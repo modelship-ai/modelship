@@ -1,0 +1,2542 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="The production backend for self-hosted agents — the OpenAI Responses API, universal tool calling, and reasoning, alongside embeddings, speech, and image generation, behind one OpenAI-compatible endpoint. Built on Ray Serve.">
+      
+      
+      
+        <link rel="canonical" href="https://docs.model-ship.ai/monitoring/">
+      
+      
+        <link rel="prev" href="../architecture/">
+      
+      
+        <link rel="next" href="../troubleshooting/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Monitoring - Modelship</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#monitoring-logging" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Modelship" class="md-header__button md-logo" aria-label="Modelship" data-md-component="logo">
+      
+  <img src="../assets/logo-dark.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Modelship
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Monitoring
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/modelship-ai/modelship" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    modelship-ai/modelship
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Modelship" class="md-nav__button md-logo" aria-label="Modelship" data-md-component="logo">
+      
+  <img src="../assets/logo-dark.svg" alt="logo">
+
+    </a>
+    Modelship
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/modelship-ai/modelship" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    modelship-ai/modelship
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview & quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Installation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install-docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install-native/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install-helm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Helm / Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production Readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi-node-docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-node without Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../integrations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Integrations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/openai-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAI SDK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/open-webui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Open WebUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/dify/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dify
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/n8n/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    n8n
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/responses-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Responses-speaking agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Logging">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#log-levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Log Levels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request-correlation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Correlation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logger-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logger Names
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#syslog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Syslog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opentelemetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenTelemetry
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enabling-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enabling Metrics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connecting-to-prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connecting to Prometheus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connecting-to-grafana" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connecting to Grafana
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alerting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alerting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alerting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#importing-alert-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Importing Alert Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alert-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alert Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alert Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#critical-page-worthy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Critical (page-worthy)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#warning-investigate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warning (investigate)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tuning-thresholds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tuning Thresholds
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#health-and-readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health and readiness
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#modelship-metrics-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modelship Metrics Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Modelship Metrics Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-gateway-dimension" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gateway dimension
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inference-timing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inference Timing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resource-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resource Cleanup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ha-control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HA Control Plane
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-metrics-from-vllm-and-ray" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in Metrics from vLLM and Ray
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-in Metrics from vLLM and Ray">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#vllm-ray_vllm_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vLLM (ray_vllm_*)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ray-serve-ray_serve_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ray Serve (ray_serve_*)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ray-cluster-ray_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ray Cluster (ray_*)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Logging">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#log-levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Log Levels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request-correlation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Correlation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logger-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logger Names
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#syslog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Syslog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opentelemetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenTelemetry
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#enabling-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enabling Metrics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connecting-to-prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connecting to Prometheus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connecting-to-grafana" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connecting to Grafana
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#alerting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alerting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alerting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#importing-alert-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Importing Alert Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#alert-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Alert Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Alert Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#critical-page-worthy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Critical (page-worthy)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#warning-investigate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warning (investigate)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tuning-thresholds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tuning Thresholds
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#health-and-readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health and readiness
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#modelship-metrics-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modelship Metrics Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Modelship Metrics Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-gateway-dimension" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gateway dimension
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inference-timing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inference Timing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resource-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resource Cleanup
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ha-control-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HA Control Plane
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-metrics-from-vllm-and-ray" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in Metrics from vLLM and Ray
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-in Metrics from vLLM and Ray">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#vllm-ray_vllm_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vLLM (ray_vllm_*)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ray-serve-ray_serve_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ray Serve (ray_serve_*)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ray-cluster-ray_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ray Cluster (ray_*)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/modelship-ai/modelship/edit/main/docs/monitoring.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="monitoring-logging">Monitoring &amp; Logging<a class="headerlink" href="#monitoring-logging" title="Permanent link">&para;</a></h1>
+<p>Modelship exposes Prometheus metrics through a single port via Ray's metrics agent. When enabled, all metrics — Ray cluster, Ray Serve, vLLM engine, and custom Modelship metrics — are available on one scrape endpoint.</p>
+<h2 id="logging">Logging<a class="headerlink" href="#logging" title="Permanent link">&para;</a></h2>
+<p>Modelship uses a centralized logging system with structured output and request correlation. All application logs go through the <code>modelship.*</code> logger hierarchy, separate from library logs (Ray, vLLM, etc.).</p>
+<h3 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Env Var</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MSHIP_LOG_LEVEL</code></td>
+<td><code>INFO</code></td>
+<td>App log level. Set to <code>TRACE</code> for request/response payloads, <code>DEBUG</code> for detailed diagnostics. Each level sets library logs to the next level up (e.g. <code>DEBUG</code> app → <code>INFO</code> libs).</td>
+</tr>
+<tr>
+<td><code>MSHIP_LOG_FORMAT</code></td>
+<td><code>text</code></td>
+<td><code>text</code> for human-readable output, <code>json</code> for structured JSON lines (for log aggregation with ELK/Loki/Splunk).</td>
+</tr>
+<tr>
+<td><code>MSHIP_LOG_TARGET</code></td>
+<td><code>console</code></td>
+<td>Log target. <code>console</code> writes to stderr; syslog URIs ship logs to a remote syslog server (see below).</td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td>
+<td>—</td>
+<td>When set, logs are also exported to an OpenTelemetry collector via OTLP (see below).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="log-levels">Log Levels<a class="headerlink" href="#log-levels" title="Permanent link">&para;</a></h3>
+<p>Each level sets library logs (Ray, vLLM, transformers) to the next level up:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>App logs (<code>modelship.*</code>)</th>
+<th>Library logs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TRACE</code></td>
+<td>Request/response payloads (audio bytes, transcription text, chat messages, etc.)</td>
+<td><code>DEBUG</code></td>
+</tr>
+<tr>
+<td><code>DEBUG</code></td>
+<td>Detailed diagnostics, per-chunk details</td>
+<td><code>INFO</code></td>
+</tr>
+<tr>
+<td><code>INFO</code> (default)</td>
+<td>Startup, deployment, request summaries</td>
+<td><code>WARNING</code></td>
+</tr>
+<tr>
+<td><code>WARNING</code></td>
+<td>Warnings only</td>
+<td><code>ERROR</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="request-correlation">Request Correlation<a class="headerlink" href="#request-correlation" title="Permanent link">&para;</a></h3>
+<p>Every API request is assigned a unique request ID that appears in all log lines for that request — both in the API gateway process and in the model deployment actor. This allows tracing a request end-to-end across Ray actor boundaries.</p>
+<p>Text format example:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>[2025-04-09 14:06:54] INFO     modelship.api [a1b2c3d4] | chat_completion model=llama messages=3 stream=True max_tokens=512
+</code></pre></div></p>
+<p>JSON format example:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span><span class="nt">&quot;timestamp&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2025-04-09T14:06:54&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;level&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;INFO&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;logger&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;modelship.api&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;chat_completion model=llama messages=3 stream=True max_tokens=512&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;request_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;a1b2c3d4&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;pid&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">12345</span><span class="p">}</span>
+</code></pre></div></p>
+<h3 id="logger-names">Logger Names<a class="headerlink" href="#logger-names" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Logger</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>modelship.startup</code></td>
+<td>Application initialization and shutdown</td>
+</tr>
+<tr>
+<td><code>modelship.api</code></td>
+<td>API gateway endpoints</td>
+</tr>
+<tr>
+<td><code>modelship.api.auth</code></td>
+<td>Authentication middleware</td>
+</tr>
+<tr>
+<td><code>modelship.infer</code></td>
+<td>Base inference layer</td>
+</tr>
+<tr>
+<td><code>modelship.infer.deployment</code></td>
+<td>Ray Serve model deployment actor</td>
+</tr>
+<tr>
+<td><code>modelship.infer.vllm</code></td>
+<td>vLLM inference backend</td>
+</tr>
+<tr>
+<td><code>modelship.infer.diffusers</code></td>
+<td>Diffusers inference backend</td>
+</tr>
+<tr>
+<td><code>modelship.infer.diffusers.image</code></td>
+<td>Diffusers image generation</td>
+</tr>
+</tbody>
+</table>
+<h3 id="syslog">Syslog<a class="headerlink" href="#syslog" title="Permanent link">&para;</a></h3>
+<p>Ship logs to a remote syslog server instead of stderr. Useful for centralized logging on bare-metal or Unraid setups without extra infrastructure.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># UDP (default)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>mship<span class="w"> </span>deploy<span class="w"> </span>--log-target<span class="w"> </span>syslog://192.168.1.50:514
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># TCP (reliable delivery)</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>mship<span class="w"> </span>deploy<span class="w"> </span>--log-target<span class="w"> </span>syslog+tcp://192.168.1.50:514
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Via environment variable</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="nv">MSHIP_LOG_TARGET</span><span class="o">=</span>syslog://192.168.1.50:514<span class="w"> </span>mship<span class="w"> </span>deploy
+</code></pre></div>
+<p>Supported URI formats:</p>
+<table>
+<thead>
+<tr>
+<th>URI</th>
+<th>Protocol</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>syslog://host:port</code></td>
+<td>UDP</td>
+<td>Default, fire-and-forget</td>
+</tr>
+<tr>
+<td><code>syslog+tcp://host:port</code></td>
+<td>TCP</td>
+<td>Reliable delivery</td>
+</tr>
+<tr>
+<td><code>syslog://host</code></td>
+<td>UDP</td>
+<td>Port defaults to 514</td>
+</tr>
+</tbody>
+</table>
+<p>The syslog target replaces the console handler — logs go to the syslog server only. The <code>--log-format</code> setting still applies (text or JSON).</p>
+<h3 id="opentelemetry">OpenTelemetry<a class="headerlink" href="#opentelemetry" title="Permanent link">&para;</a></h3>
+<p>Export logs to an OpenTelemetry collector via OTLP. Unlike syslog, OTel is additive — logs still go to the console (or syslog) handler, and are also shipped to the collector.</p>
+<p>First, install the optional dependencies:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>otel
+</code></pre></div>
+<p>Then configure the endpoint:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Via CLI</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>mship<span class="w"> </span>deploy<span class="w"> </span>--otel-endpoint<span class="w"> </span>http://collector:4317
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Via environment variable</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="nv">OTEL_EXPORTER_OTLP_ENDPOINT</span><span class="o">=</span>http://collector:4317<span class="w"> </span>mship<span class="w"> </span>deploy
+</code></pre></div>
+<p>When OTel is enabled:
+- Logs are exported via <code>BatchLogRecordProcessor</code> with <code>OTLPLogExporter</code> (gRPC)
+- The service name is set to <code>modelship</code>
+- <code>RAY_TRACING_ENABLED=1</code> is set automatically so Ray workers also export traces
+- HTTPS endpoints are detected from the URI scheme; all others use insecure connections</p>
+<p>If the <code>opentelemetry-sdk</code> and <code>opentelemetry-exporter-otlp</code> packages are not installed, a warning is logged and OTel is skipped.</p>
+<h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Prometheus  ──scrape──&gt;  Ray Metrics Agent (:8079)
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>                              |
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>                              |-- ray_node_*          Ray cluster: GPU, CPU, memory
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>                              |-- ray_serve_*         Ray Serve: HTTP requests, latency, replicas
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>                              |-- ray_vllm_*          vLLM engine: KV cache, TTFT, tokens, queue
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>                              |-- ray_modelship_*         Custom: per-model latency, errors, load time
+</code></pre></div>
+<blockquote>
+<p><strong>Note:</strong> All metrics are prefixed with <code>ray_</code> by Ray's metrics agent. vLLM metric names are also sanitized (<code>:</code> → <code>_</code>), so e.g. the vLLM-native <code>vllm:kv_cache_usage_perc</code> becomes <code>ray_vllm_kv_cache_usage_perc</code>.</p>
+</blockquote>
+<h2 id="enabling-metrics">Enabling Metrics<a class="headerlink" href="#enabling-metrics" title="Permanent link">&para;</a></h2>
+<p>Metrics are enabled by default. Set <code>MSHIP_METRICS=false</code> to disable:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--shm-size<span class="o">=</span>8g<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">HF_TOKEN</span><span class="o">=</span>your_token<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">MSHIP_RAY_DASHBOARD</span><span class="o">=</span><span class="m">0</span>.0.0.0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>-v<span class="w"> </span>./models.yaml:/modelship/config/models.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span>-v<span class="w"> </span>./models-cache:/.cache<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span>-p<span class="w"> </span><span class="m">8000</span>:8000<span class="w"> </span>-p<span class="w"> </span><span class="m">8079</span>:8079<span class="w"> </span>-p<span class="w"> </span><span class="m">8265</span>:8265<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">  </span>ghcr.io/modelship-ai/modelship:latest-cuda<span class="w"> </span>deploy
+</code></pre></div>
+<blockquote>
+<p>The dashboard always starts and binds <code>127.0.0.1</code> by default — <code>MSHIP_RAY_DASHBOARD=0.0.0.0</code> above is what makes the published <code>8265</code> port actually reachable. Only do this on a trusted/private network (see <a href="../troubleshooting/">troubleshooting.md</a>). Pair it with <code>--ray-auth=token</code> to require a bearer token for the now-reachable dashboard — retrieve it with <code>docker exec &lt;container&gt; cat /home/modelship/.ray/auth_token</code>.</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>Env Var</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MSHIP_METRICS</code></td>
+<td><code>true</code></td>
+<td>Master toggle. Enables all metrics and the Ray metrics export port.</td>
+</tr>
+<tr>
+<td><code>RAY_METRICS_EXPORT_PORT</code></td>
+<td><code>8079</code></td>
+<td>Port for the Ray metrics agent. Only takes effect on the own-head path (a joining worker picks up the head's port automatically via Ray's service discovery).</td>
+</tr>
+</tbody>
+</table>
+<p>Set <code>MSHIP_METRICS=false</code> to disable all metrics collection — port 8079 is not exposed.</p>
+<h2 id="connecting-to-prometheus">Connecting to Prometheus<a class="headerlink" href="#connecting-to-prometheus" title="Permanent link">&para;</a></h2>
+<p>Add Modelship as a scrape target in your <code>prometheus.yml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">scrape_configs</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">job_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">modelship</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">scrape_interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15s</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="nt">static_configs</span><span class="p">:</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">targets</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;&lt;modelship-host&gt;:8079&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>For multi-node Ray clusters, use Ray's auto-generated service discovery file instead of static targets:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">scrape_configs</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">job_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">modelship</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">file_sd_configs</span><span class="p">:</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">files</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;/tmp/ray/prom_metrics_service_discovery.json&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<h2 id="connecting-to-grafana">Connecting to Grafana<a class="headerlink" href="#connecting-to-grafana" title="Permanent link">&para;</a></h2>
+<p>A pre-built Grafana dashboard is included at <a href="../grafana-dashboard.json"><code>docs/grafana-dashboard.json</code></a>.</p>
+<p>To import it:</p>
+<ol>
+<li>Open Grafana and go to <strong>Dashboards &gt; Import</strong></li>
+<li>Upload <code>grafana-dashboard.json</code> or paste its contents</li>
+<li>Select your Prometheus datasource when prompted</li>
+</ol>
+<p>At the top the dashboard has <strong>Gateway</strong>, <strong>Model</strong>, and <strong>Node</strong> dropdowns. The Gateway dropdown filters every <code>ray_modelship_*</code> panel to a single gateway (or All); the vLLM/Ray-Serve/GPU rows stay cluster-wide since those metrics aren't per-gateway (see <a href="#the-gateway-dimension">The <code>gateway</code> dimension</a>).</p>
+<p>The dashboard has 9 rows:</p>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th>What it shows</th>
+<th>Metric sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Overview</strong></td>
+<td>Request rate, error rate, in-flight requests, models loaded, client disconnects, auth failures</td>
+<td><code>ray_modelship_*</code></td>
+</tr>
+<tr>
+<td><strong>Latency</strong></td>
+<td>Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed)</td>
+<td><code>ray_modelship_*</code></td>
+</tr>
+<tr>
+<td><strong>vLLM Engine</strong></td>
+<td>KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate</td>
+<td><code>ray_vllm_*</code></td>
+</tr>
+<tr>
+<td><strong>GPU &amp; System</strong></td>
+<td>GPU utilization, GPU memory, CPU, system memory (cluster aggregate)</td>
+<td><code>ray_node_*</code></td>
+</tr>
+<tr>
+<td><strong>Ray Serve</strong></td>
+<td>Health check latency, request count, deployment processing latency, HTTP request latency</td>
+<td><code>ray_serve_*</code></td>
+</tr>
+<tr>
+<td><strong>Operational</strong></td>
+<td>Model load time, load failures, resource cleanup errors, streaming chunks/s</td>
+<td><code>ray_modelship_*</code></td>
+</tr>
+<tr>
+<td><strong>Alerts</strong></td>
+<td>Error rate %, KV cache usage, queue depth, TTFT P99, client disconnects, preemptions, GPU memory</td>
+<td><code>ray_modelship_*</code>, <code>ray_vllm_*</code>, <code>ray_node_*</code></td>
+</tr>
+<tr>
+<td><strong>Cluster / HA</strong></td>
+<td>Deploy lock, reservation outcomes, operator force-releases, coordinator-vs-replica routing generation, gateway watch errors, state-store latency/errors, deploy duration &amp; model changes</td>
+<td><code>ray_modelship_*</code></td>
+</tr>
+<tr>
+<td><strong>Per-Node Resources</strong></td>
+<td>GPU utilization/memory, CPU, system memory broken out by node (filtered by the Node dropdown)</td>
+<td><code>ray_node_*</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Deploying via the Helm chart:</strong> set <code>grafanaDashboard.enabled=true</code> to ship this dashboard as a ConfigMap the Grafana sidecar auto-imports (and <code>prometheusRule.enabled=true</code> for the alert rules below) — no manual import needed. See the chart README.</p>
+</blockquote>
+<h2 id="alerting">Alerting<a class="headerlink" href="#alerting" title="Permanent link">&para;</a></h2>
+<p>A standalone Prometheus alerting rules file is included at <a href="../prometheus-alerts.yml"><code>docs/prometheus-alerts.yml</code></a>. The Grafana dashboard also has a dedicated <strong>Alerts</strong> row with threshold lines on the key panels.</p>
+<h3 id="importing-alert-rules">Importing Alert Rules<a class="headerlink" href="#importing-alert-rules" title="Permanent link">&para;</a></h3>
+<p>Add the rules file to your Prometheus config:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">rule_files</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/prometheus-alerts.yml</span>
+</code></pre></div>
+<p>Then reload Prometheus (<code>kill -HUP &lt;pid&gt;</code> or <code>POST /-/reload</code> if <code>--web.enable-lifecycle</code> is set).</p>
+<h3 id="alert-reference">Alert Reference<a class="headerlink" href="#alert-reference" title="Permanent link">&para;</a></h3>
+<h4 id="critical-page-worthy">Critical (page-worthy)<a class="headerlink" href="#critical-page-worthy" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Alert</th>
+<th>Condition</th>
+<th>For</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ModelshipHighErrorRate</code></td>
+<td>Error rate &gt; 5% of traffic</td>
+<td>5m</td>
+<td>Significant portion of requests are failing</td>
+</tr>
+<tr>
+<td><code>ModelshipNoModelsLoaded</code></td>
+<td><code>models_loaded</code> == 0</td>
+<td>2m</td>
+<td>Server is running but cannot serve requests</td>
+</tr>
+<tr>
+<td><code>ModelshipModelLoadFailure</code></td>
+<td>Any increase in <code>model_load_failures_total</code></td>
+<td>0m</td>
+<td>A model failed to initialize</td>
+</tr>
+<tr>
+<td><code>ModelshipKVCacheExhausted</code></td>
+<td>KV cache usage &gt; 95%</td>
+<td>5m</td>
+<td>Requests will queue or be preempted</td>
+</tr>
+<tr>
+<td><code>ModelshipStateStoreErrors</code></td>
+<td>Any state-store op errors</td>
+<td>5m</td>
+<td>Durable HA state failing — self-heal at risk</td>
+</tr>
+<tr>
+<td><code>ModelshipDeployJobFailed</code></td>
+<td><code>kube_job_status_failed</code> &gt; 0</td>
+<td>0m</td>
+<td>Deploy RayJob failed; last upgrade may not be applied (needs kube-state-metrics)</td>
+</tr>
+</tbody>
+</table>
+<h4 id="warning-investigate">Warning (investigate)<a class="headerlink" href="#warning-investigate" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Alert</th>
+<th>Condition</th>
+<th>For</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ModelshipHighP99Latency</code></td>
+<td>Gateway P99 &gt; 30s</td>
+<td>5m</td>
+<td>End-to-end latency is very high</td>
+</tr>
+<tr>
+<td><code>ModelshipHighQueueDepth</code></td>
+<td>Waiting requests &gt; 10</td>
+<td>5m</td>
+<td>vLLM engine is falling behind</td>
+</tr>
+<tr>
+<td><code>ModelshipPreemptions</code></td>
+<td>Preemption rate &gt; 0</td>
+<td>5m</td>
+<td>GPU memory pressure causing request eviction</td>
+</tr>
+<tr>
+<td><code>ModelshipClientDisconnects</code></td>
+<td>Disconnect rate &gt; 1/min</td>
+<td>5m</td>
+<td>Clients timing out or dropping connections</td>
+</tr>
+<tr>
+<td><code>ModelshipGPUMemoryPressure</code></td>
+<td>Available GPU memory &lt; 1 GB</td>
+<td>5m</td>
+<td>GPU is nearly out of memory</td>
+</tr>
+<tr>
+<td><code>ModelshipHighTTFT</code></td>
+<td>TTFT P99 &gt; 5s</td>
+<td>5m</td>
+<td>Users waiting too long for first token</td>
+</tr>
+<tr>
+<td><code>ModelshipDeployLockStuck</code></td>
+<td><code>deploy_lock_held</code> == 1 for 10m</td>
+<td>0m</td>
+<td>A deploy is hung holding the cluster-wide deploy lock</td>
+</tr>
+<tr>
+<td><code>ModelshipOperatorForceReleased</code></td>
+<td>Any operator force-release</td>
+<td>0m</td>
+<td>A deploy operator died ungracefully; lock reclaimed</td>
+</tr>
+<tr>
+<td><code>ModelshipGatewayRoutingDivergence</code></td>
+<td>Replica generation &lt; coordinator for 10m</td>
+<td>10m</td>
+<td>A gateway replica is routing from a stale table</td>
+</tr>
+<tr>
+<td><code>ModelshipRayWorkerNotReady</code></td>
+<td>Ray worker pod not ready</td>
+<td>5m</td>
+<td>Cluster capacity degraded (needs kube-state-metrics)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tuning-thresholds">Tuning Thresholds<a class="headerlink" href="#tuning-thresholds" title="Permanent link">&para;</a></h3>
+<p>All thresholds are starting points. Adjust based on your deployment:</p>
+<ul>
+<li><strong>Error rate</strong>: 5% is aggressive — if you run small models that occasionally OOM, raise to 10%.</li>
+<li><strong>P99 latency</strong>: 30s works for chat completions with long outputs. For embeddings or TTS, consider lowering to 5-10s by adding per-endpoint rules.</li>
+<li><strong>Queue depth</strong>: 10 assumes a single vLLM instance. Scale proportionally with replicas.</li>
+<li><strong>KV cache</strong>: 95% is the danger zone. If you use prefix caching heavily, 90% may be more appropriate.</li>
+<li><strong>TTFT</strong>: 5s is generous. For interactive chat, consider 2-3s.</li>
+<li><strong>GPU memory</strong>: 1 GB threshold assumes you're not running anything else on the GPU. Raise if you have shared workloads.</li>
+</ul>
+<h2 id="health-and-readiness">Health and readiness<a class="headerlink" href="#health-and-readiness" title="Permanent link">&para;</a></h2>
+<p>Two endpoints are always available regardless of the metrics toggle.</p>
+<p><strong><code>/health</code></strong> — cheap liveness probe. Returns 200 as soon as the gateway is up (before model deployments finish):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>curl<span class="w"> </span>http://localhost:8000/modelship/health
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="c1"># {&quot;status&quot;: &quot;ok&quot;, &quot;uptime_s&quot;: 12.3}</span>
+</code></pre></div>
+<p><strong><code>/readyz</code></strong> — readiness + timing. Returns 200 when every expected model has a registered deployment; 503 with the same JSON body while any model is still pending. Bodies carry full state so a single poll tells you what's loaded, what's outstanding, and how long each model took to come up:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>curl<span class="w"> </span>http://localhost:8000/modelship/readyz
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="c1"># 200 when ready:</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="c1"># {</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1">#   &quot;status&quot;: &quot;ok&quot;,</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1">#   &quot;ready&quot;: true,</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="c1">#   &quot;uptime_s&quot;: 420.5,</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1">#   &quot;time_to_ready_s&quot;: 215.3,</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="c1">#   &quot;models_loaded&quot;:   [&quot;kokoro&quot;, &quot;llm&quot;, &quot;nomic-embed&quot;, &quot;whisper&quot;],</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="c1">#   &quot;models_expected&quot;: [&quot;llm&quot;, &quot;kokoro&quot;, &quot;whisper&quot;, &quot;nomic-embed&quot;],</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="c1">#   &quot;models_pending&quot;:  [],</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="c1">#   &quot;model_load_times_s&quot;: {&quot;llm&quot;: 50.2, &quot;kokoro&quot;: 8.1, &quot;whisper&quot;: 120.5, &quot;nomic-embed&quot;: 36.5}</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="c1"># }</span>
+</code></pre></div>
+<p>Per-model timings are gateway-measured: the gap between one model registering and the next (models deploy sequentially, ordered by GPU footprint), so the first model's entry includes any framework-level setup time preceding it.</p>
+<p>Use <code>/health</code> for Kubernetes liveness probes and <code>/readyz</code> for readiness probes — <code>/readyz</code> returning 503 prevents a service from flipping traffic onto the pod before models are loaded.</p>
+<h2 id="modelship-metrics-reference">Modelship Metrics Reference<a class="headerlink" href="#modelship-metrics-reference" title="Permanent link">&para;</a></h2>
+<p>Custom metrics are exported through Ray's metrics agent with a <code>ray_</code> prefix. Per-model/per-gateway metrics use <code>ray.serve.metrics</code> (they're emitted inside Serve replicas); the HA control-plane metrics use <code>ray.util.metrics</code> (emitted by the deploy coordinator, state store, and deploy driver, which are not Serve replicas).</p>
+<h3 id="the-gateway-dimension">The <code>gateway</code> dimension<a class="headerlink" href="#the-gateway-dimension" title="Permanent link">&para;</a></h3>
+<p>Every per-model and per-gateway metric below carries a <code>gateway</code> tag identifying which gateway emitted it, so multiple gateways sharing one Ray cluster stay distinguishable (the Grafana dashboard exposes a <strong>Gateway</strong> dropdown built on it). The tag is stamped automatically from <code>MSHIP_GATEWAY_NAME</code> — the deploy driver sets it and forwards it to every replica via <code>runtime_env</code>, so no call site passes it explicitly.</p>
+<p>Cluster-scoped metrics are <strong>not</strong> per-gateway, because the thing they measure is shared cluster-wide: the deploy lock and reservations (one mutex per cluster), the state store (one shared backend), and all inherited <code>ray_vllm_*</code> / <code>ray_serve_*</code> / <code>ray_node_*</code> metrics (engine/cluster level). The dashboard's Gateway dropdown therefore filters the <code>ray_modelship_*</code> per-model panels but leaves the vLLM/GPU/Ray-Serve panels cluster-wide.</p>
+<h3 id="gateway">Gateway<a class="headerlink" href="#gateway" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Type</th>
+<th>Tags</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ray_modelship_request_total</code></td>
+<td>Counter</td>
+<td><code>model</code>, <code>endpoint</code>, <code>status</code>, <code>gateway</code></td>
+<td>Total requests by model and API method</td>
+</tr>
+<tr>
+<td><code>ray_modelship_request_duration_seconds</code></td>
+<td>Histogram</td>
+<td><code>model</code>, <code>endpoint</code>, <code>gateway</code></td>
+<td>End-to-end request latency</td>
+</tr>
+<tr>
+<td><code>ray_modelship_request_errors_total</code></td>
+<td>Counter</td>
+<td><code>model</code>, <code>endpoint</code>, <code>error_type</code>, <code>gateway</code></td>
+<td>Errors: <code>validation_error</code>, <code>inference_error</code>, <code>stream_error</code>, <code>unhandled</code></td>
+</tr>
+<tr>
+<td><code>ray_modelship_request_in_progress</code></td>
+<td>Gauge</td>
+<td><code>model</code>, <code>endpoint</code>, <code>gateway</code></td>
+<td>Currently processing requests</td>
+</tr>
+<tr>
+<td><code>ray_modelship_client_disconnects_total</code></td>
+<td>Counter</td>
+<td><code>model</code>, <code>endpoint</code>, <code>gateway</code></td>
+<td>Client disconnected before response completed</td>
+</tr>
+<tr>
+<td><code>ray_modelship_stream_chunks_total</code></td>
+<td>Counter</td>
+<td><code>model</code>, <code>gateway</code></td>
+<td>Streaming chunks emitted</td>
+</tr>
+<tr>
+<td><code>ray_modelship_auth_failures_total</code></td>
+<td>Counter</td>
+<td><code>reason</code>, <code>gateway</code></td>
+<td>Requests rejected for invalid/missing API key (<code>reason</code>: <code>missing</code>, <code>invalid</code>)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="model-deployment">Model Deployment<a class="headerlink" href="#model-deployment" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Type</th>
+<th>Tags</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ray_modelship_model_load_duration_seconds</code></td>
+<td>Histogram</td>
+<td><code>model</code>, <code>loader</code>, <code>gateway</code></td>
+<td>Time to initialize a model</td>
+</tr>
+<tr>
+<td><code>ray_modelship_model_load_failures_total</code></td>
+<td>Counter</td>
+<td><code>model</code>, <code>loader</code>, <code>gateway</code></td>
+<td>Failed model initializations</td>
+</tr>
+<tr>
+<td><code>ray_modelship_models_loaded</code></td>
+<td>Gauge</td>
+<td><code>gateway</code></td>
+<td>Number of loaded and ready models</td>
+</tr>
+</tbody>
+</table>
+<h3 id="inference-timing">Inference Timing<a class="headerlink" href="#inference-timing" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Type</th>
+<th>Tags</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ray_modelship_generation_duration_seconds</code></td>
+<td>Histogram</td>
+<td><code>model</code>, <code>gateway</code></td>
+<td>Chat/text generation latency</td>
+</tr>
+<tr>
+<td><code>ray_modelship_tts_generation_duration_seconds</code></td>
+<td>Histogram</td>
+<td><code>model</code>, <code>gateway</code></td>
+<td>Text-to-speech latency</td>
+</tr>
+<tr>
+<td><code>ray_modelship_image_generation_duration_seconds</code></td>
+<td>Histogram</td>
+<td><code>model</code>, <code>gateway</code></td>
+<td>Image generation latency</td>
+</tr>
+<tr>
+<td><code>ray_modelship_transcription_duration_seconds</code></td>
+<td>Histogram</td>
+<td><code>model</code>, <code>gateway</code></td>
+<td>Speech-to-text latency</td>
+</tr>
+<tr>
+<td><code>ray_modelship_embedding_duration_seconds</code></td>
+<td>Histogram</td>
+<td><code>model</code>, <code>gateway</code></td>
+<td>Embedding latency</td>
+</tr>
+</tbody>
+</table>
+<h3 id="resource-cleanup">Resource Cleanup<a class="headerlink" href="#resource-cleanup" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Type</th>
+<th>Tags</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ray_modelship_resource_cleanup_errors_total</code></td>
+<td>Counter</td>
+<td><code>model</code>, <code>component</code>, <code>gateway</code></td>
+<td>Errors during engine/model cleanup</td>
+</tr>
+</tbody>
+</table>
+<h3 id="ha-control-plane">HA Control Plane<a class="headerlink" href="#ha-control-plane" title="Permanent link">&para;</a></h3>
+<p>These cover the multi-node / HA machinery deployed by the Helm chart (deploy coordinator, pluggable state store, gateway watch loop). The first six carry a <code>gateway</code> tag; the rest are cluster-scoped.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Type</th>
+<th>Tags</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ray_modelship_gateway_reconciles_total</code></td>
+<td>Counter</td>
+<td><code>gateway</code></td>
+<td>Routing reconciles a gateway replica applied from the coordinator</td>
+</tr>
+<tr>
+<td><code>ray_modelship_gateway_watch_errors_total</code></td>
+<td>Counter</td>
+<td><code>gateway</code></td>
+<td>Errors in a gateway replica's coordinator watch loop (retried)</td>
+</tr>
+<tr>
+<td><code>ray_modelship_gateway_routing_generation</code></td>
+<td>Gauge</td>
+<td><code>gateway</code></td>
+<td>Routing generation a gateway replica has reconciled to</td>
+</tr>
+<tr>
+<td><code>ray_modelship_coordinator_generation</code></td>
+<td>Gauge</td>
+<td><code>gateway</code></td>
+<td>Coordinator's current routing generation (compare to the replica gauge to spot lag)</td>
+</tr>
+<tr>
+<td><code>ray_modelship_deploy_duration_seconds</code></td>
+<td>Histogram</td>
+<td><code>gateway</code></td>
+<td>Wall-clock time for a deploy run to settle</td>
+</tr>
+<tr>
+<td><code>ray_modelship_deploy_models_changed_total</code></td>
+<td>Counter</td>
+<td><code>gateway</code>, <code>action</code></td>
+<td>Models changed by a deploy (<code>action</code>: <code>add</code>, <code>remove</code>, <code>evict</code>)</td>
+</tr>
+<tr>
+<td><code>ray_modelship_deploy_lock_held</code></td>
+<td>Gauge</td>
+<td></td>
+<td>1 while the cluster-wide deploy lock is held, else 0</td>
+</tr>
+<tr>
+<td><code>ray_modelship_deploy_reservations_total</code></td>
+<td>Counter</td>
+<td><code>result</code></td>
+<td>Deploy-lock reservation attempts (<code>result</code>: <code>granted</code>, <code>locked</code>, <code>insufficient_gpu</code>, <code>insufficient_cpu</code>)</td>
+</tr>
+<tr>
+<td><code>ray_modelship_operator_force_release_total</code></td>
+<td>Counter</td>
+<td><code>reason</code></td>
+<td>Locks force-released after ungraceful operator death (<code>reason</code>: <code>probe_gone</code>, <code>unresponsive</code>)</td>
+</tr>
+<tr>
+<td><code>ray_modelship_state_store_operations_total</code></td>
+<td>Counter</td>
+<td><code>backend</code>, <code>op</code>, <code>result</code></td>
+<td>State-store ops (<code>op</code>: <code>get</code>/<code>set</code>/<code>delete</code>; <code>result</code>: <code>ok</code>/<code>error</code>)</td>
+</tr>
+<tr>
+<td><code>ray_modelship_state_store_operation_duration_seconds</code></td>
+<td>Histogram</td>
+<td><code>backend</code>, <code>op</code></td>
+<td>State-store operation latency</td>
+</tr>
+</tbody>
+</table>
+<h2 id="built-in-metrics-from-vllm-and-ray">Built-in Metrics from vLLM and Ray<a class="headerlink" href="#built-in-metrics-from-vllm-and-ray" title="Permanent link">&para;</a></h2>
+<p>These are automatically available when <code>MSHIP_METRICS=true</code> — no additional configuration needed.</p>
+<h3 id="vllm-ray_vllm_">vLLM (<code>ray_vllm_*</code>)<a class="headerlink" href="#vllm-ray_vllm_" title="Permanent link">&para;</a></h3>
+<p>vLLM metrics are routed through Ray's metrics agent via <code>RayPrometheusStatLogger</code>. The native <code>vllm:</code> prefix is sanitized to <code>ray_vllm_</code>.</p>
+<ul>
+<li><code>ray_vllm_num_requests_running</code> / <code>ray_vllm_num_requests_waiting</code> — queue depth</li>
+<li><code>ray_vllm_kv_cache_usage_perc</code> — KV cache utilization (0-1)</li>
+<li><code>ray_vllm_time_to_first_token_seconds</code> — TTFT histogram</li>
+<li><code>ray_vllm_inter_token_latency_seconds</code> — ITL histogram</li>
+<li><code>ray_vllm_e2e_request_latency_seconds</code> — end-to-end latency histogram</li>
+<li><code>ray_vllm_request_queue_time_seconds</code> — time spent waiting in queue</li>
+<li><code>ray_vllm_prompt_tokens_total</code> / <code>ray_vllm_generation_tokens_total</code> — token throughput counters</li>
+<li><code>ray_vllm_num_preemptions_total</code> — memory pressure signal</li>
+<li><code>ray_vllm_prefix_cache_hits_total</code> / <code>ray_vllm_prefix_cache_queries_total</code> — cache efficiency</li>
+</ul>
+<p>Full reference: <a href="https://docs.vllm.ai/en/stable/design/metrics/">vLLM Metrics Documentation</a></p>
+<h3 id="ray-serve-ray_serve_">Ray Serve (<code>ray_serve_*</code>)<a class="headerlink" href="#ray-serve-ray_serve_" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ray_serve_num_http_requests_total</code> — request count by route, method, status</li>
+<li><code>ray_serve_http_request_latency_ms</code> — request latency histogram</li>
+<li><code>ray_serve_handle_request_counter_total</code> — request count by deployment</li>
+<li><code>ray_serve_deployment_processing_latency_ms</code> — per-replica processing time</li>
+<li><code>ray_serve_health_check_latency_ms</code> — health check latency histogram</li>
+</ul>
+<p>Full reference: <a href="https://docs.ray.io/en/latest/serve/monitoring.html">Ray Serve Monitoring</a></p>
+<h3 id="ray-cluster-ray_">Ray Cluster (<code>ray_*</code>)<a class="headerlink" href="#ray-cluster-ray_" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ray_node_gpus_utilization</code> — GPU utilization by device</li>
+<li><code>ray_node_gram_used</code> / <code>ray_node_gram_available</code> — GPU memory</li>
+<li><code>ray_node_cpu_utilization</code> — CPU usage</li>
+<li><code>ray_node_mem_used</code> / <code>ray_node_mem_total</code> — system memory</li>
+</ul>
+<p>Full reference: <a href="https://docs.ray.io/en/latest/cluster/metrics.html">Ray Metrics</a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.action.edit", "search.suggest", "search.highlight"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
