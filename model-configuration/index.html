@@ -1,0 +1,3193 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="The production backend for self-hosted agents — the OpenAI Responses API, universal tool calling, and reasoning, alongside embeddings, speech, and image generation, behind one OpenAI-compatible endpoint. Built on Ray Serve.">
+      
+      
+      
+        <link rel="canonical" href="https://docs.model-ship.ai/model-configuration/">
+      
+      
+        <link rel="prev" href="../install-helm/">
+      
+      
+        <link rel="next" href="../production-readiness/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Model Configuration - Modelship</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#model-configuration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Modelship" class="md-header__button md-logo" aria-label="Modelship" data-md-component="logo">
+      
+  <img src="../assets/logo-dark.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Modelship
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Model Configuration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/modelship-ai/modelship" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    modelship-ai/modelship
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Modelship" class="md-nav__button md-logo" aria-label="Modelship" data-md-component="logo">
+      
+  <img src="../assets/logo-dark.svg" alt="logo">
+
+    </a>
+    Modelship
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/modelship-ai/modelship" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    modelship-ai/modelship
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview & quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Installation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install-docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install-native/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install-helm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Helm / Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Configuration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#cli-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI Options
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CLI Options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#single-model-deploys-no-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single-model deploys (no config file)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Single-model deploys (no config file)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tuning-blocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tuning blocks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inferred-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inferred names
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cache-directory-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache directory structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#additive-vs-reconcile-deploys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Additive vs. reconcile deploys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trusted-identity-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trusted Identity Header
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sharing-one-gpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sharing one GPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model source
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Model source">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#multi-node-clusters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-node clusters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-variant-gguf-repos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-variant GGUF repos
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vllm-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vLLM Loader
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="vLLM Loader">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cpu-no-gpu-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CPU (no GPU required)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-gpu-with-tensor-parallelism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-GPU with tensor parallelism
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#diffusers-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diffusers Loader
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llama_server-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        llama_server Loader
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="llama_server Loader">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mla-models-deepseek-minicpm3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MLA models (DeepSeek, MiniCPM3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-calling-and-reasoning-gaps-vs-the-openai-spec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool calling and reasoning gaps vs. the OpenAI spec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vision-gguf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vision (GGUF)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#embeddings-gguf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embeddings (GGUF)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stable-diffusioncpp-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stable-diffusion.cpp Loader
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whispercpp-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        whispercpp Loader
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sherpa_onnx-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sherpa_onnx Loader
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scaling-a-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scaling a Deployment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#autoscaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Autoscaling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment Variables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Environment Variables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#state-store-mship_state_store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        State store (MSHIP_STATE_STORE)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stateful-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stateful responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production Readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi-node-docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-node without Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../integrations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Integrations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/openai-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAI SDK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/open-webui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Open WebUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/dify/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dify
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/n8n/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    n8n
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/responses-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Responses-speaking agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#cli-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI Options
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CLI Options">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#single-model-deploys-no-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single-model deploys (no config file)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Single-model deploys (no config file)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tuning-blocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tuning blocks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inferred-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inferred names
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cache-directory-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache directory structure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#additive-vs-reconcile-deploys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Additive vs. reconcile deploys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trusted-identity-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trusted Identity Header
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sharing-one-gpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sharing one GPU
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model source
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Model source">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#multi-node-clusters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-node clusters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-variant-gguf-repos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-variant GGUF repos
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vllm-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vLLM Loader
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="vLLM Loader">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cpu-no-gpu-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CPU (no GPU required)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-gpu-with-tensor-parallelism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-GPU with tensor parallelism
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#diffusers-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diffusers Loader
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#llama_server-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        llama_server Loader
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="llama_server Loader">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mla-models-deepseek-minicpm3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MLA models (DeepSeek, MiniCPM3)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-calling-and-reasoning-gaps-vs-the-openai-spec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool calling and reasoning gaps vs. the OpenAI spec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vision-gguf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vision (GGUF)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#embeddings-gguf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embeddings (GGUF)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stable-diffusioncpp-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        stable-diffusion.cpp Loader
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whispercpp-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        whispercpp Loader
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sherpa_onnx-loader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sherpa_onnx Loader
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scaling-a-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scaling a Deployment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#autoscaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Autoscaling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment Variables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Environment Variables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#state-store-mship_state_store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        State store (MSHIP_STATE_STORE)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stateful-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stateful responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/modelship-ai/modelship/edit/main/docs/model-configuration.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="model-configuration">Model Configuration<a class="headerlink" href="#model-configuration" title="Permanent link">&para;</a></h1>
+<p>Reference for <code>models.yaml</code> (default: <code>config/models.yaml</code>). Each entry under <code>models:</code> defines one deployment. Unknown keys are rejected: a typo like <code>n_ctxx</code> is a validation error, not a silently ignored setting — in the file and in the <a href="#single-model-deploys-no-config-file">CLI flags</a> alike.</p>
+<h2 id="cli-options">CLI Options<a class="headerlink" href="#cli-options" title="Permanent link">&para;</a></h2>
+<p><code>mship deploy</code> accepts these arguments (env vars work as fallbacks; CLI wins over env):</p>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Env Var</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--config</code></td>
+<td>—</td>
+<td><code>config/models.yaml</code></td>
+<td>Path to models config file. An explicit path that doesn't exist is a hard error</td>
+</tr>
+<tr>
+<td><code>--gateway-name</code></td>
+<td><code>MSHIP_GATEWAY_NAME</code></td>
+<td><code>modelship</code></td>
+<td>Name for the API gateway app. Multiple gateways can coexist on one cluster, each mounted at <code>/&lt;slugified-name&gt;</code> (e.g. <code>modelship</code> → <code>/modelship/v1/...</code>)</td>
+</tr>
+<tr>
+<td><code>--gateway-replicas</code></td>
+<td><code>MSHIP_GATEWAY_REPLICAS</code></td>
+<td><code>1</code></td>
+<td>Number of API gateway replicas (routing/ingress HA; replicas sync routing via the deploy coordinator)</td>
+</tr>
+<tr>
+<td><code>--openai-api-port</code></td>
+<td><code>MSHIP_OPENAI_API_PORT</code></td>
+<td><code>8000</code></td>
+<td>Port for the OpenAI-compatible API</td>
+</tr>
+<tr>
+<td><code>--use-existing-ray-cluster</code></td>
+<td><code>MSHIP_USE_EXISTING_RAY_CLUSTER</code></td>
+<td><code>false</code></td>
+<td>Connect to a Ray cluster you manage (driver must run <strong>on</strong> a cluster node) instead of starting one. Implies deploy-and-exit, no teardown</td>
+</tr>
+<tr>
+<td><code>--address</code></td>
+<td><code>MSHIP_ADDRESS</code></td>
+<td>—</td>
+<td>Join an existing Ray cluster as an additional compute node, given its head's GCS address as <code>host:port</code> (e.g. <code>mship-head:6380</code>). Mutually exclusive with <code>--use-existing-ray-cluster</code>. See <a href="../multi-node-docker/">Multi-node without Kubernetes</a></td>
+</tr>
+<tr>
+<td><code>--token</code></td>
+<td><code>MSHIP_RAY_AUTH_TOKEN</code></td>
+<td>—</td>
+<td>Cluster auth token for joining a head running <code>--ray-auth=token</code>. Only meaningful with <code>--address</code>; retrieve via <code>docker exec &lt;head&gt; cat ~/.ray/auth_token</code></td>
+</tr>
+<tr>
+<td><code>--ray-auth</code></td>
+<td><code>MSHIP_RAY_AUTH</code></td>
+<td><code>none</code></td>
+<td>Ray cluster authentication, own-head only. <code>token</code> requires a bearer token (generated by Ray itself) for the dashboard and cluster-internal RPC</td>
+</tr>
+<tr>
+<td><code>--ray-port</code></td>
+<td><code>MSHIP_RAY_PORT</code></td>
+<td><code>6380</code></td>
+<td>Ray GCS server port, own-head only — what a joiner's <code>--address</code> points at</td>
+</tr>
+<tr>
+<td><code>--dashboard-port</code></td>
+<td><code>MSHIP_RAY_DASHBOARD_PORT</code></td>
+<td><code>8265</code></td>
+<td>Ray dashboard port, own-head only. Only needed to run multiple modelship heads on one host under <code>--network=host</code></td>
+</tr>
+<tr>
+<td><code>--node-num-cpus</code></td>
+<td><code>MSHIP_NODE_NUM_CPUS</code></td>
+<td>auto-detect</td>
+<td>CPUs this node reserves</td>
+</tr>
+<tr>
+<td><code>--node-num-gpus</code></td>
+<td><code>MSHIP_NODE_NUM_GPUS</code></td>
+<td>auto-detect</td>
+<td>GPUs this node reserves. Refused at startup if it exceeds what the container can actually see</td>
+</tr>
+<tr>
+<td><code>--node-memory</code></td>
+<td><code>MSHIP_NODE_MEMORY</code></td>
+<td>auto-detect</td>
+<td>This node's total memory budget, e.g. <code>8Gi</code>. Set explicitly when co-locating multiple modelship containers on one host without per-container cgroup memory limits</td>
+</tr>
+<tr>
+<td><code>--prune-ray-sessions</code></td>
+<td><code>MSHIP_PRUNE_RAY_SESSIONS</code></td>
+<td><code>true</code></td>
+<td>When starting its own Ray head, delete stale <code>session_*</code> dirs left under the Ray temp root by previous, no-longer-running heads. A live head's session is always kept</td>
+</tr>
+<tr>
+<td><code>--reconcile</code></td>
+<td>—</td>
+<td><code>false</code></td>
+<td>Make the cluster match the config: add new models, remove dropped ones, replace changed ones (vs. the default additive union). With no <code>--config</code>, reconciles to this gateway's persisted effective config (self-heal)</td>
+</tr>
+<tr>
+<td><code>--replace-strategy</code></td>
+<td>—</td>
+<td><code>blue_green</code></td>
+<td>How to replace a changed model: <code>blue_green</code> (deploy new before dropping old, no request loss) or <code>stop_start</code> (drop old first, brief unavailability)</td>
+</tr>
+<tr>
+<td><code>--cache-dir</code></td>
+<td><code>MSHIP_CACHE_DIR</code></td>
+<td><code>/.cache</code></td>
+<td>Base cache directory</td>
+</tr>
+<tr>
+<td><code>--state-store</code></td>
+<td><code>MSHIP_STATE_STORE</code></td>
+<td><code>memory://</code></td>
+<td>Connection URI for the effective config + deploy coordinator + <code>/v1/responses</code> state (see <a href="#state-store-mship_state_store">State store</a>)</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>MSHIP_LOG_LEVEL</code></td>
+<td><code>INFO</code></td>
+<td>Log level (env-var-only: must be set before <code>import ray</code> so library loggers latch the right level)</td>
+</tr>
+<tr>
+<td><code>--log-format</code></td>
+<td><code>MSHIP_LOG_FORMAT</code></td>
+<td><code>text</code></td>
+<td><code>text</code> or <code>json</code></td>
+</tr>
+<tr>
+<td><code>--log-target</code></td>
+<td><code>MSHIP_LOG_TARGET</code></td>
+<td><code>console</code></td>
+<td><code>console</code> or syslog URI (e.g. <code>syslog://host:514</code>, <code>syslog+tcp://host:514</code>)</td>
+</tr>
+<tr>
+<td><code>--otel-endpoint</code></td>
+<td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td>
+<td>—</td>
+<td>OpenTelemetry OTLP endpoint (e.g. <code>http://collector:4317</code>)</td>
+</tr>
+<tr>
+<td><code>--no-metrics</code></td>
+<td><code>MSHIP_METRICS</code></td>
+<td>enabled</td>
+<td>Disable Prometheus metrics (port 8079)</td>
+</tr>
+<tr>
+<td><code>--no-preflight</code></td>
+<td><code>MSHIP_PREFLIGHT</code></td>
+<td>enabled</td>
+<td>Disable preflight hardware auto-sizing; models run on loader/library defaults plus explicit config. Useful for benchmarking</td>
+</tr>
+<tr>
+<td><code>--api-keys</code></td>
+<td><code>MSHIP_API_KEYS</code></td>
+<td>—</td>
+<td>Comma-separated API keys</td>
+</tr>
+<tr>
+<td><code>--trusted-identity-header</code></td>
+<td><code>MSHIP_TRUSTED_IDENTITY_HEADER</code></td>
+<td>—</td>
+<td>Header name (e.g. <code>X-Consumer-Id</code>) a fronting credentials layer sets with a caller identity it already resolved and authorized. See <a href="#trusted-identity-header">Trusted identity header</a></td>
+</tr>
+<tr>
+<td><code>--max-request-body-bytes</code></td>
+<td><code>MSHIP_MAX_REQUEST_BODY_BYTES</code></td>
+<td><code>52428800</code></td>
+<td>Max request body size in bytes</td>
+</tr>
+<tr>
+<td><code>--responses-ttl-s</code></td>
+<td><code>MSHIP_RESPONSES_TTL_S</code></td>
+<td><code>2592000</code></td>
+<td>TTL in seconds for stored <code>/v1/responses</code> conversation state; <code>&lt;=0</code> disables expiry</td>
+</tr>
+<tr>
+<td><code>--state-sweep-interval-s</code></td>
+<td><code>MSHIP_STATE_SWEEP_INTERVAL_S</code></td>
+<td><code>300</code></td>
+<td>Interval in seconds between expired-key sweeps in the in-memory state store</td>
+</tr>
+</tbody>
+</table>
+<h3 id="single-model-deploys-no-config-file">Single-model deploys (no config file)<a class="headerlink" href="#single-model-deploys-no-config-file" title="Permanent link">&para;</a></h3>
+<p><code>--model</code> deploys one model straight from the command line, no <code>models.yaml</code> needed:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>mship<span class="w"> </span>deploy<span class="w"> </span>--model<span class="w"> </span>lmstudio-community/Qwen3-8B-GGUF:<span class="s1">&#39;*Q4_K_M.gguf&#39;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">             </span>--loader<span class="w"> </span>llama_server<span class="w"> </span>--usecase<span class="w"> </span>generate<span class="w"> </span>--num-cpus<span class="w"> </span><span class="m">4</span>
+</code></pre></div>
+<p>These flags mirror the root-level fields of a <code>models:</code> entry one for one, and are validated by the same schema — anything rejected in the file is rejected here, with the same message:</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Field</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--model</code></td>
+<td><code>model</code></td>
+</tr>
+<tr>
+<td><code>--name</code></td>
+<td><code>name</code> (inferred from <code>--model</code> when omitted)</td>
+</tr>
+<tr>
+<td><code>--usecase</code></td>
+<td><code>usecase</code></td>
+</tr>
+<tr>
+<td><code>--loader</code></td>
+<td><code>loader</code></td>
+</tr>
+<tr>
+<td><code>--num-gpus</code></td>
+<td><code>num_gpus</code></td>
+</tr>
+<tr>
+<td><code>--num-cpus</code></td>
+<td><code>num_cpus</code></td>
+</tr>
+<tr>
+<td><code>--num-replicas</code></td>
+<td><code>num_replicas</code></td>
+</tr>
+<tr>
+<td><code>--max-ongoing-requests</code></td>
+<td><code>max_ongoing_requests</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="tuning-blocks">Tuning blocks<a class="headerlink" href="#tuning-blocks" title="Permanent link">&para;</a></h4>
+<p>The nested blocks are generated from the same schema, one flag per key, named for its config path — <code>--&lt;block&gt;.&lt;key&gt;</code>, hyphenated:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>mship<span class="w"> </span>deploy<span class="w"> </span>--model<span class="w"> </span>lmstudio-community/Qwen3-8B-GGUF:<span class="s1">&#39;*Q4_K_M.gguf&#39;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">             </span>--loader<span class="w"> </span>llama_server<span class="w"> </span>--usecase<span class="w"> </span>generate<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">             </span>--llama-server-config.n-ctx<span class="w"> </span><span class="m">8192</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">             </span>--llama-server-config.parallel<span class="w"> </span><span class="m">4</span>
+</code></pre></div>
+<p>So <code>--vllm-engine-kwargs.max-model-len 8192</code> is <code>vllm_engine_kwargs: {max_model_len: 8192}</code>, <code>--autoscaling-config.max-replicas 3</code> is <code>autoscaling_config: {max_replicas: 3}</code>, and so on for <code>diffusers_config</code>, <code>stable_diffusion_cpp_config</code> and <code>whispercpp_config</code>. <code>chat_template_kwargs</code> is free-form, so it takes one whole map. <code>mship deploy --help</code> lists every flag with its type and default.</p>
+<p>Values are read as YAML: the same text you would write after the colon in the file.</p>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--llama-server-config.n-ctx 8192</code></td>
+<td><code>8192</code></td>
+</tr>
+<tr>
+<td><code>--vllm-engine-kwargs.trust-remote-code true</code></td>
+<td><code>true</code></td>
+</tr>
+<tr>
+<td><code>--vllm-engine-kwargs.limit-mm-per-prompt '{image: 2}'</code></td>
+<td>a map</td>
+</tr>
+<tr>
+<td><code>--llama-server-config.tensor-split '[3, 1]'</code></td>
+<td>a list</td>
+</tr>
+<tr>
+<td><code>--llama-server-config.threads null</code></td>
+<td><code>null</code> — an explicit value, not "left unset"</td>
+</tr>
+<tr>
+<td><code>--chat-template-kwargs '{enable_thinking: false}'</code></td>
+<td>a map</td>
+</tr>
+</tbody>
+</table>
+<p>That includes YAML's own quirks: bare <code>on</code>, <code>off</code>, <code>yes</code> and <code>no</code> are booleans, so quote them — <code>--llama-server-config.chat-template '"on"'</code> — when the string is what you mean.</p>
+<p>Limits:</p>
+<ul>
+<li><strong>One model per invocation.</strong> Use <code>--config</code> for several. A second <code>mship deploy --model ...</code> against a running cluster adds to it (the default additive merge), so models can also be added one at a time.</li>
+<li><strong><code>--model</code> and <code>--config</code> are mutually exclusive.</strong> With <code>--model</code>, the default <code>config/models.yaml</code> is ignored entirely. The tuning flags configure the model <code>--model</code> deploys, so they need it too.</li>
+<li><strong>A flag can set a key, not unset one.</strong> Omitting it leaves the schema default; pass <code>null</code> for the fields that accept it.</li>
+</ul>
+<h4 id="inferred-names">Inferred names<a class="headerlink" href="#inferred-names" title="Permanent link">&para;</a></h4>
+<p>With no <code>--name</code>, the name clients call the model by comes from the <code>model</code> reference — its basename (or the filename stem for a local weight file), minus GGUF and quantization decoration. The selector is ignored: it picks a quant, it doesn't identify the model.</p>
+<table>
+<thead>
+<tr>
+<th><code>--model</code></th>
+<th>Inferred <code>name</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lmstudio-community/Qwen3-8B-GGUF:*Q4_K_M.gguf</code></td>
+<td><code>qwen3-8b</code></td>
+</tr>
+<tr>
+<td><code>bartowski/Llama-3.3-70B-Instruct-GGUF:*Q8_0*-of-*.gguf</code></td>
+<td><code>llama-3.3-70b-instruct</code></td>
+</tr>
+<tr>
+<td><code>Qwen/Qwen3-8B</code></td>
+<td><code>qwen3-8b</code></td>
+</tr>
+<tr>
+<td><code>/models/qwen3-8b-instruct.Q4_K_M.gguf</code></td>
+<td><code>qwen3-8b-instruct</code></td>
+</tr>
+<tr>
+<td><code>~/models/Qwen3-8B/</code></td>
+<td><code>qwen3-8b</code></td>
+</tr>
+<tr>
+<td><code>base.en</code></td>
+<td><code>base.en</code></td>
+</tr>
+</tbody>
+</table>
+<p>Inference is deterministic, so re-running the same command is idempotent. It also means two different references can infer the same name — deploying <code>Qwen/Qwen3-8B</code> on <code>vllm</code> and then a <code>Qwen3-8B</code> GGUF on <code>llama_server</code> both resolve to <code>qwen3-8b</code>, and the second <strong>replaces</strong> the first, since a name maps to exactly one deployment. That is what you want when swapping a model's loader; pass <code>--name</code> to run both side by side.</p>
+<h3 id="cache-directory-structure">Cache directory structure<a class="headerlink" href="#cache-directory-structure" title="Permanent link">&para;</a></h3>
+<p>Under <code>MSHIP_CACHE_DIR</code> (default <code>/.cache</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Subdir</th>
+<th>Contents</th>
+<th>Env var</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>huggingface</code></td>
+<td>HF models and tokenizers</td>
+<td><code>HF_HOME</code></td>
+</tr>
+<tr>
+<td><code>vllm</code></td>
+<td>vLLM compiled artifacts</td>
+<td><code>VLLM_CACHE_ROOT</code></td>
+</tr>
+<tr>
+<td><code>flashinfer</code></td>
+<td>FlashInfer kernels</td>
+<td><code>FLASHINFER_CACHE_DIR</code></td>
+</tr>
+<tr>
+<td><code>whispercpp</code></td>
+<td>pywhispercpp built-in model downloads</td>
+<td><code>MSHIP_WHISPERCPP_CACHE_DIR</code></td>
+</tr>
+<tr>
+<td><code>sherpa_onnx/&lt;name&gt;</code></td>
+<td>sherpa-onnx registry tarballs</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<h3 id="additive-vs-reconcile-deploys">Additive vs. reconcile deploys<a class="headerlink" href="#additive-vs-reconcile-deploys" title="Permanent link">&para;</a></h3>
+<p>By default, deploys add models to a running cluster without touching existing deployments — run repeatedly against different config files to compose a cluster incrementally. <code>--reconcile</code> instead makes the cluster match the config exactly (add/remove/replace, draining in-flight requests on replace); it never tears the cluster down.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mship<span class="w"> </span>deploy<span class="w"> </span>--config<span class="w"> </span>config/llm.yaml<span class="w">            </span><span class="c1"># deploy</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>mship<span class="w"> </span>deploy<span class="w"> </span>--config<span class="w"> </span>config/tts.yaml<span class="w">             </span><span class="c1"># add, doesn&#39;t touch the LLMs</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>mship<span class="w"> </span>deploy<span class="w"> </span>--config<span class="w"> </span>config/models.yaml<span class="w"> </span>--reconcile<span class="w">   </span><span class="c1"># make the cluster match exactly</span>
+</code></pre></div>
+<h2 id="trusted-identity-header">Trusted Identity Header<a class="headerlink" href="#trusted-identity-header" title="Permanent link">&para;</a></h2>
+<p>modelship never authenticates callers itself — that's <code>MSHIP_API_KEYS</code>' job, and it stops at "is this caller allowed at all." There is no login, permissions, or per-model access control, and none is planned; that belongs to whatever sits in front (nginx, Kong, LiteLLM, a custom credentials layer). <code>MSHIP_TRUSTED_IDENTITY_HEADER</code> lets that layer forward a caller identity it already resolved (a consumer/tenant id), used for log correlation and for scoping server-side state (see <a href="#stateful-responses">Stateful responses</a>) — never for authorization.</p>
+<p>The header's value is trusted <strong>unconditionally</strong> — no signature check. Safe only if both hold:</p>
+<ol>
+<li><strong>The fronting layer unconditionally overwrites the header</strong>, stripping any client-supplied copy. A layer that only sets it when absent lets a client send <code>X-Consumer-Id: someone-elses-id</code> and impersonate them.</li>
+<li><strong>modelship is reachable only from that fronting layer</strong> (network policy, private subnet, or same pod) — never directly from any client, who could otherwise set the header themselves.</li>
+</ol>
+<p>For stronger guarantees than network isolation, add mTLS on that internal hop (service-mesh sidecar, Kong, a local proxy) so the peer's certificate — not just placement — proves the request's origin. modelship does not implement or verify certificates itself.</p>
+<p>If unset (the default), modelship falls back to hashing the matched <code>MSHIP_API_KEYS</code> entry, and further to a single shared bucket if no key matches (or auth is disabled).</p>
+<h2 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>string</td>
+<td>Model identifier used in API requests. Maps to exactly one deployment — a repeated name with different settings is a validation error</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>string</td>
+<td>HuggingFace repo ID, local path, or <code>repo:filename</code> (see <a href="#model-source">Model source</a>)</td>
+</tr>
+<tr>
+<td><code>usecase</code></td>
+<td>string</td>
+<td><code>generate</code>, <code>embed</code>, <code>transcription</code>, <code>translation</code>, <code>tts</code>, or <code>image</code>. Defaults to <code>image</code> and is otherwise rejected for <code>diffusers</code>/<code>stable_diffusion_cpp</code>; must be <code>tts</code> for <code>sherpa_onnx</code></td>
+</tr>
+<tr>
+<td><code>loader</code></td>
+<td>string</td>
+<td><code>vllm</code>, <code>diffusers</code>, <code>llama_server</code>, <code>stable_diffusion_cpp</code>, <code>whispercpp</code>, <code>sherpa_onnx</code></td>
+</tr>
+<tr>
+<td><code>num_gpus</code></td>
+<td>float | int</td>
+<td>Default <code>0</code>. Fractional <code>&lt; 1</code> shares one GPU — supported by <code>vllm</code>, <code>diffusers</code>, <code>llama_server</code>, and (Metal-only) <code>whispercpp</code>; forced to <code>0</code> for <code>sherpa_onnx</code> and off-Darwin <code>stable_diffusion_cpp</code>/<code>whispercpp</code>. Integer <code>≥ 1</code> requests that many whole GPUs (for <code>vllm</code>, auto-sets <code>tensor_parallel_size = num_gpus</code> unless tp/pp is already specified). <code>llama_server</code>/<code>whispercpp</code> reject a non-integer <code>≥ 1</code>. See <a href="#sharing-one-gpu">Sharing one GPU</a></td>
+</tr>
+<tr>
+<td><code>num_cpus</code></td>
+<td>float</td>
+<td>CPU units to allocate. Default <code>0.1</code></td>
+</tr>
+<tr>
+<td><code>num_replicas</code></td>
+<td>int</td>
+<td>Fixed Ray Serve replica count. Default <code>1</code>. Mutually exclusive with <code>autoscaling_config</code></td>
+</tr>
+<tr>
+<td><code>autoscaling_config</code></td>
+<td>object</td>
+<td>Autoscale replicas with load instead of a fixed <code>num_replicas</code> (see <a href="#autoscaling">Autoscaling</a>)</td>
+</tr>
+<tr>
+<td><code>max_ongoing_requests</code></td>
+<td>int</td>
+<td>Per-replica Ray Serve concurrency cap (default: Ray Serve's own default). Streaming requests hold a slot for the whole generation, so a low cap throttles upstream of the engine</td>
+</tr>
+<tr>
+<td><code>vllm_engine_kwargs</code></td>
+<td>object</td>
+<td>vLLM engine options (see <a href="#vllm-loader">vLLM Loader</a>)</td>
+</tr>
+<tr>
+<td><code>diffusers_config</code></td>
+<td>object</td>
+<td>Diffusers pipeline options (see <a href="#diffusers-loader">Diffusers Loader</a>)</td>
+</tr>
+<tr>
+<td><code>llama_server_config</code></td>
+<td>object</td>
+<td>llama-server loader options (see <a href="#llama_server-loader">llama_server Loader</a>)</td>
+</tr>
+<tr>
+<td><code>stable_diffusion_cpp_config</code></td>
+<td>object</td>
+<td>stable-diffusion.cpp loader options (see <a href="#stable-diffusioncpp-loader">stable-diffusion.cpp Loader</a>)</td>
+</tr>
+<tr>
+<td><code>whispercpp_config</code></td>
+<td>object</td>
+<td>whisper.cpp loader options (see <a href="#whispercpp-loader">whispercpp Loader</a>)</td>
+</tr>
+<tr>
+<td><code>chat_template_kwargs</code></td>
+<td>object</td>
+<td>Extra variables forwarded into the chat-template render — <code>vllm</code> only. E.g. <code>enable_thinking: false</code> for Qwen3. Only has an effect if the model's template branches on the key. A per-request <code>chat_template_kwargs</code> overrides the model default</td>
+</tr>
+</tbody>
+</table>
+<p><code>sherpa_onnx</code> has no <code>sherpa_onnx_config</code>: <code>provider</code> is always <code>cpu</code> and thread count is derived from <code>num_cpus</code>, neither user-supplied.</p>
+<h2 id="sharing-one-gpu">Sharing one GPU<a class="headerlink" href="#sharing-one-gpu" title="Permanent link">&para;</a></h2>
+<p>A fractional <code>num_gpus</code> (<code>0 &lt; n &lt; 1</code>) lets two or more deploys share one physical GPU via Ray's own fractional scheduling — e.g. a <code>vllm</code> model at <code>0.7</code> and a <code>llama_server</code> model at <code>0.3</code> on the same card. Keep fractions on one GPU summing to <strong>at most 0.9</strong>: the remaining headroom covers each engine's fixed pre-allocation overhead (CUDA context, etc.) outside the declared share.</p>
+<p>Each GPU-capable loader sizes and enforces its share differently:</p>
+<table>
+<thead>
+<tr>
+<th>Loader</th>
+<th>Enforcement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vllm</code></td>
+<td>Hard — allocates <code>total VRAM × gpu_memory_utilization</code> (a fractional <code>num_gpus</code> sets this directly) and fails at startup if it doesn't fit</td>
+</tr>
+<tr>
+<td><code>diffusers</code></td>
+<td>Hard — <code>torch.cuda.set_per_process_memory_fraction</code> caps the process; allocating past it OOMs</td>
+</tr>
+<tr>
+<td><code>llama_server</code></td>
+<td>Static — preflight sizes <code>n_ctx</code>/<code>n_gpu_layers</code> to fit the declared share; llama.cpp allocates upfront and never grows</td>
+</tr>
+<tr>
+<td><code>whispercpp</code></td>
+<td>None (Metal only) — <code>num_gpus &gt; 0</code> is a plain on/off switch, no VRAM knob to size</td>
+</tr>
+<tr>
+<td><code>sherpa_onnx</code>, <code>stable_diffusion_cpp</code> (off-Darwin)</td>
+<td>N/A — never touch CUDA; <code>num_gpus</code> is ignored (forced to <code>0</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Preflight sizes a fractional deploy from its <strong>declared share of the GPU's total capacity</strong>, not free VRAM at that moment; if free VRAM falls short, it logs a warning naming both numbers.</p>
+<p>Sharp edges:
+- No SM/compute isolation between co-tenants — they time-slice like any two CUDA processes sharing a device (fine for one large + one small model; not a MIG/MPS substitute if both are large).
+- On a multi-GPU node you can't pin which physical GPU a fractional deploy lands on — Ray picks.
+- If a co-tenant <em>frees</em> VRAM while vLLM is mid-startup (profiling its own footprint), vLLM's internal consistency check can abort; Ray Serve's replica restart recovers automatically.</p>
+<h2 id="model-source">Model source<a class="headerlink" href="#model-source" title="Permanent link">&para;</a></h2>
+<p>The <code>model:</code> field accepts three forms. For built-in loaders, modelship <strong>validates</strong> the source on the driver before any Ray actor spins up — auth failures, missing repos, bad selectors, and (on <code>vllm</code>) GGUF files all surface at startup, not inside a stuck deployment. Weight <strong>download</strong> happens per-replica, on whichever node hosts it (see <a href="#multi-node-clusters">Multi-node clusters</a>) — the driver only resolves metadata and pins the revision every node fetches.</p>
+<table>
+<thead>
+<tr>
+<th>Form</th>
+<th>Example</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HF repo ID</td>
+<td><code>Qwen/Qwen3-7B</code></td>
+<td>Downloaded with a universal filter (prefers <code>*.safetensors</code>, skips <code>*.bin</code> when both exist)</td>
+</tr>
+<tr>
+<td>Local path</td>
+<td><code>/mnt/nfs/models/qwen-7b</code></td>
+<td>A directory of HF-format files, or a single file for llama.cpp/vllm GGUF</td>
+</tr>
+<tr>
+<td><code>repo:filename</code></td>
+<td><code>lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf</code></td>
+<td>Glob selector; must match exactly one file (or a sharded set, e.g. <code>*-of-*.gguf</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>:filename</code> selector also works against a <strong>local directory</strong>: if <code>model:</code> is a directory path containing <code>:</code>, the selector matches files inside it; the loader gets the resolved file's full path.</p>
+<h3 id="multi-node-clusters">Multi-node clusters<a class="headerlink" href="#multi-node-clusters" title="Permanent link">&para;</a></h3>
+<p>Each node downloads its own copy of whatever gets scheduled onto it — <strong>not</strong> the driver's <code>HF_HOME</code> shared out to workers. A thin/control-only node that never hosts a replica downloads nothing; a node that does host one pulls exactly that model, pinned to the revision the driver validated (byte-identical weights across nodes even if the upstream repo changes between deploys).</p>
+<ul>
+<li><strong>Shared storage (NFS/EFS) for <code>MSHIP_CACHE_DIR</code> is optional</strong>, not required — mount it to dedupe across nodes; without it, each node downloads its own, correctly.</li>
+<li>Every node that can host a model needs its own disk and egress (HF rate limits apply per node).</li>
+<li>A local-path <code>model:</code> is resolved on whichever node hosts the replica — the path must exist on every node that could host it; there's no cross-node copying.</li>
+</ul>
+<p>A model also only schedules onto a node whose image has that loader's backend installed (<code>cpu</code> has no <code>diffusers</code>, for instance): every node advertises <code>mship_&lt;loader&gt;</code> Ray custom resources for what it can run, and every deploy requests its loader's resource. See <a href="../architecture/#capability-aware-scheduling">Architecture: Capability-aware scheduling</a> and <code>MSHIP_NODE_CAPABILITIES</code> to override the probe.</p>
+<p>See <a href="../multi-node-docker/">Multi-node without Kubernetes</a> for the full non-k8s cluster setup (auth, ports, co-location).</p>
+<h3 id="multi-variant-gguf-repos">Multi-variant GGUF repos<a class="headerlink" href="#multi-variant-gguf-repos" title="Permanent link">&para;</a></h3>
+<p>If <code>model:</code> points at an HF repo with more than one <code>.gguf</code> file and no <code>:filename</code> selector, modelship raises at startup listing the variants:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>HF repo &#39;lmstudio-community/Qwen2.5-7B-Instruct-GGUF&#39; contains 5 GGUF variants — pick one with the `:filename` syntax (glob supported, must match exactly one file):
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  - Qwen2.5-7B-Instruct-Q2_K.gguf
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  - Qwen2.5-7B-Instruct-Q4_K_M.gguf
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  - Qwen2.5-7B-Instruct-Q5_K_M.gguf
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>  - Qwen2.5-7B-Instruct-Q8_0.gguf
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>  - Qwen2.5-7B-Instruct-fp16.gguf
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>Example: model: lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf
+</code></pre></div>
+<h2 id="vllm-loader">vLLM Loader<a class="headerlink" href="#vllm-loader" title="Permanent link">&para;</a></h2>
+<p>Chat/generation, embeddings, transcription, and translation. Configured via <code>vllm_engine_kwargs</code>.</p>
+<p>Two vLLM settings are <strong>not</strong> keys here, because modelship derives them and setting them is a config error: <code>model</code> (the engine always loads the resolved top-level <code>model:</code>) and <code>gpu_memory_utilization</code> (a fractional <code>num_gpus</code> for a shared GPU, else a preflight recommendation, else <code>0.9</code> — <code>0.4</code> on CPU, where vLLM reads it as a <em>host RAM</em> fraction instead of VRAM).</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tensor_parallel_size</code></td>
+<td>int</td>
+<td><code>1</code></td>
+<td>GPUs for tensor parallelism</td>
+</tr>
+<tr>
+<td><code>pipeline_parallel_size</code></td>
+<td>int</td>
+<td><code>1</code></td>
+<td>GPUs for pipeline parallelism</td>
+</tr>
+<tr>
+<td><code>max_model_len</code></td>
+<td>int</td>
+<td>auto (preflight)</td>
+<td>Max sequence length. Preflight sizes this to the actor's hardware — VRAM, or on <code>num_gpus: 0</code> host RAM — falling back to vLLM's own default when it declines (missing <code>config.json</code>, unreadable KV-cache geometry, etc.)</td>
+</tr>
+<tr>
+<td><code>dtype</code></td>
+<td>string</td>
+<td><code>auto</code></td>
+<td><code>auto</code>, <code>float16</code>, <code>bfloat16</code></td>
+</tr>
+<tr>
+<td><code>tokenizer</code></td>
+<td>string</td>
+<td>model default</td>
+<td>Custom tokenizer path</td>
+</tr>
+<tr>
+<td><code>trust_remote_code</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Allow remote code execution</td>
+</tr>
+<tr>
+<td><code>quantization</code></td>
+<td>string</td>
+<td>—</td>
+<td>e.g. <code>awq</code>, <code>gptq</code></td>
+</tr>
+<tr>
+<td><code>enable_auto_tool_choice</code></td>
+<td>bool</td>
+<td>—</td>
+<td>Enable automatic tool/function calling</td>
+</tr>
+<tr>
+<td><code>tool_call_parser</code></td>
+<td>string</td>
+<td>—</td>
+<td>e.g. <code>llama3_json</code>, <code>hermes</code></td>
+</tr>
+<tr>
+<td><code>enforce_eager</code></td>
+<td>bool</td>
+<td>—</td>
+<td>Disable CUDA graph capture</td>
+</tr>
+<tr>
+<td><code>kv_cache_dtype</code></td>
+<td>string</td>
+<td>—</td>
+<td>e.g. <code>fp8</code></td>
+</tr>
+<tr>
+<td><code>enable_prefix_caching</code></td>
+<td>bool</td>
+<td>vLLM default: on</td>
+<td>Disable to turn off vLLM's automatic prefix caching entirely. Not usually needed — every request is already cache-salted per caller identity (see <a href="../architecture/#identity-scoped-vllm-prefix-caching">Identity-scoped prefix caching</a>); this is for an operator who wants caching off regardless of identity</td>
+</tr>
+<tr>
+<td><code>max_num_batched_tokens</code></td>
+<td>int</td>
+<td>—</td>
+<td>vLLM scheduler batch cap</td>
+</tr>
+<tr>
+<td><code>max_num_seqs</code></td>
+<td>int</td>
+<td>—</td>
+<td>Max concurrent sequences</td>
+</tr>
+<tr>
+<td><code>limit_mm_per_prompt</code></td>
+<td>dict</td>
+<td>—</td>
+<td>Per-modality multimodal item cap, e.g. <code>{"image": 4}</code></td>
+</tr>
+<tr>
+<td><code>mm_processor_kwargs</code></td>
+<td>dict</td>
+<td>—</td>
+<td>Forwarded to the HF processor (e.g. <code>min_pixels</code>/<code>max_pixels</code> for Qwen2.5-VL)</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>GGUF is not supported on the <code>vllm</code> loader</strong> — vLLM 0.24 dropped in-tree GGUF, so a <code>.gguf</code> source is rejected at driver preflight, unconditionally regardless of GPU vs. CPU. Use <code>loader: llama_server</code> for GGUF; <code>vllm</code> takes safetensors, or AWQ/GPTQ/FP8 quants.</p>
+</blockquote>
+<h3 id="cpu-no-gpu-required">CPU (no GPU required)<a class="headerlink" href="#cpu-no-gpu-required" title="Permanent link">&para;</a></h3>
+<p>Installable via the <code>vllm-cpu</code> extra (paired with <code>num_gpus: 0</code>) for quantized chat with no GPU — safetensors, or AWQ/GPTQ/compressed-tensors quants (CPU backend supports AWQ/GPTQ on x86 plus INT8 W8A8); GGUF is rejected here too.</p>
+<p><code>gpu_memory_utilization</code> means <em>host RAM</em> fraction on CPU, not VRAM — modelship's default drops to <code>0.4</code> (vLLM's own <code>0.9</code> would try to reserve 90% of node RAM and fail at worker init). Since it isn't a settable key, preflight's recommendation (from actual free RAM and the model's weight footprint) always applies when it can compute one; the <code>0.4</code> fallback only kicks in when preflight declines (e.g. unreadable <code>config.json</code>). Set <code>max_model_len</code> explicitly for finer control. vLLM also reads <code>VLLM_CPU_KVCACHE_SPACE</code> (fixed GiB budget) and <code>VLLM_CPU_OMP_THREADS_BIND</code> (thread pinning) directly from the environment — vLLM-native, not modelship config.</p>
+<p>Minimum config — preflight fills in the rest:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">qwen-cpu</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-8B-AWQ</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">generate</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vllm</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span><span class="nt">num_gpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+</code></pre></div>
+<p>See <code>config/examples/vllm-cpu.yaml</code> for a complete example with tool calling.</p>
+<h3 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">qwen</span><span class="w">                              </span><span class="c1"># chat</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-0.6B</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">generate</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vllm</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">num_gpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.30</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="nt">vllm_engine_kwargs</span><span class="p">:</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">      </span><span class="nt">max_model_len</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8192</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llama</span><span class="w">                             </span><span class="c1"># tool calling</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">meta-llama/Llama-3.1-8B-Instruct</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">generate</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vllm</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">    </span><span class="nt">num_gpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.70</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">    </span><span class="nt">vllm_engine_kwargs</span><span class="p">:</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="w">      </span><span class="nt">enable_auto_tool_choice</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="w">      </span><span class="nt">tool_call_parser</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llama3_json</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">nomic-embed</span><span class="w">                       </span><span class="c1"># embeddings</span>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">nomic-ai/nomic-embed-text-v1.5</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">embed</span>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vllm</span>
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="w">    </span><span class="nt">num_gpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.15</span>
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a><span class="w">    </span><span class="nt">vllm_engine_kwargs</span><span class="p">:</span>
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a><span class="w">      </span><span class="nt">trust_remote_code</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>
+<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">whisper</span><span class="w">                           </span><span class="c1"># transcription</span>
+<a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai/whisper-large-v3-turbo</span>
+<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">transcription</span>
+<a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vllm</span>
+<a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a><span class="w">    </span><span class="nt">num_gpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.15</span>
+<a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="w">    </span><span class="nt">vllm_engine_kwargs</span><span class="p">:</span>
+<a id="__codelineno-5-33" name="__codelineno-5-33" href="#__codelineno-5-33"></a><span class="w">      </span><span class="nt">trust_remote_code</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<h3 id="multi-gpu-with-tensor-parallelism">Multi-GPU with tensor parallelism<a class="headerlink" href="#multi-gpu-with-tensor-parallelism" title="Permanent link">&para;</a></h3>
+<p><code>num_gpus: 2</code> is shorthand for "2 whole GPUs" — <code>tensor_parallel_size</code> is auto-derived. Setting both is redundant (a warning is logged); setting only <code>tensor_parallel_size</code>/<code>pipeline_parallel_size</code> is fine too. Each slot always owns one whole GPU.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llama-70b</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">meta-llama/Llama-3.1-70B-Instruct</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">generate</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vllm</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">    </span><span class="nt">num_gpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+</code></pre></div>
+<p>Multi-slot deploys always use vLLM's ray distributed executor: each TP/PP slot is its own Ray worker actor inside a Ray Serve placement group (<code>STRICT_PACK</code>, one whole-GPU bundle per slot, all on one node for NVLink).</p>
+<blockquote>
+<p>Fractional <code>num_gpus</code> (<code>&lt; 1</code>) is <strong>single-GPU only</strong>. Combining it with <code>tensor_parallel_size &gt; 1</code> or <code>pipeline_parallel_size &gt; 1</code> is rejected at config time — Ray packs fractional placement-group bundles onto the same physical GPU, which breaks tensor parallelism. Share a GPU with <code>num_gpus: 0.x</code> and <code>tp: 1</code>; use whole-GPU integer <code>num_gpus</code> for TP.</p>
+</blockquote>
+<h2 id="diffusers-loader">Diffusers Loader<a class="headerlink" href="#diffusers-loader" title="Permanent link">&para;</a></h2>
+<p>HuggingFace Diffusers for image generation; any <code>AutoPipelineForText2Image</code>-compatible model works out of the box. Configured via <code>diffusers_config</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>torch_dtype</code></td>
+<td>string</td>
+<td><code>float16</code></td>
+<td><code>float16</code>, <code>bfloat16</code>, <code>float32</code></td>
+</tr>
+<tr>
+<td><code>num_inference_steps</code></td>
+<td>int</td>
+<td><code>30</code></td>
+<td>Default denoising steps (overridable per request)</td>
+</tr>
+<tr>
+<td><code>guidance_scale</code></td>
+<td>float</td>
+<td><code>7.5</code></td>
+<td>Default classifier-free guidance scale (overridable per request)</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sdxl-turbo</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">stabilityai/sdxl-turbo</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">image</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">diffusers</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">    </span><span class="nt">num_gpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.35</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">    </span><span class="nt">diffusers_config</span><span class="p">:</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">      </span><span class="nt">torch_dtype</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;float16&quot;</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">      </span><span class="nt">num_inference_steps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">      </span><span class="nt">guidance_scale</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0</span>
+</code></pre></div>
+<h2 id="llama_server-loader">llama_server Loader<a class="headerlink" href="#llama_server-loader" title="Permanent link">&para;</a></h2>
+<p>Runs GGUF models by launching a <a href="https://github.com/ggml-org/llama.cpp"><code>llama-server</code></a> subprocess and proxying its native OpenAI-compatible HTTP API. Chat templating, tool-call parsing, and reasoning parsing are all llama-server's own (<code>--jinja --reasoning-format auto</code>), not modelship's. <code>--parallel</code> request slots let concurrent requests actually overlap instead of serializing behind a single lock. Requires the unified <code>llama</code> binary discoverable via <code>MSHIP_LLAMA_SERVER_BIN</code> (see <a href="../development/#llama-server-binary-llama_server-loader">development.md</a>); Docker images ship a pinned build at <code>/opt/llama.cpp</code>.</p>
+<p><code>num_gpus</code> accepts <code>0</code> (CPU-only), a fraction <code>&lt; 1</code> (shares one physical GPU), or a whole integer — see <a href="#sharing-one-gpu">Sharing one GPU</a>. Configured via <code>llama_server_config</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>n_ctx</code></td>
+<td>int</td>
+<td>auto (preflight); <code>2048</code> when preflight declines</td>
+<td>Per-slot context length. The launch command multiplies this by <code>parallel</code> for llama-server's total <code>-c</code>. Preflight shells out to <code>llama fit-params</code>, which builds the real KV cache and compute buffers to solve <code>n_ctx</code>/<code>n_gpu_layers</code>/<code>tensor_split</code> together</td>
+</tr>
+<tr>
+<td><code>n_batch</code></td>
+<td>int</td>
+<td><code>512</code></td>
+<td>Batch size for prompt processing</td>
+</tr>
+<tr>
+<td><code>n_gpu_layers</code></td>
+<td>int</td>
+<td>auto (preflight); <code>-1</code> when preflight declines</td>
+<td>Layers offloaded to GPU when <code>num_gpus &gt; 0</code>; forced to <code>0</code> when <code>num_gpus</code> is <code>0</code>. <code>-1</code> hits llama-server's own auto-fit-to-free-memory path — verified for any negative value against b9859, unconfirmed on the current b10375 pin (<code>--help</code>'s documented <code>'auto'</code>/<code>'all'</code> string tokens aren't reachable through this int field)</td>
+</tr>
+<tr>
+<td><code>threads</code></td>
+<td>int</td>
+<td><code>None</code> (llama-server default: all cores)</td>
+<td>Compute thread count (<code>--threads</code>). Preflight recommends <code>num_cpus</code> when the deploy reserves ≥1 whole CPU and it wouldn't undercut <code>parallel</code></td>
+</tr>
+<tr>
+<td><code>parallel</code></td>
+<td>int</td>
+<td><code>1</code></td>
+<td>Concurrent request slots (<code>--parallel</code>). Also becomes <code>max_ongoing_requests</code>'s default when that's unset, so overflow queues in Ray Serve rather than inside llama-server</td>
+</tr>
+<tr>
+<td><code>chat_template</code></td>
+<td>string</td>
+<td>—</td>
+<td>Built-in template name (e.g. <code>chatml</code>) or a Jinja file path. Omit to use the GGUF's embedded template</td>
+</tr>
+<tr>
+<td><code>mmproj</code></td>
+<td>string</td>
+<td>—</td>
+<td>Multimodal projector file/repo ref for vision models — see <a href="#vision-gguf">Vision</a></td>
+</tr>
+<tr>
+<td><code>cache_reuse</code></td>
+<td>int</td>
+<td><code>0</code></td>
+<td>Min chunk size (tokens) for fuzzy KV-cache reuse via position-shifting (<code>--cache-reuse</code>). <code>0</code> means exact-prefix reuse only; raise it to also reuse chunks after a mid-prompt divergence (changed system prompt, swapped RAG doc)</td>
+</tr>
+<tr>
+<td><code>context_shift</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Evict oldest tokens and keep generating when a slot's context fills, instead of erroring (<code>--context-shift</code>)</td>
+</tr>
+<tr>
+<td><code>cache_ram_mib</code></td>
+<td>int</td>
+<td><code>None</code> (llama-server default: <code>8192</code>)</td>
+<td>In-RAM prompt-cache cap in MiB (<code>-cram</code>). <code>-1</code> = no limit, <code>0</code> disables the cache</td>
+</tr>
+<tr>
+<td><code>ubatch_size</code></td>
+<td>int</td>
+<td><code>512</code></td>
+<td>Physical max batch size (<code>-ub</code>) — the largest single memory lever after context itself</td>
+</tr>
+<tr>
+<td><code>flash_attn</code></td>
+<td><code>on</code>/<code>off</code>/<code>auto</code></td>
+<td><code>auto</code></td>
+<td>Flash Attention use (<code>-fa</code>)</td>
+</tr>
+<tr>
+<td><code>cache_type_k</code> / <code>cache_type_v</code></td>
+<td>string</td>
+<td><code>f16</code></td>
+<td>KV cache quantization (<code>-ctk</code>/<code>-ctv</code>); also <code>f32</code>, <code>bf16</code>, <code>q8_0</code>, <code>q4_0</code>, <code>q4_1</code>, <code>iq4_nl</code>, <code>q5_0</code>, <code>q5_1</code></td>
+</tr>
+<tr>
+<td><code>tensor_split</code></td>
+<td>list[float]</td>
+<td><code>None</code></td>
+<td>Proportional offload split across GPUs (<code>-ts</code>). Preflight recommends an uneven split on heterogeneous cards</td>
+</tr>
+</tbody>
+</table>
+<p>llama-server caches prompts in RAM by default (<code>--cache-prompt</code>, always on, 8 GiB idle-slot cache) — exact-prefix reuse works out of the box for ordinary append-only chat. There is no persistent <strong>on-disk</strong> prompt cache; caching is in-memory only and doesn't survive a process restart, unlike modelship's disk cache for other loaders.</p>
+<h4 id="mla-models-deepseek-minicpm3">MLA models (DeepSeek, MiniCPM3)<a class="headerlink" href="#mla-models-deepseek-minicpm3" title="Permanent link">&para;</a></h4>
+<p>llama.cpp caches the compressed latent for MLA architectures only when the GGUF ships split <code>attn_k_b</code>/<code>attn_v_b</code> projections. Conversions predating that support carry a fused <code>attn_kv_b</code> and fall back to full per-head K/V — for DeepSeek-V2-Lite that is 276,480 B/token instead of 31,104, so the same VRAM buys ~8.9x less context. <code>llama fit-params</code> builds the real KV cache either way, so <code>n_ctx</code> is sized correctly for whichever layout the file has — but the only way to recover the missing context is to use a newer conversion. Nothing in the model's metadata reveals this, so check the tensor names if a GGUF sizes far smaller than expected.</p>
+<p>Minimum config — preflight fills in <code>n_ctx</code>, <code>n_gpu_layers</code>, <code>threads</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;qwen-llama-server&quot;</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;lmstudio-community/Qwen3-8B-GGUF:*Q4_K_M.gguf&quot;</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;generate&quot;</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;llama_server&quot;</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="nt">num_gpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+</code></pre></div>
+<h3 id="tool-calling-and-reasoning-gaps-vs-the-openai-spec">Tool calling and reasoning gaps vs. the OpenAI spec<a class="headerlink" href="#tool-calling-and-reasoning-gaps-vs-the-openai-spec" title="Permanent link">&para;</a></h3>
+<p>Both parsers are auto-detected from the model's chat template — no modelship-level override. Gaps are per-model-family, not per-loader, so test against the specific model in use:</p>
+<ul>
+<li><strong>Named-function forcing is unsupported.</strong> <code>tool_choice: {"type": "function", "function": {"name": "X"}}</code> silently falls back to <code>auto</code> (llama-server logs a warning; modelship doesn't surface it as an error).</li>
+<li><strong><code>tool_choice: required</code> depends on the template family.</strong> Grammar-enforced for harmony-style templates (e.g. gpt-oss); a silent no-op for hermes-style templates (e.g. Qwen3) — the model may answer in free text with no error.</li>
+<li><strong>Bare <code>response_format: {"type": "json_object"}</code> (no <code>schema</code>) is not enforced</strong>, despite llama-server's docs describing it as supported — verified against b9859 and b10200, unconfirmed on the current b10375 pin. <code>type: json_schema</code> requests (what modelship sends whenever a schema is given) are unaffected and correctly constrained.</li>
+</ul>
+<p><code>response_format</code>/<code>json_schema</code> can combine with reasoning in the same request; <code>logprobs</code>/<code>top_logprobs</code> are forwarded and returned.</p>
+<h3 id="vision-gguf">Vision (GGUF)<a class="headerlink" href="#vision-gguf" title="Permanent link">&para;</a></h3>
+<p>Set <code>mmproj</code> to a multimodal projector file (local path or <code>repo:filename</code>) to enable image input. Requests with <code>image_url</code>/<code>input_image</code> content parts are rejected at the gateway when <code>mmproj</code> isn't configured.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;qwen-vl-llama-server&quot;</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;lmstudio-community/Qwen3-VL-8B-Instruct-GGUF:*Q4_K_M.gguf&quot;</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;generate&quot;</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;llama_server&quot;</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="nt">llama_server_config</span><span class="p">:</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">      </span><span class="nt">mmproj</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;lmstudio-community/Qwen3-VL-8B-Instruct-GGUF:mmproj-Qwen3-VL-8B-Instruct-F16.gguf&quot;</span>
+</code></pre></div>
+<h3 id="embeddings-gguf">Embeddings (GGUF)<a class="headerlink" href="#embeddings-gguf" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">nomic-embed-server</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q4_K_M.gguf&quot;</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">embed</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llama_server</span>
+</code></pre></div>
+<h2 id="stable-diffusioncpp-loader">stable-diffusion.cpp Loader<a class="headerlink" href="#stable-diffusioncpp-loader" title="Permanent link">&para;</a></h2>
+<p>Runs <a href="https://github.com/leejet/stable-diffusion.cpp">stable-diffusion.cpp</a> (via <a href="https://github.com/william-murray1204/stable-diffusion-cpp-python">stable-diffusion-cpp-python</a>) for GGUF-quantized single-file diffusion checkpoints (SD1.5, SDXL, SD-Turbo, all-in-one Flux) in a few GB of RAM. CPU-only everywhere except Apple Silicon, where ggml's runtime backend registry picks up Metal automatically — no config needed. Off Darwin, any <code>num_gpus</code> is ignored (warning logged, actor allocated <code>num_gpus: 0</code>); on Darwin it's honored normally. <code>usecase</code> defaults to <code>image</code>; serves <code>/v1/images/generations</code>, <code>/v1/images/edits</code>, <code>/v1/images/variations</code>.</p>
+<p>Configured via <code>stable_diffusion_cpp_config</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sample_steps</code></td>
+<td>int</td>
+<td><code>20</code></td>
+<td>Denoising steps</td>
+</tr>
+<tr>
+<td><code>cfg_scale</code></td>
+<td>float</td>
+<td><code>7.0</code></td>
+<td>Classifier-free guidance scale</td>
+</tr>
+<tr>
+<td><code>sample_method</code></td>
+<td>string</td>
+<td><code>default</code></td>
+<td>Sampler; <code>default</code> lets sd.cpp pick per architecture</td>
+</tr>
+<tr>
+<td><code>scheduler</code></td>
+<td>string</td>
+<td><code>default</code></td>
+<td>Denoiser sigma scheduler</td>
+</tr>
+<tr>
+<td><code>wtype</code></td>
+<td>string</td>
+<td><code>default</code></td>
+<td>On-the-fly weight quantization (e.g. <code>q4_0</code>, <code>q8_0</code>, <code>f16</code>); <code>default</code> auto-detects</td>
+</tr>
+<tr>
+<td><code>n_threads</code></td>
+<td>int</td>
+<td><code>-1</code></td>
+<td>CPU threads; <code>-1</code> uses half the cores</td>
+</tr>
+<tr>
+<td><code>vae_tiling</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Tile the VAE decode to cut peak RAM (auto-recommended by preflight on low-RAM hosts)</td>
+</tr>
+<tr>
+<td><code>diffusion_model_path</code> / <code>clip_l_path</code> / <code>clip_g_path</code> / <code>t5xxl_path</code> / <code>vae_path</code></td>
+<td>string</td>
+<td>—</td>
+<td>Standalone component paths for split checkpoints (pre-placed local paths; single-file models are the v1 focus)</td>
+</tr>
+<tr>
+<td><code>model_kwargs</code></td>
+<td>object</td>
+<td><code>{}</code></td>
+<td>Extra keyword arguments passed to the <code>StableDiffusion</code> constructor</td>
+</tr>
+</tbody>
+</table>
+<p><code>MSHIP_LOG_LEVEL=TRACE</code> enables <code>verbose</code> mode in the underlying engine. GGUF variants in an HF repo use the same <code>:filename</code> syntax as the llama_server loader (see <a href="#model-source">Model source</a>).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sd21-turbo</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gpustack/stable-diffusion-v2-1-turbo-GGUF:*Q4_1.gguf&quot;</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">image</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">stable_diffusion_cpp</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">    </span><span class="nt">num_cpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">    </span><span class="nt">stable_diffusion_cpp_config</span><span class="p">:</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">      </span><span class="nt">sample_steps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">      </span><span class="nt">cfg_scale</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0</span>
+</code></pre></div>
+<h2 id="whispercpp-loader">whispercpp Loader<a class="headerlink" href="#whispercpp-loader" title="Permanent link">&para;</a></h2>
+<p>Runs <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a> speech-to-text in-process via <a href="https://github.com/absadiki/pywhispercpp"><code>pywhispercpp</code></a> bindings — no subprocess, unlike <code>llama_server</code>. CPU-only on Linux (<code>num_gpus</code> ignored, forced to <code>0</code>). On Apple Silicon, <code>num_gpus &gt; 0</code> (including a fraction, to share the GPU) enables Metal offload — no separate VRAM knob, just a plain on/off switch, so the model's own footprint determines whether it fits its share.</p>
+<p>Configured via <code>whispercpp_config</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>n_threads</code></td>
+<td>int</td>
+<td>pywhispercpp's own default (<code>min(4, cores)</code>)</td>
+<td>Compute thread count</td>
+</tr>
+<tr>
+<td><code>flash_attn</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>ggml flash attention</td>
+</tr>
+<tr>
+<td><code>models_dir</code></td>
+<td>string</td>
+<td><code>&lt;cache_root&gt;/whispercpp</code></td>
+<td>Only used when <code>model:</code> is a bare pywhispercpp built-in name</td>
+</tr>
+</tbody>
+</table>
+<p><code>model:</code> accepts:
+- A pywhispercpp built-in name (e.g. <code>base.en</code>, <code>large-v3-turbo</code> — see <a href="https://github.com/absadiki/pywhispercpp/blob/main/pywhispercpp/constants.py">pywhispercpp's model list</a>); pywhispercpp resolves/downloads these itself, modelship doesn't pre-validate.
+- A local path or HF <code>repo:filename</code> pointing at a <code>ggml-*.bin</code> file, resolved like every other loader. Both GGUF and safetensors are rejected with a pointer at the right form.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;whisper-cpp-base&quot;</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;base.en&quot;</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;transcription&quot;</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;whispercpp&quot;</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="nt">num_cpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+</code></pre></div>
+<p>See <code>config/examples/whispercpp.yaml</code> for every <code>model:</code> form and a Metal example.</p>
+<h2 id="sherpa_onnx-loader">sherpa_onnx Loader<a class="headerlink" href="#sherpa_onnx-loader" title="Permanent link">&para;</a></h2>
+<p>Runs <a href="https://github.com/k2-fsa/sherpa-onnx">sherpa-onnx</a> in-process via its Python bindings. Current scope: TTS only, kokoro family only, CPU only — never touches CUDA or CoreML, so <code>num_gpus</code> is ignored entirely (any value accepted at config time, forced to <code>0</code> at deploy with a warning if nonzero) and reserves no GPU capacity another deploy could use.</p>
+<p><code>model:</code> is not an HF repo or path — it's a name from a curated built-in registry (or a local directory whose basename matches one). Each name maps to a GitHub release tarball with a pinned sha256, downloaded and cached under <code>&lt;cache_root&gt;/sherpa_onnx/&lt;name&gt;/</code> on first use.</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Speakers</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kokoro-en-v0_19</code></td>
+<td>11</td>
+<td>English only. Includes <code>af_bella</code></td>
+</tr>
+<tr>
+<td><code>kokoro-multi-lang-v1_0</code></td>
+<td>53</td>
+<td>English, Mandarin, Japanese, and more. Includes <code>af_bella</code> and <code>af_heart</code></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;kokoro&quot;</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;kokoro-en-v0_19&quot;</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;tts&quot;</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sherpa_onnx&quot;</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">    </span><span class="nt">num_cpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+</code></pre></div>
+<p>See <code>config/examples/sherpa-onnx.yaml</code> for the local-directory form.</p>
+<h2 id="scaling-a-deployment">Scaling a Deployment<a class="headerlink" href="#scaling-a-deployment" title="Permanent link">&para;</a></h2>
+<p>Use <code>num_replicas</code> to run several identical copies; Ray Serve load-balances across them.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;kokoro&quot;</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;kokoro-en-v0_19&quot;</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;tts&quot;</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;sherpa_onnx&quot;</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">    </span><span class="nt">num_cpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">    </span><span class="nt">num_replicas</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+</code></pre></div>
+<h2 id="autoscaling">Autoscaling<a class="headerlink" href="#autoscaling" title="Permanent link">&para;</a></h2>
+<p>Set <code>autoscaling_config</code> instead of a fixed <code>num_replicas</code> to let Ray Serve grow/shrink replica count with load. The two are mutually exclusive — setting both is a config error.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">models</span><span class="p">:</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;bursty-llm&quot;</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Qwen/Qwen3-0.6B&quot;</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">    </span><span class="nt">usecase</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;generate&quot;</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">    </span><span class="nt">loader</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;vllm&quot;</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">    </span><span class="nt">num_gpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">    </span><span class="nt">autoscaling_config</span><span class="p">:</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">      </span><span class="nt">min_replicas</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span><span class="w">            </span><span class="c1"># floor; 0 enables scale-to-zero (cold-start on first request)</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="w">      </span><span class="nt">max_replicas</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span><span class="w">            </span><span class="c1"># ceiling</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="w">      </span><span class="nt">target_ongoing_requests</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8</span><span class="w"> </span><span class="c1"># autoscaler setpoint: in-flight requests per replica (lower = scales out sooner)</span>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="w">      </span><span class="nt">initial_replicas</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span><span class="w">        </span><span class="c1"># seed count on first deploy, before load signal (default: min_replicas)</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="w">      </span><span class="nt">upscale_delay_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span><span class="w">        </span><span class="c1"># debounce before scaling out</span>
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="w">      </span><span class="nt">downscale_delay_s</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">300</span><span class="w">     </span><span class="c1"># debounce before scaling in (longer avoids thrashing GPU warm-up)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>min_replicas</code></td>
+<td>int</td>
+<td>Lower bound. Default <code>1</code>. <code>0</code> enables scale-to-zero</td>
+</tr>
+<tr>
+<td><code>max_replicas</code></td>
+<td>int</td>
+<td>Upper bound. Default <code>1</code>. Must be <code>≥ min_replicas</code></td>
+</tr>
+<tr>
+<td><code>initial_replicas</code></td>
+<td>int</td>
+<td>Seed count before the autoscaler has a load signal. Default: <code>min_replicas</code></td>
+</tr>
+<tr>
+<td><code>target_ongoing_requests</code></td>
+<td>float</td>
+<td>Desired in-flight requests per replica — the autoscaler's setpoint. Lower scales out sooner. Default: Ray Serve's own</td>
+</tr>
+<tr>
+<td><code>upscale_delay_s</code></td>
+<td>float</td>
+<td>Seconds of sustained over-load before adding replicas. Default: Ray Serve's own</td>
+</tr>
+<tr>
+<td><code>downscale_delay_s</code></td>
+<td>float</td>
+<td>Seconds of sustained under-load before removing replicas. Default: Ray Serve's own. Raise it to avoid thrashing on models with slow GPU warm-up</td>
+</tr>
+</tbody>
+</table>
+<p>Autoscaling bounds are changed in place on <code>mship deploy --reconcile</code> (excluded from the config fingerprint) — tuning them doesn't tear down and rebuild the deployment.</p>
+<h2 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HF_TOKEN</code></td>
+<td>HuggingFace access token</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>MSHIP_CACHE_DIR</code></td>
+<td>Model cache directory (HuggingFace, vLLM, sherpa_onnx, etc.)</td>
+<td><code>/.cache</code></td>
+</tr>
+<tr>
+<td><code>MSHIP_STATE_STORE</code></td>
+<td>State-store connection URI for the effective config, deploy coordinator + <code>/v1/responses</code> conversations (see <a href="#state-store-mship_state_store">State store</a>)</td>
+<td><code>memory://</code></td>
+</tr>
+<tr>
+<td><code>MSHIP_GATEWAY_NAME</code></td>
+<td>Name for the API gateway app</td>
+<td><code>modelship</code></td>
+</tr>
+<tr>
+<td><code>MSHIP_GATEWAY_REPLICAS</code></td>
+<td>Number of API gateway replicas</td>
+<td><code>1</code></td>
+</tr>
+<tr>
+<td><code>MSHIP_OPENAI_API_PORT</code></td>
+<td>Port for the OpenAI-compatible API</td>
+<td><code>8000</code></td>
+</tr>
+<tr>
+<td><code>MSHIP_MAX_REQUEST_BODY_BYTES</code></td>
+<td>Maximum allowed request body size in bytes</td>
+<td><code>52428800</code> (50 MB)</td>
+</tr>
+<tr>
+<td><code>MSHIP_LOG_TARGET</code></td>
+<td>Log target: <code>console</code> or syslog URI</td>
+<td><code>console</code></td>
+</tr>
+<tr>
+<td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code></td>
+<td>OpenTelemetry OTLP endpoint for log export. Requires <code>uv sync --extra otel</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>CUDA_DEVICE_ORDER</code></td>
+<td>GPU enumeration order; set to <code>PCI_BUS_ID</code> for deterministic ordering in multi-GPU systems</td>
+<td><code>PCI_BUS_ID</code></td>
+</tr>
+<tr>
+<td><code>MSHIP_RAY_DASHBOARD</code></td>
+<td>Ray dashboard bind host, own-head only. Dashboard always starts; this sets <em>where</em> it binds — <code>0.0.0.0</code> exposes it beyond the container (the ShadowRay/CVE-2023-48022 exposure vector), so only do this on a trusted network</td>
+<td><code>127.0.0.1</code></td>
+</tr>
+<tr>
+<td><code>MSHIP_RAY_AUTH</code></td>
+<td>Ray cluster authentication, own-head only. <code>token</code> requires a bearer token (generated by Ray at <code>~/.ray/auth_token</code>) for the dashboard and all cluster-internal RPC. The OpenAI API and Prometheus metrics are never gated either way</td>
+<td><code>none</code></td>
+</tr>
+<tr>
+<td><code>MSHIP_RAY_PORT</code></td>
+<td>Ray GCS server port, own-head only. Pinned so a joiner's <code>--address</code> has a stable target; not <code>6379</code> since that collides with the recommended same-host Redis state store under <code>--network=host</code></td>
+<td><code>6380</code></td>
+</tr>
+<tr>
+<td><code>MSHIP_RAY_DASHBOARD_PORT</code></td>
+<td>Ray dashboard port, own-head only. Needed only when running multiple modelship heads on one host under <code>--network=host</code></td>
+<td><code>8265</code></td>
+</tr>
+<tr>
+<td><code>MSHIP_ADDRESS</code></td>
+<td>Join an existing Ray cluster as an additional node, given the head's GCS address as <code>host:port</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>MSHIP_RAY_AUTH_TOKEN</code></td>
+<td>Cluster auth token for joining a head running <code>--ray-auth=token</code>. Only meaningful with <code>MSHIP_ADDRESS</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>MSHIP_NODE_NUM_CPUS</code></td>
+<td>Override: CPUs this node reserves</td>
+<td>auto-detect</td>
+</tr>
+<tr>
+<td><code>MSHIP_NODE_NUM_GPUS</code></td>
+<td>Override: GPUs this node reserves. Refused at startup if it exceeds what the container can actually see</td>
+<td>auto-detect</td>
+</tr>
+<tr>
+<td><code>MSHIP_NODE_MEMORY</code></td>
+<td>Override: this node's total memory budget, e.g. <code>8Gi</code>. Split into Ray's <code>object_store_memory</code> (30%) and schedulable <code>memory</code> (70%), matching Ray's own auto-detect proportion. Set when co-locating multiple modelship containers on one host without per-container cgroup memory limits</td>
+<td>auto-detect</td>
+</tr>
+<tr>
+<td><code>MSHIP_NODE_CAPABILITIES</code></td>
+<td>Override: this node's advertised <code>mship_&lt;loader&gt;</code> capability resources, as JSON (e.g. <code>{"mship_vllm": 1}</code>) — replaces the <code>find_spec()</code>/binary probe wholesale. See <a href="../architecture/#capability-aware-scheduling">Architecture: Capability-aware scheduling</a></td>
+<td>auto-probed</td>
+</tr>
+<tr>
+<td><code>RAY_OBJECT_STORE_SHM_SIZE</code></td>
+<td>Shared memory for Ray object store</td>
+<td><code>8g</code></td>
+</tr>
+<tr>
+<td><code>VLLM_USE_V1</code></td>
+<td>Use vLLM v1 API</td>
+<td><code>1</code></td>
+</tr>
+<tr>
+<td><code>ONNX_PROVIDER</code></td>
+<td>ONNX Runtime execution provider</td>
+<td><code>CUDAExecutionProvider</code></td>
+</tr>
+<tr>
+<td><code>NVIDIA_CUDA_VERSION</code></td>
+<td>CUDA toolkit version</td>
+<td><code>12.8.1</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="state-store-mship_state_store">State store (<code>MSHIP_STATE_STORE</code>)<a class="headerlink" href="#state-store-mship_state_store" title="Permanent link">&para;</a></h3>
+<p>Three pieces of state share one pluggable store: this gateway's <strong>effective config</strong> (its desired model set, replayed by <code>--reconcile</code> with no <code>--config</code> to self-heal after cluster loss), the <strong>deploy coordinator's</strong> routing registry (which gateway owns which model + the expected set), and <strong><code>/v1/responses</code> conversations</strong> (see <a href="#stateful-responses">Stateful responses</a>). A single connection URI picks the backend and carries its connection:</p>
+<table>
+<thead>
+<tr>
+<th>URI</th>
+<th>Backend</th>
+<th>Durability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>memory://</code> (default)</td>
+<td>dict shared cluster-wide by a detached Ray actor</td>
+<td>survives a deploy re-run, coordinator restart, gateway-replica restart — <strong>not</strong> cluster death</td>
+</tr>
+<tr>
+<td><code>redis://[:pw@]host:6379/0</code> (<code>rediss://</code> = TLS)</td>
+<td>one JSON value per key in Redis</td>
+<td>survives head/coordinator death <strong>and</strong> cluster loss; password parsed from the URL by <code>redis.from_url</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>memory://</code> is cluster-scoped, not process-local — every gateway replica and model actor shares one detached Ray actor, so it's correct at any replica count. Sized for small-traffic single-node deployments: every operation is a Ray RPC through that one actor, and large values spill to the object store.</p>
+<p>The Helm chart always sets <code>redis://…</code> in Kubernetes; the same Redis also backs Ray GCS fault tolerance (chart's <strong>Head-node HA</strong> section) and is what lets the gateway self-heal routing after a head restart instead of needing a redeploy.</p>
+<blockquote>
+<p>A <code>file://</code> backend existed before v0.7.0 and was removed: a poor fit for per-turn conversation snapshots (one JSON file each, no native TTL, last-writer-wins across replicas). Migrate <code>--state-store file://…</code>/<code>MSHIP_STATE_DIR</code> to <code>redis://</code>, or drop to <code>memory://</code> if you don't need to survive cluster loss.</p>
+</blockquote>
+<h3 id="stateful-responses">Stateful responses<a class="headerlink" href="#stateful-responses" title="Permanent link">&para;</a></h3>
+<p><code>/v1/responses</code> keeps conversations server-side, so a follow-up turn sends only the new input instead of replaying the whole history:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>curl<span class="w"> </span>localhost:8000/modelship/v1/responses<span class="w"> </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;model&quot;: &quot;qwen&quot;, &quot;input&quot;: &quot;my name is Alex&quot;}&#39;</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1"># response id comes back in `id`</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>curl<span class="w"> </span>localhost:8000/modelship/v1/responses<span class="w"> </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;model&quot;: &quot;qwen&quot;, &quot;input&quot;: &quot;what is my name?&quot;, &quot;previous_response_id&quot;: &quot;resp_…&quot;}&#39;</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /v1/responses</code></td>
+<td><code>store</code> (default <strong>true</strong>) persists the response; <code>previous_response_id</code> continues from one; <code>background: true</code> queues instead of blocking</td>
+</tr>
+<tr>
+<td><code>GET /v1/responses/{id}</code></td>
+<td>Fetch a stored response — for a background response, poll until <code>status</code> is terminal</td>
+</tr>
+<tr>
+<td><code>DELETE /v1/responses/{id}</code></td>
+<td>Drop a stored response; on an in-flight background response this implies cancel</td>
+</tr>
+<tr>
+<td><code>POST /v1/responses/{id}/cancel</code></td>
+<td>Cancel an in-flight background response</td>
+</tr>
+<tr>
+<td><code>GET /v1/responses/{id}/input_items</code></td>
+<td>The input a stored response was produced from</td>
+</tr>
+</tbody>
+</table>
+<p>Send <code>"store": false</code> to opt out of storage — no id to continue from. An unknown, expired, or already-deleted <code>previous_response_id</code> is <code>404</code>; an unreachable state store is <code>503</code> (never a silent stateless fallback).</p>
+<p><code>"background": true</code> returns <code>status: "queued"</code> immediately instead of blocking; poll <code>GET</code> until <code>status</code> reaches a terminal value (<code>completed</code>/<code>incomplete</code>/<code>failed</code>/<code>cancelled</code>). Requires <code>store</code>. Combined with <code>"stream": true</code>, the initial call instead streams live, and a disconnected client can resume with <code>GET /v1/responses/{id}?stream=true&amp;starting_after=&lt;last sequence_number seen&gt;</code> — the replay buffer is short-lived (<code>MSHIP_RESPONSES_STREAM_BUFFER_TTL_S</code>, default 600s). Use <code>redis://</code> for production background use, since a background response must outlive the request that created it.</p>
+<p>Conversations are scoped to the caller's identity, so one caller can never read or continue another's. <strong>With no auth configured, every caller shares the single <code>unscoped</code> identity</strong> — one conversation pool. Set <code>MSHIP_API_KEYS</code> or <code>MSHIP_TRUSTED_IDENTITY_HEADER</code> (see <a href="#trusted-identity-header">Trusted identity header</a>) before serving more than one user.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MSHIP_RESPONSES_TTL_S</code></td>
+<td>How long a stored conversation lives. Each turn rewrites a fresh TTL, so an active conversation stays alive while superseded snapshots age out. <code>0</code> disables expiry</td>
+<td><code>2592000</code> (30 days)</td>
+</tr>
+<tr>
+<td><code>MSHIP_STATE_SWEEP_INTERVAL_S</code></td>
+<td>How often the <code>memory://</code> store reclaims expired keys. <code>0</code> disables sweeping</td>
+<td><code>300</code></td>
+</tr>
+</tbody>
+</table>
+<p>Sizing: a snapshot holds the whole conversation as of that turn, so an <em>n</em>-turn conversation costs O(n²) storage total — the price of continuing in a single read. On the default <code>memory://</code> that all sits in one Ray actor's RAM for up to the TTL, so for sustained multi-user traffic lower <code>MSHIP_RESPONSES_TTL_S</code> or move to <code>redis://</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.action.edit", "search.suggest", "search.highlight"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
