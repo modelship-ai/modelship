@@ -204,10 +204,11 @@ class TestWatchReconcile:
             patch("modelship.openai.api.serve.get_app_handle", return_value=MagicMock()),
         ):
             assert api._sync_routing_blocking() is True
+            # _readyz_body re-enters _sync_routing_blocking, so it needs the patches too.
+            assert api._readyz_body()["ready"] is True
 
         assert set(api.models) == {"qwen", "embed"}
         assert api._gen == 3
-        assert api._readyz_body()["ready"] is True
 
     def test_sync_tolerates_unavailable_coordinator(self, api):
         api._watch_task = None
