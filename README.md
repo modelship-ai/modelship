@@ -79,6 +79,8 @@ The response carries both `output_text` and a first-class `reasoning` output ite
 
 **Latest result: 17/17** — every core, compaction, vision, and WebSocket test (`gemma-4-12B-it` QAT w4a16, vLLM, 2026-08-24).
 
+**Loader parity, 2026-09-10** (suite `92c12d9`): the `vllm` and `llama_server` loaders return the same verdict on all 17 tests, across a text pair (`Qwen2.5-7B-Instruct` AWQ vs. its Q4_K_M GGUF) and a vision pair (`Qwen2.5-VL-3B-Instruct` safetensors vs. GGUF + mmproj) — four runs, no divergence. Each loader passes all 17 across the pair; neither model passes all 17 alone, since `image-input` needs a vision model and `tool-calling` needs a stronger one than the 3B.
+
 <details>
 <summary>Full test breakdown</summary>
 
