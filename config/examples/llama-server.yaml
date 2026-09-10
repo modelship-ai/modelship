@@ -1,8 +1,3 @@
-# llama_server loader examples — GGUF inference via a llama-server subprocess
-# proxied over its native OpenAI-compatible HTTP API. Requires
-# MSHIP_LLAMA_SERVER_BIN to point at a llama-server executable; the Docker
-# images ship a pinned build already.
-
 models:
   - name: "qwen"
     model: "lmstudio-community/Qwen3-8B-GGUF:*Q4_K_M.gguf"
@@ -12,7 +7,6 @@ models:
     llama_server_config:
       parallel: 4
 
-  # Local-path GGUF; bind-mount the file into the container.
   - name: "qwen-local"
     model: "/.cache/huggingface/qwen3-8b-instruct.Q4_K_M.gguf"
     usecase: "generate"
@@ -21,8 +15,6 @@ models:
     llama_server_config:
       parallel: 2
 
-  # mmproj enables image input; requests with image content are rejected at
-  # the gateway when it's unset.
   - name: "qwen-vl"
     model: "lmstudio-community/Qwen3-VL-8B-Instruct-GGUF:*Q4_K_M.gguf"
     usecase: "generate"
@@ -31,7 +23,6 @@ models:
     llama_server_config:
       mmproj: "lmstudio-community/Qwen3-VL-8B-Instruct-GGUF:mmproj-Qwen3-VL-8B-Instruct-F16.gguf"
 
-  # `*-of-*.gguf` matches a whole sharded set; modelship downloads every shard.
   - name: "llama-70b-q8"
     model: "bartowski/Llama-3.3-70B-Instruct-GGUF:*Q8_0*-of-*.gguf"
     usecase: "generate"

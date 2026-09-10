@@ -1,7 +1,3 @@
-# stable-diffusion.cpp loader — CPU-only image generation via GGUF-quantized
-# diffusion models. Ideal for NAS / mini-PC hosts. Serves /v1/images/generations,
-# /v1/images/edits and /v1/images/variations.
-
 models:
   - name: "sd21-turbo"
     model: "gpustack/stable-diffusion-v2-1-turbo-GGUF:*Q4_1.gguf"
@@ -12,7 +8,6 @@ models:
       sample_steps: 4
       cfg_scale: 1.0
 
-  # Flux-schnell from a local path; bind-mount the file into the container.
   - name: "flux-schnell"
     model: "/.cache/models/flux1-schnell-q4_k.gguf"
     usecase: "image"

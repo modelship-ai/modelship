@@ -1,8 +1,4 @@
-# vLLM loader examples — require an NVIDIA GPU.
-# See docs/model-configuration.md for the full vllm_engine_kwargs reference.
-
 models:
-  # Tool calling and reasoning parsers auto-detect from the chat template.
   - name: "llm"
     model: "Qwen/Qwen3-8B-AWQ"
     usecase: "generate"
@@ -25,8 +21,6 @@ models:
     vllm_engine_kwargs:
       trust_remote_code: true
 
-  # Autoscaling replaces num_replicas (set one or the other, never both).
-  # min_replicas: 0 enables scale-to-zero.
   - name: "bursty-llm"
     model: "Qwen/Qwen3-8B-AWQ"
     usecase: "generate"
@@ -35,6 +29,6 @@ models:
     autoscaling_config:
       min_replicas: 1
       max_replicas: 4
-      target_ongoing_requests: 8   # scale out past ~8 in-flight reqs/replica
+      target_ongoing_requests: 8
       upscale_delay_s: 10
-      downscale_delay_s: 600       # hold capacity 10 min before scaling in
+      downscale_delay_s: 600

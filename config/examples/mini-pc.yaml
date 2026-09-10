@@ -1,6 +1,3 @@
-# Low-resource home-assistant stack for a mini-PC (e.g. Intel N100, 16 GB RAM).
-# CPU-only: quantized chat via llama-server, Kokoro TTS, whisper.cpp STT.
-
 models:
   - name: "qwen"
     model: "lmstudio-community/Qwen3-4B-GGUF:*Q4_K_M.gguf"
@@ -15,7 +12,6 @@ models:
     num_gpus: 0
     num_cpus: 1
 
-  # Swap to `base` for multilingual.
   - name: "whisper"
     model: "base.en"
     usecase: "transcription"
