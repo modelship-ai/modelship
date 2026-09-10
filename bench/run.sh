@@ -122,8 +122,13 @@ BASELINE_CONTAINER=bench-baseline
 # Not --network host: an arm binds Ray's GCS, dashboard and proxy on fixed
 # ports. Also carries the load client, on the same bridge as the server.
 BENCH_NET=bench-net
-# The gateway mounts under a slug of its name.
-GATEWAY_PREFIX="/$(echo "${MSHIP_GATEWAY_NAME:-modelship}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-' | sed 's/-*$//')"
+# The gateway mounts under a slug of its name; same regex as
+# serve_utils.gateway_route_prefix.
+GATEWAY_NAME="${MSHIP_GATEWAY_NAME:-modelship}"
+GATEWAY_PREFIX="$(python3 -c \
+    'import re, sys; print("/" + re.sub(r"[^a-z0-9_-]+", "-", sys.argv[1].lower()).strip("-"))' \
+    "$GATEWAY_NAME")"
+[[ "$GATEWAY_PREFIX" != "/" ]] || { echo "MSHIP_GATEWAY_NAME=$GATEWAY_NAME has no URL-safe characters" >&2; exit 2; }
 trap cleanup EXIT
 
 # Defensive: remove any pre-existing bench containers from a prior aborted run.
@@ -156,6 +161,7 @@ start_modelship() {
         --network "$BENCH_NET" -p "$API_PORT:8000" -p "$METRICS_PORT:8079" \
         -e MSHIP_METRICS=true \
         -e MSHIP_PREFLIGHT="$MSHIP_PREFLIGHT_ENV" \
+        -e MSHIP_GATEWAY_NAME="$GATEWAY_NAME" \
         -e MSHIP_GATEWAY_REPLICAS="${MSHIP_GATEWAY_REPLICAS:-1}" \
         -e MSHIP_GATEWAY_MAX_ONGOING="${MSHIP_GATEWAY_MAX_ONGOING:-1024}" \
         -v "$CONFIG:/modelship/config/models.yaml:ro" \
