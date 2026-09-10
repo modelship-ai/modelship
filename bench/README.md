@@ -20,11 +20,27 @@ picks GPU vs CPU for that stack. The four combinations:
 ## Prerequisites
 
 - `docker` and `curl` on the host.
-- For `--device gpu`: the NVIDIA container runtime (`--gpus all` must work) and `nvidia-smi`.
-- A built modelship image. Default tag is `modelship:dev` (CUDA) / `modelship:dev-cpu`
-  (CPU) — override with `--image`. CUDA and CPU are separate image variants
-  (`--build-arg MSHIP_VARIANT=cuda|cpu`, see the root `Dockerfile`); the `cpu`
-  variant is required for `--device cpu` (it ships the `vllm==...+cpu` wheel).
+- For `--device gpu`: the NVIDIA container runtime and `nvidia-smi`.
+- A built modelship image, **prod target** — the artifact users run, and the only
+  one carrying the pinned `llama-server` build. Default tag is
+  `modelship:bench-cuda` (CUDA) / `modelship:bench-cpu` (CPU); override with
+  `--image`.
+
+```bash
+uv build -o wheels .
+uv build -o wheels bootstrap
+docker build -t modelship:bench-cuda \
+  --target prod \
+  --build-arg MSHIP_VARIANT=cuda \
+  --build-arg MSHIP_VERSION="$(uv version --short)" \
+  --build-context wheels=./wheels \
+  .
+```
+
+The image supplies only the dependency set. Both arms mount `modelship/` from the
+working tree over the copy the image was built from, so a source edit needs no
+rebuild and the sweep always measures current source. Every run header and
+`summary.md` records the tree it ran (`source: v0.7.14-62-gada5fe6-dirty`).
 
 ## Run
 
@@ -33,7 +49,7 @@ bench/run.sh                                        # vllm on GPU (default): 100
 bench/run.sh --loader vllm --device cpu
 bench/run.sh --loader llama_server --device gpu
 bench/run.sh --loader llama_server --device cpu
-bench/run.sh --loader vllm --image modelship:dev --concurrency 32 --num-prompts 500
+bench/run.sh --loader vllm --concurrency 32 --num-prompts 500
 ```
 
 `--num-warmups N` (default 20) sends warmup requests that are discarded before
@@ -41,6 +57,15 @@ timing so cold-start (CUDA graph capture / compilation / first-request JIT)
 doesn't skew the result. `--repeats N` (default 3) runs the sweep N times per
 stack; the summary reports the **median** so a single noisy run can't dominate.
 `--config PATH` overrides the config file picked by `--loader`/`--device`.
+
+- `--preflight on|off` (default `on`) — run modelship's hardware-aware preflight
+  in **both** arms, so the sweep measures the engine settings modelship ships.
+  `off` falls both arms back to loader/pydantic defaults.
+- `--gpu-device ID` (default `0`) — the physical GPU both arms are pinned to.
+  Required for a meaningful result on a host with unlike GPUs.
+- `--api-port N` / `--metrics-port N` (default 18000/18079) — host-side ports the
+  harness polls. The load client shares the server arm's bridge network, so
+  these never carry benchmark traffic and only have to be free.
 
 Tunable env vars (forwarded to the modelship phase):
 
@@ -91,111 +116,118 @@ Two cross-checks back this up:
 
 ## Results
 
+Both runs below: 1×RTX 5060 Ti (16 GB), 100 prompts @ concurrency 8, in/out
+128/512, 20 warmups, median of 3, `--preflight on`, greedy (`--temperature 0`).
+
 ### vllm / GPU
 
-Example run — 1×GPU, Qwen2.5-7B-AWQ, `--loader vllm --device gpu`, 100 prompts @ concurrency 8, median of 3:
+Qwen2.5-7B-Instruct-AWQ, `num_gpus: 0.9`. Both arms launched with
+`gpu_memory_utilization=0.9` and `max_model_len=-1` (vLLM's own auto-fit, which
+settled on 32,768 tokens).
 
 | metric | modelship | raw vllm | overhead |
 | --- | ---: | ---: | ---: |
-| throughput (req/s) | 1.199 | 1.203 | −0.4% |
-| output (tok/s) | 613.7 | 616.1 | −0.4% |
-| TTFT mean (ms) | 62.5 | 54.9 | +13.9% |
-| TTFT p95 (ms) | 89.5 | 65.0 | +37.8% |
-| ITL mean (ms) | 12.96 | 12.39 | +4.6% |
-| TPOT mean (ms) | 12.44 | 12.42 | +0.2% |
-| peak VRAM (MiB) | 14533 | 14020 | +513 MiB |
+| completed / failed | 100 / 0 | 100 / 0 | — |
+| throughput (req/s) | 1.213 | 1.214 | −0.1% |
+| output (tok/s) | 620.91 | 621.70 | −0.1% |
+| TTFT mean (ms) | 64.8 | 59.9 | +8.3% |
+| TTFT p50 (ms) | 62.2 | 64.5 | −3.6% |
+| TTFT p95 (ms) | 103.7 | 76.0 | +36.5% |
+| TPOT mean (ms) | 12.3 | 12.3 | −0.0% |
+| ITL mean (ms) | 12.66 | 12.27 | +3.2% |
+| peak VRAM (MiB) | 15058 | 13294 | +1764 |
+| anon / process RSS (MiB) | 5958 | 3696 | +2262 |
 
 Notes:
 
 - **Throughput and decode (TPOT) are at parity** — same vLLM wheel and GPU, so
   the engine's hot path is identical. modelship adds no per-token overhead.
-- **TTFT/ITL** carry modelship's expected cost: the extra hop through the Ray
-  Serve proxy/router adds a small *fixed* first-token latency (here ~7.6 ms) and a
-  tiny per-chunk cost. Negligible for a 512-token response.
-- **TTFT's tail is fatter than its mean**: p95 overhead (+37.8%) runs well above
-  the mean/p50 gap (+13.9%/+1.6%) — occasional scheduling jitter through the Ray
-  Serve proxy/router under concurrent load, not a fixed per-request cost. Still
-  small in absolute terms (~25 ms) against a multi-second E2E latency.
-- **VRAM overhead is modest** (an extra CUDA context, not KV cache). The real
-  host-RAM cost is the Ray + Serve control plane (including the prewarmed
-  idle-worker pool) plus the replica — but read it from `anon` in the
-  per-component table below, **not** the container-RSS delta, which is dominated
-  by reclaimable page cache and swings multiple GB between runs depending on which
-  cgroup faulted the weights.
-- Numbers are illustrative; they vary with model, hardware, load, loader, and device.
+- **TTFT** carries modelship's expected cost: the extra hop through the Ray Serve
+  proxy/router adds a small *fixed* first-token latency (~5 ms). Negligible for a
+  512-token response, and the p50 is inside the noise.
+- **TTFT's tail is fatter than its mean** — p95 overhead (+36.5%) runs well above
+  the mean (+8.3%): scheduling jitter through the proxy/router under concurrent
+  load, not a fixed per-request cost. ~28 ms against a 6.3 s E2E latency.
+- **Read host-RAM cost from `anon`**, not container RSS. The `file` (page cache)
+  row swings multiple GB between arms depending on which cgroup faulted the
+  weights first, and is not overhead.
 
 ### llama_server / GPU
 
-Example run — 1×GPU, Qwen2.5-7B-Instruct Q4_K_M GGUF (fully offloaded, `n_gpu_layers: 99`),
-`--loader llama_server --device gpu`, 100 prompts @ concurrency 8, greedy (`--temperature 0`), median of 3:
+Qwen2.5-7B-Instruct Q4_K_M GGUF, `num_gpus: 1`. `llama fit-params` returned
+`-c 0 -ngl -1` on both arms — the whole model and its full context fit, so no
+constraint is imposed.
 
 | metric | modelship | vanilla llama-server | overhead |
 | --- | ---: | ---: | ---: |
-| completed / 100 | **100** | 93 | — |
-| failed | **0** | 7 | — |
-| throughput (req/s) | 0.495 | 0.501 | −1.2% |
-| output (tok/s) | 253.5 | 256.7 | −1.2% |
-| TTFT mean (ms) | 341.2 | 331.6 | +2.9% |
-| TTFT p95 (ms) | 491.3 | 443.9 | +10.7% |
-| ITL mean (ms) | 30.29 | 29.99 | +1.0% |
-| TPOT mean (ms) | 30.2 | 29.9 | +1.0% |
-| peak VRAM (MiB) | 5505 | 5372 | +133 MiB |
+| completed / failed | **100 / 0** | 94 / 6 | — |
+| throughput (req/s) | 0.524 | 0.528 | −0.6% |
+| output (tok/s) | 268.51 | 270.17 | −0.6% |
+| TTFT mean (ms) | 332.8 | 337.7 | **−1.5%** |
+| TTFT p95 (ms) | 488.5 | 442.0 | +10.5% |
+| TPOT mean (ms) | 28.5 | 28.4 | +0.4% |
+| ITL mean (ms) | 28.54 | 28.51 | +0.1% |
+| peak VRAM (MiB) | 6268 | 6268 | **+0** |
+| anon / process RSS (MiB) | 11148 | 8457 | +2691 |
 
 Notes:
 
-- **Decode is at parity** — same `llama-server` binary and GPU, so the engine's
-  hot path is identical. TPOT/ITL sit within ~1%; modelship adds no per-token cost.
-- **modelship completes every request; the raw baseline drops ~7%.** Vanilla
+- **Decode is at parity and VRAM is identical** — same binary, same GPU, and
+  both arms fit from the same `fit-params` call, so they offload the same layers
+  into the same buffers.
+- **modelship completes every request; the raw baseline drops ~6%.** Vanilla
   `llama-server`'s failures are all `ServerDisconnectedError` — the bench client
-  (aiohttp) hits `llama-server`'s cpp-httplib keep-alive close behaviour directly,
-  a race that Ray Serve's uvicorn front door structurally absorbs. It is **not**
-  tunable away via `llama-server` flags (`--threads-http` sizes the worker pool,
-  not the keep-alive lifecycle). So the baseline's small throughput/TTFT edge is
-  partly **survivorship** — it decoded fewer requests. The survivorship-immune
-  per-token metrics (TPOT/ITL) are the honest read, and they're at parity.
+  (aiohttp) hits `llama-server`'s cpp-httplib keep-alive close behaviour
+  directly, a race that Ray Serve's uvicorn front door structurally absorbs. It
+  is **not** tunable away via `llama-server` flags (`--threads-http` sizes the
+  worker pool, not the keep-alive lifecycle). So the baseline's small throughput
+  edge is partly **survivorship** — it decoded fewer requests. The
+  survivorship-immune per-token metrics (TPOT/ITL) are the honest read.
+- **The result-parity gate is relative between arms**: modelship dropping or
+  truncating *more* than the baseline hard-fails the run; the baseline dropping
+  more (as here) is reported as a **FINDING** and the run passes.
 - **The load client runs greedy (`--temperature 0`).** Both arms then decode an
   identical deterministic token stream, so the A/B is reproducible and any
   *shared* engine-level in-band error appears symmetrically instead of landing on
-  one arm by sampling luck. (Under sampling, `--ignore-eos` occasionally makes the
-  model babble a malformed `<tool_call>` past EOS that `llama-server`'s **own**
-  grammar parser rejects mid-stream — modelship faithfully relays that as an
-  in-band SSE error, which greedy decoding eliminates.)
-- **The result-parity gate is relative between arms**: modelship dropping or
-  truncating *more* than the baseline hard-fails the run; the baseline dropping
-  more (as here) is reported as a **FINDING** and the run passes. This run is a
-  finding in modelship's favour — 0 drops vs 7.
-- **VRAM overhead is modest** (+133 MiB, an extra CUDA context). As with vllm,
-  read host-RAM cost from `anon` in the per-component table, not the container-RSS
-  delta (page-cache-dominated and non-deterministic — here the baseline's `file`
-  cache is actually ~4.4 GiB *higher*).
+  one arm by sampling luck.
 - Numbers are illustrative; they vary with model, hardware, load, loader, and device.
 
 ## How the two phases stay comparable
 
-- Both phases use the same image (same vLLM wheel / same `llama-server` binary)
-  and the same config file.
-- The modelship phase runs with **`MSHIP_PREFLIGHT=false`** (passed via env). This is the linchpin: it disables hardware-aware automatic preflight tuning, ensuring that unset fields fall back to loader/pydantic defaults. Consequently, both phases run identical engine parameters out-of-the-box.
-- The baseline phase parses the config through modelship's own pydantic schema
-  and translates the engine config into either `vllm serve` flags
-  ([`rawvllm_entrypoint.py`](rawvllm_entrypoint.py)) or a `llama-server` launch
-  command ([`rawllama_entrypoint.py`](rawllama_entrypoint.py), mirroring
-  `modelship/infer/llama_server/llama_server_infer.py`'s `_launch`).
-- **Launch parity check**: After both phases run, the harness extracts each phase's effective launch command from its container logs, normalizes legitimately-different tokens (such as ports, hostnames, and api keys), and fails (exits non-zero) if there are any remaining differences. This guarantees that both phases run identical engine parameters.
-- **Tokenizer extraction**: GGUF configs (which use GGUF model paths) cannot be used directly as Hugging Face repository IDs by the bench client. To handle this, the harness looks for a `# bench-tokenizer: <repo-id>` comment inside the yaml config file (inert to modelship) and parses it using `yaml_scalar` to use as the tokenizer for the bench client. You can also override it using the `--tokenizer` CLI flag.
-- vLLM: `gpu_memory_utilization` is not a config key — modelship derives it from
-  `num_gpus` (the fraction itself when `num_gpus` is fractional, else 0.9 GPU /
-  0.4 CPU), and the raw phase calls the same `resolve_gpu_memory_utilization()`.
-  Both phases therefore agree by construction; setting it in the yaml is now a
-  hard error rather than something to keep hand-synced.
-- llama_server: set `n_gpu_layers` explicitly in `configs/llama-gpu.yaml`
-  (rather than the loader's `-1` auto-fit default) — the raw phase has no
-  preflight to pick a matching value on its own, so an explicit, identical
-  value keeps both phases offloading the same number of layers.
+- Both phases use the same image (same vLLM wheel / same `llama-server` binary),
+  the same config file, and the same working-tree `modelship/` mount.
+- Both phases are pinned to the same physical GPU (`--gpu-device`, default 0) and
+  resolve weights into the same mounted cache, so neither arm reads a different
+  device or a different page cache than the arm it is compared against.
+- **Both phases run preflight.** The baseline entrypoints
+  ([`rawvllm_entrypoint.py`](rawvllm_entrypoint.py),
+  [`rawllama_entrypoint.py`](rawllama_entrypoint.py)) run the same
+  `run_preflight` → `merge_with_user_overrides` → `resolve_*` chain the loader
+  actors run, then translate the result into `vllm serve` flags or a
+  `llama-server` launch command. Set `--preflight off` to take both arms back to
+  loader/pydantic defaults instead.
+- **Phase B replays phase A's resolved engine args.** Preflight sizes itself from
+  free RAM/VRAM, and the two phases deploy tens of minutes apart, so re-deriving
+  can legitimately land on a different reservation — a difference that would make
+  the two arms incomparable rather than reveal a defect. `pin_baseline_engine_args`
+  extracts what the modelship arm actually launched with and passes it to the
+  baseline, which logs both the pinned and the derived value. The flag
+  translation still runs independently, so a translation bug still fails the run.
+- **Launch parity check**: after both phases run, the harness extracts each
+  phase's effective launch command from its container logs, normalizes
+  legitimately-different tokens (ports, hostnames, api keys, weight paths), and
+  fails the run if anything else differs. For vllm this compares what is actually
+  handed to the engine, including the two values derived at the engine boundary
+  (`gpu_memory_utilization` and the `max_model_len` auto-fit sentinel), not the
+  config dump — those read `None` where the engine gets `-1`.
+- **Tokenizer extraction**: GGUF configs can't be used as Hugging Face repo IDs by
+  the bench client, so the harness reads a `# bench-tokenizer: <repo-id>` comment
+  from the yaml (inert to modelship). `--tokenizer` overrides it.
+- vLLM: `gpu_memory_utilization` is not a config key — `resolve_gpu_memory_utilization()`
+  derives it (fractional `num_gpus` > preflight > loader default) and both arms
+  call it. Setting it in the yaml is a hard error.
 - llama_server on a multi-GPU host: `rawllama_entrypoint.py` sets
   `CUDA_VISIBLE_DEVICES` to exactly `num_gpus` device(s) before exec'ing
-  `llama-server`, mirroring the GPU reservation Ray gives the modelship
-  actor. Without this the raw phase — a bare subprocess with no Ray actor —
-  inherits every GPU the container's `--gpus` flag exposed, and llama.cpp
-  auto-splits the model across all of them (no `--tensor-split`/`--main-gpu`
-  is passed), handing the baseline more aggregate VRAM/bandwidth than the
-  single-GPU modelship deploy and invalidating the comparison.
+  `llama-server`, mirroring the GPU reservation Ray gives the modelship actor.
+  Without this the raw phase inherits every GPU the container's `--gpus` flag
+  exposed and llama.cpp auto-splits across all of them.

@@ -5,15 +5,40 @@ launch command. Mirrors `LlamaServerInfer._launch` — keep both in sync."""
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
 
-import yaml
+# Must precede any huggingface_hub import — HF_HOME latches at its import time.
+# The same set the driver hands each replica via runtime_env, so both arms
+# resolve weights into the mounted cache.
+from modelship.deploy.actor_options import build_cache_env_vars
 
-from modelship.infer.infer_config import LlamaServerConfig, ModelLoader, ModelshipConfig, ModelUsecase
-from modelship.infer.model_resolver import resolve_model_source
+for _key, _value in build_cache_env_vars().items():
+    os.environ.setdefault(_key, _value)
+
+import math  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import yaml  # noqa: E402
+
+from modelship.infer.infer_config import (  # noqa: E402
+    LlamaServerConfig,
+    ModelLoader,
+    ModelshipConfig,
+    ModelUsecase,
+)
+from modelship.infer.model_resolver import resolve_model_source  # noqa: E402
+from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight  # noqa: E402
 
 CONFIG_PATH = Path(os.environ.get("MSHIP_CONFIG", "/modelship/config/models.yaml"))
+
+
+def _pinned(name: str, derived):
+    """The harness's replay of what the modelship arm launched with, if set."""
+    value = os.environ.get(f"BENCH_PIN_{name}")
+    if value is None:
+        return derived
+    print(f"rawllama pinned {name.lower()}={value} (derived {derived})", flush=True)
+    return value
 
 
 def main() -> int:
@@ -32,10 +57,25 @@ def main() -> int:
         return 2
 
     m = llama_models[0]
-    k = m.llama_server_config or LlamaServerConfig()
+    user_config = m.llama_server_config or LlamaServerConfig()
 
+    # Preflight reads the GGUF's own metadata, so resolve the path first. The
+    # driver does this for the actor.
     model_path = resolve_model_source(m.model)
+    m._resolved_path = model_path
     print(f"rawllama resolved model -> {model_path}", flush=True)
+
+    # The same recommendation/override merge the actor runs; MSHIP_PREFLIGHT
+    # applies to both arms.
+    recommendation = run_preflight(m, discover_hardware(read_free_memory=True))
+    print(f"rawllama preflight recommendation: {recommendation or 'none'}", flush=True)
+    merged = merge_with_user_overrides(recommendation, user_config.model_dump(exclude_unset=True), model_name=m.name)
+    k = user_config.model_copy(update=merged)
+
+    # Preflight reads free RAM/VRAM, which moves between the two phases. The
+    # harness pins what the modelship arm launched with.
+    n_ctx_total = int(_pinned("N_CTX_TOTAL", k.n_ctx * k.parallel))
+    n_gpu_layers = int(_pinned("N_GPU_LAYERS", k.n_gpu_layers))
 
     args = [
         binary,
@@ -47,7 +87,7 @@ def main() -> int:
         "-m",
         model_path,
         "-c",
-        str(k.n_ctx * k.parallel),
+        str(n_ctx_total),
         "-b",
         str(k.n_batch),
         "-ub",
@@ -71,13 +111,12 @@ def main() -> int:
     # Ray only sets CUDA_VISIBLE_DEVICES for GPU-reserving actors, so a
     # num_gpus=0 deploy may still see every GPU — force no offload.
     if m.num_gpus > 0:
-        args += ["-ngl", str(k.n_gpu_layers)]
+        args += ["-ngl", str(n_gpu_layers)]
         if k.tensor_split:
             args += ["-ts", ",".join(str(v) for v in k.tensor_split)]
         # Bypasses Ray's own CUDA_VISIBLE_DEVICES restriction — set it explicitly.
-        # This script only benchmarks whole-GPU configs, not the loader's own
-        # fractional num_gpus (shared-GPU) support.
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(int(m.num_gpus)))
+        # A fractional num_gpus rounds up to one device.
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(max(1, math.ceil(m.num_gpus))))
     else:
         args += ["-ngl", "0"]
     if k.threads is not None:
@@ -90,6 +129,12 @@ def main() -> int:
         args += ["--mmproj", mmproj_path]
     if m.usecase == ModelUsecase.embed:
         args += ["--embedding"]
+    if k.cache_reuse > 0:
+        args += ["--cache-reuse", str(k.cache_reuse)]
+    if k.context_shift:
+        args += ["--context-shift"]
+    if k.cache_ram_mib is not None:
+        args += ["--cache-ram", str(k.cache_ram_mib)]
 
     print("rawllama exec:", " ".join(args), flush=True)
     os.execvp(args[0], args)

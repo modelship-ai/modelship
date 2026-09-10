@@ -9,15 +9,12 @@ models:
     # Lift Ray Serve's per-replica concurrency cap (default 100) so the model
     # deployment isn't the bottleneck during the sweep.
     max_ongoing_requests: 256
-    # MSHIP_PREFLIGHT=false: both phases use loader defaults for unset fields.
     llama_server_config:
       # Must cover --concurrency (8) so requests overlap instead of queuing,
       # which would muddy the TTFT/ITL comparison with queue-wait time.
       parallel: 8
-      # Explicit (not -1/auto): the raw phase reads this verbatim, so leaving
-      # it unset would let the two phases pick different offload counts.
-      # 99 exceeds Qwen2.5-7B's 28 layers — full offload for both.
-      n_gpu_layers: 99
+      # n_ctx and n_gpu_layers unset: both arms fit them with `llama fit-params`.
+      #
       # The baseline arm drops ~4-7% of requests to llama-server's own
       # cpp-httplib keep-alive resets (modelship's uvicorn front door absorbs
       # this); not tunable via llama-server flags. assert_result_parity treats

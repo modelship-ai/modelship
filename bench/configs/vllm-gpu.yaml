@@ -7,7 +7,6 @@ models:
     # Lift Ray Serve's per-replica concurrency cap (default 100) so the model
     # deployment isn't the bottleneck during the sweep.
     max_ongoing_requests: 256
-    # MSHIP_PREFLIGHT=false: both phases use loader defaults for unset fields.
+    # Engine sizing unset: both arms run the same preflight and derivations.
     vllm_engine_kwargs:
       tensor_parallel_size: 1
-      max_model_len: 8192
