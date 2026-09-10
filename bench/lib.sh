@@ -24,8 +24,9 @@ cleanup() {
             docker rm -f "$c" >/dev/null 2>&1 || true
         fi
     done
-    [[ -n "${BENCH_NET:-}" ]] && docker network rm "$BENCH_NET" >/dev/null 2>&1
-    return 0
+    if [[ -n "${BENCH_NET:-}" ]]; then
+        docker network rm "$BENCH_NET" >/dev/null 2>&1 || true
+    fi
 }
 
 # modelship answers under the gateway's route prefix; the vanilla server it
