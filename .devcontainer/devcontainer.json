@@ -48,13 +48,10 @@
         "anthropic.claude-code",
         "google.gemini-cli-vscode-ide-companion",
         "charliermarsh.ruff",
-        "ms-python.python",
         "ms-pyright.pyright"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "/.venv/bin/python",
         "ruff.interpreter": ["/.venv/bin/python"],
-        "python.analysis.extraPaths": ["/.venv/lib/python3.12/site-packages"],
         "pyright.venvPath": "/",
         "pyright.venv": ".venv"
       }
