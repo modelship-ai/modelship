@@ -325,6 +325,10 @@ if loader == "llama_server":
     # Compared by basename: the same weights resolve under different roots.
     PATH_VALUED = {"-m", "--mmproj", "--chat-template-file", "--chat-template"}
 
+    def is_flag(token):
+        """`-1` is a value (llama.cpp's auto-fit), `-ngl` is a flag."""
+        return token.startswith("-") and re.match(r"^-+\d", token) is None
+
     def normalize_llama_args(args):
         """Each flag is paired with its own value, so swapping two values
         between flags is a difference rather than the same token multiset."""
@@ -333,7 +337,7 @@ if loader == "llama_server":
         i = 0
         while i < len(res):
             arg = res[i]
-            has_value = i + 1 < len(res) and not res[i + 1].startswith("-")
+            has_value = i + 1 < len(res) and not is_flag(res[i + 1])
             if arg in IGNORED:
                 i += 2 if has_value else 1
             elif arg in PATH_VALUED:
