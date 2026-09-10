@@ -333,11 +333,15 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         )
 
         self.vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
+        # Derived at the engine boundary, so logged beside the kwargs dump
+        # rather than inside it, which reads None where the engine gets -1.
+        self._max_model_len = resolve_max_model_len(self.vllm_engine_kwargs)
         logger.info(
-            "initialising vllm engine with args: %s (model=%s, gpu_memory_utilization=%s)",
+            "initialising vllm engine with args: %s (model=%s, gpu_memory_utilization=%s, max_model_len=%s)",
             self.vllm_engine_kwargs.model_dump(),
             self._model_path,
             self._gpu_memory_utilization,
+            self._max_model_len,
         )
 
         # Force the ray executor for multi-slot deploys: the outer actor sits
@@ -360,7 +364,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             model=self._model_path,
             tensor_parallel_size=self.vllm_engine_kwargs.tensor_parallel_size,
             pipeline_parallel_size=self.vllm_engine_kwargs.pipeline_parallel_size,
-            max_model_len=resolve_max_model_len(self.vllm_engine_kwargs),
+            max_model_len=self._max_model_len,
             dtype=cast("VllmModelDType", self.vllm_engine_kwargs.dtype),
             tokenizer=self.vllm_engine_kwargs.tokenizer,
             trust_remote_code=self.vllm_engine_kwargs.trust_remote_code,
