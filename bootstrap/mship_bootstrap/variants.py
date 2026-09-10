@@ -12,7 +12,7 @@ _PYPI_INDEX = "https://pypi.org/simple"
 _PYTORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 _PYTORCH_CU130_INDEX = "https://download.pytorch.org/whl/cu130"
 # Embeds the vLLM version; bump alongside the `vllm` pin in the engine's pyproject.
-_VLLM_CPU_INDEX = "https://wheels.vllm.ai/0.26.0/cpu"
+_VLLM_CPU_INDEX = "https://wheels.vllm.ai/0.28.0/cpu"
 
 
 def _index_args(*accelerator_indexes: str) -> tuple[str, ...]:

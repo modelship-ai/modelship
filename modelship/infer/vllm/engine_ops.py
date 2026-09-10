@@ -86,7 +86,7 @@ async def render_and_params(
 
     `render_chat` mutates `vllm_req` in place as a side effect of rendering
     (`ToolParser.adjust_request` sets `structured_outputs` /
-    `_grammar_from_tool_parser`), and `to_sampling_params` reads that
+    `_grammar_from_parser`), and `to_sampling_params` reads that
     mutation. The order is load-bearing — this function exists specifically
     so callers can't split the two apart or run them against a rebuilt copy
     of the request, which would silently drop the mutation.
@@ -158,16 +158,16 @@ def derive_reasoning_ended(
 
     Mistral's grammar (when built) already encodes an optional `think?` rule
     covering both reasoning and non-reasoning outputs, so `reasoning_ended`
-    is forced True whenever `_grammar_from_tool_parser` is set. But that flag
+    is forced True whenever `_grammar_from_parser` is set. But that flag
     is only set on the grammar-building branch of
-    `MistralToolParser.adjust_request` — a request with tools but no
+    `MistralParser.adjust_request` — a request with tools but no
     structured-outputs constraint active takes an early-return branch that
     leaves it False, so this must not assume the flag is reliably True
     whenever a mistral tool parser is in play.
     """
     if not vllm_req.include_reasoning:
         return True
-    if vllm_req._grammar_from_tool_parser:
+    if vllm_req._grammar_from_parser:
         return True
     if parser is not None and parser.reasoning_parser is not None:
         return parser.is_reasoning_end(prompt_token_ids)

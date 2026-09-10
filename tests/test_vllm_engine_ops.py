@@ -73,9 +73,9 @@ class TestDeriveReasoningEnded:
         vllm_req = _vllm_req(include_reasoning=False)
         assert engine_ops.derive_reasoning_ended(vllm_req, parser=None, prompt_token_ids=[]) is True
 
-    def test_grammar_from_tool_parser_forces_true(self):
+    def test_grammar_from_parser_forces_true(self):
         vllm_req = _vllm_req()
-        vllm_req._grammar_from_tool_parser = True
+        vllm_req._grammar_from_parser = True
         assert engine_ops.derive_reasoning_ended(vllm_req, parser=None, prompt_token_ids=[]) is True
 
     def test_reasoning_parser_present_defers_to_is_reasoning_end(self):
@@ -298,10 +298,10 @@ class TestSignaturesGuardVllmBump:
         assert "reasoning_ended" in params
         assert "reasoning_parser_kwargs" in params
 
-    def test_chat_completion_request_has_grammar_from_tool_parser_private_attr(self):
+    def test_chat_completion_request_has_grammar_from_parser_private_attr(self):
         vllm_req = _vllm_req()
-        assert hasattr(vllm_req, "_grammar_from_tool_parser")
-        assert vllm_req._grammar_from_tool_parser is False
+        assert hasattr(vllm_req, "_grammar_from_parser")
+        assert vllm_req._grammar_from_parser is False
 
     def test_to_sampling_params_signature_unchanged(self):
         params = inspect.signature(VllmChatCompletionRequest.to_sampling_params).parameters
@@ -406,8 +406,8 @@ class TestVllmParserAcceptsOurRequest:
 
     @pytest.mark.asyncio
     async def test_mistral_tool_only_no_grammar_flag(self):
-        # A tool-only request takes MistralToolParser.adjust_request's early-return
-        # branch and never sets _grammar_from_tool_parser.
+        # A tool-only request takes MistralParser.adjust_request's early-return
+        # branch and never sets _grammar_from_parser.
         render, tokenizer = self._build_render(
             "mistralai/Mistral-7B-Instruct-v0.3", tokenizer_mode="mistral", tool_parser="mistral"
         )
@@ -417,7 +417,7 @@ class TestVllmParserAcceptsOurRequest:
         assert not isinstance(result, engine_ops.VllmErrorResponse)
         engine_input, _sampling_params = result
 
-        assert vllm_req._grammar_from_tool_parser is False
+        assert vllm_req._grammar_from_parser is False
 
         prompt_ids = engine_ops.extract_prompt_token_ids(render, engine_input)
         parsers = engine_ops.make_parsers(render, tokenizer, vllm_req, chat_template_kwargs=None, n=1)

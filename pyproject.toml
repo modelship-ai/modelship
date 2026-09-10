@@ -56,8 +56,8 @@ cuda = [
     "torchaudio>=2.10.0",
     "transformers>=5.5.3",
     "flashinfer-python>=0.6.1",
-    "vllm==0.26.0",
-    "vllm[audio]==0.26.0",
+    "vllm==0.28.0",
+    "vllm[audio]==0.28.0",
     "bitsandbytes>=0.49.0",
     "diffusers>=0.31.0",
     "stable-diffusion-cpp-python>=0.4.7",
@@ -83,14 +83,14 @@ cpu = [
     "sherpa-onnx-core==1.13.4",
 ]
 # Adds CPU-only vLLM on top of `cpu`. Pinned to the `+cpu` local version, not a
-# bare `==0.26.0` — see docs/installation.md.
+# bare `==0.28.0` — see docs/installation.md.
 vllm-cpu = [
-    "torch==2.11.0+cpu ; sys_platform == 'linux'",
-    "torchvision==0.26.0+cpu ; sys_platform == 'linux'",
+    "torch==2.13.0+cpu ; sys_platform == 'linux'",
+    "torchvision==0.28.0+cpu ; sys_platform == 'linux'",
     "torchaudio==2.11.0+cpu ; sys_platform == 'linux'",
     "transformers>=5.5.3",
-    "vllm==0.26.0+cpu ; sys_platform == 'linux'",
-    "vllm[audio]==0.26.0+cpu ; sys_platform == 'linux'",
+    "vllm==0.28.0+cpu ; sys_platform == 'linux'",
+    "vllm[audio]==0.28.0+cpu ; sys_platform == 'linux'",
 ]
 otel = [
     "opentelemetry-sdk>=1.20.0",
@@ -128,12 +128,12 @@ name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
-# NOTE: this URL embeds the vllm version — a future bump of vllm==0.26.0 above
+# NOTE: this URL embeds the vllm version — a future bump of vllm==0.28.0 above
 # must update this to match, or the cpu extra silently falls back to whatever
 # (if anything) that path resolves to.
 [[tool.uv.index]]
 name = "vllm-cpu"
-url = "https://wheels.vllm.ai/0.26.0/cpu"
+url = "https://wheels.vllm.ai/0.28.0/cpu"
 explicit = true
 
 [tool.uv.sources]
