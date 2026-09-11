@@ -336,13 +336,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         # Derived at the engine boundary, so logged beside the kwargs dump
         # rather than inside it, which reads None where the engine gets -1.
         self._max_model_len = resolve_max_model_len(self.vllm_engine_kwargs)
-        logger.info(
-            "initialising vllm engine with args: %s (model=%s, gpu_memory_utilization=%s, max_model_len=%s)",
-            self.vllm_engine_kwargs.model_dump(),
-            self._model_path,
-            self._gpu_memory_utilization,
-            self._max_model_len,
-        )
 
         # Force the ray executor for multi-slot deploys: the outer actor sits
         # in a 0-GPU PG bundle, but vLLM's ParallelConfig validates world_size
@@ -351,6 +344,16 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         # inherited placement group).
         world_size = self.vllm_engine_kwargs.tensor_parallel_size * self.vllm_engine_kwargs.pipeline_parallel_size
         distributed_executor_backend = "ray" if world_size > 1 else None
+
+        logger.info(
+            "initialising vllm engine with args: %s (model=%s, gpu_memory_utilization=%s, max_model_len=%s, "
+            "distributed_executor_backend=%s)",
+            self.vllm_engine_kwargs.model_dump(),
+            self._model_path,
+            self._gpu_memory_utilization,
+            self._max_model_len,
+            distributed_executor_backend,
+        )
 
         # Multimodal knobs: only forward when the user set them so we inherit
         # vLLM's own defaults (empty dict / None) otherwise.

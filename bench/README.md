@@ -234,6 +234,13 @@ Notes:
 - vLLM: `gpu_memory_utilization` is not a config key — `resolve_gpu_memory_utilization()`
   derives it (fractional `num_gpus` > preflight > loader default) and both arms
   call it. Setting it in the yaml is a hard error.
+- vLLM, multi-slot (`tp × pp > 1`): modelship forces
+  `distributed_executor_backend="ray"` because its actor sits in a 0-GPU
+  placement-group bundle. vLLM's own default there is `mp`, so the raw arm is
+  passed `--distributed-executor-backend ray` too — otherwise the sweep would
+  compare two executors rather than two wrappers around one. It is also not a
+  config key, so the actor logs it beside the kwargs dump for the parity check
+  to read.
 - On a multi-GPU host both raw entrypoints set `CUDA_VISIBLE_DEVICES` to exactly
   the devices Ray reserves for the modelship actor before exec'ing the server.
   Without this the raw phase inherits every GPU the container's `--gpus` flag

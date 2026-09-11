@@ -385,7 +385,8 @@ elif loader == "vllm":
     # kwargs dict rather than inside it.
     m_match = re.search(
         r"initialising vllm engine with args:\s*(\{.*\})\s*\(model=.*?"
-        r"gpu_memory_utilization=([\d.]+),\s*max_model_len=(-?\d+)\)",
+        r"gpu_memory_utilization=([\d.]+),\s*max_model_len=(-?\d+),\s*"
+        r"distributed_executor_backend=(\S+?)\)",
         m_content,
     )
     if not m_match:
@@ -393,6 +394,9 @@ elif loader == "vllm":
     m_dict = ast.literal_eval(m_match.group(1))
     m_dict["gpu_memory_utilization"] = float(m_match.group(2))
     m_dict["max_model_len"] = int(m_match.group(3))
+    # vLLM's own default for a single-slot deploy; the flag is then absent on
+    # both sides.
+    m_dict["distributed_executor_backend"] = None if m_match.group(4) == "None" else m_match.group(4)
 
     b_match = re.search(r"rawvllm exec:\s*(.*)", b_content)
     if not b_match:
@@ -456,6 +460,7 @@ elif loader == "vllm":
         'chat_template_content_format',
         'limit_mm_per_prompt',
         'mm_processor_kwargs',
+        'distributed_executor_backend',
     ]
     # modelship dumps these as dicts; the raw arm's flag carries JSON text.
     JSON_VALUED = {'limit_mm_per_prompt', 'mm_processor_kwargs'}
@@ -515,7 +520,7 @@ pin_baseline_engine_args() {
     if [[ "$LOADER" == "vllm" ]]; then
         local gmu mml
         gmu=$(sed -n 's/.*gpu_memory_utilization=\([0-9.]*\), max_model_len=.*/\1/p' "$log" | tail -1)
-        mml=$(sed -n 's/.*gpu_memory_utilization=[0-9.]*, max_model_len=\(-\?[0-9]*\)).*/\1/p' "$log" | tail -1)
+        mml=$(sed -n 's/.*gpu_memory_utilization=[0-9.]*, max_model_len=\(-\?[0-9]*\)[,)].*/\1/p' "$log" | tail -1)
         [[ -n "$gmu" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_GPU_MEMORY_UTILIZATION=$gmu")
         [[ -n "$mml" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_MAX_MODEL_LEN=$mml")
         echo "  baseline pinned to phase A: gpu_memory_utilization=${gmu:-unset} max_model_len=${mml:-unset}"

@@ -124,8 +124,11 @@ def main() -> int:
         args += ["--limit-mm-per-prompt", json.dumps(k.limit_mm_per_prompt, sort_keys=True, separators=(",", ":"))]
     if k.mm_processor_kwargs is not None:
         args += ["--mm-processor-kwargs", json.dumps(k.mm_processor_kwargs, sort_keys=True, separators=(",", ":"))]
-    # distributed_executor_backend is derived internally by modelship (not a
-    # config field), so the raw phase relies on vLLM's own default executor here.
+    # Derived internally by modelship, not a config field: vLLM's own default
+    # for a multi-slot deploy is mp, so leaving it out would compare two
+    # executors rather than two wrappers around one.
+    if world_size > 1:
+        args += ["--distributed-executor-backend", "ray"]
 
     # shlex.join, not " ".join: the JSON-valued flags have to survive the
     # parity checker's shlex.split.
