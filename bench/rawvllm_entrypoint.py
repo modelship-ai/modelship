@@ -72,21 +72,6 @@ def main() -> int:
     m._resolved_path = resolve_model_source(m.model, trust_remote_code=m.vllm_engine_kwargs.trust_remote_code)
     print(f"rawvllm resolved model -> {m._resolved_path}", flush=True)
 
-    # VllmInfer auto-detects both parsers from the chat template whenever the
-    # config leaves them unset, so the flags come from the same resolvers rather
-    # than from the config fields. Gated on usecase like init_serving_chat.
-    tool_parser = reasoning_parser = None
-    if m.usecase == ModelUsecase.generate:
-        tokenizer = get_tokenizer(m._resolved_path, trust_remote_code=m.vllm_engine_kwargs.trust_remote_code)
-        try:
-            template = tokenizer.get_chat_template()
-        except ValueError:
-            # A base model carries no template; the actor leaves both unset too.
-            template = None
-        tool_parser = resolve_tool_parser(m, template)
-        reasoning_parser = resolve_reasoning_parser(m, template)
-    print(f"rawvllm parsers: tool={tool_parser} reasoning={reasoning_parser}", flush=True)
-
     # The same recommendation/override merge the actor runs; MSHIP_PREFLIGHT
     # applies to both arms.
     recommendation = run_preflight(m, discover_hardware())
@@ -97,6 +82,20 @@ def main() -> int:
     gpu_memory_utilization = resolve_gpu_memory_utilization(m, merged.pop("gpu_memory_utilization", None))
     k = VllmEngineConfig(**merged)
     max_model_len = resolve_max_model_len(k)
+
+    # Mirrors init_serving_chat: same resolvers, same usecase gate. Reads the
+    # template off the configured tokenizer, which vLLM defaults to the model.
+    tool_parser = reasoning_parser = None
+    if m.usecase == ModelUsecase.generate:
+        tokenizer = get_tokenizer(k.tokenizer or m._resolved_path, trust_remote_code=k.trust_remote_code)
+        try:
+            template = tokenizer.get_chat_template()
+        except ValueError:
+            # A base model carries no template; the actor leaves both unset too.
+            template = None
+        tool_parser = resolve_tool_parser(m, template)
+        reasoning_parser = resolve_reasoning_parser(m, template)
+    print(f"rawvllm parsers: tool={tool_parser} reasoning={reasoning_parser}", flush=True)
 
     # Preflight reads free RAM/VRAM, which moves between the two phases. The
     # harness pins what the modelship arm launched with.
