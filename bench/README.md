@@ -156,8 +156,9 @@ Notes:
 ### llama_server / GPU
 
 Qwen2.5-7B-Instruct Q4_K_M GGUF, `num_gpus: 1`. `llama fit-params` returned
-`-c 0 -ngl -1` on both arms — the whole model and its full context fit, so no
-constraint is imposed.
+`-c 0 -ngl -1` on both arms — the whole model and its full context fit — so both
+launched with a literal `-c 0`, leaving llama-server to resolve the model's own
+maximum.
 
 | metric | modelship | vanilla llama-server | overhead |
 | --- | ---: | ---: | ---: |
