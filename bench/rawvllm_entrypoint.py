@@ -54,10 +54,15 @@ def main() -> int:
 
     m = vllm_models[0]
 
-    # Ray gives the modelship actor exactly num_gpus device(s); a bare
-    # subprocess would otherwise inherit every GPU --gpus exposed.
-    if m.num_gpus > 0:
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(max(1, math.ceil(m.num_gpus))))
+    # Ray gives the modelship actor exactly the devices it reserved; a bare
+    # subprocess would otherwise inherit every GPU --gpus exposed. A multi-slot
+    # deploy reserves one whole-GPU bundle per slot and config validation
+    # collapses num_gpus to 1.0, so tp x pp carries that count instead.
+    world_size = m.vllm_engine_kwargs.tensor_parallel_size * m.vllm_engine_kwargs.pipeline_parallel_size
+    gpus_reserved = max(math.ceil(m.num_gpus), world_size if world_size > 1 else 0)
+    if gpus_reserved:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(gpus_reserved))
+        print(f"rawvllm CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']}", flush=True)
 
     # Preflight reads the checkpoint's config.json, so resolve the path first.
     # The driver does this for the actor.

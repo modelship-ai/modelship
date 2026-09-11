@@ -231,8 +231,12 @@ Notes:
 - vLLM: `gpu_memory_utilization` is not a config key — `resolve_gpu_memory_utilization()`
   derives it (fractional `num_gpus` > preflight > loader default) and both arms
   call it. Setting it in the yaml is a hard error.
-- llama_server on a multi-GPU host: `rawllama_entrypoint.py` sets
-  `CUDA_VISIBLE_DEVICES` to exactly `num_gpus` device(s) before exec'ing
-  `llama-server`, mirroring the GPU reservation Ray gives the modelship actor.
+- On a multi-GPU host both raw entrypoints set `CUDA_VISIBLE_DEVICES` to exactly
+  the devices Ray reserves for the modelship actor before exec'ing the server.
   Without this the raw phase inherits every GPU the container's `--gpus` flag
-  exposed and llama.cpp auto-splits across all of them.
+  exposed and llama.cpp auto-splits across all of them. For llama_server that
+  reservation is `num_gpus`; for vllm it is `num_gpus` or, for a multi-slot
+  deploy, `tensor_parallel_size × pipeline_parallel_size` — config validation
+  collapses `num_gpus` to `1.0` once tp × pp carries the count, so reading
+  `num_gpus` alone would pin a tp=2 baseline to one GPU. Pass every device to
+  `--gpu-device` (e.g. `--gpu-device 0,1`) for such a run.
