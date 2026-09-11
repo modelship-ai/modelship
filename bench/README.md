@@ -253,6 +253,14 @@ Notes:
   compare two executors rather than two wrappers around one. It is also not a
   config key, so the actor logs it beside the kwargs dump for the parity check
   to read.
+- **`OMP_NUM_THREADS` is passed to the baseline only**, and that is what makes
+  the two arms match rather than a gap in the plumbing. Ray sets
+  `OMP_NUM_THREADS=max(floor(num_cpus),1)` in each worker when it is unset, so
+  the modelship replica already runs at its reserved thread count; the baseline
+  has no Ray and would otherwise take every core on the host. Setting it
+  container-wide for the modelship arm would pre-empt Ray's per-actor sizing and
+  raise the `num_cpus: 0` gateway replica from 1 thread to the model's count,
+  changing the overhead being measured.
 - On a multi-GPU host both raw entrypoints set `CUDA_VISIBLE_DEVICES` to exactly
   the devices Ray reserves for the modelship actor before exec'ing the server.
   Without this the raw phase inherits every GPU the container's `--gpus` flag

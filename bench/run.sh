@@ -114,7 +114,10 @@ fi
 NUM_CPUS="$(yaml_scalar '^[[:space:]]*num_cpus:' "$CONFIG")"
 BASELINE_ENV_ARGS=()
 if [[ -n "${NUM_CPUS:-}" ]]; then
-    BASELINE_ENV_ARGS+=(-e "OMP_NUM_THREADS=$NUM_CPUS")
+    # Baseline-only on purpose: Ray already sets OMP_NUM_THREADS=max(floor(num_cpus),1)
+    # per worker, and setting it container-wide would override that for the gateway too.
+    OMP_THREADS=$(awk -v n="$NUM_CPUS" 'BEGIN {v = int(n); print (v < 1 ? 1 : v)}')
+    BASELINE_ENV_ARGS+=(-e "OMP_NUM_THREADS=$OMP_THREADS")
 fi
 
 MODELSHIP_CONTAINER=bench-modelship
