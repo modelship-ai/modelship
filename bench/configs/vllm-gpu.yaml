@@ -1,7 +1,6 @@
 models:
   - name: "llm"
-    # Named AWQ, actually compressed-tensors int4; vLLM detects either from
-    # config.json, so quantization stays unset on both arms.
+    # Repo name says AWQ; the format is compressed-tensors int4.
     model: "cyankiwi/Qwen3.5-9B-AWQ-4bit"
     usecase: "generate"
     loader: "vllm"

@@ -1,6 +1,6 @@
 models:
   - name: "llm"
-    # Text-only: the glob takes the single Q4_K_M file, not the mmproj beside it.
+    # Vision model; the glob takes the text-only file, not the mmproj.
     model: "unsloth/Qwen3.5-9B-GGUF:*Q4_K_M.gguf"
     # bench-tokenizer: Qwen/Qwen3.5-9B
     usecase: "generate"
