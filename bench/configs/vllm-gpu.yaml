@@ -1,6 +1,8 @@
 models:
   - name: "llm"
-    model: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    # Named AWQ, actually compressed-tensors int4; vLLM detects either from
+    # config.json, so quantization stays unset on both arms.
+    model: "cyankiwi/Qwen3.5-9B-AWQ-4bit"
     usecase: "generate"
     loader: "vllm"
     num_gpus: 0.9

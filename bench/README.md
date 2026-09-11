@@ -120,6 +120,11 @@ Two cross-checks back this up:
 Both runs below: 1×RTX 5060 Ti (16 GB), 100 prompts @ concurrency 8, in/out
 128/512, 20 warmups, median of 3, `--preflight on`, greedy (`--temperature 0`).
 
+> **Stale — both GPU tables predate the current configs.** They were measured on
+> Qwen2.5-7B; the GPU configs now run Qwen3.5-9B. The vllm table also predates
+> the tool/reasoning-parser fix, so its modelship arm ran a parser the baseline
+> did not. Re-run both before quoting these numbers.
+
 ### vllm / GPU
 
 Qwen2.5-7B-Instruct-AWQ, `num_gpus: 0.9`. Both arms launched with
@@ -233,8 +238,9 @@ Notes:
   template whenever the config leaves them unset, so the raw arm calls
   `resolve_tool_parser`/`resolve_reasoning_parser` itself and passes the result
   as `--enable-auto-tool-choice --tool-call-parser`/`--reasoning-parser`. Both
-  bench configs hit this: Qwen2.5 resolves to `hermes`, Qwen3 to `hermes` plus
-  `deepseek_r1`. The resolved names never reach the kwargs dump, so the actor
+  bench configs hit this: Qwen3.5 resolves to `qwen3_coder` (its template nests
+  `<function=`/`<parameter=` inside `<tool_call>`) plus `deepseek_r1`, Qwen3-0.6B
+  to `hermes` plus `deepseek_r1`. The resolved names never reach the kwargs dump, so the actor
   logs them on their own line for the parity check to read. Note that the
   chat-template toggle defaults the actor pins into `chat_template_kwargs` are
   request-time, not launch flags — `vllm serve` has no equivalent, so a template

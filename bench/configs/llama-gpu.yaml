@@ -1,7 +1,8 @@
 models:
   - name: "llm"
-    model: "lmstudio-community/Qwen2.5-7B-Instruct-GGUF:*Q4_K_M.gguf"
-    # bench-tokenizer: Qwen/Qwen2.5-7B-Instruct
+    # Text-only: the glob takes the single Q4_K_M file, not the mmproj beside it.
+    model: "unsloth/Qwen3.5-9B-GGUF:*Q4_K_M.gguf"
+    # bench-tokenizer: Qwen/Qwen3.5-9B
     usecase: "generate"
     loader: "llama_server"
     num_gpus: 1
