@@ -300,7 +300,7 @@ scrape_prom() {
 assert_launch_parity() {
     echo "=== verifying launch-args parity ==="
     python3 - "$RESULTS_DIR" "$LOADER" <<'PY'
-import sys, re, ast, shlex, os
+import sys, re, ast, json, shlex, os
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -451,7 +451,21 @@ elif loader == "vllm":
         'max_num_seqs',
         'enable_auto_tool_choice',
         'tool_call_parser',
+        'enable_log_requests',
+        'disable_log_stats',
+        'chat_template_content_format',
+        'limit_mm_per_prompt',
+        'mm_processor_kwargs',
     ]
+    # modelship dumps these as dicts; the raw arm's flag carries JSON text.
+    JSON_VALUED = {'limit_mm_per_prompt', 'mm_processor_kwargs'}
+
+    def canon_json(val):
+        if isinstance(val, str):
+            val = json.loads(val)
+        if not val:
+            return None
+        return json.dumps(val, sort_keys=True)
 
     m_norm = {}
     b_norm = {}
@@ -463,6 +477,9 @@ elif loader == "vllm":
         if fld == 'kv_cache_dtype':
             mv = mv or 'auto'
             bv = bv or 'auto'
+        if fld in JSON_VALUED:
+            mv = canon_json(mv)
+            bv = canon_json(bv)
         if mv in [None, False]:
             mv = None
         if bv in [None, False]:

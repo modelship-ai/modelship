@@ -14,7 +14,9 @@ from modelship.deploy.actor_options import build_cache_env_vars
 for _key, _value in build_cache_env_vars().items():
     os.environ.setdefault(_key, _value)
 
+import json  # noqa: E402
 import math  # noqa: E402
+import shlex  # noqa: E402
 import sys  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -104,10 +106,25 @@ def main() -> int:
         args += ["--max-num-batched-tokens", str(k.max_num_batched_tokens)]
     if k.max_num_seqs is not None:
         args += ["--max-num-seqs", str(k.max_num_seqs)]
+    # None means False to VllmInfer, so both are emitted explicitly rather than
+    # left to vLLM's own default.
+    args += ["--enable-log-requests" if k.enable_log_requests else "--no-enable-log-requests"]
+    # store_true, with no --no- form: absent is False.
+    if k.disable_log_stats:
+        args += ["--disable-log-stats"]
+    args += ["--chat-template-content-format", k.chat_template_content_format]
+    # Forwarded only when set, so vLLM's own defaults apply otherwise — same as
+    # VllmInfer's mm_kwargs.
+    if k.limit_mm_per_prompt is not None:
+        args += ["--limit-mm-per-prompt", json.dumps(k.limit_mm_per_prompt, sort_keys=True, separators=(",", ":"))]
+    if k.mm_processor_kwargs is not None:
+        args += ["--mm-processor-kwargs", json.dumps(k.mm_processor_kwargs, sort_keys=True, separators=(",", ":"))]
     # distributed_executor_backend is derived internally by modelship (not a
     # config field), so the raw phase relies on vLLM's own default executor here.
 
-    print("rawvllm exec:", " ".join(args), flush=True)
+    # shlex.join, not " ".join: the JSON-valued flags have to survive the
+    # parity checker's shlex.split.
+    print("rawvllm exec:", shlex.join(args), flush=True)
     os.execvp(args[0], args)
 
 

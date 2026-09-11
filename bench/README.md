@@ -221,7 +221,10 @@ Notes:
   fails the run if anything else differs. For vllm this compares what is actually
   handed to the engine, including the two values derived at the engine boundary
   (`gpu_memory_utilization` and the `max_model_len` auto-fit sentinel), not the
-  config dump — those read `None` where the engine gets `-1`.
+  config dump — those read `None` where the engine gets `-1`. The comparison
+  covers every `vllm_engine_kwargs` key `VllmInfer` forwards, the multimodal
+  `limit_mm_per_prompt`/`mm_processor_kwargs` included, so a vision config can't
+  benchmark two different engines.
 - **Tokenizer extraction**: GGUF configs can't be used as Hugging Face repo IDs by
   the bench client, so the harness reads a `# bench-tokenizer: <repo-id>` comment
   from the yaml (inert to modelship). `--tokenizer` overrides it.

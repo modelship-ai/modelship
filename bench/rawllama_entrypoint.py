@@ -15,6 +15,7 @@ for _key, _value in build_cache_env_vars().items():
     os.environ.setdefault(_key, _value)
 
 import math  # noqa: E402
+import shlex  # noqa: E402
 import sys  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -136,7 +137,9 @@ def main() -> int:
     if k.cache_ram_mib is not None:
         args += ["--cache-ram", str(k.cache_ram_mib)]
 
-    print("rawllama exec:", " ".join(args), flush=True)
+    # shlex.join, not " ".join: an inline --chat-template has to survive the
+    # parity checker's shlex.split.
+    print("rawllama exec:", shlex.join(args), flush=True)
     os.execvp(args[0], args)
 
 
