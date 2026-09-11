@@ -5,7 +5,7 @@
 # Usage: bench/run.sh [--loader vllm|llama_server] [--device gpu|cpu] [--image TAG]
 #                      [--config PATH] [--num-prompts N] [--concurrency N]
 #                      [--input-len N] [--output-len N] [--num-warmups N] [--repeats N]
-#                      [--preflight on|off] [--gpu-device ID]
+#                      [--preflight on|off] [--gpu-device ID[,ID...]]
 #                      [--api-port N] [--metrics-port N]
 set -euo pipefail
 
@@ -136,7 +136,8 @@ docker rm -f "$MODELSHIP_CONTAINER" "$BASELINE_CONTAINER" >/dev/null 2>&1 || tru
 docker network inspect "$BENCH_NET" >/dev/null 2>&1 || docker network create "$BENCH_NET" >/dev/null
 
 DOCKER_GPU_ARGS=()
-[[ "$DEVICE" == "gpu" ]] && DOCKER_GPU_ARGS=(--gpus "device=$GPU_DEVICE")
+# docker reads --gpus as CSV, so a multi-device id list needs the embedded quotes.
+[[ "$DEVICE" == "gpu" ]] && DOCKER_GPU_ARGS=(--gpus "\"device=$GPU_DEVICE\"")
 
 # The image supplies the dependency set; this mounts the working tree over the
 # modelship copy the image was built from, so the bench measures current source.

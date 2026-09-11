@@ -61,8 +61,9 @@ stack; the summary reports the **median** so a single noisy run can't dominate.
 - `--preflight on|off` (default `on`) — run modelship's hardware-aware preflight
   in **both** arms, so the sweep measures the engine settings modelship ships.
   `off` falls both arms back to loader/pydantic defaults.
-- `--gpu-device ID` (default `0`) — the physical GPU both arms are pinned to.
-  Required for a meaningful result on a host with unlike GPUs.
+- `--gpu-device ID[,ID...]` (default `0`) — the physical GPU(s) both arms are
+  pinned to. Required for a meaningful result on a host with unlike GPUs; pass a
+  comma-separated list for a multi-slot (`tp*pp > 1`) config.
 - `--api-port N` / `--metrics-port N` (default 18000/18079) — host-side ports the
   harness polls. The load client shares the server arm's bridge network, so
   these never carry benchmark traffic and only have to be free.
@@ -196,7 +197,7 @@ Notes:
 
 - Both phases use the same image (same vLLM wheel / same `llama-server` binary),
   the same config file, and the same working-tree `modelship/` mount.
-- Both phases are pinned to the same physical GPU (`--gpu-device`, default 0) and
+- Both phases are pinned to the same physical GPU(s) (`--gpu-device`, default 0) and
   resolve weights into the same mounted cache, so neither arm reads a different
   device or a different page cache than the arm it is compared against.
 - **Both phases run preflight.** The baseline entrypoints
