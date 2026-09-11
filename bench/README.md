@@ -199,7 +199,8 @@ Notes:
   the same config file, and the same working-tree `modelship/` mount.
 - Both phases are pinned to the same physical GPU(s) (`--gpu-device`, default 0) and
   resolve weights into the same mounted cache, so neither arm reads a different
-  device or a different page cache than the arm it is compared against.
+  device or a different page cache than the arm it is compared against. The peak-VRAM
+  sampler and the between-phase release gate read those same device ids, summed.
 - **Both phases run preflight.** The baseline entrypoints
   ([`rawvllm_entrypoint.py`](rawvllm_entrypoint.py),
   [`rawllama_entrypoint.py`](rawllama_entrypoint.py)) run the same

@@ -136,8 +136,15 @@ docker rm -f "$MODELSHIP_CONTAINER" "$BASELINE_CONTAINER" >/dev/null 2>&1 || tru
 docker network inspect "$BENCH_NET" >/dev/null 2>&1 || docker network create "$BENCH_NET" >/dev/null
 
 DOCKER_GPU_ARGS=()
-# docker reads --gpus as CSV, so a multi-device id list needs the embedded quotes.
-[[ "$DEVICE" == "gpu" ]] && DOCKER_GPU_ARGS=(--gpus "\"device=$GPU_DEVICE\"")
+if [[ "$DEVICE" == "gpu" ]]; then
+    # The samplers query these same ids, so an unusable one must fail here.
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        nvidia-smi -i "$GPU_DEVICE" -L >/dev/null 2>&1 \
+            || { echo "--gpu-device $GPU_DEVICE: no such device on this host" >&2; exit 2; }
+    fi
+    # docker reads --gpus as CSV, so a multi-device id list needs the embedded quotes.
+    DOCKER_GPU_ARGS=(--gpus "\"device=$GPU_DEVICE\"")
+fi
 
 # The image supplies the dependency set; this mounts the working tree over the
 # modelship copy the image was built from, so the bench measures current source.

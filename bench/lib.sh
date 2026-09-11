@@ -63,6 +63,15 @@ wait_ready() {
     return 1
 }
 
+# Used VRAM summed over the GPUs the run is pinned to ($GPU_DEVICE, the same
+# id list handed to docker --gpus). Empty when nvidia-smi is absent.
+gpu_used_mib() {
+    command -v nvidia-smi >/dev/null 2>&1 || return 0
+    nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits \
+        -i "${GPU_DEVICE:-0}" 2>/dev/null \
+        | awk '{t+=$1} END {if (NR) printf "%d", t}'
+}
+
 start_mem_sampler() {
     local stack="$1"
     local container="$2"
@@ -74,7 +83,7 @@ start_mem_sampler() {
             ts=$(date +%s)
             # || true: avoid aborting this subshell under pipefail+set -e.
             # No nvidia-smi (CPU host) just leaves vram at 0.
-            vram=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ') || true
+            vram=$(gpu_used_mib) || true
             # docker stats MemUsage is "1.234GiB / 64GiB" — take the first field
             # and normalize any unit (binary or decimal, any case) to MiB.
             cmem=$(docker stats --no-stream --format '{{.MemUsage}}' "$container" 2>/dev/null \
@@ -160,12 +169,16 @@ vram_gate() {
     if ! command -v nvidia-smi >/dev/null 2>&1; then
         return 0
     fi
+    # The floor is per selected GPU, since the reading is summed over them.
+    local ngpus threshold
+    ngpus=$(awk -F, '{print NF}' <<< "${GPU_DEVICE:-0}")
+    threshold=$(( 500 * ngpus ))
     local deadline=$(( $(date +%s) + 60 ))
     while (( $(date +%s) < deadline )); do
         local used
-        # tr -dc digits: "" on error/non-numeric output; || true for pipefail+set -e.
-        used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9') || true
-        if [[ -n "$used" ]] && (( used < 500 )); then return 0; fi
+        # "" on error/non-numeric output; || true for pipefail+set -e.
+        used=$(gpu_used_mib) || true
+        if [[ -n "$used" ]] && (( used < threshold )); then return 0; fi
         sleep 1
     done
     echo "warn: VRAM not freed within 60s" >&2
