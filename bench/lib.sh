@@ -543,7 +543,8 @@ pin_baseline_engine_args() {
         [[ -n "$args_line" ]] || { echo "  warn: no llama-server launch args in the modelship log" >&2; return 0; }
         ctx=$(grep -o "'-c', '[0-9-]*'" <<< "$args_line" | grep -oE -- '-?[0-9]+' | tail -1)
         ngl=$(grep -o "'-ngl', '[0-9-]*'" <<< "$args_line" | grep -oE -- '-?[0-9]+' | tail -1)
-        ts=$(grep -o "'-ts', '[0-9.,]*'" <<< "$args_line" | grep -oE -- '[0-9.,]+' | tail -1)
+        # Emitted only for a multi-GPU split.
+        ts=$(grep -o "'-ts', '[0-9.,]*'" <<< "$args_line" | grep -oE -- '[0-9.,]+' | tail -1) || true
         [[ -n "$ctx" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_N_CTX_TOTAL=$ctx")
         [[ -n "$ngl" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_N_GPU_LAYERS=$ngl")
         # Pinned even when empty: phase A launching without a split is itself
