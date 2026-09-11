@@ -1,7 +1,3 @@
-# vLLM loader on CPU — no GPU required. Requires a non-GGUF checkpoint:
-# safetensors, or an AWQ/GPTQ/compressed-tensors quant. gpu_memory_utilization
-# and max_model_len are left unset so preflight sizes both from free host RAM.
-
 models:
   - name: "qwen-cpu"
     model: "Qwen/Qwen3-8B-AWQ"

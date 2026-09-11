@@ -24,6 +24,20 @@ cleanup() {
             docker rm -f "$c" >/dev/null 2>&1 || true
         fi
     done
+    if [[ -n "${BENCH_NET:-}" ]]; then
+        docker network rm "$BENCH_NET" >/dev/null 2>&1 || true
+    fi
+}
+
+# modelship answers under the gateway's route prefix; the vanilla server it
+# wraps answers at the root.
+arm_base_url() {
+    local host="$1" port="$2" container="$3"
+    if [[ "$container" == "$MODELSHIP_CONTAINER" ]]; then
+        printf 'http://%s:%s%s' "$host" "$port" "$GATEWAY_PREFIX"
+    else
+        printf 'http://%s:%s' "$host" "$port"
+    fi
 }
 
 wait_ready() {
@@ -32,7 +46,7 @@ wait_ready() {
     while (( $(date +%s) < deadline )); do
         # /v1/models reachable AND lists the served model id
         local response
-        if response=$(curl -fsS http://localhost:8000/v1/models 2>/dev/null); then
+        if response=$(curl -fsS "$(arm_base_url localhost "$API_PORT" "$name")/v1/models" 2>/dev/null); then
             if python3 -c "import sys, json; data = json.loads(sys.argv[1]); print('match' if any(m.get('id') == sys.argv[2] for m in data.get('data', [])) else '')" "$response" "$SERVED_NAME" | grep -q "match"; then
                 return 0
             fi
@@ -49,6 +63,15 @@ wait_ready() {
     return 1
 }
 
+# Used VRAM summed over the GPUs the run is pinned to ($GPU_DEVICE, the same
+# id list handed to docker --gpus). Empty when nvidia-smi is absent.
+gpu_used_mib() {
+    command -v nvidia-smi >/dev/null 2>&1 || return 0
+    nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits \
+        -i "${GPU_DEVICE:-0}" 2>/dev/null \
+        | awk '{t+=$1} END {if (NR) printf "%d", t}'
+}
+
 start_mem_sampler() {
     local stack="$1"
     local container="$2"
@@ -60,7 +83,7 @@ start_mem_sampler() {
             ts=$(date +%s)
             # || true: avoid aborting this subshell under pipefail+set -e.
             # No nvidia-smi (CPU host) just leaves vram at 0.
-            vram=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ') || true
+            vram=$(gpu_used_mib) || true
             # docker stats MemUsage is "1.234GiB / 64GiB" — take the first field
             # and normalize any unit (binary or decimal, any case) to MiB.
             cmem=$(docker stats --no-stream --format '{{.MemUsage}}' "$container" 2>/dev/null \
@@ -114,7 +137,7 @@ start_component_sampler() {
         local best=-1 comp score
         while :; do
             # || true: a failed scrape under pipefail+set -e must not kill the loop.
-            comp=$(curl -fsS http://localhost:8079/metrics 2>/dev/null \
+            comp=$(curl -fsS "http://localhost:$METRICS_PORT/metrics" 2>/dev/null \
                 | awk '/^ray_component_(uss_mb|rss_mb|mem_shared_bytes)[{ ]/') || true
             if [[ -n "$comp" ]]; then
                 # Score = total private (USS); $NF is robust to spaces in
@@ -146,12 +169,16 @@ vram_gate() {
     if ! command -v nvidia-smi >/dev/null 2>&1; then
         return 0
     fi
+    # The floor is per selected GPU, since the reading is summed over them.
+    local ngpus threshold
+    ngpus=$(awk -F, '{print NF}' <<< "${GPU_DEVICE:-0}")
+    threshold=$(( 500 * ngpus ))
     local deadline=$(( $(date +%s) + 60 ))
     while (( $(date +%s) < deadline )); do
         local used
-        # tr -dc digits: "" on error/non-numeric output; || true for pipefail+set -e.
-        used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9') || true
-        if [[ -n "$used" ]] && (( used < 500 )); then return 0; fi
+        # "" on error/non-numeric output; || true for pipefail+set -e.
+        used=$(gpu_used_mib) || true
+        if [[ -n "$used" ]] && (( used < threshold )); then return 0; fi
         sleep 1
     done
     echo "warn: VRAM not freed within 60s" >&2
@@ -226,21 +253,28 @@ run_sweep() {
     # nondeterministic. Also makes a rare llama-server grammar-rejection
     # (triggered by --ignore-eos forcing past EOS) deterministic and symmetric
     # across both arms, instead of landing randomly on one.
-    docker run --rm --network host --user "$(id -u):$(id -g)" \
+    # Addressed by container name on the server arm's own bridge, so the load
+    # never crosses a published port.
+    local server_container="$MODELSHIP_CONTAINER"
+    [[ "$stack" == "baseline" ]] && server_container="$BASELINE_CONTAINER"
+
+    docker run --rm --network "$BENCH_NET" --user "$(id -u):$(id -g)" \
         "${extra_client_args[@]}" \
-        -v "$out_dir:/out:rw" "$IMAGE" \
-        bash -lc "cd /modelship && uv run --active --no-sync vllm bench serve \
+        -e HF_HOME=/.cache/huggingface \
+        -v "$CACHE_DIR:/.cache:rw" \
+        -v "$out_dir:/out:rw" --entrypoint vllm "$IMAGE" \
+        bench serve \
             --backend openai-chat \
-            --base-url http://localhost:8000 \
+            --base-url "$(arm_base_url "$server_container" 8000 "$server_container")" \
             --endpoint /v1/chat/completions \
-            --model $SERVED_NAME \
-            --tokenizer $TOKENIZER \
+            --model "$SERVED_NAME" \
+            --tokenizer "$TOKENIZER" \
             --dataset-name random \
-            --random-input-len $INPUT_LEN \
-            --random-output-len $OUTPUT_LEN \
-            --num-prompts $NUM_PROMPTS \
-            --max-concurrency $CONCURRENCY \
-            --num-warmups $NUM_WARMUPS \
+            --random-input-len "$INPUT_LEN" \
+            --random-output-len "$OUTPUT_LEN" \
+            --num-prompts "$NUM_PROMPTS" \
+            --max-concurrency "$CONCURRENCY" \
+            --num-warmups "$NUM_WARMUPS" \
             --ignore-eos \
             --temperature 0 \
             --percentile-metrics ttft,tpot,itl,e2el \
@@ -248,7 +282,7 @@ run_sweep() {
             --save-result \
             --save-detailed \
             --result-dir /out \
-            --result-filename $fname"
+            --result-filename "$fname"
 }
 
 scrape_prom() {
@@ -257,7 +291,7 @@ scrape_prom() {
     # scrape suffices; per-component memory (a gauge) is sampled separately
     # under load, in start_component_sampler. || true: an empty scrape must
     # not abort the run under pipefail.
-    curl -fsS http://localhost:8079/metrics 2>/dev/null \
+    curl -fsS "http://localhost:$METRICS_PORT/metrics" 2>/dev/null \
         | awk '/^ray_modelship_(request|generation)_duration_seconds_(sum|count)/ \
               || /^ray_serve_request_router_fulfillment_time_ms_(sum|count)/' \
         > "$out" || true
@@ -266,7 +300,7 @@ scrape_prom() {
 assert_launch_parity() {
     echo "=== verifying launch-args parity ==="
     python3 - "$RESULTS_DIR" "$LOADER" <<'PY'
-import sys, re, ast, shlex, os
+import sys, re, ast, json, shlex, os
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -299,23 +333,32 @@ if loader == "llama_server":
         sys.exit("Could not find 'rawllama exec:' in baseline log")
     b_args = shlex.split(b_match.group(1))
 
+    # Legitimately different between the arms.
+    IGNORED = {"--host", "--port", "--api-key", "--alias"}
+    # Compared by basename: the same weights resolve under different roots.
+    PATH_VALUED = {"-m", "--mmproj", "--chat-template-file", "--chat-template"}
+
+    def is_flag(token):
+        """`-1` is a value (llama.cpp's auto-fit), `-ngl` is a flag."""
+        return token.startswith("-") and re.match(r"^-+\d", token) is None
+
     def normalize_llama_args(args):
+        """Each flag is paired with its own value, so swapping two values
+        between flags is a difference rather than the same token multiset."""
         res = list(args[1:])
         normalized = []
         i = 0
         while i < len(res):
             arg = res[i]
-            if arg in ["--host", "--port", "--api-key"]:
+            has_value = i + 1 < len(res) and not is_flag(res[i + 1])
+            if arg in IGNORED:
+                i += 2 if has_value else 1
+            elif arg in PATH_VALUED:
+                normalized.append((arg, normalize_path(res[i + 1]) if has_value else ""))
+                i += 2 if has_value else 1
+            elif has_value:
+                normalized.append((arg, res[i + 1]))
                 i += 2
-            elif arg in ["--alias"]:
-                i += 2
-            elif arg in ["-m", "--mmproj", "--chat-template-file", "--chat-template"]:
-                if i + 1 < len(res):
-                    normalized.append((arg, normalize_path(res[i+1])))
-                    i += 2
-                else:
-                    normalized.append((arg, ""))
-                    i += 1
             else:
                 normalized.append((arg, ""))
                 i += 1
@@ -330,69 +373,117 @@ if loader == "llama_server":
 
     if m_norm != b_norm:
         print("LAUNCH PARITY FAILED for llama_server!", file=sys.stderr)
-        print(f"Modelship: {m_norm}", file=sys.stderr)
-        print(f"Baseline:  {b_norm}", file=sys.stderr)
+        for only_in, other, label in ((m_norm, b_norm, "modelship"), (b_norm, m_norm, "baseline")):
+            for item in sorted(set(only_in) - set(other)):
+                print(f"  only in {label}: {item[0]} {item[1]}".rstrip(), file=sys.stderr)
         sys.exit(1)
     else:
         print("LAUNCH PARITY PASSED for llama_server.")
 
 elif loader == "vllm":
-    # Derived, so modelship logs it beside the kwargs dict, not inside it.
+    # Both derived at the engine boundary, so modelship logs them beside the
+    # kwargs dict rather than inside it.
     m_match = re.search(
-        r"initialising vllm engine with args:\s*(\{.*\})\s*\(model=.*?gpu_memory_utilization=([\d.]+)\)",
+        r"initialising vllm engine with args:\s*(\{.*\})\s*\(model=.*?"
+        r"gpu_memory_utilization=([\d.]+),\s*max_model_len=(-?\d+),\s*"
+        r"distributed_executor_backend=(\S+?)\)",
         m_content,
     )
     if not m_match:
         sys.exit("Could not find 'initialising vllm engine with args:' in modelship log")
     m_dict = ast.literal_eval(m_match.group(1))
     m_dict["gpu_memory_utilization"] = float(m_match.group(2))
+    m_dict["max_model_len"] = int(m_match.group(3))
+    # vLLM's own default for a single-slot deploy; the flag is then absent on
+    # both sides.
+    m_dict["distributed_executor_backend"] = None if m_match.group(4) == "None" else m_match.group(4)
+
+    # Auto-detected from the chat template after the engine is up, so they land
+    # on their own line rather than in the kwargs dict.
+    p_match = re.search(
+        r"resolved vllm parsers for '.*': enable_auto_tools=(\S+), tool_parser=(\S+), reasoning_parser=(\S+)",
+        m_content,
+    )
+    if not p_match:
+        sys.exit("Could not find 'resolved vllm parsers for' in modelship log")
+    m_dict["enable_auto_tool_choice"] = p_match.group(1) == "True"
+    m_dict["tool_call_parser"] = None if p_match.group(2) == "None" else p_match.group(2)
+    m_dict["reasoning_parser"] = None if p_match.group(3) == "None" else p_match.group(3)
 
     b_match = re.search(r"rawvllm exec:\s*(.*)", b_content)
     if not b_match:
         sys.exit("Could not find 'rawvllm exec:' in baseline log")
     b_args = shlex.split(b_match.group(1))
 
+    def coerce(val):
+        try:
+            return int(val)
+        except ValueError:
+            pass
+        try:
+            return float(val)
+        except ValueError:
+            return val
+
     def parse_vllm_flags(args):
+        """A flag followed by another flag (or nothing) is a store_true; vLLM
+        spells the negation `--no-<name>`."""
         parsed = {}
-        flag_start = 0
-        for idx, arg in enumerate(args):
-            if arg.startswith('--'):
-                flag_start = idx
-                break
-        
-        i = flag_start
+        i = 0
         while i < len(args):
             arg = args[i]
-            if arg.startswith('--'):
-                name = arg[2:].replace('-', '_')
-                if name in ['enforce_eager', 'trust_remote_code', 'enable_auto_tool_choice']:
-                    parsed[name] = True
-                elif i + 1 < len(args):
-                    val = args[i+1]
-                    if val.isdigit():
-                        parsed[name] = int(val)
-                    else:
-                        try:
-                            parsed[name] = float(val)
-                        except ValueError:
-                            parsed[name] = val
-                    i += 1
+            if not arg.startswith("--"):
+                i += 1
+                continue
+            name = arg[2:].replace("-", "_")
+            if i + 1 < len(args) and not args[i + 1].startswith("--"):
+                parsed[name] = coerce(args[i + 1])
+                i += 2
+                continue
+            if name.startswith("no_"):
+                parsed[name[3:]] = False
+            else:
+                parsed[name] = True
             i += 1
         return parsed
 
     b_dict = parse_vllm_flags(b_args)
 
+    # Every engine arg VllmInfer forwards that the raw arm can also set. A key
+    # missing on one side compares as None against the other's value.
     fields = [
         'gpu_memory_utilization',
+        'max_model_len',
         'tensor_parallel_size',
         'pipeline_parallel_size',
         'dtype',
+        'tokenizer',
         'quantization',
         'kv_cache_dtype',
         'enforce_eager',
         'trust_remote_code',
-        'max_model_len',
+        'enable_prefix_caching',
+        'max_num_batched_tokens',
+        'max_num_seqs',
+        'enable_auto_tool_choice',
+        'tool_call_parser',
+        'reasoning_parser',
+        'enable_log_requests',
+        'disable_log_stats',
+        'chat_template_content_format',
+        'limit_mm_per_prompt',
+        'mm_processor_kwargs',
+        'distributed_executor_backend',
     ]
+    # modelship dumps these as dicts; the raw arm's flag carries JSON text.
+    JSON_VALUED = {'limit_mm_per_prompt', 'mm_processor_kwargs'}
+
+    def canon_json(val):
+        if isinstance(val, str):
+            val = json.loads(val)
+        if not val:
+            return None
+        return json.dumps(val, sort_keys=True)
 
     m_norm = {}
     b_norm = {}
@@ -400,6 +491,13 @@ elif loader == "vllm":
     for fld in fields:
         mv = m_dict.get(fld)
         bv = b_dict.get(fld)
+        # vLLM's own default for an unset kv cache dtype.
+        if fld == 'kv_cache_dtype':
+            mv = mv or 'auto'
+            bv = bv or 'auto'
+        if fld in JSON_VALUED:
+            mv = canon_json(mv)
+            bv = canon_json(bv)
         if mv in [None, False]:
             mv = None
         if bv in [None, False]:
@@ -416,12 +514,44 @@ elif loader == "vllm":
 
     if m_norm != b_norm:
         print("LAUNCH PARITY FAILED for vllm!", file=sys.stderr)
-        print(f"Modelship: {m_norm}", file=sys.stderr)
-        print(f"Baseline:  {b_norm}", file=sys.stderr)
+        for fld in fields:
+            if m_norm[fld] != b_norm[fld]:
+                print(f"  {fld}: modelship={m_norm[fld]!r} baseline={b_norm[fld]!r}", file=sys.stderr)
         sys.exit(1)
     else:
         print("LAUNCH PARITY PASSED for vllm.")
 PY
+}
+
+# Preflight reads free RAM/VRAM, which moves between the two phases. Phase B
+# replays phase A's resolved values; its flag translation still runs
+# independently, so assert_launch_parity still checks it.
+pin_baseline_engine_args() {
+    local log="$RESULTS_DIR/${MODELSHIP_CONTAINER}.log"
+    [[ -f "$log" ]] || { echo "  warn: no modelship log to pin baseline args from" >&2; return 0; }
+
+    if [[ "$LOADER" == "vllm" ]]; then
+        local gmu mml
+        gmu=$(sed -n 's/.*gpu_memory_utilization=\([0-9.]*\), max_model_len=.*/\1/p' "$log" | tail -1)
+        mml=$(sed -n 's/.*gpu_memory_utilization=[0-9.]*, max_model_len=\(-\?[0-9]*\)[,)].*/\1/p' "$log" | tail -1)
+        [[ -n "$gmu" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_GPU_MEMORY_UTILIZATION=$gmu")
+        [[ -n "$mml" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_MAX_MODEL_LEN=$mml")
+        echo "  baseline pinned to phase A: gpu_memory_utilization=${gmu:-unset} max_model_len=${mml:-unset}"
+    else
+        local args_line ctx ngl ts
+        args_line=$(grep -o "llama-server launch args for .*" "$log" | tail -1)
+        [[ -n "$args_line" ]] || { echo "  warn: no llama-server launch args in the modelship log" >&2; return 0; }
+        ctx=$(grep -o "'-c', '[0-9-]*'" <<< "$args_line" | grep -oE -- '-?[0-9]+' | tail -1)
+        ngl=$(grep -o "'-ngl', '[0-9-]*'" <<< "$args_line" | grep -oE -- '-?[0-9]+' | tail -1)
+        # Emitted only for a multi-GPU split.
+        ts=$(grep -o "'-ts', '[0-9.,]*'" <<< "$args_line" | grep -oE -- '[0-9.,]+' | tail -1) || true
+        [[ -n "$ctx" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_N_CTX_TOTAL=$ctx")
+        [[ -n "$ngl" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_N_GPU_LAYERS=$ngl")
+        # Pinned even when empty: phase A launching without a split is itself
+        # the value to replay, and fit-params re-derives one from free VRAM.
+        BASELINE_ENV_ARGS+=(-e "BENCH_PIN_TENSOR_SPLIT=$ts")
+        echo "  baseline pinned to phase A: -c ${ctx:-unset} -ngl ${ngl:-unset} -ts ${ts:-none}"
+    fi
 }
 
 # Fails the run if one arm silently drops more requests than the other — the

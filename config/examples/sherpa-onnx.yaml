@@ -1,25 +1,16 @@
-# sherpa_onnx loader examples — in-process sherpa-onnx TTS via its Python
-# bindings. See docs/model-configuration.md for the full reference.
-
 models:
-  # Registry name; the tarball is fetched, sha256-verified, and cached under
-  # <cache_root>/sherpa_onnx/kokoro-en-v0_19/ on first use.
   - name: "kokoro"
     model: "kokoro-en-v0_19"
     usecase: "tts"
     loader: "sherpa_onnx"
     num_cpus: 2
 
-  # Multi-language variant — same registry mechanism, more voices.
   - name: "kokoro-multi-lang"
     model: "kokoro-multi-lang-v1_0"
     usecase: "tts"
     loader: "sherpa_onnx"
     num_cpus: 2
 
-  # Local directory instead of a download; basename must match a registry
-  # name above (`kokoro-en-v0_19`), which is how the loader knows what to
-  # expect inside it.
   - name: "kokoro-local"
     model: "/models/kokoro-en-v0_19"
     usecase: "tts"

@@ -1,15 +1,10 @@
-# whispercpp loader examples — in-process whisper.cpp speech-to-text via
-# pywhispercpp. See docs/model-configuration.md for the full reference.
-
 models:
-  # Bare pywhispercpp built-in name; downloaded/cached by pywhispercpp itself.
   - name: "whisper-cpp-tiny"
     model: "tiny.en"
     usecase: "transcription"
     loader: "whispercpp"
     num_cpus: 1
 
-  # HF repo:filename, resolved the same way as every other loader.
   - name: "whisper-cpp-base"
     model: "ggerganov/whisper.cpp:ggml-base.en.bin"
     usecase: "transcription"
@@ -18,14 +13,12 @@ models:
     whispercpp_config:
       n_threads: 2
 
-  # Local-path ggml model; bind-mount the file into the container.
   - name: "whisper-cpp-local"
     model: "/.cache/huggingface/ggml-base.en.bin"
     usecase: "transcription"
     loader: "whispercpp"
     num_cpus: 2
 
-  # Metal offload on Apple Silicon; ignored (with a warning) everywhere else.
   - name: "whisper-cpp-metal"
     model: "base.en"
     usecase: "transcription"

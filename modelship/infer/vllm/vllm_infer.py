@@ -333,12 +333,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         )
 
         self.vllm_engine_kwargs: VllmEngineConfig = VllmEngineConfig(**config_engine_kwargs)
-        logger.info(
-            "initialising vllm engine with args: %s (model=%s, gpu_memory_utilization=%s)",
-            self.vllm_engine_kwargs.model_dump(),
-            self._model_path,
-            self._gpu_memory_utilization,
-        )
+        # Derived at the engine boundary, so logged beside the kwargs dump
+        # rather than inside it, which reads None where the engine gets -1.
+        self._max_model_len = resolve_max_model_len(self.vllm_engine_kwargs)
 
         # Force the ray executor for multi-slot deploys: the outer actor sits
         # in a 0-GPU PG bundle, but vLLM's ParallelConfig validates world_size
@@ -347,6 +344,16 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         # inherited placement group).
         world_size = self.vllm_engine_kwargs.tensor_parallel_size * self.vllm_engine_kwargs.pipeline_parallel_size
         distributed_executor_backend = "ray" if world_size > 1 else None
+
+        logger.info(
+            "initialising vllm engine with args: %s (model=%s, gpu_memory_utilization=%s, max_model_len=%s, "
+            "distributed_executor_backend=%s)",
+            self.vllm_engine_kwargs.model_dump(),
+            self._model_path,
+            self._gpu_memory_utilization,
+            self._max_model_len,
+            distributed_executor_backend,
+        )
 
         # Multimodal knobs: only forward when the user set them so we inherit
         # vLLM's own defaults (empty dict / None) otherwise.
@@ -360,7 +367,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             model=self._model_path,
             tensor_parallel_size=self.vllm_engine_kwargs.tensor_parallel_size,
             pipeline_parallel_size=self.vllm_engine_kwargs.pipeline_parallel_size,
-            max_model_len=resolve_max_model_len(self.vllm_engine_kwargs),
+            max_model_len=self._max_model_len,
             dtype=cast("VllmModelDType", self.vllm_engine_kwargs.dtype),
             tokenizer=self.vllm_engine_kwargs.tokenizer,
             trust_remote_code=self.vllm_engine_kwargs.trust_remote_code,
@@ -534,6 +541,16 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         tool_parser_name = resolve_tool_parser(self.model_config, template)
         enable_tools = tool_parser_name is not None
         reasoning_parser_name = resolve_reasoning_parser(self.model_config, template) or ""
+
+        # Resolved from the chat template, not from config, so neither name
+        # appears in the engine-kwargs dump the bench compares against.
+        logger.info(
+            "resolved vllm parsers for '%s': enable_auto_tools=%s, tool_parser=%s, reasoning_parser=%s",
+            self.model_config.name,
+            enable_tools,
+            tool_parser_name,
+            reasoning_parser_name or None,
+        )
 
         self._enable_auto_tools = enable_tools
         self.openai_serving_render = VllmOnlineRenderer(

@@ -1,5 +1,3 @@
-# Diffusers loader example — image generation on GPU.
-
 models:
   - name: "sd-turbo"
     model: "stabilityai/sdxl-turbo"

@@ -29,7 +29,8 @@ integration`, or a single area via its own marker (e.g. `-m blue_green`).
 Alongside these, a cluster-wide deploy coordinator serializes model loads so a
 tight-on-VRAM cluster never loads two models concurrently, and `/v1/responses`
 passes the independent [Open Responses](https://github.com/openresponses/openresponses)
-compliance suite 17/17.
+compliance suite 17/17 — on both the `vllm` and `llama_server` loaders, which
+agreed on every test when re-audited 2026-09-10.
 
 ## Hardening roadmap
 
