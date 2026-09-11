@@ -113,8 +113,10 @@ def main() -> int:
     # num_gpus=0 deploy may still see every GPU — force no offload.
     if m.num_gpus > 0:
         args += ["-ngl", str(n_gpu_layers)]
-        if k.tensor_split:
-            args += ["-ts", ",".join(str(v) for v in k.tensor_split)]
+        # fit-params sizes the split from free VRAM, so it is replayed too.
+        tensor_split = _pinned("TENSOR_SPLIT", ",".join(str(v) for v in k.tensor_split) if k.tensor_split else "")
+        if tensor_split:
+            args += ["-ts", tensor_split]
         # Bypasses Ray's own CUDA_VISIBLE_DEVICES restriction — set it explicitly.
         # A fractional num_gpus rounds up to one device.
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(max(1, math.ceil(m.num_gpus))))

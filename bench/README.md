@@ -213,7 +213,10 @@ Notes:
   can legitimately land on a different reservation — a difference that would make
   the two arms incomparable rather than reveal a defect. `pin_baseline_engine_args`
   extracts what the modelship arm actually launched with and passes it to the
-  baseline, which logs both the pinned and the derived value. The flag
+  baseline, which logs both the pinned and the derived value — for vllm
+  `gpu_memory_utilization` and `max_model_len`, for llama_server `-c`, `-ngl`
+  and the `-ts` tensor split, all of which `fit-params` sizes from free VRAM.
+  The flag
   translation still runs independently, so a translation bug still fails the run.
 - **Launch parity check**: after both phases run, the harness extracts each
   phase's effective launch command from its container logs, normalizes
