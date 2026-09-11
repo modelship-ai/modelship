@@ -142,7 +142,7 @@ DOCKER_GPU_ARGS=()
 if [[ "$DEVICE" == "gpu" ]]; then
     # The samplers query these same ids, so an unusable one must fail here.
     if command -v nvidia-smi >/dev/null 2>&1; then
-        nvidia-smi -i "$GPU_DEVICE" -L >/dev/null 2>&1 \
+        nvidia-smi -i "$GPU_DEVICE" --query-gpu=index --format=csv,noheader >/dev/null 2>&1 \
             || { echo "--gpu-device $GPU_DEVICE: no such device on this host" >&2; exit 2; }
     fi
     # docker reads --gpus as CSV, so a multi-device id list needs the embedded quotes.
