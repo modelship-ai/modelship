@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="120 80 440 440" width="512" height="512" role="img" aria-label="modelship">
+  <title>modelship</title>
+  <style>
+    .fav { fill: #0B2545; }
+    @media (prefers-color-scheme: dark) {
+      .fav { fill: #EAF0F7; }
+    }
+  </style>
+  <g class="fav">
+    <polygon points="335,150 252,398 335,398"/>
+    <polygon points="345,150 345,398 428,398"/>
+    <path d="M199,404 Q340,545 481,404 Q340,486 199,404 Z"/>
+  </g>
+</svg>

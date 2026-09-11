@@ -1,0 +1,1553 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="The production backend for self-hosted agents — the OpenAI Responses API, universal tool calling, and reasoning, alongside embeddings, speech, and image generation, behind one OpenAI-compatible endpoint. Built on Ray Serve.">
+      
+      
+      
+        <link rel="canonical" href="https://docs.model-ship.ai/multi-node-docker/">
+      
+      
+        <link rel="prev" href="../production-readiness/">
+      
+      
+        <link rel="next" href="../development/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Multi-node without Kubernetes - Modelship</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#multi-node-without-kubernetes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Modelship" class="md-header__button md-logo" aria-label="Modelship" data-md-component="logo">
+      
+  <img src="../assets/logo-dark.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Modelship
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Multi-node without Kubernetes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/modelship-ai/modelship" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    modelship-ai/modelship
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Modelship" class="md-nav__button md-logo" aria-label="Modelship" data-md-component="logo">
+      
+  <img src="../assets/logo-dark.svg" alt="logo">
+
+    </a>
+    Modelship
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/modelship-ai/modelship" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    modelship-ai/modelship
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview & quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Installation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install-docker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install-native/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install-helm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Helm / Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production-readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production Readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-node without Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-node without Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#non-negotiables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-negotiables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start-a-two-vm-cluster" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick start: a two-VM cluster
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ports-and-firewall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ports and firewall
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-node-weight-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-node weight cache
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-aware-scheduling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capability-aware scheduling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mship_state_storeredis-is-the-multi-node-recommendation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MSHIP_STATE_STORE=redis:// is the multi-node recommendation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#co-location-running-more-than-one-node-per-physical-box" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Co-location: running more than one node per physical box
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Co-location: running more than one node per physical box">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#head-farm-several-cluster-heads-on-one-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Head-farm: several cluster heads on one machine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-gpu-shared-across-two-clusters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One GPU, shared across two clusters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../integrations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Integrations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/openai-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenAI SDK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/open-webui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Open WebUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/dify/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dify
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/n8n/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    n8n
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/responses-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Responses-speaking agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#non-negotiables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-negotiables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start-a-two-vm-cluster" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick start: a two-VM cluster
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ports-and-firewall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ports and firewall
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-node-weight-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-node weight cache
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-aware-scheduling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capability-aware scheduling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mship_state_storeredis-is-the-multi-node-recommendation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MSHIP_STATE_STORE=redis:// is the multi-node recommendation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#co-location-running-more-than-one-node-per-physical-box" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Co-location: running more than one node per physical box
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Co-location: running more than one node per physical box">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#head-farm-several-cluster-heads-on-one-machine" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Head-farm: several cluster heads on one machine
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-gpu-shared-across-two-clusters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One GPU, shared across two clusters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/modelship-ai/modelship/edit/main/docs/multi-node-docker.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="multi-node-without-kubernetes">Multi-node without Kubernetes<a class="headerlink" href="#multi-node-without-kubernetes" title="Permanent link">&para;</a></h1>
+<p>Modelship has two well-worn rungs: one container running its own Ray head, or full
+Kubernetes via the <a href="https://github.com/modelship-ai/modelship/blob/main/helm/modelship/README.md">Helm chart</a>. This page covers the
+rung in between — a handful of plain <code>docker run</code> VMs, no cluster orchestrator,
+joined into one Ray cluster via <code>--address</code>/<code>--token</code>.</p>
+<p>If you're choosing a topology from scratch: single container is right until you
+need more GPUs than one box has; this page is right for a few-VM fleet you manage
+by hand; Kubernetes is right once you want autoscaling, self-healing pod
+scheduling, or you already run k8s for everything else.</p>
+<h2 id="non-negotiables">Non-negotiables<a class="headerlink" href="#non-negotiables" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Private network only.</strong> Ray's cluster-internal RPC (GCS, raylet, object
+  manager) is not designed to be internet-facing — <code>RAY_AUTH_MODE=token</code>
+  authenticates it, but the token travels as plaintext and never expires, so it
+  is not encryption and not a substitute for network isolation. Put every node on
+  a private VPC/VLAN; for cross-provider fleets, a VPN (WireGuard is a common,
+  simple choice) that makes the VMs behave like they're on one LAN. Exposing Ray
+  ports to the public internet is exactly the <a href="https://www.oligo.security/blog/shadowray-attack-ai-workloads-actively-exploited-in-the-wild">ShadowRay /
+  CVE-2023-48022</a>
+  exposure class — mass-exploited GPU clusters, arbitrary code execution via the
+  jobs API.</li>
+<li><strong><code>--network=host</code> on every node.</strong> Ray advertises the node's own IP and opens a
+  wide dynamic port range; bridge networking is a well-documented source of pain
+  with it. Host networking on an already-private network sidesteps that entirely.</li>
+<li><strong>Pin every node to the identical release version.</strong> Floating tags (<code>:latest</code>,
+  <code>:latest-cuda</code>, <code>:latest-cpu</code>) are single-node only — Ray refuses to form a
+  cluster across mismatched versions. Multi-node means every <code>docker run</code>, on
+  every VM, uses the same <code>:X.Y.Z</code> release — the thin/<code>-cuda</code>/<code>-cpu</code> suffix can
+  differ per node's role, but the version number can't.</li>
+</ul>
+<h2 id="quick-start-a-two-vm-cluster">Quick start: a two-VM cluster<a class="headerlink" href="#quick-start-a-two-vm-cluster" title="Permanent link">&para;</a></h2>
+<p>VM A becomes the head (control plane + gateway; no models scheduled there) and
+uses the <strong>thin</strong> (bare-tag) image — no torch/vllm needed for that role. VM B
+joins it as a GPU worker on the <code>-cuda</code> tag. Every node in a multi-node cluster
+must share the same version, even across variants — pin all of them to the
+identical <code>X.Y.Z</code> release.</p>
+<p><strong>VM A — head, with cluster auth enabled:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--network<span class="o">=</span>host<span class="w"> </span>--shm-size<span class="o">=</span>8g<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>-v<span class="w"> </span>./models.yaml:/modelship/config/models.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>-v<span class="w"> </span>./models-cache:/.cache<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>-e<span class="w"> </span><span class="nv">MSHIP_STATE_STORE</span><span class="o">=</span>redis://your-redis-host:6379/0<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>ghcr.io/modelship-ai/modelship:0.6.5<span class="w"> </span>deploy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span>--ray-auth<span class="o">=</span>token<span class="w"> </span>--ray-port<span class="o">=</span><span class="m">6380</span>
+</code></pre></div>
+<p><code>--ray-port</code> defaults to <code>6380</code> already (deliberately not Ray's own <code>6379</code>
+default, which collides with the Redis state store above under host
+networking) — passed explicitly here only for clarity.</p>
+<p>Retrieve the token a joiner needs (Ray generates and owns it; modelship never
+writes or logs it):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>&lt;head-container&gt;<span class="w"> </span>cat<span class="w"> </span>~/.ray/auth_token
+</code></pre></div>
+<p><strong>VM B — joins VM A as a GPU worker:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--network<span class="o">=</span>host<span class="w"> </span>--shm-size<span class="o">=</span>8g<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-v<span class="w"> </span>./models-cache:/.cache<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>ghcr.io/modelship-ai/modelship:0.6.5-cuda<span class="w"> </span>deploy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--address<span class="o">=</span>&lt;vm-a-private-ip&gt;:6380<span class="w"> </span>--token<span class="o">=</span>&lt;token-from-above&gt;
+</code></pre></div>
+<p>No <code>--config</code> is needed on the joiner — it contributes compute and reconciles
+the cluster to whatever the head's effective config already wants deployed (the
+same self-heal mechanism <code>--reconcile</code> uses after a cluster loss). Pass
+<code>--config</code>/<code>--reconcile</code> on a joiner only if you also want it to change the
+desired model set, not just add capacity.</p>
+<p><strong><code>--token</code> only means anything if the head runs <code>--ray-auth=token</code>.</strong> Joining
+with a token against a head that has auth disabled doesn't fail — the joiner's
+own node starts demanding bearer tokens on <em>inbound</em> RPC while the head never
+sends them, so the join looks like it succeeded and then cluster↔worker traffic
+fails confusingly. There's no reliable way to detect this from the joining side;
+treat "auth enabled on the head" and "token passed on the join" as a matched
+pair you set deliberately, not independent toggles.</p>
+<h2 id="ports-and-firewall">Ports and firewall<a class="headerlink" href="#ports-and-firewall" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>What</th>
+<th>Configurable via</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>8000</code></td>
+<td>Gateway HTTP API (<code>ProxyLocation.EveryNode</code> — every node with ≥1 replica runs a proxy)</td>
+<td><code>--openai-api-port</code></td>
+</tr>
+<tr>
+<td><code>8079</code></td>
+<td>Prometheus metrics</td>
+<td><code>RAY_METRICS_EXPORT_PORT</code> (own-head); left dynamic on a joiner by design, since the head's own service-discovery file picks it up automatically</td>
+</tr>
+<tr>
+<td><code>8265</code></td>
+<td>Ray dashboard (head only)</td>
+<td><code>--dashboard-port</code> (bind host separately via <code>MSHIP_RAY_DASHBOARD</code>, default <code>127.0.0.1</code> — keep it there unless you have a specific reason to expose it)</td>
+</tr>
+<tr>
+<td>GCS (head control plane)</td>
+<td>what a joiner's <code>--address</code> points at</td>
+<td><code>--ray-port</code> (default <code>6380</code>)</td>
+</tr>
+<tr>
+<td><code>10002–19999</code> + node/object manager</td>
+<td>Ray's dynamic worker range</td>
+<td>not configurable; open the range between fleet nodes</td>
+</tr>
+</tbody>
+</table>
+<p>Open cluster ports <strong>only between fleet nodes</strong> on the private network. From
+outside that network, only <code>8000</code> (the gateway) should be reachable at all,
+ideally behind TLS termination.</p>
+<h2 id="per-node-weight-cache">Per-node weight cache<a class="headerlink" href="#per-node-weight-cache" title="Permanent link">&para;</a></h2>
+<p>Each node downloads its own copy of whatever models get scheduled onto it —
+built-in loaders resolve and validate model references on the driver (auth
+failures, missing repos, bad selectors all surface immediately at startup), but
+the actual weight download happens <strong>on the node hosting the replica</strong>, not the
+driver. A thin head therefore never downloads model weights at all, and a
+worker only pulls what it's actually asked to run.</p>
+<p>This means, per fleet:
+- Every node that can host a given model needs its own disk for that model's
+  weights, and its own egress from HuggingFace (or wherever the weights live).
+- A <strong>shared NFS/EFS mount</strong> for the cache directory (<code>MSHIP_CACHE_DIR</code>) is an
+  optional optimization — every node dedupes onto one copy — not a requirement.
+  If you don't have shared storage, per-node caches work correctly on their own.
+- Local-path <code>model:</code> references (as opposed to a HuggingFace repo id) are
+  resolved on whichever node actually hosts the replica — the file must exist at
+  that path on every node that could host it, since there's no cross-node
+  copying of a local reference.</p>
+<h2 id="capability-aware-scheduling">Capability-aware scheduling<a class="headerlink" href="#capability-aware-scheduling" title="Permanent link">&para;</a></h2>
+<p>Every node advertises <code>mship_&lt;loader&gt;</code> Ray custom resources for whatever it can
+actually run (probed via <code>importlib.util.find_spec()</code>, plus a real-binary check
+for <code>llama_server</code>), and every deploy requests its loader's resource regardless
+of <code>num_gpus</code>. A thin head advertises none — it never accidentally schedules a
+model onto itself. A worker missing the right extras (e.g. a <code>-cpu</code> node given a
+<code>loader: vllm</code> config that needs <code>cuda</code>) just leaves that deploy pending; Ray's
+own scheduling message names the missing resource, nothing hard-fails at driver
+time. Override the probe wholesale with <code>MSHIP_NODE_CAPABILITIES</code> (JSON) if
+auto-detection is wrong or you want to disable a loader on one node.</p>
+<h2 id="mship_state_storeredis-is-the-multi-node-recommendation"><code>MSHIP_STATE_STORE=redis://</code> is the multi-node recommendation<a class="headerlink" href="#mship_state_storeredis-is-the-multi-node-recommendation" title="Permanent link">&para;</a></h2>
+<p>Without it, the effective config (this gateway's desired model set) and the
+deploy coordinator's routing registry live in a cluster-scoped Ray actor — they
+survive a redeploy or coordinator restart, but not the loss of the head/cluster
+itself. A <code>redis://</code> store survives cluster loss too, so <code>--reconcile</code> with no
+<code>--config</code> on a fresh cluster (or a rejoining node) restores the real model set
+instead of coming back empty. See <a href="../model-configuration/#state-store-mship_state_store">State store
+(<code>MSHIP_STATE_STORE</code>)</a> for
+the full connection-URI reference — the head is otherwise a single point of
+failure for this state, same as it is for Ray's GCS itself.</p>
+<h2 id="co-location-running-more-than-one-node-per-physical-box">Co-location: running more than one node per physical box<a class="headerlink" href="#co-location-running-more-than-one-node-per-physical-box" title="Permanent link">&para;</a></h2>
+<p>Co-location is a supported topology, not a footgun to avoid — the two patterns
+below are deliberate ways to pack more onto hardware you already have. What
+<em>is</em> still your responsibility: fencing which physical resources each container
+gets, so two containers on one box don't both believe they own the same
+hardware. See <a href="https://github.com/modelship-ai/modelship/blob/main/AGENTS.md#gotchas">AGENTS.md's co-location
+note</a> for the full fencing discipline
+(<code>--gpus device=N</code>, <code>--node-memory</code> + <code>--shm-size</code>, <code>--cpuset-cpus</code> +
+<code>--node-num-cpus</code>) — this page only covers the two topologies it unlocks.
+Reserving more GPUs than a container can actually see is refused at startup
+(not silently broken later); each node also logs every GPU it sees, by index,
+name, and UUID, at startup — check that log to confirm two co-located
+containers were actually handed distinct physical cards.</p>
+<h3 id="head-farm-several-cluster-heads-on-one-machine">Head-farm: several cluster heads on one machine<a class="headerlink" href="#head-farm-several-cluster-heads-on-one-machine" title="Permanent link">&para;</a></h3>
+<p>One box can host the control plane for 3-4 independent modelship clusters, each
+a separate own-head container with its own distinct ports:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--network<span class="o">=</span>host<span class="w"> </span>--shm-size<span class="o">=</span>8g<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-v<span class="w"> </span>./cluster-a/models.yaml:/modelship/config/models.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-v<span class="w"> </span>./cluster-a/cache:/.cache<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>ghcr.io/modelship-ai/modelship:0.6.5<span class="w"> </span>deploy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--ray-port<span class="o">=</span><span class="m">6380</span><span class="w"> </span>--openai-api-port<span class="o">=</span><span class="m">8000</span><span class="w"> </span>--dashboard-port<span class="o">=</span><span class="m">8265</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--network<span class="o">=</span>host<span class="w"> </span>--shm-size<span class="o">=</span>8g<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span>-v<span class="w"> </span>./cluster-b/models.yaml:/modelship/config/models.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span>-v<span class="w"> </span>./cluster-b/cache:/.cache<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">  </span>ghcr.io/modelship-ai/modelship:0.6.5<span class="w"> </span>deploy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span>--ray-port<span class="o">=</span><span class="m">6381</span><span class="w"> </span>--openai-api-port<span class="o">=</span><span class="m">8001</span><span class="w"> </span>--dashboard-port<span class="o">=</span><span class="m">8266</span>
+</code></pre></div>
+<p>Each head needs a distinct <code>--ray-port</code>, <code>--openai-api-port</code>, <code>--dashboard-port</code>,
+and <code>RAY_METRICS_EXPORT_PORT</code> — see the port table above for what each one
+gates. Workers on other machines join whichever cluster they're meant to serve,
+by pointing <code>--address</code> at that head's GCS port.</p>
+<h3 id="one-gpu-shared-across-two-clusters">One GPU, shared across two clusters<a class="headerlink" href="#one-gpu-shared-across-two-clusters" title="Permanent link">&para;</a></h3>
+<p>A single physical GPU can back worker containers in two <em>different</em> clusters at
+once — this is plain GPU sharing (the same idea as two vLLM processes each
+capped at <code>gpu_memory_utilization=0.4</code>), not a bookkeeping error, because each
+cluster's resource ledger is independent and has no visibility into the other's:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Joins cluster A</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--network<span class="o">=</span>host<span class="w"> </span>--gpus<span class="w"> </span><span class="nv">device</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>ghcr.io/modelship-ai/modelship:0.6.5-cuda<span class="w"> </span>deploy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>--address<span class="o">=</span>&lt;cluster-a-head&gt;:6380<span class="w"> </span>--node-num-gpus<span class="o">=</span><span class="m">1</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1"># Joins cluster B — same physical GPU, different cluster</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--network<span class="o">=</span>host<span class="w"> </span>--gpus<span class="w"> </span><span class="nv">device</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span>ghcr.io/modelship-ai/modelship:0.6.5-cuda<span class="w"> </span>deploy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span>--address<span class="o">=</span>&lt;cluster-b-head&gt;:6380<span class="w"> </span>--node-num-gpus<span class="o">=</span><span class="m">1</span>
+</code></pre></div>
+<p>Ray does not arbitrate VRAM across independent clusters — that budget is
+yours to manage, the same way you'd size two co-resident models on one GPU
+within a single cluster (fractional <code>num_gpus</code>, which sizes vLLM's
+<code>gpu_memory_utilization</code> for you, or <code>llama_server</code>'s <code>n_gpu_layers</code>) so both
+sides' footprints actually fit together on the card.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="https://github.com/modelship-ai/modelship/blob/main/helm/modelship/README.md">helm/modelship/README.md</a> — the Kubernetes rung:
+  same image variants and version-pinning rule, but autoscaling, self-healing
+  pod scheduling, and (unlike this page's manual token setup) no Ray
+  cluster-auth wiring yet.</li>
+<li><a href="../development/">development.md</a> — the full CLI/env var reference table,
+  image variants, and dev-container setup.</li>
+<li><a href="../model-configuration/">model-configuration.md</a> — <code>models.yaml</code> reference,
+  including the <a href="../model-configuration/#state-store-mship_state_store">state store</a>
+  section referenced above.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.action.edit", "search.suggest", "search.highlight"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

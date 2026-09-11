@@ -1,0 +1,26 @@
+:root {
+  --md-primary-fg-color: #0b2545;
+  --md-primary-fg-color--light: #4a6b8a;
+  --md-primary-fg-color--dark: #081b33;
+  --md-primary-bg-color: #eaf0f7;
+  --md-accent-fg-color: #0e7c86;
+}
+
+[data-md-color-scheme="slate"] {
+  /* Header/tabs use --md-primary-fg-color as their background and
+     --md-typeset-a-color (which defaults to --md-primary-fg-color) for
+     content links — the light-mode ink navy is too close to the dark
+     scheme's near-black body to read, so dark mode gets its own lighter
+     values instead of reusing the light-mode ones. */
+  --md-primary-fg-color: #4a6b8a;
+  --md-primary-fg-color--light: #6f93b3;
+  --md-primary-fg-color--dark: #0b2545;
+  --md-primary-bg-color: #eaf0f7;
+  --md-accent-fg-color: #4fd3de;
+  --md-typeset-a-color: #4fd3de;
+}
+
+[data-md-color-scheme="slate"] .md-button:not(.md-button--primary) {
+  color: var(--md-accent-fg-color);
+  border-color: var(--md-accent-fg-color);
+}
