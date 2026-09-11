@@ -398,6 +398,18 @@ elif loader == "vllm":
     # both sides.
     m_dict["distributed_executor_backend"] = None if m_match.group(4) == "None" else m_match.group(4)
 
+    # Auto-detected from the chat template after the engine is up, so they land
+    # on their own line rather than in the kwargs dict.
+    p_match = re.search(
+        r"resolved vllm parsers for '.*': enable_auto_tools=(\S+), tool_parser=(\S+), reasoning_parser=(\S+)",
+        m_content,
+    )
+    if not p_match:
+        sys.exit("Could not find 'resolved vllm parsers for' in modelship log")
+    m_dict["enable_auto_tool_choice"] = p_match.group(1) == "True"
+    m_dict["tool_call_parser"] = None if p_match.group(2) == "None" else p_match.group(2)
+    m_dict["reasoning_parser"] = None if p_match.group(3) == "None" else p_match.group(3)
+
     b_match = re.search(r"rawvllm exec:\s*(.*)", b_content)
     if not b_match:
         sys.exit("Could not find 'rawvllm exec:' in baseline log")
@@ -455,6 +467,7 @@ elif loader == "vllm":
         'max_num_seqs',
         'enable_auto_tool_choice',
         'tool_call_parser',
+        'reasoning_parser',
         'enable_log_requests',
         'disable_log_stats',
         'chat_template_content_format',

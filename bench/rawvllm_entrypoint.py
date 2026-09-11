@@ -21,13 +21,16 @@ import sys  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import yaml  # noqa: E402
+from vllm.tokenizers import get_tokenizer  # noqa: E402
 
 from modelship.infer.infer_config import (  # noqa: E402
     ModelLoader,
     ModelshipConfig,
+    ModelUsecase,
     resolve_gpu_memory_utilization,
 )
 from modelship.infer.model_resolver import resolve_model_source  # noqa: E402
+from modelship.infer.vllm.parsing.detect import resolve_reasoning_parser, resolve_tool_parser  # noqa: E402
 from modelship.infer.vllm.vllm_infer import resolve_max_model_len  # noqa: E402
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight  # noqa: E402
 from modelship.utils.config_schema import VllmEngineConfig  # noqa: E402
@@ -69,6 +72,21 @@ def main() -> int:
     m._resolved_path = resolve_model_source(m.model, trust_remote_code=m.vllm_engine_kwargs.trust_remote_code)
     print(f"rawvllm resolved model -> {m._resolved_path}", flush=True)
 
+    # VllmInfer auto-detects both parsers from the chat template whenever the
+    # config leaves them unset, so the flags come from the same resolvers rather
+    # than from the config fields. Gated on usecase like init_serving_chat.
+    tool_parser = reasoning_parser = None
+    if m.usecase == ModelUsecase.generate:
+        tokenizer = get_tokenizer(m._resolved_path, trust_remote_code=m.vllm_engine_kwargs.trust_remote_code)
+        try:
+            template = tokenizer.get_chat_template()
+        except ValueError:
+            # A base model carries no template; the actor leaves both unset too.
+            template = None
+        tool_parser = resolve_tool_parser(m, template)
+        reasoning_parser = resolve_reasoning_parser(m, template)
+    print(f"rawvllm parsers: tool={tool_parser} reasoning={reasoning_parser}", flush=True)
+
     # The same recommendation/override merge the actor runs; MSHIP_PREFLIGHT
     # applies to both arms.
     recommendation = run_preflight(m, discover_hardware())
@@ -99,10 +117,11 @@ def main() -> int:
         args += ["--trust-remote-code"]
     if k.quantization:
         args += ["--quantization", k.quantization]
-    if k.enable_auto_tool_choice:
-        args += ["--enable-auto-tool-choice"]
-    if k.tool_call_parser:
-        args += ["--tool-call-parser", k.tool_call_parser]
+    # Resolved above, not read off k: an unset config field still auto-detects.
+    if tool_parser:
+        args += ["--enable-auto-tool-choice", "--tool-call-parser", tool_parser]
+    if reasoning_parser:
+        args += ["--reasoning-parser", reasoning_parser]
     if k.enforce_eager:
         args += ["--enforce-eager"]
     if k.enable_prefix_caching is not None:

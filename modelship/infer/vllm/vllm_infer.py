@@ -542,6 +542,16 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         enable_tools = tool_parser_name is not None
         reasoning_parser_name = resolve_reasoning_parser(self.model_config, template) or ""
 
+        # Resolved from the chat template, not from config, so neither name
+        # appears in the engine-kwargs dump the bench compares against.
+        logger.info(
+            "resolved vllm parsers for '%s': enable_auto_tools=%s, tool_parser=%s, reasoning_parser=%s",
+            self.model_config.name,
+            enable_tools,
+            tool_parser_name,
+            reasoning_parser_name or None,
+        )
+
         self._enable_auto_tools = enable_tools
         self.openai_serving_render = VllmOnlineRenderer(
             model_config=self.engine.model_config,

@@ -228,6 +228,17 @@ Notes:
   covers every `vllm_engine_kwargs` key `VllmInfer` forwards, the multimodal
   `limit_mm_per_prompt`/`mm_processor_kwargs` included, so a vision config can't
   benchmark two different engines.
+- vLLM tool-call and reasoning parsers are auto-detected from the model's chat
+  template whenever the config leaves them unset, so the raw arm calls
+  `resolve_tool_parser`/`resolve_reasoning_parser` itself and passes the result
+  as `--enable-auto-tool-choice --tool-call-parser`/`--reasoning-parser`. Both
+  bench configs hit this: Qwen2.5 resolves to `hermes`, Qwen3 to `hermes` plus
+  `deepseek_r1`. The resolved names never reach the kwargs dump, so the actor
+  logs them on their own line for the parity check to read. Note that the
+  chat-template toggle defaults the actor pins into `chat_template_kwargs` are
+  request-time, not launch flags — `vllm serve` has no equivalent, so a template
+  whose `enable_thinking` default differs from the parser's is the one
+  request-shaping difference this harness cannot equalize.
 - **Tokenizer extraction**: GGUF configs can't be used as Hugging Face repo IDs by
   the bench client, so the harness reads a `# bench-tokenizer: <repo-id>` comment
   from the yaml (inert to modelship). `--tokenizer` overrides it.
