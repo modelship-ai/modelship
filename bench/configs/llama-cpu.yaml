@@ -19,5 +19,5 @@ models:
       #
       # The baseline arm drops ~4-7% of requests to llama-server's own
       # cpp-httplib keep-alive resets (modelship's uvicorn front door absorbs
-      # this); not tunable via llama-server flags. assert_result_parity treats
+      # this); LLAMA_ARG_THREADS_HTTP reduces it. assert_result_parity treats
       # this asymmetry as a non-failing finding, since it favors modelship.

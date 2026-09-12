@@ -867,12 +867,18 @@ async def _raw_stream_chunks(
             logger.warning("chat request %s failed: %s", request_id, detail)
             raise _LlamaServerStreamError(detail) from e
 
+        done = False
         async for line in resp.aiter_lines():
             if not line.startswith("data:"):
                 continue
             data_str = line[len("data:") :].strip()
             if data_str == "[DONE]":
-                return
+                # Returning here leaves the chunked body unfinished, so httpx
+                # discards the connection instead of reusing it.
+                done = True
+                continue
+            if done:
+                continue
             try:
                 data = json.loads(data_str)
             except json.JSONDecodeError:
