@@ -4,6 +4,7 @@
 #
 # Usage: bench/run.sh [--loader vllm|llama_server] [--device gpu|cpu] [--image TAG]
 #                      [--config PATH] [--num-prompts N] [--concurrency N]
+#                      [--request-rate N]
 #                      [--input-len N] [--output-len N] [--num-warmups N] [--repeats N]
 #                      [--preflight on|off] [--gpu-device ID[,ID...]]
 #                      [--api-port N] [--metrics-port N]
@@ -16,6 +17,7 @@ CONFIG=""
 TOKENIZER=""
 NUM_PROMPTS=100
 CONCURRENCY=8
+REQUEST_RATE=""
 INPUT_LEN=128
 OUTPUT_LEN=512
 # Requests sent and discarded before timing, to avoid a cold-start tail
@@ -43,6 +45,7 @@ while [[ $# -gt 0 ]]; do
         --tokenizer) TOKENIZER="$2"; shift 2 ;;
         --num-prompts) NUM_PROMPTS="$2"; shift 2 ;;
         --concurrency) CONCURRENCY="$2"; shift 2 ;;
+        --request-rate) REQUEST_RATE="$2"; shift 2 ;;
         --input-len) INPUT_LEN="$2"; shift 2 ;;
         --output-len) OUTPUT_LEN="$2"; shift 2 ;;
         --num-warmups) NUM_WARMUPS="$2"; shift 2 ;;
@@ -120,6 +123,19 @@ if [[ -n "${NUM_CPUS:-}" ]]; then
     BASELINE_ENV_ARGS+=(-e "OMP_NUM_THREADS=$OMP_THREADS")
 fi
 
+LOAD_SHAPE_ARGS=(--max-concurrency "$CONCURRENCY")
+LOAD_SHAPE="conc=$CONCURRENCY"
+if [[ -n "$REQUEST_RATE" ]]; then
+    LOAD_SHAPE_ARGS=(--request-rate "$REQUEST_RATE")
+    LOAD_SHAPE="rate=$REQUEST_RATE/s"
+fi
+
+# Sized for both arms alike when set; llama-server's own default is -1.
+LLAMA_HTTP_ENV_ARGS=()
+if [[ -n "${LLAMA_ARG_THREADS_HTTP:-}" ]]; then
+    LLAMA_HTTP_ENV_ARGS+=(-e "LLAMA_ARG_THREADS_HTTP=$LLAMA_ARG_THREADS_HTTP")
+fi
+
 MODELSHIP_CONTAINER=bench-modelship
 BASELINE_CONTAINER=bench-baseline
 # Not --network host: an arm binds Ray's GCS, dashboard and proxy on fixed
@@ -175,6 +191,8 @@ start_modelship() {
         -e MSHIP_GATEWAY_NAME="$GATEWAY_NAME" \
         -e MSHIP_GATEWAY_REPLICAS="${MSHIP_GATEWAY_REPLICAS:-1}" \
         -e MSHIP_GATEWAY_MAX_ONGOING="${MSHIP_GATEWAY_MAX_ONGOING:-1024}" \
+        -e MSHIP_LOG_LEVEL="${MSHIP_LOG_LEVEL:-INFO}" \
+        "${LLAMA_HTTP_ENV_ARGS[@]}" \
         -v "$CONFIG:/modelship/config/models.yaml:ro" \
         -v "$CACHE_DIR:/.cache:rw" \
         "${SOURCE_MOUNT[@]}" \
@@ -189,6 +207,7 @@ start_baseline() {
         --network "$BENCH_NET" -p "$API_PORT:8000" \
         -e MSHIP_PREFLIGHT="$MSHIP_PREFLIGHT_ENV" \
         "${BASELINE_ENV_ARGS[@]}" \
+        "${LLAMA_HTTP_ENV_ARGS[@]}" \
         -v "$CONFIG:/modelship/config/models.yaml:ro" \
         -v "$BENCH_DIR/$BASELINE_ENTRYPOINT:/modelship/bench/$BASELINE_ENTRYPOINT:ro" \
         -v "$CACHE_DIR:/.cache:rw" \
@@ -198,7 +217,7 @@ start_baseline() {
         python "/modelship/bench/$BASELINE_ENTRYPOINT" >/dev/null
 }
 
-echo "=== bench $TS — loader=$LOADER device=$DEVICE image=$IMAGE config=$(basename "$CONFIG") prompts=$NUM_PROMPTS conc=$CONCURRENCY in=$INPUT_LEN out=$OUTPUT_LEN warmups=$NUM_WARMUPS repeats=$REPEATS preflight=$PREFLIGHT source=$SOURCE_REV ==="
+echo "=== bench $TS — loader=$LOADER device=$DEVICE image=$IMAGE config=$(basename "$CONFIG") prompts=$NUM_PROMPTS $LOAD_SHAPE in=$INPUT_LEN out=$OUTPUT_LEN warmups=$NUM_WARMUPS repeats=$REPEATS preflight=$PREFLIGHT source=$SOURCE_REV ==="
 
 # Phase A — modelship
 echo "[A] starting modelship..."
@@ -240,7 +259,7 @@ SUMMARY="$RESULTS_DIR/summary.md"
 {
     echo "# bench $TS — $LOADER / $DEVICE"
     echo
-    echo "image: \`$IMAGE\`  config: \`$(basename "$CONFIG")\`  prompts: $NUM_PROMPTS  concurrency: $CONCURRENCY  input/output: $INPUT_LEN/$OUTPUT_LEN  warmups: $NUM_WARMUPS  repeats: $REPEATS  preflight: $PREFLIGHT  source: \`$SOURCE_REV\`"
+    echo "image: \`$IMAGE\`  config: \`$(basename "$CONFIG")\`  prompts: $NUM_PROMPTS  load: $LOAD_SHAPE  input/output: $INPUT_LEN/$OUTPUT_LEN  warmups: $NUM_WARMUPS  repeats: $REPEATS  preflight: $PREFLIGHT  source: \`$SOURCE_REV\`"
     echo
     echo "Values are the median across \`repeats\` sweeps."
     echo

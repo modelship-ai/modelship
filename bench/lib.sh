@@ -273,7 +273,7 @@ run_sweep() {
             --random-input-len "$INPUT_LEN" \
             --random-output-len "$OUTPUT_LEN" \
             --num-prompts "$NUM_PROMPTS" \
-            --max-concurrency "$CONCURRENCY" \
+            "${LOAD_SHAPE_ARGS[@]}" \
             --num-warmups "$NUM_WARMUPS" \
             --ignore-eos \
             --temperature 0 \

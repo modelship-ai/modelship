@@ -120,43 +120,40 @@ Two cross-checks back this up:
 Both runs below: 1×RTX 5060 Ti (16 GB), 100 prompts @ concurrency 8, in/out
 128/512, 20 warmups, median of 3, `--preflight on`, greedy (`--temperature 0`).
 
-> **Stale — both GPU tables predate the current configs.** They were measured on
-> Qwen2.5-7B; the GPU configs now run Qwen3.5-9B. The vllm table also predates
-> the tool/reasoning-parser fix, so its modelship arm ran a parser the baseline
-> did not. Re-run both before quoting these numbers.
-
 ### vllm / GPU
 
-Qwen2.5-7B-Instruct-AWQ, `num_gpus: 0.9`. Both arms launched with
-`gpu_memory_utilization=0.9` and `max_model_len=-1` (vLLM's own auto-fit, which
-settled on 32,768 tokens).
+Measured 2026-09-12, suite `v0.7.14-85-g259b051`. Qwen3.5-9B (`cyankiwi/Qwen3.5-9B-AWQ-4bit`,
+compressed-tensors int4), `num_gpus: 0.9`. Both arms launched with
+`gpu_memory_utilization=0.9` and `max_model_len=-1` (vLLM's own auto-fit).
+LAUNCH PARITY PASSED, RESULT PARITY PASSED (0 dropped/truncated on both arms).
 
 | metric | modelship | raw vllm | overhead |
 | --- | ---: | ---: | ---: |
 | completed / failed | 100 / 0 | 100 / 0 | — |
-| throughput (req/s) | 1.213 | 1.214 | −0.1% |
-| output (tok/s) | 620.91 | 621.70 | −0.1% |
-| TTFT mean (ms) | 64.8 | 59.9 | +8.3% |
-| TTFT p50 (ms) | 62.2 | 64.5 | −3.6% |
-| TTFT p95 (ms) | 103.7 | 76.0 | +36.5% |
-| TPOT mean (ms) | 12.3 | 12.3 | −0.0% |
-| ITL mean (ms) | 12.66 | 12.27 | +3.2% |
-| peak VRAM (MiB) | 15058 | 13294 | +1764 |
-| anon / process RSS (MiB) | 5958 | 3696 | +2262 |
+| throughput (req/s) | 0.848 | 0.850 | −0.2% |
+| output (tok/s) | 434.27 | 435.08 | −0.2% |
+| TTFT mean (ms) | 345.8 | 359.3 | −3.8% |
+| TTFT p50 (ms) | 402.0 | 402.0 | +0.0% |
+| TTFT p95 (ms) | 438.5 | 415.5 | +5.5% |
+| TPOT mean (ms) | 17.1 | 17.0 | +0.3% |
+| ITL mean (ms) | 17.04 | 17.00 | +0.2% |
+| E2E p50 (ms) | 9089.0 | 9079.7 | +0.1% |
+| peak VRAM (MiB) | 12506 | 12502 | +4 |
+| anon / process RSS (MiB) | 7152 | 5233 | +1918 |
 
 Notes:
 
 - **Throughput and decode (TPOT) are at parity** — same vLLM wheel and GPU, so
   the engine's hot path is identical. modelship adds no per-token overhead.
-- **TTFT** carries modelship's expected cost: the extra hop through the Ray Serve
-  proxy/router adds a small *fixed* first-token latency (~5 ms). Negligible for a
-  512-token response, and the p50 is inside the noise.
-- **TTFT's tail is fatter than its mean** — p95 overhead (+36.5%) runs well above
-  the mean (+8.3%): scheduling jitter through the proxy/router under concurrent
-  load, not a fixed per-request cost. ~28 ms against a 6.3 s E2E latency.
+- **TTFT mean favors modelship here**; p50 is exactly equal and p95 shows the
+  same small proxy/router jitter as before (+5.5%, ~23 ms against a 9.1 s E2E
+  latency) — inside the noise for a 512-token response.
 - **Read host-RAM cost from `anon`**, not container RSS. The `file` (page cache)
   row swings multiple GB between arms depending on which cgroup faulted the
   weights first, and is not overhead.
+- Qwen3.5 is hybrid (mostly linear-attention/Mamba layers, 8 full-attention of
+  32) and thinking is on by default in its chat template, so these numbers are
+  not comparable to the old Qwen2.5-7B table — don't diff them against it.
 
 ### llama_server / GPU
 
