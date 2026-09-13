@@ -157,36 +157,44 @@ Notes:
 
 ### llama_server / GPU
 
-Qwen2.5-7B-Instruct Q4_K_M GGUF, `num_gpus: 1`. `llama fit-params` returned
-`-c 0 -ngl -1` on both arms — the whole model and its full context fit — so both
-launched with a literal `-c 0`, leaving llama-server to resolve the model's own
-maximum.
+Measured 2026-09-13, suite `v0.7.15-1-g5a70275`. Qwen3.5-9B (`unsloth/Qwen3.5-9B-GGUF`,
+Q4_K_M), `num_gpus: 1`. `llama fit-params` returned `-c 0 -ngl -1` on both arms — the
+whole model and its full context fit — so both launched with a literal `-c 0`, leaving
+llama-server to resolve the model's own maximum. **llama.cpp's prompt cache is off on
+both arms** (`cache_ram_mib: 0` → `--cache-ram 0`): the bench's random prompts share no
+prefix to reuse. LAUNCH PARITY PASSED, RESULT PARITY PASSED with a baseline robustness
+finding (20 of 300 baseline requests dropped across the 3 sweeps, 0 for modelship).
 
 | metric | modelship | vanilla llama-server | overhead |
 | --- | ---: | ---: | ---: |
-| completed / failed | **100 / 0** | 94 / 6 | — |
-| throughput (req/s) | 0.524 | 0.528 | −0.6% |
-| output (tok/s) | 268.51 | 270.17 | −0.6% |
-| TTFT mean (ms) | 332.8 | 337.7 | **−1.5%** |
-| TTFT p95 (ms) | 488.5 | 442.0 | +10.5% |
-| TPOT mean (ms) | 28.5 | 28.4 | +0.4% |
-| ITL mean (ms) | 28.54 | 28.51 | +0.1% |
-| peak VRAM (MiB) | 6268 | 6268 | **+0** |
-| anon / process RSS (MiB) | 11148 | 8457 | +2691 |
+| completed / failed | **100 / 0** | 93 / 7 | — |
+| throughput (req/s) | 0.416 | 0.415 | +0.2% |
+| output (tok/s) | 212.81 | 212.45 | +0.2% |
+| TTFT mean (ms) | 547.9 | 609.3 | −10.1% |
+| TTFT p50 (ms) | 557.2 | 624.7 | −10.8% |
+| TTFT p95 (ms) | 697.0 | 742.3 | −6.1% |
+| TPOT mean (ms) | 35.7 | 35.5 | +0.6% |
+| ITL mean (ms) | 35.59 | 35.37 | +0.6% |
+| E2E p50 (ms) | 19094.2 | 18851.5 | +1.3% |
+| peak VRAM (MiB) | 13750 | 13752 | −2 |
+| anon / process RSS (MiB) | 3860 | 1175 | +2685 |
 
 Notes:
 
 - **Decode is at parity and VRAM is identical** — same binary, same GPU, and
   both arms fit from the same `fit-params` call, so they offload the same layers
   into the same buffers.
-- **modelship completes every request; the raw baseline drops ~6%.** Vanilla
-  `llama-server`'s failures are all `ServerDisconnectedError` — the bench client
-  (aiohttp) hits `llama-server`'s cpp-httplib keep-alive close behaviour
-  directly, a race that Ray Serve's uvicorn front door structurally absorbs. It
-  is **not** tunable away via `llama-server` flags (`--threads-http` sizes the
-  worker pool, not the keep-alive lifecycle). So the baseline's small throughput
-  edge is partly **survivorship** — it decoded fewer requests. The
-  survivorship-immune per-token metrics (TPOT/ITL) are the honest read.
+- **TTFT favors modelship in this run**, but modelship proxies the same
+  `llama-server` process, so this is not an engine speedup. Per sweep, the TTFT
+  mean was 601.6 / 547.6 / 547.9 ms for modelship and 594.3 / 628.8 / 609.3 ms
+  for the baseline. ITL p95 (38.15 vs 36.43 ms, +4.7%) shows the proxy hop's
+  per-token jitter.
+- **modelship completes every request; the raw baseline drops some** (10 / 7 / 3
+  per sweep). The bench client (aiohttp) hits `llama-server`'s cpp-httplib
+  keep-alive resets directly, which Ray Serve's uvicorn front door absorbs.
+  `LLAMA_ARG_THREADS_HTTP` on the baseline reduces the drops. Baseline figures
+  cover its surviving requests only, so the per-token metrics (TPOT/ITL) are the
+  most like-for-like read.
 - **The result-parity gate is relative between arms**: modelship dropping or
   truncating *more* than the baseline hard-fails the run; the baseline dropping
   more (as here) is reported as a **FINDING** and the run passes.
