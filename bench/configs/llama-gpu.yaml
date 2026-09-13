@@ -14,6 +14,8 @@ models:
       # Must cover --concurrency (8) so requests overlap instead of queuing,
       # which would muddy the TTFT/ITL comparison with queue-wait time.
       parallel: 8
+      # Prompt cache off on both arms: random prompts share no prefix to reuse.
+      cache_ram_mib: 0
       # n_ctx and n_gpu_layers unset: both arms fit them with `llama fit-params`.
       #
       # The baseline arm drops ~4-7% of requests to llama-server's own
