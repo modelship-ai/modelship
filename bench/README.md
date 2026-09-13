@@ -120,10 +120,6 @@ Two cross-checks back this up:
 Both runs below: 1×RTX 5060 Ti (16 GB), 100 prompts @ concurrency 8, in/out
 128/512, 20 warmups, median of 3, `--preflight on`, greedy (`--temperature 0`).
 
-> **The llama_server table below is stale** — it was measured on Qwen2.5-7B and
-> that config now runs Qwen3.5-9B. Re-run it before quoting those numbers. The
-> vllm table is current.
-
 ### vllm / GPU
 
 Measured 2026-09-12, suite `v0.7.14-85-g259b051`. Qwen3.5-9B (`cyankiwi/Qwen3.5-9B-AWQ-4bit`,

@@ -17,8 +17,6 @@ CONFIG=""
 TOKENIZER=""
 NUM_PROMPTS=100
 CONCURRENCY=8
-# Poisson arrivals at this rate instead of a closed loop. Unset: closed loop,
-# --concurrency requests in flight, each new one issued as one completes.
 REQUEST_RATE=""
 INPUT_LEN=128
 OUTPUT_LEN=512
