@@ -4,6 +4,86 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.15] - 2026-09-13
+
+### Added
+- fail fast on AMD and Intel GPUs when num_gpus > 0
+- let vLLM auto-fit the GPU context length
+- report what the vllm engine actually deployed
+
+### Fixed
+- reuse the llama-server connection across streaming chat requests
+- detect the raw vllm parsers from the configured tokenizer
+- tolerate a missing -ts when pinning the llama baseline
+- probe the bench gpu device with a valid nvidia-smi query
+- match the vllm tool and reasoning parsers across both bench arms
+- match the vllm executor backend across both bench arms
+- replay the llama tensor split in the bench baseline
+- pin the raw vllm arm to every GPU the deploy reserves
+- compare the vllm engine args a vision config actually changes
+- sample VRAM on the GPUs the bench is pinned to
+- quote the bench --gpus device list for docker's CSV parser
+- honour MSHIP_GATEWAY_NAME in the bench harness
+- pair llama flags with negative numeric values
+- stop bench cleanup masking the run's exit status
+- log the vllm engine args the actor actually passes
+- stop the test suite from silently booting a real Ray head
+- let vllm auto-fit the context on cpu instead of dictating it
+- reject a max_model_len that is neither a length nor the sentinel
+- stop reading the auto-fit sentinel as a context length
+- submit the death report instead of awaiting it
+- drop a model from the readiness set when it never registered at all
+- name the reason when the vllm output handler exits without raising
+- count replica deaths for the deployment's life, not in a window
+- retire a deployment whose backend keeps dying
+- drop a model from the readiness set when its last deployment goes
+- stop retrying a failing deploy forever
+- deploy a model with no chat template instead of crashing
+- install torchaudio from the accelerator indexes
+- size the MLA gmu haircut against device total
+- stop the driver reserving a CUDA context on every GPU
+- divide the CPU gmu by the cgroup-clamped RAM total
+- reserve process RSS in the CPU gpu_memory_utilization
+- stop subtracting a cudagraph estimate from the preflight budget
+- correct three misreadings in the deployment summary
+- tighten llama_server preflight guards and config validation
+- delegate llama_server preflight sizing to llama fit-params
+- normalize every image content-part shape to the nested chat form
+
+### Changed
+- drop review-flagged comments in bench/run.sh and bench/README.md
+- record the 2026-09-12 vllm GPU bench results on Qwen3.5-9B
+- trim the bench config comments
+- move the GPU bench configs to Qwen3.5-9B
+- explain the baseline-only OMP_NUM_THREADS, and floor it
+- correct the llama preflight -c 0 claim
+- record the 2026-09-10 loader-parity audit
+- correct the llama preflight n_gpu_layers claim
+- strip the commentary from the example configs
+- run preflight in both bench arms
+- drop ms-python.python from the dev container
+- bump vllm to 0.28.0
+- make the auto-fit sentinel derived instead of user input
+- pin that the Serve replica context crosses threads
+- cut the commentary explaining Ray rather than this code
+- move deployment teardown out of serve_utils
+- consolidate the comments in strategy.py
+- allow torchaudio to differ across bootstrap variants
+- regenerate the pins for the torchaudio index move
+- drop the unread cpu_count and unified_memory
+- trim the comments in preflight/base.py
+- read free VRAM from NVML instead of a CUDA context
+- force both fractional tenants onto one GPU
+- describe num_gpus as a GPU count or a share of one
+- trim the comments added in the auto-fit rewrite
+- fix an inaccurate docstring in the deployment summary
+- correct a misleading comment in bench/rawllama_entrypoint.py
+- add a canary test for llama.cpp's own CLI flags
+- regenerate pins after removing the gguf dependency
+- trim oversized comments across bench/
+- drop the backend-rejection comments on image url nesting
+- name both backends' rejection of a bare-string image url
+
 ## [0.7.14] - 2026-08-27
 
 ### Added

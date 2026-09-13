@@ -1,7 +1,7 @@
 [project]
 # Installed by the `mship` bootstrapper (bootstrap/), never directly by users.
 name = "mship-engine"
-version = "0.7.14"
+version = "0.7.15"
 description = "The production backend for self-hosted agents — the OpenAI Responses API with server-side conversation state (durable with Redis), universal tool calling, and reasoning, alongside embeddings, speech, and image generation, behind one OpenAI-compatible endpoint. Built on Ray Serve."
 authors = [
     { name = "Alex Margarit" }

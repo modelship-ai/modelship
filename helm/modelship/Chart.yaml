@@ -5,9 +5,9 @@ description: |
   via KubeRay and deploys models from models.yaml with a one-shot deploy Job.
 type: application
 # Chart version — bump on chart changes, independent of the app version.
-version: 0.7.14
+version: 0.7.15
 # Tracks the modelship image this chart is validated against.
-appVersion: "0.7.14"
+appVersion: "0.7.15"
 home: https://github.com/modelship-ai/modelship
 sources:
   - https://github.com/modelship-ai/modelship

@@ -2,4 +2,4 @@
 `mship-engine`, and execs into it."""
 
 # Lockstep with mship-engine; `make _release` bumps both pyprojects.
-__version__ = "0.7.14"
+__version__ = "0.7.15"

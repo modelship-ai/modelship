@@ -1,6 +1,6 @@
 [project]
 name = "mship"
-version = "0.7.14"
+version = "0.7.15"
 description = "Installer for modelship — provisions a pinned Python 3.12.10 environment for the selected node variant and runs the mship engine inside it."
 authors = [
     { name = "Alex Margarit" }
