@@ -210,6 +210,7 @@ The `:filename` selector also works against a **local directory**: if `model:` i
 Each node downloads its own copy of whatever gets scheduled onto it — **not** the driver's `HF_HOME` shared out to workers. A thin/control-only node that never hosts a replica downloads nothing; a node that does host one pulls exactly that model, pinned to the revision the driver validated (byte-identical weights across nodes even if the upstream repo changes between deploys).
 
 - **Shared storage (NFS/EFS) for `MSHIP_CACHE_DIR` is optional**, not required — mount it to dedupe across nodes; without it, each node downloads its own, correctly.
+- Cache paths resolve on each node from its own `MSHIP_CACHE_DIR` and `MSHIP_NODE_CACHE_DIR`, so they may differ between nodes. `mship` and the images set both; if you start a node's Ray yourself (`--use-existing-ray-cluster`), export them there, or replicas on that node refuse to start.
 - Every node that can host a model needs its own disk and egress (HF rate limits apply per node).
 - A local-path `model:` is resolved on whichever node hosts the replica — the path must exist on every node that could host it; there's no cross-node copying.
 

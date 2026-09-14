@@ -318,7 +318,8 @@ class TestApplyArgsToEnv:
 
 
 class TestDriverCacheEnv:
-    def test_cache_dir_flags_reach_the_import_latched_vars(self):
+    @staticmethod
+    def _env_before_ray(env: dict[str, str], argv: list[str]) -> dict[str, str]:
         class _StopError(Exception):
             pass
 
@@ -331,15 +332,32 @@ class TestDriverCacheEnv:
         from modelship.driver import main as driver_main
 
         with (
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, env, clear=True),
+            patch("modelship.driver.resolve_cache_root", return_value="/tmp/mship-test-cache"),
             patch("modelship.driver.resolve_ray_auth_env", side_effect=_capture_env),
             pytest.raises(_StopError),
         ):
-            driver_main(["--cache-dir", "/custom/shared", "--node-cache-dir", "/custom/node"])
+            driver_main(argv)
+        return seen
 
+    def test_cache_dir_flags_reach_the_import_latched_vars(self):
+        seen = self._env_before_ray({}, ["--cache-dir", "/custom/shared", "--node-cache-dir", "/custom/node"])
         assert seen["HF_HOME"] == "/custom/shared/huggingface"
         assert seen["VLLM_CACHE_ROOT"] == "/custom/node/vllm"
         assert seen["FLASHINFER_WORKSPACE_BASE"] == "/custom/node/flashinfer"
+
+    @pytest.mark.parametrize(
+        ("env", "argv", "expected"),
+        [
+            ({"MSHIP_HOME": "/opt/mship"}, [], "/opt/mship/node-cache"),
+            ({"MSHIP_NODE_CACHE_DIR": "/from/env"}, [], "/from/env"),
+            ({"MSHIP_NODE_CACHE_DIR": "/from/env"}, ["--node-cache-dir", "/from/flag"], "/from/flag"),
+        ],
+    )
+    def test_roots_are_exported_before_ray_starts(self, env, argv, expected):
+        seen = self._env_before_ray(env, argv)
+        assert seen["MSHIP_CACHE_DIR"] == "/tmp/mship-test-cache"
+        assert seen["MSHIP_NODE_CACHE_DIR"] == expected
 
 
 class TestRandSuffix:

@@ -9,19 +9,38 @@ from modelship.utils import cache_dir, download
 from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
 
 
-def test_build_cache_env_vars_defaults():
-    env = {"MSHIP_CACHE_DIR": "/.cache", "MSHIP_NODE_CACHE_DIR": "/opt/mship/node-cache"}
+def test_build_cache_env_vars_ignores_the_drivers_paths():
+    env = {"MSHIP_CACHE_DIR": "/driver/cache", "MSHIP_NODE_CACHE_DIR": "/driver/node", "HF_HOME": "/driver/hf"}
     with mock.patch.dict(os.environ, env, clear=True):
         env_vars = build_cache_env_vars()
-        assert env_vars["HF_HOME"] == "/.cache/huggingface"
-        assert env_vars["VLLM_CACHE_ROOT"] == "/opt/mship/node-cache/vllm"
-        assert env_vars["FLASHINFER_WORKSPACE_BASE"] == "/opt/mship/node-cache/flashinfer"
-        assert env_vars["TRITON_CACHE_DIR"] == "/opt/mship/node-cache/triton"
-        assert env_vars["VLLM_CONFIG_ROOT"] == "/opt/mship/node-cache/vllm-config"
-        # flashinfer never reads it from env
-        assert "FLASHINFER_CACHE_DIR" not in env_vars
-        assert "HF_TOKEN" not in env_vars
-        assert "HF_HUB_OFFLINE" not in env_vars
+    assert env_vars["HF_HOME"] == "${MSHIP_CACHE_DIR}/huggingface"
+    assert env_vars["MSHIP_WHISPERCPP_CACHE_DIR"] == "${MSHIP_CACHE_DIR}/whispercpp"
+    assert env_vars["VLLM_CACHE_ROOT"] == "${MSHIP_NODE_CACHE_DIR}/vllm"
+    assert env_vars["FLASHINFER_WORKSPACE_BASE"] == "${MSHIP_NODE_CACHE_DIR}/flashinfer"
+    assert env_vars["TRITON_CACHE_DIR"] == "${MSHIP_NODE_CACHE_DIR}/triton"
+    assert env_vars["VLLM_CONFIG_ROOT"] == "${MSHIP_NODE_CACHE_DIR}/vllm-config"
+    # the roots come from each node's own env
+    assert "MSHIP_CACHE_DIR" not in env_vars
+    assert "MSHIP_NODE_CACHE_DIR" not in env_vars
+    # flashinfer never reads it from env
+    assert "FLASHINFER_CACHE_DIR" not in env_vars
+    assert "HF_TOKEN" not in env_vars
+    assert "HF_HUB_OFFLINE" not in env_vars
+
+
+def test_build_cache_env_vars_expand_with_rays_update_envs():
+    # Private Ray API; fails loudly if a Ray bump changes placeholder expansion.
+    from ray._private.utils import update_envs
+
+    node_env = {"MSHIP_CACHE_DIR": "/node/cache", "MSHIP_NODE_CACHE_DIR": "/node/node-cache"}
+    with mock.patch.dict(os.environ, node_env, clear=True):
+        update_envs(build_cache_env_vars())
+        assert os.environ["HF_HOME"] == "/node/cache/huggingface"
+        assert os.environ["MSHIP_WHISPERCPP_CACHE_DIR"] == "/node/cache/whispercpp"
+        assert os.environ["VLLM_CACHE_ROOT"] == "/node/node-cache/vllm"
+        assert os.environ["FLASHINFER_WORKSPACE_BASE"] == "/node/node-cache/flashinfer"
+        assert os.environ["TRITON_CACHE_DIR"] == "/node/node-cache/triton"
+        assert os.environ["VLLM_CONFIG_ROOT"] == "/node/node-cache/vllm-config"
 
 
 def test_build_cache_env_vars_forwards_hf_token_and_offline():
@@ -30,17 +49,6 @@ def test_build_cache_env_vars_forwards_hf_token_and_offline():
         env_vars = build_cache_env_vars()
         assert env_vars["HF_TOKEN"] == "hf_secret"
         assert env_vars["HF_HUB_OFFLINE"] == "1"
-
-
-def test_build_cache_env_vars_custom_dirs():
-    shared, node = "/mnt/shared", "/scratch/node-cache"
-    with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": shared, "MSHIP_NODE_CACHE_DIR": node}, clear=True):
-        env_vars = build_cache_env_vars()
-        assert env_vars["HF_HOME"] == f"{shared}/huggingface"
-        assert env_vars["VLLM_CACHE_ROOT"] == f"{node}/vllm"
-        assert env_vars["FLASHINFER_WORKSPACE_BASE"] == f"{node}/flashinfer"
-        assert env_vars["TRITON_CACHE_DIR"] == f"{node}/triton"
-        assert env_vars["VLLM_CONFIG_ROOT"] == f"{node}/vllm-config"
 
 
 def test_utils_cache_dir_default():

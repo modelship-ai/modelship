@@ -45,9 +45,6 @@ def _cmd_deploy(argv: list[str]) -> None:
 
     args = parse_args(argv)
     apply_args_to_env(args)
-    # Before Ray starts, so the raylet and its workers inherit both roots.
-    os.environ.setdefault("MSHIP_CACHE_DIR", resolve_cache_root())
-    os.environ.setdefault("MSHIP_NODE_CACHE_DIR", resolve_node_cache_root())
     _guard_python_version()
 
     config = _validate_config(args)

@@ -18,8 +18,10 @@ _DEFAULT_GATEWAY_NAME = "modelship"
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     apply_args_to_env(args)
-    # After argv, so --cache-dir/--node-cache-dir apply; huggingface_hub latches HF_HOME at import.
-    base_cache, node_cache = resolve_cache_root(), resolve_node_cache_root()
+    # After argv, before Ray starts: raylets inherit the roots replicas expand cache paths from.
+    base_cache = os.environ.setdefault("MSHIP_CACHE_DIR", resolve_cache_root())
+    node_cache = os.environ.setdefault("MSHIP_NODE_CACHE_DIR", resolve_node_cache_root())
+    # huggingface_hub latches HF_HOME at import.
     os.environ.setdefault("HF_HOME", f"{base_cache}/huggingface")
     os.environ.setdefault("VLLM_CACHE_ROOT", f"{node_cache}/vllm")
     os.environ.setdefault("FLASHINFER_WORKSPACE_BASE", f"{node_cache}/flashinfer")
