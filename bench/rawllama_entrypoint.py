@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import os
 
-# Must precede any huggingface_hub import — HF_HOME latches at its import time.
-# The same set the driver hands each replica via runtime_env, so both arms
-# resolve weights into the mounted cache.
 from modelship.deploy.actor_options import build_cache_env_vars
+from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
 
+# Before any huggingface_hub import: HF_HOME latches there. Ray expands the ${root} placeholders for replicas; we do it here.
+os.environ.setdefault("MSHIP_CACHE_DIR", resolve_cache_root())
+os.environ.setdefault("MSHIP_NODE_CACHE_DIR", resolve_node_cache_root())
 for _key, _value in build_cache_env_vars().items():
-    os.environ.setdefault(_key, _value)
+    os.environ.setdefault(_key, os.path.expandvars(_value))
 
 import math  # noqa: E402
 import shlex  # noqa: E402

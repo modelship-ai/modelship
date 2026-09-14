@@ -74,6 +74,15 @@ def _reject_unsupported_accelerator(config: ModelshipModelConfig) -> None:
         )
 
 
+def _reject_unset_cache_roots() -> None:
+    """runtime_env cache paths expand from these; Ray turns an unset one into "", putting them under /."""
+    missing = [var for var in ("MSHIP_CACHE_DIR", "MSHIP_NODE_CACHE_DIR") if not os.environ.get(var)]
+    if missing:
+        raise RuntimeError(
+            f"{' and '.join(missing)} not set on this node; export it in the environment that starts the node's Ray."
+        )
+
+
 def _reap_child_processes() -> None:
     """Kill any subprocesses still alive in this actor process.
 
@@ -189,6 +198,7 @@ class ModelDeployment:
         start = time.monotonic()
         self.infer: BaseInfer
         try:
+            _reject_unset_cache_roots()
             _reject_unsupported_darwin_loader(config)
             _reject_unsupported_accelerator(config)
             # Must run before the loader is constructed: preflight (which

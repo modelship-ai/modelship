@@ -74,6 +74,7 @@ def _bootstrap(variant, rest: list[str]) -> None:
 def _engine_env(variant) -> dict[str, str]:
     env = dict(os.environ)
     env.setdefault("MSHIP_CACHE_DIR", os.path.join(paths.home(), "cache"))
+    env.setdefault("MSHIP_NODE_CACHE_DIR", os.path.join(paths.home(), "node-cache"))
 
     if variant.serves_models and (wrapper := llama_cpp.locate(variant)):
         env["MSHIP_LLAMA_SERVER_BIN"] = wrapper

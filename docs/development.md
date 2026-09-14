@@ -56,7 +56,8 @@ The following environment variables are set in the dev image with sensible defau
 | `MSHIP_RAY_DASHBOARD_PORT` | `8265` | **Optional override:** Ray dashboard port, own-head only (`--dashboard-port` flag). Only needed to run multiple modelship heads on one host under `--network=host`, where Ray's fixed default would otherwise collide between them. |
 | `MSHIP_ADDRESS` | *(unset)* | **Optional:** join an existing Ray cluster as an additional compute node, given the head's GCS address as `host:port` (`--address` flag). See [Multi-node without Kubernetes](multi-node-docker.md). Mutually exclusive with `MSHIP_USE_EXISTING_RAY_CLUSTER`. |
 | `MSHIP_RAY_AUTH_TOKEN` | *(unset)* | **Optional:** cluster auth token for joining a head running `--ray-auth=token` (`--token` flag). Only meaningful with `MSHIP_ADDRESS`. |
-| `MSHIP_CACHE_DIR` | `/.cache` | Model cache directory |
+| `MSHIP_CACHE_DIR` | `/.cache` | Model cache directory (`--cache-dir` flag). May be shared storage. |
+| `MSHIP_NODE_CACHE_DIR` | `/opt/mship/node-cache` | Node-local vLLM/Triton/FlashInfer compile caches (`--node-cache-dir` flag). Must not be shared storage. |
 | `MSHIP_STATE_STORE` | `memory://` | State-store URI for the effective config, deploy coordinator + `/v1/responses` conversations: `memory://` or `redis://[:pw@]host:port/db`. See [model-configuration.md](model-configuration.md#state-store-mship_state_store). The chart always sets `redis://` for k8s. |
 | `MSHIP_USE_EXISTING_RAY_CLUSTER` | `false` | Set to `true` to connect to a Ray cluster you manage (must run on a cluster node) instead of starting one; implies deploy-and-exit |
 | `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas. Raise for routing/ingress HA and to spread request-proxying load under high concurrency; replicas keep routing tables in sync via the deploy coordinator's watch loop. |

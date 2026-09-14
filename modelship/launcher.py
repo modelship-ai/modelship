@@ -17,7 +17,7 @@ import yaml
 
 from modelship.deploy.capabilities import LOADER_MODULES
 from modelship.utils.accelerator import detect_accelerator
-from modelship.utils.cache import resolve_cache_root
+from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
 
 if TYPE_CHECKING:
     from pydantic import ValidationError
@@ -45,7 +45,6 @@ def _cmd_deploy(argv: list[str]) -> None:
 
     args = parse_args(argv)
     apply_args_to_env(args)
-    os.environ.setdefault("MSHIP_CACHE_DIR", resolve_cache_root())
     _guard_python_version()
 
     config = _validate_config(args)
@@ -62,6 +61,7 @@ def _cmd_info() -> None:
     print(f"accelerator: {accelerator}")
     print(f"python: {platform.python_version()}")
     print(f"cache: {resolve_cache_root()}")
+    print(f"node cache: {resolve_node_cache_root()}")
     try:
         import ray
 

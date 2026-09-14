@@ -71,6 +71,7 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 ENV UV_CACHE_DIR=/opt/uv/cache
 
 ENV MSHIP_CACHE_DIR=/.cache
+ENV MSHIP_NODE_CACHE_DIR=/opt/mship/node-cache
 ENV CUDA_DEVICE_ORDER=PCI_BUS_ID
 ENV MSHIP_USE_EXISTING_RAY_CLUSTER=false
 ENV MSHIP_METRICS=true
@@ -81,7 +82,7 @@ ENV MSHIP_LOG_FORMAT=text
 # On PATH, not just in the entrypoint: KubeRay injects its own `ray start`.
 ENV PATH="${MSHIP_HOME}/envs/${MSHIP_VARIANT}/.venv/bin:${UV_TOOL_BIN_DIR}:$PATH"
 
-RUN mkdir -p /.cache /opt/mship /opt/uv && \
+RUN mkdir -p /.cache /opt/mship/node-cache /opt/uv && \
     chown -R $UID:$GID /modelship /.cache /opt/mship /opt/uv
 
 # =============================================================================

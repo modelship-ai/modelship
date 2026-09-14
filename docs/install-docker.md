@@ -82,11 +82,15 @@ directory, Ray version, and the `llama-server` binary in use.
 /opt/mship/builds/<variant>/      llama-server binaries
 /opt/mship/env                    the variant the image was built for
 /modelship/config/examples/       reference models.yaml files
+/opt/mship/node-cache/            compiled kernels (MSHIP_NODE_CACHE_DIR)
 /.cache                           model weights (MSHIP_CACHE_DIR)
 ```
 
 Mount your own config over `/modelship/config/models.yaml` and a volume at
-`/.cache` so weights survive container restarts. The engine is installed as an
+`/.cache` so weights survive container restarts. Compiled kernels live outside
+that volume, so a new container compiles them again once; add
+`-v modelship-node-cache:/opt/mship/node-cache` to keep them as well, but never
+share that volume with another node. The engine is installed as an
 ordinary wheel into that venv — there is no source tree in the image.
 
 ## Scaling beyond one node
