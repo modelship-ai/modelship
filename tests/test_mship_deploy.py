@@ -317,6 +317,31 @@ class TestApplyArgsToEnv:
         assert os.environ["MSHIP_STATE_SWEEP_INTERVAL_S"] == "30.0"
 
 
+class TestDriverCacheEnv:
+    def test_cache_dir_flags_reach_the_import_latched_vars(self):
+        class _StopError(Exception):
+            pass
+
+        seen: dict[str, str] = {}
+
+        def _capture_env():
+            seen.update(os.environ)
+            raise _StopError
+
+        from modelship.driver import main as driver_main
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("modelship.driver.resolve_ray_auth_env", side_effect=_capture_env),
+            pytest.raises(_StopError),
+        ):
+            driver_main(["--cache-dir", "/custom/shared", "--node-cache-dir", "/custom/node"])
+
+        assert seen["HF_HOME"] == "/custom/shared/huggingface"
+        assert seen["VLLM_CACHE_ROOT"] == "/custom/node/vllm"
+        assert seen["FLASHINFER_WORKSPACE_BASE"] == "/custom/node/flashinfer"
+
+
 class TestRandSuffix:
     def test_default_length(self):
         suffix = rand_suffix()
