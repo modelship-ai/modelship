@@ -13,7 +13,7 @@ import platform
 from modelship.deploy.capabilities import deployment_capability_resources
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
-from modelship.utils.cache import resolve_cache_root
+from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
 
 logger = get_logger("startup")
 
@@ -44,20 +44,22 @@ def build_passthrough_env_vars() -> dict[str, str]:
 
 
 def build_cache_env_vars() -> dict[str, str]:
-    """Resolve HF / vLLM / FlashInfer cache dirs, all rooted at MSHIP_CACHE_DIR.
+    """Resolve cache dirs: weights under MSHIP_CACHE_DIR, compile caches under MSHIP_NODE_CACHE_DIR.
 
     Also forwards HF_TOKEN/HF_HUB_OFFLINE when set on the driver, so an actor
     downloading a gated/offline model has the same auth."""
     base_cache = resolve_cache_root()
+    node_cache = resolve_node_cache_root()
     env_vars = {
         "HF_HOME": os.environ.get("HF_HOME", f"{base_cache}/huggingface"),
         "HF_HUB_DISABLE_XET": os.environ.get("HF_HUB_DISABLE_XET", "1"),
-        "VLLM_CACHE_ROOT": os.environ.get("VLLM_CACHE_ROOT", f"{base_cache}/vllm"),
-        "FLASHINFER_CACHE_DIR": os.environ.get("FLASHINFER_CACHE_DIR", f"{base_cache}/flashinfer"),
+        "VLLM_CACHE_ROOT": os.environ.get("VLLM_CACHE_ROOT", f"{node_cache}/vllm"),
+        # flashinfer appends .cache/flashinfer/<version>/<arch>
+        "FLASHINFER_WORKSPACE_BASE": os.environ.get("FLASHINFER_WORKSPACE_BASE", f"{node_cache}/flashinfer"),
         # Triton JITs kernels at import for some archs
-        "TRITON_CACHE_DIR": os.environ.get("TRITON_CACHE_DIR", f"{base_cache}/triton"),
+        "TRITON_CACHE_DIR": os.environ.get("TRITON_CACHE_DIR", f"{node_cache}/triton"),
         # vLLM's usage-stats thread writes usage_stats.json/do_not_track here
-        "VLLM_CONFIG_ROOT": os.environ.get("VLLM_CONFIG_ROOT", f"{base_cache}/vllm-config"),
+        "VLLM_CONFIG_ROOT": os.environ.get("VLLM_CONFIG_ROOT", f"{node_cache}/vllm-config"),
         # Default download dir for the whispercpp loader's pywhispercpp-managed
         # built-in model names (a bare `model:` like `base.en`).
         "MSHIP_WHISPERCPP_CACHE_DIR": os.environ.get("MSHIP_WHISPERCPP_CACHE_DIR", f"{base_cache}/whispercpp"),

@@ -102,6 +102,16 @@ class TestEngineEnvironment:
         cli.main(["deploy", "--cpu"])
         assert provisioned.call_args[0][2]["MSHIP_CACHE_DIR"] == "/mnt/shared/models"
 
+    def test_node_cache_dir_defaults_under_mship_home(self, provisioned, tmp_path, monkeypatch):
+        monkeypatch.delenv("MSHIP_NODE_CACHE_DIR", raising=False)
+        cli.main(["deploy", "--cpu"])
+        assert provisioned.call_args[0][2]["MSHIP_NODE_CACHE_DIR"] == os.path.join(str(tmp_path), "node-cache")
+
+    def test_explicit_node_cache_dir_is_preserved(self, provisioned, monkeypatch):
+        monkeypatch.setenv("MSHIP_NODE_CACHE_DIR", "/scratch/node-cache")
+        cli.main(["deploy", "--cpu"])
+        assert provisioned.call_args[0][2]["MSHIP_NODE_CACHE_DIR"] == "/scratch/node-cache"
+
     def test_cuda_checks_for_a_live_device(self, provisioned):
         cli.main(["deploy", "--cuda"])
         cli.llama_cpp.warn_if_no_cuda_device.assert_called_once()

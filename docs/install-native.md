@@ -110,6 +110,7 @@ deploy seems slow, check `"$MSHIP_LLAMA_SERVER_BIN" --list-devices` — it print
 ~/.modelship/
   env                       the variant bootstrap recorded (MSHIP_VARIANT=…)
   cache/                    models and other downloads (MSHIP_CACHE_DIR)
+  node-cache/               compiled kernels (MSHIP_NODE_CACHE_DIR)
   envs/<variant>/           one environment per variant
   builds/<variant>/         llama-server binaries
   bin/uv                    only if uv was not already installed
@@ -129,7 +130,9 @@ Change it with `mship bootstrap`, not by hand.
 
 `MSHIP_CACHE_DIR` may point at shared storage — model weights are identical on every
 node. `MSHIP_HOME` (default `~/.modelship`) must stay node-local: environments and
-binaries are platform- and variant-specific. To reset a variant, delete
+binaries are platform- and variant-specific, and the kernels in `node-cache/` are
+compiled for this node's GPUs. `MSHIP_NODE_CACHE_DIR` can move them, but never onto
+shared storage. To reset a variant, delete
 `~/.modelship/envs/<variant>/` and bootstrap it again; your models are untouched.
 
 ## Scaling beyond one node

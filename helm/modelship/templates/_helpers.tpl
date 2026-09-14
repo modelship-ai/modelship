@@ -227,13 +227,20 @@ so redis.address is required — there is no durable fallback to degrade to.
 
 {{/*
 Volumes shared by every Ray pod (head + workers): an in-memory /dev/shm for
-vLLM/NCCL, and the model-weight cache PVC.
+vLLM/NCCL, a per-pod node-local compile cache, and the model-weight cache PVC.
 */}}
 {{- define "modelship.volumes" -}}
 - name: dshm
   emptyDir:
     medium: Memory
     sizeLimit: {{ .Values.shm.sizeLimit }}
+- name: node-cache
+{{- if .Values.nodeCache.sizeLimit }}
+  emptyDir:
+    sizeLimit: {{ .Values.nodeCache.sizeLimit }}
+{{- else }}
+  emptyDir: {}
+{{- end }}
 {{- if .Values.cache.enabled }}
 - name: cache
   persistentVolumeClaim:
@@ -242,11 +249,14 @@ vLLM/NCCL, and the model-weight cache PVC.
 {{- end -}}
 
 {{/*
-Matching volumeMounts for the volumes above.
+Matching volumeMounts for the volumes above. node-cache's mountPath must match
+the image's MSHIP_NODE_CACHE_DIR.
 */}}
 {{- define "modelship.volumeMounts" -}}
 - name: dshm
   mountPath: /dev/shm
+- name: node-cache
+  mountPath: /opt/mship/node-cache
 {{- if .Values.cache.enabled }}
 - name: cache
   mountPath: {{ .Values.cache.mountPath }}

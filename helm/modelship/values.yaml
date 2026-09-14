@@ -114,6 +114,11 @@ cache:
   size: 100Gi
   mountPath: /.cache
 
+# -- Node-local compile/JIT caches, one emptyDir per pod. Empty sizeLimit =
+# uncapped; a pod over its cap is evicted.
+nodeCache:
+  sizeLimit: ""
+
 # -- /dev/shm. vLLM/NCCL use POSIX shared memory; the default 64Mi tmpfs is far
 # too small and crashes engine startup. Sized as an emptyDir(memory) per pod.
 shm:

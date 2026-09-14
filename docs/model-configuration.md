@@ -24,7 +24,8 @@ Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `m
 | `--prune-ray-sessions` | `MSHIP_PRUNE_RAY_SESSIONS` | `true` | When starting its own Ray head, delete stale `session_*` dirs left under the Ray temp root by previous, no-longer-running heads. A live head's session is always kept |
 | `--reconcile` | — | `false` | Make the cluster match the config: add new models, remove dropped ones, replace changed ones (vs. the default additive union). With no `--config`, reconciles to this gateway's persisted effective config (self-heal) |
 | `--replace-strategy` | — | `blue_green` | How to replace a changed model: `blue_green` (deploy new before dropping old, no request loss) or `stop_start` (drop old first, brief unavailability) |
-| `--cache-dir` | `MSHIP_CACHE_DIR` | `/.cache` | Base cache directory |
+| `--cache-dir` | `MSHIP_CACHE_DIR` | `/.cache` | Base cache directory for model weights; may be shared storage |
+| `--node-cache-dir` | `MSHIP_NODE_CACHE_DIR` | `$MSHIP_HOME/node-cache` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer). Must not be shared storage |
 | `--state-store` | `MSHIP_STATE_STORE` | `memory://` | Connection URI for the effective config + deploy coordinator + `/v1/responses` state (see [State store](#state-store-mship_state_store)) |
 | — | `MSHIP_LOG_LEVEL` | `INFO` | Log level (env-var-only: must be set before `import ray` so library loggers latch the right level) |
 | `--log-format` | `MSHIP_LOG_FORMAT` | `text` | `text` or `json` |
@@ -109,15 +110,22 @@ Inference is deterministic, so re-running the same command is idempotent. It als
 
 ### Cache directory structure
 
-Under `MSHIP_CACHE_DIR` (default `/.cache`):
+Under `MSHIP_CACHE_DIR` (default `/.cache`; may be shared storage):
 
 | Subdir | Contents | Env var |
 |---|---|---|
 | `huggingface` | HF models and tokenizers | `HF_HOME` |
-| `vllm` | vLLM compiled artifacts | `VLLM_CACHE_ROOT` |
-| `flashinfer` | FlashInfer kernels | `FLASHINFER_CACHE_DIR` |
 | `whispercpp` | pywhispercpp built-in model downloads | `MSHIP_WHISPERCPP_CACHE_DIR` |
 | `sherpa_onnx/<name>` | sherpa-onnx registry tarballs | — |
+
+Under `MSHIP_NODE_CACHE_DIR` (default `$MSHIP_HOME/node-cache` — `/opt/mship/node-cache` in the image). Never put this on storage shared between nodes: vLLM keys its GPU peer-access cache by device index alone, so nodes would read each other's results.
+
+| Subdir | Contents | Env var |
+|---|---|---|
+| `vllm` | vLLM compiled artifacts | `VLLM_CACHE_ROOT` |
+| `vllm-config` | vLLM usage-stats config | `VLLM_CONFIG_ROOT` |
+| `triton` | Triton JIT kernels | `TRITON_CACHE_DIR` |
+| `flashinfer` | FlashInfer JIT kernels | `FLASHINFER_WORKSPACE_BASE` |
 
 ### Additive vs. reconcile deploys
 
@@ -552,7 +560,8 @@ Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded 
 | Variable | Description | Default |
 |---|---|---|
 | `HF_TOKEN` | HuggingFace access token | — |
-| `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace, vLLM, sherpa_onnx, etc.) | `/.cache` |
+| `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace, sherpa_onnx, etc.); may be shared storage | `/.cache` |
+| `MSHIP_NODE_CACHE_DIR` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer); must not be shared storage | `$MSHIP_HOME/node-cache` |
 | `MSHIP_STATE_STORE` | State-store connection URI for the effective config, deploy coordinator + `/v1/responses` conversations (see [State store](#state-store-mship_state_store)) | `memory://` |
 | `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship` |
 | `MSHIP_GATEWAY_REPLICAS` | Number of API gateway replicas | `1` |

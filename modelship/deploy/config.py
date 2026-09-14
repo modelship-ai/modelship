@@ -98,8 +98,8 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     missing repo, missing file, glob-no-match) so the operator sees it before
     any Ray actor spins up.
 
-    Note: HF_HOME / VLLM_CACHE_ROOT / FLASHINFER_CACHE_DIR are set at module
-    load time in mship_deploy.py — `huggingface_hub.HF_HOME` is latched at
+    Note: HF_HOME / VLLM_CACHE_ROOT / FLASHINFER_WORKSPACE_BASE are set at module
+    load time in modelship/driver.py — `huggingface_hub.HF_HOME` is latched at
     import, so setting them later doesn't take effect.
     """
     # Deferred: pulls huggingface_hub.

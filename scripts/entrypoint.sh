@@ -20,13 +20,15 @@ TARGET_GID=${MSHIP_GID:-1000}
 # the container command, bypassing this ENTRYPOINT entirely for Ray pods; this
 # branch covers any pod that keeps it, e.g. the deploy Job.)
 if [ "$(id -u)" = "0" ]; then
-    # Fix permissions for the cache directory (may be a root-owned bind mount).
+    # Fix permissions for the cache directories (may be root-owned bind mounts).
     # `chown -R` walks the whole weight cache, which is very slow on NFS/EFS, so
     # only do it when the directory isn't already owned by the target user — i.e.
     # the first run / a freshly-mounted root-owned volume. Restarts skip the walk.
-    if [ -d "/.cache" ] && [ "$(stat -c '%u:%g' /.cache)" != "$TARGET_UID:$TARGET_GID" ]; then
-        chown -R "$TARGET_UID:$TARGET_GID" /.cache
-    fi
+    for dir in /.cache "${MSHIP_NODE_CACHE_DIR:-}"; do
+        if [ -n "$dir" ] && [ -d "$dir" ] && [ "$(stat -c '%u:%g' "$dir")" != "$TARGET_UID:$TARGET_GID" ]; then
+            chown -R "$TARGET_UID:$TARGET_GID" "$dir"
+        fi
+    done
     # Also ensure the workspace has the right permissions.
     chown "$TARGET_UID:$TARGET_GID" /modelship
     # Drop privileges and execute the main command (gosu takes UID:GID).

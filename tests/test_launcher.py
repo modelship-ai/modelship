@@ -258,6 +258,26 @@ class TestCmdDeploy:
             launcher._cmd_deploy([])
         mock_driver_main.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("env", "argv", "expected"),
+        [
+            ({"MSHIP_HOME": "/opt/mship"}, [], "/opt/mship/node-cache"),
+            ({"MSHIP_NODE_CACHE_DIR": "/from/env"}, [], "/from/env"),
+            ({"MSHIP_NODE_CACHE_DIR": "/from/env"}, ["--node-cache-dir", "/from/flag"], "/from/flag"),
+        ],
+    )
+    def test_node_cache_dir_is_set_before_the_driver_runs(self, env, argv, expected):
+        seen: dict[str, str] = {}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
+            patch.object(launcher, "_validate_config", return_value=None),
+            patch.object(launcher, "_guard_python_version"),
+            patch("modelship.driver.main", side_effect=lambda _argv: seen.update(os.environ)),
+        ):
+            launcher._cmd_deploy(argv)
+        assert seen["MSHIP_NODE_CACHE_DIR"] == expected
+
 
 class TestMain:
     def test_no_args_exits_2(self):

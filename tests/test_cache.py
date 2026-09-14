@@ -6,17 +6,20 @@ import requests
 
 from modelship.deploy.actor_options import build_cache_env_vars
 from modelship.utils import cache_dir, download
-from modelship.utils.cache import resolve_cache_root
+from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
 
 
 def test_build_cache_env_vars_defaults():
-    with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": "/.cache"}, clear=True):
+    env = {"MSHIP_CACHE_DIR": "/.cache", "MSHIP_NODE_CACHE_DIR": "/opt/mship/node-cache"}
+    with mock.patch.dict(os.environ, env, clear=True):
         env_vars = build_cache_env_vars()
         assert env_vars["HF_HOME"] == "/.cache/huggingface"
-        assert env_vars["VLLM_CACHE_ROOT"] == "/.cache/vllm"
-        assert env_vars["FLASHINFER_CACHE_DIR"] == "/.cache/flashinfer"
-        assert env_vars["TRITON_CACHE_DIR"] == "/.cache/triton"
-        assert env_vars["VLLM_CONFIG_ROOT"] == "/.cache/vllm-config"
+        assert env_vars["VLLM_CACHE_ROOT"] == "/opt/mship/node-cache/vllm"
+        assert env_vars["FLASHINFER_WORKSPACE_BASE"] == "/opt/mship/node-cache/flashinfer"
+        assert env_vars["TRITON_CACHE_DIR"] == "/opt/mship/node-cache/triton"
+        assert env_vars["VLLM_CONFIG_ROOT"] == "/opt/mship/node-cache/vllm-config"
+        # flashinfer never reads it from env
+        assert "FLASHINFER_CACHE_DIR" not in env_vars
         assert "HF_TOKEN" not in env_vars
         assert "HF_HUB_OFFLINE" not in env_vars
 
@@ -29,15 +32,15 @@ def test_build_cache_env_vars_forwards_hf_token_and_offline():
         assert env_vars["HF_HUB_OFFLINE"] == "1"
 
 
-def test_build_cache_env_vars_custom_dir():
-    custom_dir = "/tmp/custom_cache"
-    with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": custom_dir}, clear=True):
+def test_build_cache_env_vars_custom_dirs():
+    shared, node = "/mnt/shared", "/scratch/node-cache"
+    with mock.patch.dict(os.environ, {"MSHIP_CACHE_DIR": shared, "MSHIP_NODE_CACHE_DIR": node}, clear=True):
         env_vars = build_cache_env_vars()
-        assert env_vars["HF_HOME"] == f"{custom_dir}/huggingface"
-        assert env_vars["VLLM_CACHE_ROOT"] == f"{custom_dir}/vllm"
-        assert env_vars["FLASHINFER_CACHE_DIR"] == f"{custom_dir}/flashinfer"
-        assert env_vars["TRITON_CACHE_DIR"] == f"{custom_dir}/triton"
-        assert env_vars["VLLM_CONFIG_ROOT"] == f"{custom_dir}/vllm-config"
+        assert env_vars["HF_HOME"] == f"{shared}/huggingface"
+        assert env_vars["VLLM_CACHE_ROOT"] == f"{node}/vllm"
+        assert env_vars["FLASHINFER_WORKSPACE_BASE"] == f"{node}/flashinfer"
+        assert env_vars["TRITON_CACHE_DIR"] == f"{node}/triton"
+        assert env_vars["VLLM_CONFIG_ROOT"] == f"{node}/vllm-config"
 
 
 def test_utils_cache_dir_default():
@@ -79,6 +82,25 @@ class TestResolveCacheRoot:
         ):
             assert resolve_cache_root() == "/home/user/.modelship/cache"
         mock_makedirs.assert_called_once_with("/home/user/.modelship/cache", exist_ok=True)
+
+
+class TestResolveNodeCacheRoot:
+    def test_explicit_env_var_wins(self):
+        env = {"MSHIP_NODE_CACHE_DIR": "/scratch/node-cache", "MSHIP_HOME": "/opt/mship"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            assert resolve_node_cache_root() == "/scratch/node-cache"
+
+    def test_follows_mship_home_not_the_shared_root(self):
+        with mock.patch.dict(os.environ, {"MSHIP_HOME": "/opt/mship", "MSHIP_CACHE_DIR": "/mnt/shared"}, clear=True):
+            assert resolve_node_cache_root() == "/opt/mship/node-cache"
+
+    def test_defaults_under_home_dir(self):
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("os.path.expanduser", return_value="/home/user/.modelship") as mock_expand,
+        ):
+            assert resolve_node_cache_root() == "/home/user/.modelship/node-cache"
+        mock_expand.assert_called_once_with("~/.modelship")
 
 
 class _FakeResponse:

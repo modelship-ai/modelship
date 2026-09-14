@@ -31,6 +31,7 @@ _QUANT_SEGMENT = re.compile(r"^(?:i?q\d+|bf\d+|f\d+)(?:[_-]\w+)*$", re.IGNORECAS
 # reads exclusively from os.environ so a single source of truth is preserved.
 _STRING_ARG_TO_ENV: dict[str, str] = {
     "cache_dir": "MSHIP_CACHE_DIR",
+    "node_cache_dir": "MSHIP_NODE_CACHE_DIR",
     "state_store": "MSHIP_STATE_STORE",
     "log_format": "MSHIP_LOG_FORMAT",
     "log_target": "MSHIP_LOG_TARGET",
@@ -53,6 +54,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--config", help="Path to models.yaml config file (default: config/models.yaml)")
     parser.add_argument("--cache-dir", help="Model cache directory (env: MSHIP_CACHE_DIR)")
+    parser.add_argument(
+        "--node-cache-dir",
+        help="Node-local compile/JIT cache directory; not for shared storage (env: MSHIP_NODE_CACHE_DIR)",
+    )
     parser.add_argument(
         "--state-store",
         help=(

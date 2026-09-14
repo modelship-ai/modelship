@@ -4,14 +4,15 @@ import sys
 import time
 
 # Ray-free — safe to import ahead of the env-latch block below.
-from modelship.utils.cache import resolve_cache_root
+from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
 
 # Must precede any huggingface_hub import — HF_HOME latches at its import time.
 # Workers get these via runtime_env.env_vars (actor_options.build_cache_env_vars).
 _BASE_CACHE = resolve_cache_root()
+_NODE_CACHE = resolve_node_cache_root()
 os.environ.setdefault("HF_HOME", f"{_BASE_CACHE}/huggingface")
-os.environ.setdefault("VLLM_CACHE_ROOT", f"{_BASE_CACHE}/vllm")
-os.environ.setdefault("FLASHINFER_CACHE_DIR", f"{_BASE_CACHE}/flashinfer")
+os.environ.setdefault("VLLM_CACHE_ROOT", f"{_NODE_CACHE}/vllm")
+os.environ.setdefault("FLASHINFER_WORKSPACE_BASE", f"{_NODE_CACHE}/flashinfer")
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 # Sets RAY_LOG_LEVEL/etc. from MSHIP_LOG_LEVEL before `import ray`, which latches

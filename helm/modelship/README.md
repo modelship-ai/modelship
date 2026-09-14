@@ -94,6 +94,9 @@ secrets:
 - **Cache** — a shared PVC for model weights at `/.cache`. Single-node clusters
   can use `ReadWriteOnce`; **multi-node requires `ReadWriteMany`** so every worker
   shares one copy.
+- **Node cache** — an emptyDir per pod at `/opt/mship/node-cache` for vLLM, Triton
+  and FlashInfer compile caches, kept off the shared PVC. A rescheduled pod
+  compiles them again; cap the size with `nodeCache.sizeLimit`.
 - **/dev/shm** — an in-memory emptyDir (default 8Gi); vLLM/NCCL need it.
 
 ## Reaching the gateway
@@ -192,6 +195,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `gateway.replicas` | `1` | API gateway replicas; raise (with ≥1 worker) for routing/ingress HA |
 | `secrets.huggingfaceToken` / `secrets.apiKeys` | `""` | HF token / gateway API keys |
 | `cache.size` / `cache.accessModes` | `100Gi` / `[ReadWriteOnce]` | Shared weight cache |
+| `nodeCache.sizeLimit` | `""` (uncapped) | Per-pod compile-cache emptyDir; a pod over the cap is evicted |
 | `workerGroups` | `[]` | Worker pool layout (a list — set the full set; copy the example in `values.yaml`) |
 | `deploy.reconcile` | `false` | Remove dropped models on upgrade |
 | `deploy.replaceStrategy` | `blue_green` | How changed models are replaced |
