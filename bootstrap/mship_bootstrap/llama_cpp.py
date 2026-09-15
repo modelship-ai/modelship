@@ -110,12 +110,13 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
                 file=sys.stderr,
             )
             return None
-        if not os.access(wrapper_path, os.X_OK):
-            print(
-                f"warning: {wrapper_path} is not executable by this user; the llama_server loader will not work.",
-                file=sys.stderr,
-            )
-            return None
+        for path in (wrapper_path, binary):
+            if not os.access(path, os.X_OK):
+                print(
+                    f"warning: {path} is not executable by this user; the llama_server loader will not work.",
+                    file=sys.stderr,
+                )
+                return None
         return wrapper_path
 
     if not built:
@@ -123,10 +124,11 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
             shutil.rmtree(extract_dir, ignore_errors=True)
         print(f"mship: fetching llama.cpp {_LLAMA_CPP_TAG}", flush=True)
         fetch_and_extract_archive(asset.url, asset.sha256, archive_path, extract_dir, flatten=True, keep_archive=True)
-        os.chmod(binary, 0o755)
         if cuda:
             _install_cuda_backend(tag_dir, extract_dir)
 
+    # Also repairs an existing build.
+    os.chmod(binary, 0o755)
     # Bakes in a venv-specific library path.
     _write_wrapper(wrapper_path, extract_dir, asset.lib_env, variant, cuda=cuda)
     return wrapper_path
