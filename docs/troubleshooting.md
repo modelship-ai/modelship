@@ -14,11 +14,9 @@ Ungated models (e.g. `lmstudio-community/Qwen2.5-7B-Instruct-GGUF`) don't need a
 
 ## Permission denied on `/.cache`
 
-The container runs as a non-root user (since v0.1.23). If you're mounting a host directory to `/.cache`, make sure it's writable by UID 1000, or let Docker create it fresh:
+The container starts as root and drops to the owner of the directory mounted at `/.cache`. A root-owned one — including a missing `-v` source Docker created for you — is chowned to UID/GID 1000 on first start instead. Set `MSHIP_UID`/`MSHIP_GID` to pick the user explicitly (`0` runs as root).
 
-```bash
-mkdir -p models-cache && chmod 777 models-cache
-```
+Under `--user` or a Kubernetes `runAsUser` the container can't change ownership, so the mount must already be writable by that UID.
 
 If you previously used the old `/root/.cache/huggingface` mount path, switch to `/.cache` and move any cached weights across — the container no longer looks at the old location.
 

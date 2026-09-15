@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import stat
 import subprocess
 import sys
 from typing import NamedTuple
@@ -100,24 +99,37 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
 
     binary = os.path.join(extract_dir, "llama")
     cuda = variant.name == "cuda" and (platform.system(), platform.machine()) == ("Linux", "x86_64")
+    built = os.path.isfile(binary) and (not cuda or os.path.isfile(os.path.join(extract_dir, _CUDA_BACKEND_SO)))
 
-    if not os.path.isfile(binary) or (cuda and not os.path.isfile(os.path.join(extract_dir, _CUDA_BACKEND_SO))):
-        if not fetch:
+    if not fetch:
+        # Read-only: deploy may run as a UID that doesn't own the build.
+        if not (built and os.path.isfile(wrapper_path)):
             print(
                 f"warning: no llama.cpp {_LLAMA_CPP_TAG} build under {tag_dir}; "
                 f"the llama_server loader will not work. Run: mship bootstrap --{variant.name}",
                 file=sys.stderr,
             )
             return None
+        for path in (wrapper_path, binary):
+            if not os.access(path, os.X_OK):
+                print(
+                    f"warning: {path} is not executable by this user; the llama_server loader will not work.",
+                    file=sys.stderr,
+                )
+                return None
+        return wrapper_path
+
+    if not built:
         if os.path.isdir(extract_dir):
             shutil.rmtree(extract_dir, ignore_errors=True)
         print(f"mship: fetching llama.cpp {_LLAMA_CPP_TAG}", flush=True)
         fetch_and_extract_archive(asset.url, asset.sha256, archive_path, extract_dir, flatten=True, keep_archive=True)
-        os.chmod(binary, os.stat(binary).st_mode | stat.S_IEXEC)
         if cuda:
             _install_cuda_backend(tag_dir, extract_dir)
 
-    # Cheap, and rewritten on both paths: it bakes in a venv-specific library path.
+    # Also repairs an existing build.
+    os.chmod(binary, 0o755)
+    # Bakes in a venv-specific library path.
     _write_wrapper(wrapper_path, extract_dir, asset.lib_env, variant, cuda=cuda)
     return wrapper_path
 
@@ -156,7 +168,7 @@ def _write_wrapper(wrapper_path: str, extract_dir: str, lib_env: str, variant: V
     )
     with open(wrapper_path, "w") as f:
         f.write(content)
-    os.chmod(wrapper_path, os.stat(wrapper_path).st_mode | stat.S_IEXEC)
+    os.chmod(wrapper_path, 0o755)
 
 
 def warn_if_no_cuda_device(wrapper_path: str) -> None:
