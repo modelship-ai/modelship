@@ -54,9 +54,6 @@ RUN if ! getent group $GID >/dev/null; then groupadd -g $GID modelship; fi && \
     if ! getent passwd $UID >/dev/null; then useradd -m -u $UID -g $GID modelship; \
     else existing=$(getent passwd $UID | cut -d: -f1) && usermod -l modelship -d /home/modelship -m "$existing"; fi
 
-ENV MSHIP_UID=$UID
-ENV MSHIP_GID=$GID
-
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV UV_LINK_MODE=copy
 
