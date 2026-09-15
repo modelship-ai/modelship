@@ -103,14 +103,20 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
 
     if not fetch:
         # Read-only: deploy may run as a UID that doesn't own the build.
-        if built and os.path.isfile(wrapper_path):
-            return wrapper_path
-        print(
-            f"warning: no llama.cpp {_LLAMA_CPP_TAG} build under {tag_dir}; "
-            f"the llama_server loader will not work. Run: mship bootstrap --{variant.name}",
-            file=sys.stderr,
-        )
-        return None
+        if not (built and os.path.isfile(wrapper_path)):
+            print(
+                f"warning: no llama.cpp {_LLAMA_CPP_TAG} build under {tag_dir}; "
+                f"the llama_server loader will not work. Run: mship bootstrap --{variant.name}",
+                file=sys.stderr,
+            )
+            return None
+        if not os.access(wrapper_path, os.X_OK):
+            print(
+                f"warning: {wrapper_path} is not executable by this user; the llama_server loader will not work.",
+                file=sys.stderr,
+            )
+            return None
+        return wrapper_path
 
     if not built:
         if os.path.isdir(extract_dir):

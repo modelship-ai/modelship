@@ -36,9 +36,19 @@ def test_locate_leaves_the_wrapper_untouched(tag_dir):
     wrapper = os.path.join(tag_dir, "llama-server.sh")
     with open(wrapper, "w") as f:
         f.write("bootstrap-written\n")
+    os.chmod(wrapper, 0o755)
     assert llama_cpp.locate(_CPU) == wrapper
     with open(wrapper) as f:
         assert f.read() == "bootstrap-written\n"
+
+
+def test_locate_rejects_a_wrapper_this_user_cannot_execute(tag_dir, capsys):
+    _install_build(tag_dir)
+    wrapper = os.path.join(tag_dir, "llama-server.sh")
+    open(wrapper, "w").close()
+    os.chmod(wrapper, 0o644)
+    assert llama_cpp.locate(_CPU) is None
+    assert "not executable" in capsys.readouterr().err
 
 
 def test_locate_without_wrapper_returns_none(tag_dir, capsys):
