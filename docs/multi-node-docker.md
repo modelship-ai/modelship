@@ -46,6 +46,7 @@ docker run -d --network=host --shm-size=8g \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -e MSHIP_STATE_STORE=redis://your-redis-host:6379/0 \
+  -e HF_TOKEN=your_token_here \
   ghcr.io/modelship-ai/modelship:0.6.5 deploy \
   --ray-auth=token --ray-port=6380
 ```
@@ -66,9 +67,13 @@ docker exec <head-container> cat ~/.ray/auth_token
 ```bash
 docker run -d --network=host --shm-size=8g --gpus all \
   -v ./models-cache:/.cache \
+  -e HF_TOKEN=your_token_here \
   ghcr.io/modelship-ai/modelship:0.6.5-cuda deploy \
   --address=<vm-a-private-ip>:6380 --token=<token-from-above>
 ```
+
+`HF_TOKEN` goes on every node: the head checks model sources with it, and each
+replica reads it from its own node's environment — the driver never forwards it.
 
 No `--config` is needed on the joiner — it contributes compute and reconciles
 the cluster to whatever the head's effective config already wants deployed (the

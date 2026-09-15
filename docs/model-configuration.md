@@ -211,6 +211,7 @@ Each node downloads its own copy of whatever gets scheduled onto it — **not** 
 - **Shared storage (NFS/EFS) for `MSHIP_CACHE_DIR` is optional**, not required — mount it to dedupe across nodes; without it, each node downloads its own, correctly.
 - Cache paths resolve on each node from its own `MSHIP_CACHE_DIR` and `MSHIP_NODE_CACHE_DIR`, so they may differ between nodes. `mship` and the images set both; if you start a node's Ray yourself (`--use-existing-ray-cluster`), export them there, or replicas on that node refuse to start.
 - Every node that can host a model needs its own disk and egress (HF rate limits apply per node).
+- Every node that can host a gated model needs `HF_TOKEN` in its own environment; replicas read it from the node, not the driver.
 - A local-path `model:` is resolved on whichever node hosts the replica — the path must exist on every node that could host it; there's no cross-node copying.
 
 A model also only schedules onto a node whose image has that loader's backend installed (`cpu` has no `diffusers`, for instance): every node advertises `mship_<loader>` Ray custom resources for what it can run, and every deploy requests its loader's resource. See [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling) and `MSHIP_NODE_CAPABILITIES` to override the probe.
@@ -558,7 +559,7 @@ Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded 
 
 | Variable | Description | Default |
 |---|---|---|
-| `HF_TOKEN` | HuggingFace access token | — |
+| `HF_TOKEN` | HuggingFace access token. Read from each node's own environment, never forwarded by the driver | — |
 | `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace, sherpa_onnx, etc.); may be shared storage | `/.cache` |
 | `MSHIP_NODE_CACHE_DIR` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer); must not be shared storage | `$MSHIP_HOME/node-cache` |
 | `MSHIP_STATE_STORE` | State-store connection URI for the effective config, deploy coordinator + `/v1/responses` conversations (see [State store](#state-store-mship_state_store)) | `memory://` |

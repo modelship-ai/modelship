@@ -41,12 +41,14 @@ def test_build_cache_env_vars_expand_with_rays_update_envs():
         assert os.environ["VLLM_CONFIG_ROOT"] == "/node/node-cache/vllm-config"
 
 
-def test_build_cache_env_vars_forwards_hf_token_and_offline():
-    env = {"MSHIP_CACHE_DIR": "/.cache", "HF_TOKEN": "hf_secret", "HF_HUB_OFFLINE": "1"}
+def test_build_cache_env_vars_ignores_the_drivers_hf_settings():
+    env = {"MSHIP_CACHE_DIR": "/.cache", "HF_TOKEN": "hf_secret", "HF_HUB_OFFLINE": "1", "HF_HUB_DISABLE_XET": "0"}
     with mock.patch.dict(os.environ, env, clear=True):
         env_vars = build_cache_env_vars()
-        assert env_vars["HF_TOKEN"] == "hf_secret"
-        assert env_vars["HF_HUB_OFFLINE"] == "1"
+    assert "HF_TOKEN" not in env_vars
+    assert "hf_secret" not in env_vars.values()
+    assert "HF_HUB_OFFLINE" not in env_vars
+    assert env_vars["HF_HUB_DISABLE_XET"] == "1"
 
 
 def test_utils_cache_dir_default():

@@ -32,10 +32,11 @@ def build_passthrough_env_vars() -> dict[str, str]:
 def build_cache_env_vars() -> dict[str, str]:
     """Cache paths as ${root}/subdir placeholders that Ray expands on each replica's node.
 
-    Also forwards the driver's HF_TOKEN/HF_HUB_OFFLINE."""
-    env_vars = {
+    HF_TOKEN/HF_HUB_OFFLINE come from the node's own env, not runtime_env (plain-text cluster metadata)."""
+    return {
         "HF_HOME": "${MSHIP_CACHE_DIR}/huggingface",
-        "HF_HUB_DISABLE_XET": os.environ.get("HF_HUB_DISABLE_XET", "1"),
+        # hf_xet stalls on out-of-order chunks (xet-core#789)
+        "HF_HUB_DISABLE_XET": "1",
         "VLLM_CACHE_ROOT": "${MSHIP_NODE_CACHE_DIR}/vllm",
         # flashinfer appends .cache/flashinfer/<version>/<arch>
         "FLASHINFER_WORKSPACE_BASE": "${MSHIP_NODE_CACHE_DIR}/flashinfer",
@@ -44,10 +45,6 @@ def build_cache_env_vars() -> dict[str, str]:
         # vLLM writes usage_stats.json here
         "VLLM_CONFIG_ROOT": "${MSHIP_NODE_CACHE_DIR}/vllm-config",
     }
-    for var in ("HF_TOKEN", "HF_HUB_OFFLINE"):
-        if os.environ.get(var) is not None:
-            env_vars[var] = os.environ[var]
-    return env_vars
 
 
 def _world_size(config: ModelshipModelConfig) -> int:
