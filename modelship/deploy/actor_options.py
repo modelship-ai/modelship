@@ -43,8 +43,6 @@ def build_cache_env_vars() -> dict[str, str]:
         "TRITON_CACHE_DIR": "${MSHIP_NODE_CACHE_DIR}/triton",
         # vLLM writes usage_stats.json here
         "VLLM_CONFIG_ROOT": "${MSHIP_NODE_CACHE_DIR}/vllm-config",
-        # pywhispercpp's download dir for built-in model names
-        "MSHIP_WHISPERCPP_CACHE_DIR": "${MSHIP_CACHE_DIR}/whispercpp",
     }
     for var in ("HF_TOKEN", "HF_HUB_OFFLINE"):
         if os.environ.get(var) is not None:

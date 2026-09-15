@@ -115,7 +115,6 @@ Under `MSHIP_CACHE_DIR` (default `/.cache`; may be shared storage):
 | Subdir | Contents | Env var |
 |---|---|---|
 | `huggingface` | HF models and tokenizers | `HF_HOME` |
-| `whispercpp` | pywhispercpp built-in model downloads | `MSHIP_WHISPERCPP_CACHE_DIR` |
 | `sherpa_onnx/<name>` | sherpa-onnx registry tarballs | — |
 
 Under `MSHIP_NODE_CACHE_DIR` (default `$MSHIP_HOME/node-cache` — `/opt/mship/node-cache` in the image). Never put this on storage shared between nodes: vLLM keys its GPU peer-access cache by device index alone, so nodes would read each other's results.
@@ -472,10 +471,9 @@ Configured via `whispercpp_config`:
 |---|---|---|---|
 | `n_threads` | int | pywhispercpp's own default (`min(4, cores)`) | Compute thread count |
 | `flash_attn` | bool | `false` | ggml flash attention |
-| `models_dir` | string | `<cache_root>/whispercpp` | Only used when `model:` is a bare pywhispercpp built-in name |
 
 `model:` accepts:
-- A pywhispercpp built-in name (e.g. `base.en`, `large-v3-turbo` — see [pywhispercpp's model list](https://github.com/absadiki/pywhispercpp/blob/main/pywhispercpp/constants.py)); pywhispercpp resolves/downloads these itself, modelship doesn't pre-validate.
+- A whisper.cpp model name (e.g. `base.en`, `large-v3-turbo`), shorthand for `ggerganov/whisper.cpp:ggml-<name>.bin` — pinned, validated at deploy time, and cached under `huggingface/` like any HF ref. The [repo's file list](https://huggingface.co/ggerganov/whisper.cpp/tree/main) shows every name.
 - A local path or HF `repo:filename` pointing at a `ggml-*.bin` file, resolved like every other loader. Both GGUF and safetensors are rejected with a pointer at the right form.
 
 ```yaml

@@ -147,8 +147,6 @@ class WhispercppConfig(_StrictModel):
 
     n_threads: int | None = None
     flash_attn: bool = False
-    # Only used for a bare pywhispercpp model name. None -> `<cache_root>/whispercpp`.
-    models_dir: str | None = None
 
 
 class StableDiffusionCppConfig(_StrictModel):
