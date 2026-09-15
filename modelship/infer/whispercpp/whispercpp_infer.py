@@ -57,21 +57,7 @@ class WhispercppInfer(BaseInfer):
 
     def _load(self) -> Any:
         import _pywhispercpp as _pw
-        from pywhispercpp import utils as pywhispercpp_utils
-        from pywhispercpp.constants import AVAILABLE_MODELS
         from pywhispercpp.model import Model
-        from tqdm import tqdm
-
-        class _ThrottledDownloadProgress(tqdm):
-            def __init__(self, *args: Any, **kwargs: Any) -> None:
-                kwargs.setdefault("mininterval", 60)
-                kwargs.setdefault(
-                    "bar_format", "{desc}: downloading {percentage:3.0f}% ({n_fmt}/{total_fmt}, {rate_fmt})"
-                )
-                super().__init__(*args, **kwargs)
-
-            def display(self, msg: str | None = None, pos: int | None = None) -> None:
-                logging.getLogger("pywhispercpp.download").info("%s", self)
 
         use_gpu = self.model_config.num_gpus > 0
         context_params: dict[str, Any] = {"use_gpu": use_gpu}
@@ -83,31 +69,17 @@ class WhispercppInfer(BaseInfer):
             kwargs["n_threads"] = self.config.n_threads
 
         resolved_path = self.model_config._resolved_path
-        if resolved_path is not None:
-            _validate_ggml_model_file(resolved_path, self.model_config.name)
-            model_ref = resolved_path
-        else:
-            model_ref = self.model_config.model
-            if model_ref not in AVAILABLE_MODELS:
-                raise ValueError(
-                    f"whispercpp deployment '{self.model_config.name}': model {model_ref!r} did not resolve to a "
-                    f"local/HF source and is not one of pywhispercpp's built-in model names. Built-in names: "
-                    f"{', '.join(AVAILABLE_MODELS)}"
-                )
-            models_dir = self.config.models_dir or os.environ.get("MSHIP_WHISPERCPP_CACHE_DIR")
-            if models_dir:
-                os.makedirs(models_dir, exist_ok=True)
-                kwargs["models_dir"] = models_dir
+        if resolved_path is None:
+            raise ValueError(
+                f"whispercpp deployment '{self.model_config.name}' has no resolved model file. "
+                f"Check driver logs for resolution errors."
+            )
+        _validate_ggml_model_file(resolved_path, self.model_config.name)
 
-        logger.info("loading whisper.cpp model %r (gpu=%s) for '%s'", model_ref, use_gpu, self.model_config.name)
+        logger.info("loading whisper.cpp model %r (gpu=%s) for '%s'", resolved_path, use_gpu, self.model_config.name)
         # raw stderr writes; redirecting into our own logger would deadlock (fd 2 -> our handlers' pipe)
         kwargs["redirect_whispercpp_logs_to"] = False if logger.isEnabledFor(logging.DEBUG) else None
-        original_tqdm = pywhispercpp_utils.tqdm  # pyright: ignore[reportPrivateImportUsage]
-        pywhispercpp_utils.tqdm = _ThrottledDownloadProgress  # pyright: ignore[reportPrivateImportUsage]
-        try:
-            model: Any = Model(model_ref, **kwargs)
-        finally:
-            pywhispercpp_utils.tqdm = original_tqdm  # pyright: ignore[reportPrivateImportUsage]
+        model: Any = Model(resolved_path, **kwargs)
         self._multilingual = bool(_pw.whisper_is_multilingual(model._ctx))
         return model
 

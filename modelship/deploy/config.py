@@ -60,10 +60,14 @@ def load_raw_models(arg_path: str | None) -> list[dict]:
     return models
 
 
-def _is_whispercpp_builtin_ref(model: str) -> bool:
-    """A bare pywhispercpp built-in name (e.g. `base.en`) — no repo or path
-    separator. Validated in the actor; the driver may lack pywhispercpp."""
-    return "/" not in model and not os.path.exists(model)
+WHISPERCPP_REPO = "ggerganov/whisper.cpp"
+
+
+def _whispercpp_source_ref(model: str) -> str:
+    """A bare name (`base.en`) is shorthand for its ggml file in the whisper.cpp HF repo."""
+    if is_pathy(model) or "/" in model or ":" in model or os.path.exists(model):
+        return model
+    return f"{WHISPERCPP_REPO}:ggml-{model}.bin"
 
 
 def _resolve_sherpa_onnx_source(cfg) -> None:
@@ -105,17 +109,23 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     from modelship.infer.model_resolver import check_model_source
 
     for cfg in yml_conf.models:
-        if cfg.loader == ModelLoader.whispercpp and cfg.model and _is_whispercpp_builtin_ref(cfg.model):
-            # pywhispercpp resolves/downloads its own built-in models; nothing to pin here.
-            logger.info("Skipping source check for '%s': pywhispercpp built-in model %r", cfg.name, cfg.model)
-            continue
         if cfg.loader == ModelLoader.sherpa_onnx:
             _resolve_sherpa_onnx_source(cfg)
             continue
         assert cfg.model is not None  # validator guarantees this for built-in loaders
         trust_remote_code = bool(cfg.vllm_engine_kwargs and cfg.vllm_engine_kwargs.trust_remote_code)
-        logger.info("Checking model source for '%s': %s", cfg.name, cfg.model)
-        cfg._pinned_source = check_model_source(cfg.model, trust_remote_code=trust_remote_code)
+        # cfg.model stays as written: it feeds the fingerprint.
+        ref = _whispercpp_source_ref(cfg.model) if cfg.loader == ModelLoader.whispercpp else cfg.model
+        logger.info("Checking model source for '%s': %s", cfg.name, ref)
+        try:
+            cfg._pinned_source = check_model_source(ref, trust_remote_code=trust_remote_code)
+        except FileNotFoundError as e:
+            if ref == cfg.model:
+                raise
+            raise FileNotFoundError(
+                f"Model '{cfg.name}': {cfg.model!r} is not a whisper.cpp model name in {WHISPERCPP_REPO!r} "
+                f"(looked for {ref.split(':', 1)[1]!r})"
+            ) from e
         logger.info("Checked '%s' (revision=%s)", cfg.name, cfg._pinned_source.revision or "local")
 
         if cfg.loader == ModelLoader.llama_server and cfg.llama_server_config and cfg.llama_server_config.mmproj:

@@ -14,7 +14,6 @@ def test_build_cache_env_vars_ignores_the_drivers_paths():
     with mock.patch.dict(os.environ, env, clear=True):
         env_vars = build_cache_env_vars()
     assert env_vars["HF_HOME"] == "${MSHIP_CACHE_DIR}/huggingface"
-    assert env_vars["MSHIP_WHISPERCPP_CACHE_DIR"] == "${MSHIP_CACHE_DIR}/whispercpp"
     assert env_vars["VLLM_CACHE_ROOT"] == "${MSHIP_NODE_CACHE_DIR}/vllm"
     assert env_vars["FLASHINFER_WORKSPACE_BASE"] == "${MSHIP_NODE_CACHE_DIR}/flashinfer"
     assert env_vars["TRITON_CACHE_DIR"] == "${MSHIP_NODE_CACHE_DIR}/triton"
@@ -36,7 +35,6 @@ def test_build_cache_env_vars_expand_with_rays_update_envs():
     with mock.patch.dict(os.environ, node_env, clear=True):
         update_envs(build_cache_env_vars())
         assert os.environ["HF_HOME"] == "/node/cache/huggingface"
-        assert os.environ["MSHIP_WHISPERCPP_CACHE_DIR"] == "/node/cache/whispercpp"
         assert os.environ["VLLM_CACHE_ROOT"] == "/node/node-cache/vllm"
         assert os.environ["FLASHINFER_WORKSPACE_BASE"] == "/node/node-cache/flashinfer"
         assert os.environ["TRITON_CACHE_DIR"] == "/node/node-cache/triton"
