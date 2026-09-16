@@ -3,18 +3,16 @@ RAY_AUTH_MODE at import, before resolve_ray_auth_env() runs.
 """
 
 import hashlib
-import os
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from modelship.logging import get_logger
-from modelship.utils import is_pathy
 
 if TYPE_CHECKING:
     # Annotation only; a real import pulls huggingface_hub.
-    from modelship.infer.model_resolver import PinnedSource
+    from modelship.infer.sources import PinnedSource
 
 _logger = get_logger("config")
 
@@ -283,10 +281,10 @@ class ModelshipModelConfig(_StrictModel):
         # `model:` must be a registry name, or a local dir named for one.
         if self.loader != ModelLoader.sherpa_onnx:
             return self
-        from modelship.infer.sherpa_onnx.registry import registry_names
+        from modelship.infer.sherpa_onnx.registry import registry_name, registry_names
 
         assert self.model is not None  # enforced by check_model_required above
-        name = os.path.basename(self.model.rstrip("/")) if is_pathy(self.model) else self.model
+        name = registry_name(self.model)
         names = registry_names()
         if name not in names:
             raise ValueError(

@@ -11,7 +11,7 @@ from ray.exceptions import RayActorError
 
 from modelship.infer import infer_config
 from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
-from modelship.infer.model_resolver import ModelDownloadError, download_model_source
+from modelship.infer.sources import ModelDownloadError, download_model_source
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
     ChatCompletionRequest,

@@ -7,7 +7,7 @@ import re
 import shutil
 import string
 import tarfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import requests
@@ -61,12 +61,9 @@ def is_pathy(s: str) -> bool:
     return s.startswith(("/", "./", "~"))
 
 
-def download(url: str, file_path: str, overwrite: bool = False):
-    """Download ``url`` to ``file_path``, skipping if it already exists.
-
-    Streams to a per-call unique temp file and atomically renames it into place
-    only on success
-    """
+def download(url: str, file_path: str, overwrite: bool = False, on_chunk: Callable[[int], None] | None = None):
+    """Download ``url`` to ``file_path`` via a unique temp file + atomic rename, skipping if it
+    already exists. ``on_chunk`` receives each written chunk's byte count."""
     if not overwrite and os.path.isfile(file_path):
         return
 
@@ -78,6 +75,8 @@ def download(url: str, file_path: str, overwrite: bool = False):
                 for chunk in response.iter_content(chunk_size=1024):
                     if chunk:
                         f.write(chunk)
+                        if on_chunk is not None:
+                            on_chunk(len(chunk))
         os.replace(tmp_path, file_path)
     finally:
         if os.path.exists(tmp_path):

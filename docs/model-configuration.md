@@ -115,7 +115,7 @@ Under `MSHIP_CACHE_DIR` (default `/.cache`; may be shared storage):
 | Subdir | Contents | Env var |
 |---|---|---|
 | `huggingface` | HF models and tokenizers | `HF_HOME` |
-| `sherpa_onnx/<name>` | sherpa-onnx registry tarballs | — |
+| `sherpa_onnx/<name>-<sha256 prefix>` | sherpa-onnx registry tarballs | — |
 
 Under `MSHIP_NODE_CACHE_DIR` (default `$MSHIP_HOME/node-cache` — `/opt/mship/node-cache` in the image). Never put this on storage shared between nodes: vLLM keys its GPU peer-access cache by device index alone, so nodes would read each other's results.
 
@@ -492,7 +492,7 @@ See `config/examples/whispercpp.yaml` for every `model:` form and a Metal exampl
 
 Runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Python bindings. Current scope: TTS only, kokoro family only, CPU only — never touches CUDA or CoreML, so `num_gpus` is ignored entirely (any value accepted at config time, forced to `0` at deploy with a warning if nonzero) and reserves no GPU capacity another deploy could use.
 
-`model:` is not an HF repo or path — it's a name from a curated built-in registry (or a local directory whose basename matches one). Each name maps to a GitHub release tarball with a pinned sha256, downloaded and cached under `<cache_root>/sherpa_onnx/<name>/` on first use.
+`model:` is not an HF repo or path — it's a name from a curated built-in registry (or a local directory whose basename matches one). Each name maps to a GitHub release tarball with a pinned sha256, downloaded and cached under `<cache_root>/sherpa_onnx/<name>-<sha256 prefix>/` on first use.
 
 | Name | Speakers | Notes |
 |---|---|---|

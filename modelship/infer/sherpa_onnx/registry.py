@@ -5,7 +5,10 @@ No network access and no `import sherpa_onnx` — must be importable without the
 wheel installed, same as capabilities.py's LOADER_MODULES.
 """
 
+import os
 from typing import NamedTuple
+
+from modelship.utils import is_pathy
 
 
 class SherpaOnnxRegistryEntry(NamedTuple):
@@ -136,3 +139,8 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
 
 def registry_names() -> tuple[str, ...]:
     return tuple(REGISTRY)
+
+
+def registry_name(model: str) -> str:
+    """The registry key a `model:` value names: itself, or a local directory's basename."""
+    return os.path.basename(model.rstrip("/")) if is_pathy(model) else model

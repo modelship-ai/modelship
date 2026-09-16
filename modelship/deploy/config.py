@@ -1,6 +1,7 @@
 import argparse
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 from pydantic_yaml import parse_yaml_raw_as
@@ -9,6 +10,9 @@ from modelship.logging import get_logger
 from modelship.utils import is_pathy
 from modelship.utils.cli import model_from_args
 from modelship.utils.config_schema import ModelLoader, ModelshipConfig
+
+if TYPE_CHECKING:
+    from modelship.infer.sources import PinnedSource
 
 logger = get_logger("startup")
 
@@ -70,26 +74,16 @@ def _whispercpp_source_ref(model: str) -> str:
     return f"{WHISPERCPP_REPO}:ggml-{model}.bin"
 
 
-def _resolve_sherpa_onnx_source(cfg) -> None:
-    """Not an HF repo, so no `check_model_source`. A local-directory `model:` is
-    validated here at driver preflight; a bare registry name has nothing to pin
-    since the tarball fetch happens in the actor."""
-    from modelship.infer.sherpa_onnx.bundle import validate_bundle
-    from modelship.infer.sherpa_onnx.registry import REGISTRY
+def _pin_label(pinned: "PinnedSource") -> str:
+    from modelship.infer.sources import ArchiveSource, HfSource
 
-    model = cfg.model
-    assert model is not None  # validator guarantees this for built-in loaders
-    if is_pathy(model):
-        path = os.path.expanduser(model)
-        name = os.path.basename(path.rstrip("/"))
-        entry = REGISTRY[name]  # config validation already guarantees this key exists
-        logger.info("Checking sherpa_onnx bundle for '%s': %s", cfg.name, path)
-        validate_bundle(path, entry)
-        logger.info("Checked '%s' (local bundle, no download)", cfg.name)
-    else:
-        logger.info(
-            "Skipping source check for '%s': sherpa_onnx registry model %r is fetched by the actor", cfg.name, model
-        )
+    match pinned:
+        case HfSource():
+            return f"revision={pinned.revision}"
+        case ArchiveSource():
+            return f"sha256={pinned.sha256[:12]}"
+        case _:
+            return "local"
 
 
 def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
@@ -106,19 +100,22 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     latches it at import.
     """
     # Deferred: pulls huggingface_hub.
-    from modelship.infer.model_resolver import check_model_source
+    from modelship.infer.sherpa_onnx.bundle import bundle_source
+    from modelship.infer.sources import check_model_source
 
     for cfg in yml_conf.models:
-        if cfg.loader == ModelLoader.sherpa_onnx:
-            _resolve_sherpa_onnx_source(cfg)
-            continue
         assert cfg.model is not None  # validator guarantees this for built-in loaders
+        if cfg.loader == ModelLoader.sherpa_onnx:
+            logger.info("Checking sherpa_onnx bundle for '%s': %s", cfg.name, cfg.model)
+            cfg._pinned_source = bundle_source(cfg.model)
+            logger.info("Checked '%s' (%s)", cfg.name, _pin_label(cfg._pinned_source))
+            continue
         trust_remote_code = bool(cfg.vllm_engine_kwargs and cfg.vllm_engine_kwargs.trust_remote_code)
         # cfg.model stays as written: it feeds the fingerprint.
         ref = _whispercpp_source_ref(cfg.model) if cfg.loader == ModelLoader.whispercpp else cfg.model
         logger.info("Checking model source for '%s': %s", cfg.name, ref)
         try:
-            cfg._pinned_source = check_model_source(ref, trust_remote_code=trust_remote_code)
+            pinned = check_model_source(ref, trust_remote_code=trust_remote_code)
         except FileNotFoundError as e:
             if ref == cfg.model:
                 raise
@@ -126,7 +123,8 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
                 f"Model '{cfg.name}': {cfg.model!r} is not a whisper.cpp model name in {WHISPERCPP_REPO!r} "
                 f"(looked for {ref.split(':', 1)[1]!r})"
             ) from e
-        logger.info("Checked '%s' (revision=%s)", cfg.name, cfg._pinned_source.revision or "local")
+        cfg._pinned_source = pinned
+        logger.info("Checked '%s' (%s)", cfg.name, _pin_label(pinned))
 
         if cfg.loader == ModelLoader.llama_server and cfg.llama_server_config and cfg.llama_server_config.mmproj:
             logger.info("Checking mmproj source for '%s': %s", cfg.name, cfg.llama_server_config.mmproj)
@@ -136,7 +134,7 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
 
         # GGUF is not supported on the vllm loader (vLLM 0.24 dropped in-tree
         # GGUF). Reject early using the listed filename, before any download.
-        if cfg.loader == ModelLoader.vllm and cfg._pinned_source.resolves_to_gguf:
+        if cfg.loader == ModelLoader.vllm and pinned.resolves_to_gguf:
             raise ValueError(
                 f"Model '{cfg.name}' resolves to a GGUF file, which the vllm loader does not support "
                 f"(vLLM 0.24 dropped in-tree GGUF). Use `loader: llama_server` for GGUF models, or point "

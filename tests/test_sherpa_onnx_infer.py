@@ -7,7 +7,6 @@ import sys
 import time
 import types
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -108,17 +107,16 @@ class TestResolveSid:
         assert infer._resolve_sid("not_a_voice") is None
 
 
+def _resolved(config: ModelshipModelConfig, path: str = "/bundle") -> ModelshipModelConfig:
+    config._resolved_path = path
+    return config
+
+
 class TestLoad:
     def test_provider_and_threads_and_path_routing(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa_onnx_module(len(_ENTRY.voice_names)))
-        infer = SherpaOnnxInfer(_config(num_cpus=3))
-        with (
-            patch(
-                "modelship.infer.sherpa_onnx.sherpa_onnx_infer.resolve_bundle_dir",
-                return_value=("/bundle", _ENTRY),
-            ),
-        ):
-            tts, entry = infer._load()
+        infer = SherpaOnnxInfer(_resolved(_config(num_cpus=3)))
+        tts, entry = infer._load()
         assert entry is _ENTRY
         assert tts.cfg.model.provider == "cpu"
         assert tts.cfg.model.num_threads == 3
@@ -130,36 +128,29 @@ class TestLoad:
     def test_lexicon_joined_with_commas(self, monkeypatch):
         entry = REGISTRY["kokoro-multi-lang-v1_0"]
         monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa_onnx_module(len(entry.voice_names)))
-        infer = SherpaOnnxInfer(_config(model="kokoro-multi-lang-v1_0"))
-        with (
-            patch("modelship.infer.sherpa_onnx.sherpa_onnx_infer.resolve_bundle_dir", return_value=("/bundle", entry)),
-        ):
-            tts, _entry2 = infer._load()
+        infer = SherpaOnnxInfer(_resolved(_config(model="kokoro-multi-lang-v1_0")))
+        tts, entry2 = infer._load()
+        assert entry2 is entry
         assert tts.cfg.model.kokoro.lexicon == "/bundle/lexicon-us-en.txt,/bundle/lexicon-zh.txt"
+
+    def test_local_dir_uses_the_entry_its_basename_names(self, monkeypatch, tmp_path):
+        monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa_onnx_module(len(_ENTRY.voice_names)))
+        bundle = str(tmp_path / "kokoro-en-v0_19")
+        infer = SherpaOnnxInfer(_resolved(_config(model=f"{bundle}/"), bundle))
+        tts, entry = infer._load()
+        assert entry is _ENTRY
+        assert tts.cfg.model.kokoro.model == f"{bundle}/model.onnx"
 
     def test_num_speakers_mismatch_raises(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa_onnx_module(num_speakers=999))
-        infer = SherpaOnnxInfer(_config())
-        with (
-            patch(
-                "modelship.infer.sherpa_onnx.sherpa_onnx_infer.resolve_bundle_dir",
-                return_value=("/bundle", _ENTRY),
-            ),
-            pytest.raises(ValueError, match="999"),
-        ):
+        infer = SherpaOnnxInfer(_resolved(_config()))
+        with pytest.raises(ValueError, match="999"):
             infer._load()
 
-    def test_bundle_resolution_failure_is_a_download_error(self, monkeypatch):
-        from modelship.infer.model_resolver import ModelDownloadError
-
+    def test_rejects_a_config_without_a_resolved_path(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa_onnx_module(len(_ENTRY.voice_names)))
         infer = SherpaOnnxInfer(_config())
-        with (
-            patch(
-                "modelship.infer.sherpa_onnx.sherpa_onnx_infer.resolve_bundle_dir", side_effect=OSError("network down")
-            ),
-            pytest.raises(ModelDownloadError),
-        ):
+        with pytest.raises(ValueError, match="no resolved bundle directory"):
             infer._load()
 
 

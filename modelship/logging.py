@@ -133,7 +133,7 @@ def propagate_lib_log_env(level_name: str | None = None) -> None:
     # downside. setdefault so an explicit user value wins.
     os.environ.setdefault("VLLM_CONFIGURE_LOGGING", "0")
 
-    # Superseded by _DownloadProgressLogger (model_resolver.py), which bypasses this env var.
+    # Superseded by _DownloadProgressLogger (infer/sources/hf.py), which bypasses this env var.
 
 
 def _parse_syslog_target(target: str) -> SysLogHandler:

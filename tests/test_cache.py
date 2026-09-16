@@ -137,6 +137,13 @@ def test_download_writes_file(tmp_path):
     assert dest.read_bytes() == b"abcdef"
 
 
+def test_download_reports_each_chunk(tmp_path):
+    sizes: list[int] = []
+    with mock.patch("modelship.utils.requests.get", return_value=_FakeResponse([b"abc", b"", b"de"])):
+        download("http://x/model.onnx", str(tmp_path / "model.onnx"), on_chunk=sizes.append)
+    assert sizes == [3, 2]
+
+
 def test_download_skips_when_present(tmp_path):
     dest = tmp_path / "model.onnx"
     dest.write_bytes(b"existing")

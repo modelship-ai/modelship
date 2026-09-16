@@ -11,14 +11,13 @@ from modelship.infer.infer_config import (
     ModelshipModelConfig,
     ModelUsecase,
 )
-from modelship.infer.model_resolver import ModelDownloadError, PinnedSource
+from modelship.infer.sources import HfSource, ModelDownloadError
 
-_PIN = PinnedSource(
-    resolved_path=None,
+_PIN = HfSource(
     repo="org/repo",
     revision="deadbeef",
-    download_filename="model.safetensors",
-    download_patterns=None,
+    filename="model.safetensors",
+    patterns=None,
     first_shard=None,
     total_bytes=None,
 )

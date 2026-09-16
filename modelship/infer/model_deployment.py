@@ -13,7 +13,7 @@ from ray import serve
 
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, RawRequestProxy
-from modelship.infer.model_resolver import ModelDownloadError
+from modelship.infer.sources import ModelDownloadError
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
     EMBEDDING_DURATION_SECONDS,
