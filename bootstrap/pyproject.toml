@@ -28,6 +28,7 @@ mship = "mship_bootstrap.cli:main"
 Homepage = "https://github.com/modelship-ai/modelship"
 Repository = "https://github.com/modelship-ai/modelship"
 Documentation = "https://modelship-ai.github.io/modelship/"
+Chat = "https://discord.gg/apbtTdk2Am"
 
 [build-system]
 requires = ["uv_build>=0.9.0,<0.10.0"]

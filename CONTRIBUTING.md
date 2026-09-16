@@ -42,9 +42,13 @@ make lint-fix    # auto-fix ruff issues
 3. Ensure `make lint` and `make test` pass
 4. Open a pull request against `main` with a clear description of what changed and why
 
+## Getting Help
+
+For usage questions, join the [Discord](https://discord.gg/apbtTdk2Am) — `#help` is faster than an issue for "how do I configure X".
+
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/modelship-ai/modelship/issues). For bugs, include:
+Use [GitHub Issues](https://github.com/modelship-ai/modelship/issues) for confirmed bugs and feature requests. For bugs, include:
 
 - GPU model and VRAM
 - Your `models.yaml` configuration
