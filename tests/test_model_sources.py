@@ -207,6 +207,14 @@ class TestResolveLocalPath:
         assert pinned == LocalSource(str(f.absolute()))
         assert download_model_source(pinned) == pinned.path
 
+    def test_download_rejects_a_path_missing_on_the_replica_node(self, tmp_path: Path):
+        f = tmp_path / "model.gguf"
+        f.write_text("dummy")
+        pinned = check_model_source(str(f))
+        f.unlink()
+        with pytest.raises(FileNotFoundError, match="Local path not found"):
+            download_model_source(pinned)
+
     def test_download_rechecks_required_paths(self, tmp_path: Path):
         (tmp_path / "model.onnx").write_text("m")
         (tmp_path / "data").mkdir()

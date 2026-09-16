@@ -11,7 +11,7 @@ from modelship.infer.infer_config import (
     ModelshipModelConfig,
     ModelUsecase,
 )
-from modelship.infer.sources import HfSource, ModelDownloadError
+from modelship.infer.sources import HfSource, LocalSource, ModelDownloadError
 
 _PIN = HfSource(
     repo="org/repo",
@@ -55,6 +55,13 @@ class TestEnsureDownloadedModel:
             await BaseInfer.ensure_downloaded(config)
         mock_d.assert_not_called()
         assert config._resolved_path == "/cache/already-there"
+
+    async def test_missing_local_path_is_a_download_error(self, tmp_path):
+        config = _vllm_config()
+        config._pinned_source = LocalSource(str(tmp_path / "gone"))
+        with pytest.raises(ModelDownloadError, match="Local path not found"):
+            await BaseInfer.ensure_downloaded(config)
+        assert config._resolved_path is None
 
     async def test_download_failure_wrapped_and_path_not_set(self):
         config = _vllm_config()

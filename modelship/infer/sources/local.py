@@ -54,5 +54,8 @@ def check_local_source(source: str, selector: str | None) -> LocalSource:
 
 
 def download_local_source(source: LocalSource) -> str:
+    # the driver only checked its own node
+    if not os.path.exists(source.path):
+        raise FileNotFoundError(f"Local path not found: {source.path}")
     check_required(source.path, source.required)
     return source.path
