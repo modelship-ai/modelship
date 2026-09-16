@@ -28,7 +28,7 @@ from modelship.infer.infer_config import (  # noqa: E402
     ModelshipConfig,
     ModelUsecase,
 )
-from modelship.infer.model_resolver import resolve_model_source  # noqa: E402
+from modelship.infer.sources import resolve_model_source  # noqa: E402
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight  # noqa: E402
 
 CONFIG_PATH = Path(os.environ.get("MSHIP_CONFIG", "/modelship/config/models.yaml"))

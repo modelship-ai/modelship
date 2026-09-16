@@ -14,7 +14,7 @@ from modelship.infer.model_deployment import (
     _reject_unsupported_accelerator,
     _reject_unsupported_darwin_loader,
 )
-from modelship.infer.model_resolver import ModelDownloadError
+from modelship.infer.sources import ModelDownloadError
 
 # Bypass the @serve.deployment wrapper (see test_model_deployment_metrics.py).
 _ModelDeployment = ModelDeployment.func_or_class

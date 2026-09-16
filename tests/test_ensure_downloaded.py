@@ -11,14 +11,13 @@ from modelship.infer.infer_config import (
     ModelshipModelConfig,
     ModelUsecase,
 )
-from modelship.infer.model_resolver import ModelDownloadError, PinnedSource
+from modelship.infer.sources import HfSource, LocalSource, ModelDownloadError, ModelSourceError
 
-_PIN = PinnedSource(
-    resolved_path=None,
+_PIN = HfSource(
     repo="org/repo",
     revision="deadbeef",
-    download_filename="model.safetensors",
-    download_patterns=None,
+    filename="model.safetensors",
+    patterns=None,
     first_shard=None,
     total_bytes=None,
 )
@@ -56,6 +55,13 @@ class TestEnsureDownloadedModel:
             await BaseInfer.ensure_downloaded(config)
         mock_d.assert_not_called()
         assert config._resolved_path == "/cache/already-there"
+
+    async def test_source_error_is_not_wrapped_as_a_download_error(self, tmp_path):
+        config = _vllm_config()
+        config._pinned_source = LocalSource(str(tmp_path / "gone"))
+        with pytest.raises(ModelSourceError, match="Local path not found"):
+            await BaseInfer.ensure_downloaded(config)
+        assert config._resolved_path is None
 
     async def test_download_failure_wrapped_and_path_not_set(self):
         config = _vllm_config()
@@ -107,5 +113,13 @@ class TestEnsureDownloadedMmproj:
         with (
             patch("modelship.infer.base_infer.download_model_source", side_effect=OSError("disk full")),
             pytest.raises(ModelDownloadError, match="mmproj"),
+        ):
+            await BaseInfer.ensure_downloaded(config)
+
+    async def test_mmproj_source_error_is_not_wrapped(self):
+        config = self._llama_config()
+        with (
+            patch("modelship.infer.base_infer.download_model_source", side_effect=ModelSourceError("stale")),
+            pytest.raises(ModelSourceError, match="stale"),
         ):
             await BaseInfer.ensure_downloaded(config)

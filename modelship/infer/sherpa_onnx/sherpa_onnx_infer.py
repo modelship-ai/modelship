@@ -9,9 +9,7 @@ import numpy as np
 
 from modelship.infer.base_infer import BaseInfer, ClientDisconnectedError
 from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
-from modelship.infer.model_resolver import ModelDownloadError
-from modelship.infer.sherpa_onnx.bundle import resolve_bundle_dir
-from modelship.infer.sherpa_onnx.registry import SherpaOnnxRegistryEntry
+from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry, registry_name
 from modelship.logging import get_logger
 from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest, create_error_response
 from modelship.openai.utils.audio import sse_stream_speech
@@ -44,10 +42,13 @@ class SherpaOnnxInfer(BaseInfer):
         import sherpa_onnx
 
         assert self.model_config.model is not None
-        try:
-            bundle_dir, entry = resolve_bundle_dir(self.model_config.model)
-        except Exception as e:
-            raise ModelDownloadError(f"Failed to resolve sherpa_onnx bundle for '{self.model_config.name}': {e}") from e
+        bundle_dir = self.model_config._resolved_path
+        if bundle_dir is None:
+            raise ValueError(
+                f"sherpa_onnx deployment '{self.model_config.name}' has no resolved bundle directory. "
+                f"Check driver logs for resolution errors."
+            )
+        entry = REGISTRY[registry_name(self.model_config.model)]
 
         cfg = sherpa_onnx.OfflineTtsConfig()
         family_cfg = getattr(cfg.model, entry.family)

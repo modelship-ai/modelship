@@ -1,20 +1,26 @@
-"""Tests for the centralized model-source resolver."""
+"""Local and HF model sources: ref parsing, pinning, and download dispatch."""
 
+import inspect
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import huggingface_hub._snapshot_download
 import pytest
+from huggingface_hub.utils.tqdm import _create_progress_bar
 
-from modelship.infer.model_resolver import (
+from modelship.infer.sources import (
+    HfSource,
+    LocalSource,
     ModelDownloadError,
-    PinnedSource,
-    _DownloadProgressLogger,
-    _select_patterns,
+    ModelSourceError,
     check_model_source,
     download_model_source,
-    parse_model_ref,
+    hf,
     resolve_model_source,
 )
+from modelship.infer.sources.hf import _TRANSFER_BAR, _DownloadProgressLogger, _select_patterns
+from modelship.utils.model_ref import parse_model_ref
 
 
 def _model_info(files: list[str], sha: str = "deadbeef"):
@@ -199,8 +205,31 @@ class TestResolveLocalPath:
         f = tmp_path / "model.gguf"
         f.write_text("dummy")
         pinned = check_model_source(str(f))
-        assert pinned.resolved_path == str(f.absolute())
-        assert download_model_source(pinned) == pinned.resolved_path
+        assert pinned == LocalSource(str(f.absolute()))
+        assert download_model_source(pinned) == pinned.path
+
+    def test_download_rejects_a_path_missing_on_the_replica_node(self, tmp_path: Path):
+        f = tmp_path / "model.gguf"
+        f.write_text("dummy")
+        pinned = check_model_source(str(f))
+        f.unlink()
+        with pytest.raises(ModelSourceError, match="Local path not found"):
+            download_model_source(pinned)
+
+    def test_download_rechecks_required_paths(self, tmp_path: Path):
+        (tmp_path / "model.onnx").write_text("m")
+        (tmp_path / "data").mkdir()
+        pinned = LocalSource(str(tmp_path), ("model.onnx", "data/"))
+        assert download_model_source(pinned) == str(tmp_path)
+
+        (tmp_path / "model.onnx").unlink()
+        with pytest.raises(ModelSourceError, match=r"missing 'model\.onnx'"):
+            download_model_source(pinned)
+
+    def test_required_dir_must_be_a_directory(self, tmp_path: Path):
+        (tmp_path / "data").write_text("not a dir")
+        with pytest.raises(ModelSourceError, match="missing 'data/'"):
+            download_model_source(LocalSource(str(tmp_path), ("data/",)))
 
 
 class TestCheckHfRepoDoesNoDownload:
@@ -210,9 +239,9 @@ class TestCheckHfRepoDoesNoDownload:
     def test_no_download_calls(self):
         files = ["model.safetensors", "config.json", "tokenizer.json"]
         with (
-            patch("modelship.infer.model_resolver.model_info", return_value=_model_info(files)) as mock_info,
-            patch("modelship.infer.model_resolver.hf_hub_download") as mock_dl,
-            patch("modelship.infer.model_resolver.snapshot_download") as mock_snap,
+            patch("modelship.infer.sources.hf.model_info", return_value=_model_info(files)) as mock_info,
+            patch("modelship.infer.sources.hf.hf_hub_download") as mock_dl,
+            patch("modelship.infer.sources.hf.snapshot_download") as mock_snap,
         ):
             check_model_source("Qwen/Qwen3-7B")
             mock_info.assert_called_once_with("Qwen/Qwen3-7B", files_metadata=True)
@@ -221,15 +250,15 @@ class TestCheckHfRepoDoesNoDownload:
 
     def test_pins_commit_sha(self):
         files = ["model.safetensors", "config.json"]
-        with patch("modelship.infer.model_resolver.model_info", return_value=_model_info(files, "abc123")):
+        with patch("modelship.infer.sources.hf.model_info", return_value=_model_info(files, "abc123")):
             pinned = check_model_source("Qwen/Qwen3-7B")
+            assert isinstance(pinned, HfSource)
             assert pinned.revision == "abc123"
-            assert pinned.resolved_path is None
             assert pinned.repo == "Qwen/Qwen3-7B"
 
     def test_info_lookup_failure_wrapped(self):
         with (
-            patch("modelship.infer.model_resolver.model_info", side_effect=Exception("boom")),
+            patch("modelship.infer.sources.hf.model_info", side_effect=Exception("boom")),
             pytest.raises(RuntimeError, match="Failed to fetch info"),
         ):
             check_model_source("Qwen/Qwen3-7B")
@@ -241,8 +270,8 @@ class TestResolveHfRepo:
     def test_full_snapshot_calls_universal_filter(self):
         files = ["model.safetensors", "config.json", "tokenizer.json"]
         with (
-            patch("modelship.infer.model_resolver.model_info", return_value=_model_info(files)),
-            patch("modelship.infer.model_resolver.snapshot_download") as mock_snap,
+            patch("modelship.infer.sources.hf.model_info", return_value=_model_info(files)),
+            patch("modelship.infer.sources.hf.snapshot_download") as mock_snap,
         ):
             mock_snap.return_value = "/cache/snapshot"
             result = resolve_model_source("Qwen/Qwen3-7B")
@@ -256,8 +285,8 @@ class TestResolveHfRepo:
     def test_selector_single_file_uses_hf_hub_download(self):
         files = ["model-Q4_K_M.gguf", "model-Q8_0.gguf"]
         with (
-            patch("modelship.infer.model_resolver.model_info", return_value=_model_info(files)),
-            patch("modelship.infer.model_resolver.hf_hub_download") as mock_dl,
+            patch("modelship.infer.sources.hf.model_info", return_value=_model_info(files)),
+            patch("modelship.infer.sources.hf.hf_hub_download") as mock_dl,
         ):
             mock_dl.return_value = "/cache/model-Q4_K_M.gguf"
             result = resolve_model_source("org/repo:*Q4_K_M.gguf")
@@ -271,8 +300,8 @@ class TestResolveHfRepo:
         # path (not the snapshot dir) since file-path loaders like llama.cpp need it.
         files = ["model-00002-of-00002.gguf", "model-00001-of-00002.gguf"]
         with (
-            patch("modelship.infer.model_resolver.model_info", return_value=_model_info(files)),
-            patch("modelship.infer.model_resolver.snapshot_download") as mock_snap,
+            patch("modelship.infer.sources.hf.model_info", return_value=_model_info(files)),
+            patch("modelship.infer.sources.hf.snapshot_download") as mock_snap,
         ):
             mock_snap.return_value = "/cache/snapshot"
             result = resolve_model_source("org/repo:*.gguf")
@@ -284,7 +313,7 @@ class TestResolveHfRepo:
     def test_selector_no_match_raises(self):
         files = ["model-Q4_K_M.gguf"]
         with (
-            patch("modelship.infer.model_resolver.model_info", return_value=_model_info(files)),
+            patch("modelship.infer.sources.hf.model_info", return_value=_model_info(files)),
             pytest.raises(FileNotFoundError, match="matched no files"),
         ):
             resolve_model_source("org/repo:*Q8_0.gguf")
@@ -297,7 +326,7 @@ class TestResolveHfRepo:
             "model-Q8_0.gguf",
         ]
         with (
-            patch("modelship.infer.model_resolver.model_info", return_value=_model_info(files)),
+            patch("modelship.infer.sources.hf.model_info", return_value=_model_info(files)),
             pytest.raises(ValueError, match="contains 4 GGUF variants"),
         ):
             resolve_model_source("lmstudio-community/Qwen2.5-7B-Instruct-GGUF")
@@ -307,9 +336,9 @@ class TestResolveHfRepo:
         # dir), because llama_server requires a file path.
         files = ["model.gguf", "config.json"]
         with (
-            patch("modelship.infer.model_resolver.model_info", return_value=_model_info(files)),
-            patch("modelship.infer.model_resolver.hf_hub_download") as mock_dl,
-            patch("modelship.infer.model_resolver.snapshot_download") as mock_snap,
+            patch("modelship.infer.sources.hf.model_info", return_value=_model_info(files)),
+            patch("modelship.infer.sources.hf.hf_hub_download") as mock_dl,
+            patch("modelship.infer.sources.hf.snapshot_download") as mock_snap,
         ):
             mock_dl.return_value = "/cache/model.gguf"
             result = resolve_model_source("org/single-gguf-repo")
@@ -321,31 +350,62 @@ class TestResolveHfRepo:
 
     def test_model_info_failure_wrapped(self):
         with (
-            patch("modelship.infer.model_resolver.model_info", side_effect=Exception("auth failure")),
+            patch("modelship.infer.sources.hf.model_info", side_effect=Exception("auth failure")),
             pytest.raises(RuntimeError, match="Failed to fetch info"),
         ):
             resolve_model_source("private/repo")
 
 
-class TestPinnedSourceResolvesToGguf:
+class TestDownloadProgressLogger:
+    @pytest.fixture
+    def active(self, monkeypatch):
+        progress = MagicMock()
+        monkeypatch.setattr(hf, "_active_download", progress)
+        return progress
+
+    def _bar(self, **kwargs):
+        # HF's own factory: it passes `name` only to subclasses of its tqdm
+        return _create_progress_bar(cls=_DownloadProgressLogger, log_level=logging.INFO, **kwargs)
+
+    @pytest.mark.parametrize("name", ["huggingface_hub.http_get", "huggingface_hub.snapshot_download"])
+    def test_byte_bars_are_counted(self, active, name):
+        self._bar(name=name, unit="B", total=10).update(4)
+        active.add.assert_called_once_with(4)
+
+    def test_snapshot_transfer_mirror_is_skipped(self, active):
+        self._bar(name=_TRANSFER_BAR, unit="B", total=10).update(4)
+        active.add.assert_not_called()
+
+    def test_file_count_bar_is_skipped(self, active):
+        self._bar(total=3).update(1)
+        active.add.assert_not_called()
+
+    def test_rollback_is_counted(self, active):
+        self._bar(name="huggingface_hub.http_get", unit="B", total=10).update(-4)
+        active.add.assert_called_once_with(-4)
+
+    def test_transfer_bar_name_matches_huggingface_hub(self):
+        # fails loudly if HF renames the bar, which would double-count snapshot bytes again
+        assert f'name="{_TRANSFER_BAR}"' in inspect.getsource(huggingface_hub._snapshot_download)
+
+
+class TestResolvesToGguf:
     def test_local_file_gguf(self):
-        pinned = PinnedSource("/models/x.gguf", None, None, None, None, None, None)
-        assert pinned.resolves_to_gguf
+        assert LocalSource("/models/x.gguf").resolves_to_gguf
 
     def test_local_dir_not_gguf(self):
-        pinned = PinnedSource("/models/snapshot", None, None, None, None, None, None)
-        assert not pinned.resolves_to_gguf
+        assert not LocalSource("/models/snapshot").resolves_to_gguf
 
     def test_hf_single_file_download_gguf(self):
-        pinned = PinnedSource(None, "org/repo", "sha", "model.gguf", None, None, None)
+        pinned = HfSource("org/repo", "sha", "model.gguf", None, None, None)
         assert pinned.resolves_to_gguf
 
     def test_hf_shard_gguf(self):
-        pinned = PinnedSource(None, "org/repo", "sha", None, ["*.gguf"], "model-00001-of-00002.gguf", None)
+        pinned = HfSource("org/repo", "sha", None, ["*.gguf"], "model-00001-of-00002.gguf", None)
         assert pinned.resolves_to_gguf
 
     def test_hf_full_snapshot_not_gguf(self):
-        pinned = PinnedSource(None, "org/repo", "sha", None, ["*.safetensors"], None, None)
+        pinned = HfSource("org/repo", "sha", None, ["*.safetensors"], None, None)
         assert not pinned.resolves_to_gguf
 
 
@@ -353,9 +413,9 @@ class TestDownloadErrorClassification:
     def test_download_failure_is_not_wrapped_by_download_model_source(self):
         # download_model_source raises whatever hf raises; wrapping into
         # ModelDownloadError is BaseInfer.ensure_downloaded's job (it needs the model name).
-        pinned = PinnedSource(None, "org/repo", "sha", "model.safetensors", None, None, None)
+        pinned = HfSource("org/repo", "sha", "model.safetensors", None, None, None)
         with (
-            patch("modelship.infer.model_resolver.hf_hub_download", side_effect=OSError("disk full")),
+            patch("modelship.infer.sources.hf.hf_hub_download", side_effect=OSError("disk full")),
             pytest.raises(OSError, match="disk full"),
         ):
             download_model_source(pinned)
