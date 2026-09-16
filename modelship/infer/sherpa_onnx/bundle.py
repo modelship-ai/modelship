@@ -7,7 +7,7 @@ import shutil
 
 from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry
 from modelship.logging import get_logger
-from modelship.utils import cache_dir, fetch_and_extract_archive, is_pathy
+from modelship.utils import cache_dir, fetch_and_extract_archive, is_pathy, random_uuid
 
 logger = get_logger("infer.sherpa_onnx.bundle")
 
@@ -28,8 +28,7 @@ def resolve_bundle_dir(model: str) -> tuple[str, SherpaOnnxRegistryEntry]:
     if _is_valid(bundle_dir, entry):
         return bundle_dir, entry
 
-    # flock serializes same-node replicas of one deployment onto a single
-    # download+extract instead of each fetching its own copy.
+    # flock dedups fetches only as far as the mount shares locks; unique archive paths keep the rest safe.
     root = os.path.join(cache_dir(), "sherpa_onnx")
     os.makedirs(root, exist_ok=True)
     with open(os.path.join(root, f".{model}.lock"), "w") as lock_file:
@@ -41,7 +40,7 @@ def resolve_bundle_dir(model: str) -> tuple[str, SherpaOnnxRegistryEntry]:
                 logger.warning("cached sherpa_onnx bundle %r failed validation, re-fetching", model)
                 shutil.rmtree(bundle_dir, ignore_errors=True)
 
-            archive_path = os.path.join(root, f".{model}.tar.bz2")
+            archive_path = os.path.join(root, f".{model}-{random_uuid()}.tar.bz2")
             fetch_and_extract_archive(entry.tarball_url, entry.sha256, archive_path, bundle_dir)
             validate_bundle(bundle_dir, entry)
             return bundle_dir, entry

@@ -1,5 +1,5 @@
-"""resolve_bundle_dir()'s cache-hit, re-fetch-on-invalid-cache, and
-concurrent-caller single-flight paths."""
+"""resolve_bundle_dir()'s cache-hit, re-fetch-on-invalid-cache, concurrent-caller
+single-flight, and lock-less concurrent-fetch paths."""
 
 import hashlib
 import os
@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from modelship.infer.sherpa_onnx import bundle
 from modelship.infer.sherpa_onnx.registry import REGISTRY
+from modelship.utils import verify_sha256
 
 _ENTRY = REGISTRY["kokoro-en-v0_19"]
 
@@ -110,6 +111,52 @@ def test_concurrent_callers_only_fetch_once(tmp_path, monkeypatch):
     assert len(results) == 3
     for bundle_dir, _resolved_entry in results:
         assert os.path.isfile(os.path.join(bundle_dir, "model.onnx"))
+
+
+def test_fetchers_without_a_shared_lock_each_use_their_own_archive(tmp_path, monkeypatch):
+    src_archive, digest = _make_valid_archive(tmp_path)
+    cache_root = tmp_path / "cache"
+    monkeypatch.setattr(bundle, "cache_dir", lambda: str(cache_root))
+    monkeypatch.setattr(bundle.fcntl, "flock", lambda *_args: None)
+    entry = _ENTRY._replace(sha256=digest)
+
+    # b has downloaded but not verified when a finishes and removes its archive
+    b_downloaded = threading.Event()
+    a_returned = threading.Event()
+
+    def fake_download(url, dest):
+        _fake_download(src_archive)(url, dest)
+        if threading.current_thread().name == "b":
+            b_downloaded.set()
+
+    def gated_verify(path, expected):
+        if threading.current_thread().name == "b":
+            a_returned.wait(5)
+        verify_sha256(path, expected)
+
+    errors: list[Exception] = []
+
+    def run_b():
+        try:
+            bundle.resolve_bundle_dir("kokoro-en-v0_19")
+        except Exception as e:
+            errors.append(e)
+
+    with (
+        patch.dict(bundle.REGISTRY, {"kokoro-en-v0_19": entry}),
+        patch("modelship.utils.download", side_effect=fake_download),
+        patch("modelship.utils.verify_sha256", side_effect=gated_verify),
+    ):
+        b = threading.Thread(target=run_b, name="b")
+        b.start()
+        assert b_downloaded.wait(5)
+        bundle_dir, _resolved_entry = bundle.resolve_bundle_dir("kokoro-en-v0_19")
+        a_returned.set()
+        b.join(5)
+
+    assert errors == []
+    assert os.path.isfile(os.path.join(bundle_dir, "model.onnx"))
+    assert list((cache_root / "sherpa_onnx").glob("*.tar.bz2")) == []
 
 
 def _write_valid_bundle_dir(root: str) -> None:
