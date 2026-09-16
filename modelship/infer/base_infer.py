@@ -11,7 +11,7 @@ from ray.exceptions import RayActorError
 
 from modelship.infer import infer_config
 from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
-from modelship.infer.sources import ModelDownloadError, download_model_source
+from modelship.infer.sources import ModelDownloadError, ModelSourceError, download_model_source
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
     ChatCompletionRequest,
@@ -100,8 +100,8 @@ class BaseInfer[Prepared](ABC):
 
         Runs the download in a thread to avoid blocking the event loop.
         Failures are wrapped in `ModelDownloadError` so they classify
-        as transient (retried next pass), not fatal. Idempotent once
-        `_resolved_path` is set."""
+        as transient (retried next pass), except `ModelSourceError`, which
+        stays fatal. Idempotent once `_resolved_path` is set."""
         loop = asyncio.get_running_loop()
 
         if model_config._pinned_source is not None and model_config._resolved_path is None:
@@ -109,6 +109,8 @@ class BaseInfer[Prepared](ABC):
                 model_config._resolved_path = await loop.run_in_executor(
                     None, download_model_source, model_config._pinned_source
                 )
+            except ModelSourceError:
+                raise
             except Exception as e:
                 raise ModelDownloadError(f"Failed to download model for '{model_config.name}': {e}") from e
             logger.info("Downloaded '%s' -> %s", model_config.name, model_config._resolved_path)
@@ -119,6 +121,8 @@ class BaseInfer[Prepared](ABC):
             # Clearing the pin makes a second call a no-op.
             try:
                 llama_cfg.mmproj = await loop.run_in_executor(None, download_model_source, llama_cfg._pinned_mmproj)
+            except ModelSourceError:
+                raise
             except Exception as e:
                 raise ModelDownloadError(f"Failed to download mmproj for '{model_config.name}': {e}") from e
             llama_cfg._pinned_mmproj = None

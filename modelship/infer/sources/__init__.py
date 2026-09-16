@@ -5,6 +5,7 @@ from pathlib import Path
 
 from modelship.infer.sources import archive, hf, local
 from modelship.infer.sources.archive import ArchiveSource, check_archive_source
+from modelship.infer.sources.errors import ModelDownloadError, ModelSourceError
 from modelship.infer.sources.hf import HfSource
 from modelship.infer.sources.local import LocalSource, check_required
 from modelship.utils.model_ref import parse_model_ref
@@ -14,6 +15,7 @@ __all__ = [
     "HfSource",
     "LocalSource",
     "ModelDownloadError",
+    "ModelSourceError",
     "PinnedSource",
     "check_archive_source",
     "check_model_source",
@@ -23,11 +25,6 @@ __all__ = [
 ]
 
 PinnedSource = LocalSource | HfSource | ArchiveSource
-
-
-class ModelDownloadError(Exception):
-    """A validated source failed to download; `ModelDeployment` treats it as
-    transient, unlike the check errors."""
 
 
 def check_model_source(model_ref: str, trust_remote_code: bool = False) -> LocalSource | HfSource:

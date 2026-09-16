@@ -5,6 +5,7 @@ from typing import NamedTuple
 
 import requests
 
+from modelship.infer.sources.errors import ModelSourceError
 from modelship.infer.sources.local import check_required
 from modelship.infer.sources.progress import DownloadProgress
 from modelship.logging import get_logger
@@ -68,8 +69,10 @@ def download_archive_source(source: ArchiveSource) -> str:
                 # the helper only removes it on success or a sha256 mismatch
                 with contextlib.suppress(FileNotFoundError):
                     os.remove(archive_path)
-            check_required(dest, source.required)
-            return dest
+            # the helper suppresses os.replace errors, assuming a concurrent extractor won
+            if not os.path.isdir(dest):
+                raise OSError(f"extraction did not publish {dest!r}")
+            return _published(dest, source.required)
         finally:
             fcntl.flock(lock_file, fcntl.LOCK_UN)
 
@@ -78,5 +81,5 @@ def _published(dest: str, required: tuple[str, ...]) -> str:
     try:
         check_required(dest, required)
     except ValueError as e:
-        raise ValueError(f"{e}; delete it to fetch again") from None
+        raise ModelSourceError(f"{e}; delete it to fetch again") from None
     return dest

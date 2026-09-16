@@ -11,7 +11,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from modelship.infer.sources import ArchiveSource, archive, check_archive_source, download_model_source
+from modelship.infer.sources import (
+    ArchiveSource,
+    ModelSourceError,
+    archive,
+    check_archive_source,
+    download_model_source,
+)
 from modelship.utils import verify_sha256
 
 _REQUIRED = ("model.onnx", "tokens.txt", "data/")
@@ -107,11 +113,21 @@ class TestDownloadArchiveSource:
         (dest / "tokens.txt").unlink()
         with (
             patch.object(archive, "download") as download,
-            pytest.raises(ValueError, match=r"missing 'tokens\.txt'; delete it to fetch again"),
+            pytest.raises(ModelSourceError, match=r"missing 'tokens\.txt'; delete it to fetch again"),
         ):
             download_model_source(_source())
         download.assert_not_called()
         assert (dest / "model.onnx").is_file()
+
+    def test_extraction_that_publishes_nothing_stays_retryable(self, tmp_path, cache_root):
+        src_archive, digest = _make_archive(tmp_path)
+        with (
+            patch.object(archive, "download", side_effect=_fake_download(src_archive)),
+            patch("modelship.utils.os.replace", side_effect=PermissionError("denied")),
+            pytest.raises(OSError, match="did not publish") as exc_info,
+        ):
+            download_model_source(_source(digest))
+        assert not isinstance(exc_info.value, ModelSourceError)
 
     @pytest.mark.parametrize("pinned_digest", [True, False], ids=["extract-fails", "sha256-mismatch"])
     def test_failed_fetch_leaves_no_archive(self, tmp_path, cache_root, pinned_digest):

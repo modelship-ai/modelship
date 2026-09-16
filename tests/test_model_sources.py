@@ -13,6 +13,7 @@ from modelship.infer.sources import (
     HfSource,
     LocalSource,
     ModelDownloadError,
+    ModelSourceError,
     check_model_source,
     download_model_source,
     hf,
@@ -212,7 +213,7 @@ class TestResolveLocalPath:
         f.write_text("dummy")
         pinned = check_model_source(str(f))
         f.unlink()
-        with pytest.raises(FileNotFoundError, match="Local path not found"):
+        with pytest.raises(ModelSourceError, match="Local path not found"):
             download_model_source(pinned)
 
     def test_download_rechecks_required_paths(self, tmp_path: Path):
@@ -222,12 +223,12 @@ class TestResolveLocalPath:
         assert download_model_source(pinned) == str(tmp_path)
 
         (tmp_path / "model.onnx").unlink()
-        with pytest.raises(ValueError, match=r"missing 'model\.onnx'"):
+        with pytest.raises(ModelSourceError, match=r"missing 'model\.onnx'"):
             download_model_source(pinned)
 
     def test_required_dir_must_be_a_directory(self, tmp_path: Path):
         (tmp_path / "data").write_text("not a dir")
-        with pytest.raises(ValueError, match="missing 'data/'"):
+        with pytest.raises(ModelSourceError, match="missing 'data/'"):
             download_model_source(LocalSource(str(tmp_path), ("data/",)))
 
 

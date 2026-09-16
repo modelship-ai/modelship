@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from typing import NamedTuple
 
+from modelship.infer.sources.errors import ModelSourceError
 from modelship.logging import get_logger
 
 logger = get_logger("startup")
@@ -56,6 +57,9 @@ def check_local_source(source: str, selector: str | None) -> LocalSource:
 def download_local_source(source: LocalSource) -> str:
     # the driver only checked its own node
     if not os.path.exists(source.path):
-        raise FileNotFoundError(f"Local path not found: {source.path}")
-    check_required(source.path, source.required)
+        raise ModelSourceError(f"Local path not found: {source.path}")
+    try:
+        check_required(source.path, source.required)
+    except ValueError as e:
+        raise ModelSourceError(str(e)) from None
     return source.path
