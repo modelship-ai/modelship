@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from huggingface_hub import hf_hub_download, model_info, snapshot_download
-from tqdm.asyncio import tqdm_asyncio
+from huggingface_hub.utils.tqdm import tqdm as hf_tqdm
 
 from modelship.infer.sources.progress import DownloadProgress
 from modelship.logging import get_logger
@@ -15,14 +15,22 @@ logger = get_logger("startup")
 # one model's files all report into a single aggregate.
 _active_download: DownloadProgress | None = None
 
+# snapshot_download mirrors every byte of its disk bar into this network bar.
+_TRANSFER_BAR = "huggingface_hub.snapshot_download.transfer"
 
-class _DownloadProgressLogger(tqdm_asyncio):
-    """`tqdm_class` for HF downloads: one instance per file, so it feeds the
-    model-wide `DownloadProgress` instead of logging itself."""
+
+class _DownloadProgressLogger(hf_tqdm):
+    """`tqdm_class` for HF downloads. Subclasses HF's tqdm so bars arrive with their
+    group `name`; byte bars other than the transfer mirror feed `DownloadProgress`."""
+
+    def __init__(self, *args, **kwargs):
+        self._counts_bytes = kwargs.get("unit") == "B" and kwargs.get("name") != _TRANSFER_BAR
+        super().__init__(*args, **kwargs)
 
     def update(self, n: float | None = 1):
         result = super().update(n)
-        if _active_download is not None and n is not None and n > 0:
+        # negative n rolls back bytes HF re-downloads when a server ignores its Range header
+        if self._counts_bytes and _active_download is not None and n:
             _active_download.add(int(n))
         return result
 

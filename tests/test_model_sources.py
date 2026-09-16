@@ -1,9 +1,13 @@
 """Local and HF model sources: ref parsing, pinning, and download dispatch."""
 
+import inspect
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import huggingface_hub._snapshot_download
 import pytest
+from huggingface_hub.utils.tqdm import _create_progress_bar
 
 from modelship.infer.sources import (
     HfSource,
@@ -11,9 +15,10 @@ from modelship.infer.sources import (
     ModelDownloadError,
     check_model_source,
     download_model_source,
+    hf,
     resolve_model_source,
 )
-from modelship.infer.sources.hf import _DownloadProgressLogger, _select_patterns
+from modelship.infer.sources.hf import _TRANSFER_BAR, _DownloadProgressLogger, _select_patterns
 from modelship.utils.model_ref import parse_model_ref
 
 
@@ -340,6 +345,39 @@ class TestResolveHfRepo:
             pytest.raises(RuntimeError, match="Failed to fetch info"),
         ):
             resolve_model_source("private/repo")
+
+
+class TestDownloadProgressLogger:
+    @pytest.fixture
+    def active(self, monkeypatch):
+        progress = MagicMock()
+        monkeypatch.setattr(hf, "_active_download", progress)
+        return progress
+
+    def _bar(self, **kwargs):
+        # HF's own factory: it passes `name` only to subclasses of its tqdm
+        return _create_progress_bar(cls=_DownloadProgressLogger, log_level=logging.INFO, **kwargs)
+
+    @pytest.mark.parametrize("name", ["huggingface_hub.http_get", "huggingface_hub.snapshot_download"])
+    def test_byte_bars_are_counted(self, active, name):
+        self._bar(name=name, unit="B", total=10).update(4)
+        active.add.assert_called_once_with(4)
+
+    def test_snapshot_transfer_mirror_is_skipped(self, active):
+        self._bar(name=_TRANSFER_BAR, unit="B", total=10).update(4)
+        active.add.assert_not_called()
+
+    def test_file_count_bar_is_skipped(self, active):
+        self._bar(total=3).update(1)
+        active.add.assert_not_called()
+
+    def test_rollback_is_counted(self, active):
+        self._bar(name="huggingface_hub.http_get", unit="B", total=10).update(-4)
+        active.add.assert_called_once_with(-4)
+
+    def test_transfer_bar_name_matches_huggingface_hub(self):
+        # fails loudly if HF renames the bar, which would double-count snapshot bytes again
+        assert f'name="{_TRANSFER_BAR}"' in inspect.getsource(huggingface_hub._snapshot_download)
 
 
 class TestResolvesToGguf:
