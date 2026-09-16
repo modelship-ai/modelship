@@ -1,3 +1,4 @@
+import contextlib
 import fcntl
 import os
 from typing import NamedTuple
@@ -52,16 +53,21 @@ def download_archive_source(source: ArchiveSource) -> str:
             if os.path.isdir(dest):
                 return _published(dest, source.required)
             archive_path = os.path.join(root, f".{name}.{random_uuid()}.archive")
-            progress = DownloadProgress(name, source.total_bytes)
-            success = False
             try:
-                download(source.url, archive_path, on_chunk=progress.add)
-                success = True
+                progress = DownloadProgress(name, source.total_bytes)
+                success = False
+                try:
+                    download(source.url, archive_path, on_chunk=progress.add)
+                    success = True
+                finally:
+                    progress.finish(success)
+                logger.info("%s: verifying and extracting", name)
+                # the archive is already in place, so this skips its own download
+                fetch_and_extract_archive(source.url, source.sha256, archive_path, dest)
             finally:
-                progress.finish(success)
-            logger.info("%s: verifying and extracting", name)
-            # the archive is already in place, so this skips its own download
-            fetch_and_extract_archive(source.url, source.sha256, archive_path, dest)
+                # the helper only removes it on success or a sha256 mismatch
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(archive_path)
             check_required(dest, source.required)
             return dest
         finally:

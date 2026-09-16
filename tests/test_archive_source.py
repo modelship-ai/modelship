@@ -113,6 +113,18 @@ class TestDownloadArchiveSource:
         download.assert_not_called()
         assert (dest / "model.onnx").is_file()
 
+    @pytest.mark.parametrize("pinned_digest", [True, False], ids=["extract-fails", "sha256-mismatch"])
+    def test_failed_fetch_leaves_no_archive(self, tmp_path, cache_root, pinned_digest):
+        garbage = tmp_path / "not-a-tar.bin"
+        garbage.write_bytes(b"not a tarball")
+        digest = hashlib.sha256(garbage.read_bytes()).hexdigest() if pinned_digest else "0" * 64
+        with (
+            patch.object(archive, "download", side_effect=_fake_download(str(garbage))),
+            pytest.raises((tarfile.ReadError, ValueError)),
+        ):
+            download_model_source(_source(digest))
+        assert [p.name for p in (cache_root / "bundles").iterdir()] == [".bundle-12345678.lock"]
+
     def test_concurrent_callers_only_fetch_once(self, tmp_path, cache_root):
         src_archive, digest = _make_archive(tmp_path)
         call_count = 0
