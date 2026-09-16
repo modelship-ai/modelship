@@ -1752,7 +1752,7 @@ requires-dist = [
     { name = "flashinfer-python", marker = "extra == 'cuda'", specifier = ">=0.6.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx2", specifier = ">=2.9.1" },
-    { name = "huggingface-hub", specifier = ">=1.12.0" },
+    { name = "huggingface-hub", specifier = ">=1.18.0" },
     { name = "librosa", marker = "extra == 'cpu'", specifier = ">=0.11.0" },
     { name = "librosa", marker = "extra == 'cuda'", specifier = ">=0.11.0" },
     { name = "librosa", marker = "extra == 'metal'", specifier = ">=0.11.0" },
