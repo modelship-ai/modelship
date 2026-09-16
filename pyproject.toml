@@ -113,6 +113,7 @@ Homepage = "https://github.com/modelship-ai/modelship"
 Documentation = "https://docs.model-ship.ai/"
 Issues = "https://github.com/modelship-ai/modelship/issues"
 Changelog = "https://github.com/modelship-ai/modelship/blob/main/CHANGELOG.md"
+Chat = "https://discord.gg/apbtTdk2Am"
 
 [build-system]
 requires = ["uv_build"]
