@@ -1,4 +1,5 @@
 import os
+import threading
 from unittest import mock
 
 import pytest
@@ -6,7 +7,12 @@ import requests
 
 from modelship.deploy.actor_options import build_cache_env_vars
 from modelship.utils import cache_dir, download
-from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
+from modelship.utils.cache import (
+    reject_unset_cache_roots,
+    resolve_cache_root,
+    resolve_node_cache_root,
+    shared_cache_id,
+)
 
 
 def test_build_cache_env_vars_ignores_the_drivers_paths():
@@ -109,6 +115,49 @@ class TestResolveNodeCacheRoot:
         ):
             assert resolve_node_cache_root() == "/home/user/.modelship/node-cache"
         mock_expand.assert_called_once_with("~/.modelship")
+
+
+class TestRejectUnsetCacheRoots:
+    @pytest.mark.parametrize(
+        "env", [{}, {"MSHIP_CACHE_DIR": "/.cache"}, {"MSHIP_NODE_CACHE_DIR": "/opt/mship/node-cache"}]
+    )
+    def test_rejects_a_missing_root(self, env):
+        with mock.patch.dict(os.environ, env, clear=True), pytest.raises(RuntimeError, match="not set on this node"):
+            reject_unset_cache_roots()
+
+    def test_allows_both_roots(self):
+        env = {"MSHIP_CACHE_DIR": "/.cache", "MSHIP_NODE_CACHE_DIR": "/opt/mship/node-cache"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            reject_unset_cache_roots()  # no raise
+
+
+class TestSharedCacheId:
+    def test_stable_across_calls(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_CACHE_DIR", str(tmp_path))
+        assert shared_cache_id() == shared_cache_id() == (tmp_path / ".mship-cache-id").read_text()
+
+    def test_separate_roots_get_separate_ids(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_CACHE_DIR", str(tmp_path / "a"))
+        a = shared_cache_id()
+        monkeypatch.setenv("MSHIP_CACHE_DIR", str(tmp_path / "b"))
+        assert shared_cache_id() != a
+
+    def test_racing_creators_agree(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_CACHE_DIR", str(tmp_path))
+        barrier = threading.Barrier(8)
+        ids: list[str] = []
+
+        def create():
+            barrier.wait()
+            ids.append(shared_cache_id())
+
+        threads = [threading.Thread(target=create) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(set(ids)) == 1
+        assert [p.name for p in tmp_path.iterdir()] == [".mship-cache-id"]
 
 
 class _FakeResponse:

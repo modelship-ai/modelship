@@ -10,8 +10,9 @@ from ray import serve
 from ray.exceptions import RayActorError
 
 from modelship.infer import infer_config
+from modelship.infer.downloads import locked_download
 from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
-from modelship.infer.sources import ModelDownloadError, ModelSourceError, download_model_source
+from modelship.infer.sources import ModelDownloadError, ModelSourceError
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
     ChatCompletionRequest,
@@ -98,17 +99,13 @@ class BaseInfer[Prepared](ABC):
         `model_config`. Called before the loader is constructed, since
         preflight needs the file on disk during the loader's own `__init__`.
 
-        Runs the download in a thread to avoid blocking the event loop.
+        Downloads hold a cluster-wide lease (see `locked_download`).
         Failures are wrapped in `ModelDownloadError` so they classify
         as transient (retried next pass), except `ModelSourceError`, which
         stays fatal. Idempotent once `_resolved_path` is set."""
-        loop = asyncio.get_running_loop()
-
         if model_config._pinned_source is not None and model_config._resolved_path is None:
             try:
-                model_config._resolved_path = await loop.run_in_executor(
-                    None, download_model_source, model_config._pinned_source
-                )
+                model_config._resolved_path = await locked_download(model_config._pinned_source, model_config.name)
             except ModelSourceError:
                 raise
             except Exception as e:
@@ -120,7 +117,7 @@ class BaseInfer[Prepared](ABC):
             # Overwrites the public `mmproj` field with the final path.
             # Clearing the pin makes a second call a no-op.
             try:
-                llama_cfg.mmproj = await loop.run_in_executor(None, download_model_source, llama_cfg._pinned_mmproj)
+                llama_cfg.mmproj = await locked_download(llama_cfg._pinned_mmproj, model_config.name)
             except ModelSourceError:
                 raise
             except Exception as e:

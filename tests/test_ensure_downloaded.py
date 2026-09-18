@@ -1,6 +1,6 @@
 """BaseInfer.ensure_downloaded — the actor-side model download hook."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -32,28 +32,30 @@ class TestEnsureDownloadedModel:
     async def test_noop_without_a_pinned_source(self):
         # e.g. loader=custom: resolve_all_model_sources never sets _pinned_source.
         config = _vllm_config()
-        with patch("modelship.infer.base_infer.download_model_source") as mock_download:
+        with patch("modelship.infer.base_infer.locked_download", new_callable=AsyncMock) as mock_download:
             await BaseInfer.ensure_downloaded(config)
-        mock_download.assert_not_called()
+        mock_download.assert_not_awaited()
         assert config._resolved_path is None
 
     async def test_downloads_and_sets_resolved_path(self):
         config = _vllm_config()
         config._pinned_source = _PIN
         with patch(
-            "modelship.infer.base_infer.download_model_source", return_value="/cache/model.safetensors"
+            "modelship.infer.base_infer.locked_download",
+            new_callable=AsyncMock,
+            return_value="/cache/model.safetensors",
         ) as mock_d:
             await BaseInfer.ensure_downloaded(config)
-        mock_d.assert_called_once_with(_PIN)
+        mock_d.assert_awaited_once_with(_PIN, "m")
         assert config._resolved_path == "/cache/model.safetensors"
 
     async def test_idempotent_once_resolved_path_is_set(self):
         config = _vllm_config()
         config._pinned_source = _PIN
         config._resolved_path = "/cache/already-there"
-        with patch("modelship.infer.base_infer.download_model_source") as mock_d:
+        with patch("modelship.infer.base_infer.locked_download", new_callable=AsyncMock) as mock_d:
             await BaseInfer.ensure_downloaded(config)
-        mock_d.assert_not_called()
+        mock_d.assert_not_awaited()
         assert config._resolved_path == "/cache/already-there"
 
     async def test_source_error_is_not_wrapped_as_a_download_error(self, tmp_path):
@@ -67,7 +69,11 @@ class TestEnsureDownloadedModel:
         config = _vllm_config()
         config._pinned_source = _PIN
         with (
-            patch("modelship.infer.base_infer.download_model_source", side_effect=OSError("network blip")),
+            patch(
+                "modelship.infer.base_infer.locked_download",
+                new_callable=AsyncMock,
+                side_effect=OSError("network blip"),
+            ),
             pytest.raises(ModelDownloadError, match="network blip"),
         ):
             await BaseInfer.ensure_downloaded(config)
@@ -95,23 +101,27 @@ class TestEnsureDownloadedMmproj:
             usecase=ModelUsecase.generate,
             loader=ModelLoader.llama_server,
         )
-        with patch("modelship.infer.base_infer.download_model_source") as mock_d:
+        with patch("modelship.infer.base_infer.locked_download", new_callable=AsyncMock) as mock_d:
             await BaseInfer.ensure_downloaded(config)
-        mock_d.assert_not_called()
+        mock_d.assert_not_awaited()
 
     async def test_downloads_and_overwrites_mmproj_field(self):
         config = self._llama_config()
         assert config.llama_server_config is not None
-        with patch("modelship.infer.base_infer.download_model_source", return_value="/cache/mmproj.gguf") as mock_d:
+        with patch(
+            "modelship.infer.base_infer.locked_download", new_callable=AsyncMock, return_value="/cache/mmproj.gguf"
+        ) as mock_d:
             await BaseInfer.ensure_downloaded(config)
-        mock_d.assert_called_once_with(_PIN)
+        mock_d.assert_awaited_once_with(_PIN, "m")
         assert config.llama_server_config.mmproj == "/cache/mmproj.gguf"
         assert config.llama_server_config._pinned_mmproj is None
 
     async def test_mmproj_failure_wrapped(self):
         config = self._llama_config()
         with (
-            patch("modelship.infer.base_infer.download_model_source", side_effect=OSError("disk full")),
+            patch(
+                "modelship.infer.base_infer.locked_download", new_callable=AsyncMock, side_effect=OSError("disk full")
+            ),
             pytest.raises(ModelDownloadError, match="mmproj"),
         ):
             await BaseInfer.ensure_downloaded(config)
@@ -119,7 +129,11 @@ class TestEnsureDownloadedMmproj:
     async def test_mmproj_source_error_is_not_wrapped(self):
         config = self._llama_config()
         with (
-            patch("modelship.infer.base_infer.download_model_source", side_effect=ModelSourceError("stale")),
+            patch(
+                "modelship.infer.base_infer.locked_download",
+                new_callable=AsyncMock,
+                side_effect=ModelSourceError("stale"),
+            ),
             pytest.raises(ModelSourceError, match="stale"),
         ):
             await BaseInfer.ensure_downloaded(config)

@@ -37,6 +37,7 @@ from modelship.openai.protocol import (
     TranslationRequest,
 )
 from modelship.utils.accelerator import detect_accelerator
+from modelship.utils.cache import reject_unset_cache_roots
 
 logger = get_logger("infer.deployment")
 
@@ -71,15 +72,6 @@ def _reject_unsupported_accelerator(config: ModelshipModelConfig) -> None:
             f"this node's GPU is {vendor}, which no modelship loader can offload to "
             f"(model '{config.name}' asks for num_gpus={config.num_gpus}). "
             "Set num_gpus: 0 to run on CPU."
-        )
-
-
-def _reject_unset_cache_roots() -> None:
-    """runtime_env cache paths expand from these; Ray turns an unset one into "", putting them under /."""
-    missing = [var for var in ("MSHIP_CACHE_DIR", "MSHIP_NODE_CACHE_DIR") if not os.environ.get(var)]
-    if missing:
-        raise RuntimeError(
-            f"{' and '.join(missing)} not set on this node; export it in the environment that starts the node's Ray."
         )
 
 
@@ -198,7 +190,7 @@ class ModelDeployment:
         start = time.monotonic()
         self.infer: BaseInfer
         try:
-            _reject_unset_cache_roots()
+            reject_unset_cache_roots()
             _reject_unsupported_darwin_loader(config)
             _reject_unsupported_accelerator(config)
             # Must run before the loader is constructed: preflight (which
