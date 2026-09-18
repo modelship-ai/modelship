@@ -35,6 +35,8 @@ def build_cache_env_vars() -> dict[str, str]:
     HF_TOKEN/HF_HUB_OFFLINE come from the node's own env, not runtime_env (plain-text cluster metadata)."""
     return {
         "HF_HOME": "${MSHIP_CACHE_DIR}/huggingface",
+        # huggingface_hub reads it before HF_HOME
+        "HF_HUB_CACHE": "${MSHIP_CACHE_DIR}/huggingface/hub",
         # hf_xet stalls on out-of-order chunks (xet-core#789)
         "HF_HUB_DISABLE_XET": "1",
         "VLLM_CACHE_ROOT": "${MSHIP_NODE_CACHE_DIR}/vllm",

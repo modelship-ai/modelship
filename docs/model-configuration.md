@@ -114,7 +114,7 @@ Under `MSHIP_CACHE_DIR` (default `/.cache`; may be shared storage):
 
 | Subdir | Contents | Env var |
 |---|---|---|
-| `huggingface` | HF models and tokenizers | `HF_HOME` |
+| `huggingface` | HF models and tokenizers | `HF_HOME`, `HF_HUB_CACHE` (a node's own are overridden) |
 | `sherpa_onnx/<name>-<sha256 prefix>` | sherpa-onnx registry tarballs | — |
 | `.mship-cache-id` | Identifies this cache, so nodes sharing it take turns downloading | — |
 
