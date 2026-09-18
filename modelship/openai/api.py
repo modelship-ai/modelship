@@ -200,7 +200,7 @@ class ModelshipAPI:
         # MSHIP_LOG_* are forwarded to this replica via runtime_env (see serve_utils).
         configure_logging()
         max_body_bytes = int(os.environ.get("MSHIP_MAX_REQUEST_BODY_BYTES", _DEFAULT_MAX_BODY_BYTES))
-        logger.info("Payload size limit: %d bytes", max_body_bytes)
+        logger.info("Request body limit: %.4g MiB", max_body_bytes / 1024**2)
         api_keys = get_api_keys()
         if api_keys:
             logger.info("API key authentication enabled (%d key(s))", len(api_keys))
