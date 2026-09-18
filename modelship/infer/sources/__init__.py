@@ -17,14 +17,18 @@ __all__ = [
     "ModelDownloadError",
     "ModelSourceError",
     "PinnedSource",
+    "RemoteSource",
     "check_archive_source",
     "check_model_source",
     "check_required",
     "download_model_source",
+    "is_cached",
+    "remove_leftovers",
     "resolve_model_source",
 ]
 
-PinnedSource = LocalSource | HfSource | ArchiveSource
+RemoteSource = HfSource | ArchiveSource
+PinnedSource = LocalSource | RemoteSource
 
 
 def check_model_source(model_ref: str, trust_remote_code: bool = False) -> LocalSource | HfSource:
@@ -45,6 +49,24 @@ def download_model_source(pinned: PinnedSource) -> str:
             return hf.download_hf_source(pinned)
         case ArchiveSource():
             return archive.download_archive_source(pinned)
+
+
+def is_cached(pinned: RemoteSource) -> bool:
+    """Network-free: True when `download_model_source` would transfer nothing."""
+    match pinned:
+        case HfSource():
+            return hf.is_hf_cached(pinned)
+        case ArchiveSource():
+            return archive.is_archive_cached(pinned)
+
+
+def remove_leftovers(pinned: RemoteSource) -> int:
+    """Deletes *pinned*'s unfinished download files on this node; returns how many."""
+    match pinned:
+        case HfSource():
+            return hf.remove_hf_leftovers(pinned)
+        case ArchiveSource():
+            return archive.remove_archive_leftovers(pinned)
 
 
 def resolve_model_source(model_ref: str, trust_remote_code: bool = False) -> str:

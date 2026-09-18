@@ -1,9 +1,19 @@
+import contextlib
 import fnmatch
 from collections.abc import Iterable
 from pathlib import Path
 from typing import NamedTuple
 
-from huggingface_hub import hf_hub_download, model_info, snapshot_download
+from huggingface_hub import (
+    constants,
+    get_cached_repo_tree,
+    hf_hub_download,
+    model_info,
+    snapshot_download,
+    try_to_load_from_cache,
+)
+from huggingface_hub.errors import CachedRepoTreeNotFoundError, LocalEntryNotFoundError
+from huggingface_hub.file_download import repo_folder_name
 from huggingface_hub.utils.tqdm import tqdm as hf_tqdm
 
 from modelship.infer.sources.progress import DownloadProgress
@@ -194,3 +204,28 @@ def download_hf_source(source: HfSource) -> str:
     finally:
         progress.finish(success)
         _active_download = None
+
+
+def is_hf_cached(source: HfSource) -> bool:
+    """Network-free; False unless every file is provably on disk."""
+    if source.filename is not None:
+        # a sentinel, not None, for a file cached as missing
+        return isinstance(try_to_load_from_cache(source.repo, source.filename, revision=source.revision), str)
+    try:
+        # without the tree listing, snapshot_download can't tell a partial snapshot from a whole one
+        get_cached_repo_tree(source.repo, revision=source.revision)
+        snapshot_download(source.repo, revision=source.revision, allow_patterns=source.patterns, local_files_only=True)
+    except (CachedRepoTreeNotFoundError, LocalEntryNotFoundError):
+        return False
+    return True
+
+
+def remove_hf_leftovers(source: HfSource) -> int:
+    """Deletes the repo's unfinished blobs; finished ones stay for any revision to reuse."""
+    blobs = Path(constants.HF_HUB_CACHE, repo_folder_name(repo_id=source.repo, repo_type="model"), "blobs")
+    removed = 0
+    for path in blobs.glob("*.incomplete"):
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+            removed += 1
+    return removed

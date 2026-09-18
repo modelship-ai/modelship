@@ -5,7 +5,6 @@ import hashlib
 import os
 import tarfile
 import threading
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +16,8 @@ from modelship.infer.sources import (
     archive,
     check_archive_source,
     download_model_source,
+    is_cached,
+    remove_leftovers,
 )
 from modelship.utils import verify_sha256
 
@@ -96,9 +97,7 @@ class TestDownloadArchiveSource:
 
         assert path == str(cache_root / "bundles" / "bundle-12345678")
         assert os.path.isfile(os.path.join(path, "model.onnx"))
-        assert [p.name for p in (cache_root / "bundles").iterdir() if not p.name.endswith(".lock")] == [
-            "bundle-12345678"
-        ]
+        assert [p.name for p in (cache_root / "bundles").iterdir()] == ["bundle-12345678"]
 
     def test_published_dest_is_reused_without_fetching(self, cache_root):
         _write_tree(cache_root / "bundles" / "bundle-12345678")
@@ -139,40 +138,10 @@ class TestDownloadArchiveSource:
             pytest.raises((tarfile.ReadError, ValueError)),
         ):
             download_model_source(_source(digest))
-        assert [p.name for p in (cache_root / "bundles").iterdir()] == [".bundle-12345678.lock"]
+        assert list((cache_root / "bundles").iterdir()) == []
 
-    def test_concurrent_callers_only_fetch_once(self, tmp_path, cache_root):
+    def test_concurrent_fetchers_each_use_their_own_archive(self, tmp_path, cache_root):
         src_archive, digest = _make_archive(tmp_path)
-        call_count = 0
-        count_lock = threading.Lock()
-        start_barrier = threading.Barrier(3)
-
-        def counting_download(url, dest, on_chunk=None):
-            nonlocal call_count
-            with count_lock:
-                call_count += 1
-            time.sleep(0.05)  # widen the window so other threads reach the same branch
-            _fake_download(src_archive)(url, dest)
-
-        results: list[str] = []
-
-        def worker():
-            start_barrier.wait()
-            results.append(download_model_source(_source(digest)))
-
-        with patch.object(archive, "download", side_effect=counting_download):
-            threads = [threading.Thread(target=worker) for _ in range(3)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
-
-        assert call_count == 1
-        assert results == [str(cache_root / "bundles" / "bundle-12345678")] * 3
-
-    def test_fetchers_without_a_shared_lock_each_use_their_own_archive(self, tmp_path, cache_root, monkeypatch):
-        src_archive, digest = _make_archive(tmp_path)
-        monkeypatch.setattr(archive.fcntl, "flock", lambda *_args: None)
 
         # b has downloaded but not verified when a publishes and removes its archive
         b_downloaded = threading.Event()
@@ -212,3 +181,30 @@ class TestDownloadArchiveSource:
         assert b_results == [path]
         assert os.path.isfile(os.path.join(path, "model.onnx"))
         assert list((cache_root / "bundles").glob("*.archive")) == []
+
+
+class TestIsArchiveCached:
+    def test_published_dest(self, cache_root):
+        _write_tree(cache_root / "bundles" / "bundle-12345678")
+        assert is_cached(_source())
+
+    def test_leftovers_alone_are_not_cached(self, cache_root):
+        (cache_root / "bundles" / "bundle-12345678.abc.tmp").mkdir(parents=True)
+        assert not is_cached(_source())
+
+
+class TestRemoveArchiveLeftovers:
+    def test_removes_temps_and_keeps_the_published_dest(self, cache_root):
+        bundles = cache_root / "bundles"
+        _write_tree(bundles / "bundle-12345678")
+        (bundles / ".bundle-12345678.abc.archive").write_bytes(b"x")
+        (bundles / ".bundle-12345678.abc.archive.def.tmp").write_bytes(b"x")
+        (bundles / "bundle-12345678.ghi.tmp" / "data").mkdir(parents=True)
+        (bundles / "bundle-99999999.jkl.tmp").mkdir()
+
+        assert remove_leftovers(_source()) == 3
+        assert sorted(p.name for p in bundles.iterdir()) == ["bundle-12345678", "bundle-99999999.jkl.tmp"]
+        assert (bundles / "bundle-12345678" / "model.onnx").is_file()
+
+    def test_nothing_to_remove(self, cache_root):
+        assert remove_leftovers(_source()) == 0
