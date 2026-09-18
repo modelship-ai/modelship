@@ -130,18 +130,14 @@ class DownloadLeases:
 
 def get_or_create_leases():
     """The cluster-wide lease actor, created on the head node if absent."""
-    try:
-        return ray.get_actor(LEASES_ACTOR_NAME, namespace=LEASES_NAMESPACE)
-    except ValueError:
-        pass
-    try:
-        return DownloadLeases.options(
-            name=LEASES_ACTOR_NAME,
-            namespace=LEASES_NAMESPACE,
-            lifetime="detached",
-            # a restart would trust an empty table; a fresh actor waits out a lease period instead
-            max_restarts=0,
-            resources={"node:__internal_head__": 0.001},
-        ).remote()
-    except ValueError:
-        return ray.get_actor(LEASES_ACTOR_NAME, namespace=LEASES_NAMESPACE)
+    return DownloadLeases.options(
+        name=LEASES_ACTOR_NAME,
+        namespace=LEASES_NAMESPACE,
+        get_if_exists=True,
+        lifetime="detached",
+        # a restart would trust an empty table; a fresh actor waits out a lease period instead
+        max_restarts=0,
+        resources={"node:__internal_head__": 0.001},
+        # unset, a caller's placement group captures it, and no bundle has the head resource
+        scheduling_strategy="DEFAULT",
+    ).remote()
