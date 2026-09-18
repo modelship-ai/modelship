@@ -14,6 +14,12 @@ _Leases = DownloadLeases.__ray_metadata__.modified_class
 _SOURCE = HfSource("org/repo", "a" * 40, "model.gguf", None, None, None)
 
 
+@pytest.fixture(autouse=True)
+def no_logging_setup(monkeypatch):
+    # the actor configures its own process's logging; here that's pytest's, for every later test
+    monkeypatch.setattr(download_leases, "configure_logging", lambda: None)
+
+
 def _fresh():
     leases = _Leases()
     leases._reaper.cancel()
