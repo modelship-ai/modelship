@@ -18,6 +18,9 @@ from modelship.utils.request_id import random_uuid
 
 _RAND_CHARS = string.ascii_lowercase + string.digits
 
+# per connect and per read, not for the whole transfer
+_DOWNLOAD_TIMEOUT_SECONDS = 30
+
 _MEMORY_SIZE_RE = re.compile(r"(\d+)\s*(ki|mi|gi|ti)?", re.IGNORECASE)
 _MEMORY_UNIT_MULTIPLIERS = {"": 1, "ki": 1024, "mi": 1024**2, "gi": 1024**3, "ti": 1024**4}
 
@@ -69,7 +72,7 @@ def download(url: str, file_path: str, overwrite: bool = False, on_chunk: Callab
 
     tmp_path = f"{file_path}.{random_uuid()}.tmp"
     try:
-        with requests.get(url, stream=True) as response:
+        with requests.get(url, stream=True, timeout=_DOWNLOAD_TIMEOUT_SECONDS) as response:
             response.raise_for_status()
             with open(tmp_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1024):

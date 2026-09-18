@@ -1,10 +1,44 @@
 import hashlib
+import socket
 import tarfile
+import threading
+import time
 from unittest.mock import patch
 
 import pytest
+import requests
 
-from modelship.utils import fetch_and_extract_archive, verify_sha256
+from modelship import utils
+from modelship.utils import download, fetch_and_extract_archive, verify_sha256
+
+
+@pytest.fixture
+def stalling_url():
+    """Serves the headers and a few body bytes, then goes silent."""
+    server = socket.create_server(("127.0.0.1", 0))
+    done = threading.Event()
+
+    def serve():
+        conn, _ = server.accept()
+        with conn:
+            conn.recv(65536)
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial")
+            done.wait(10)
+
+    threading.Thread(target=serve, daemon=True).start()
+    yield f"http://127.0.0.1:{server.getsockname()[1]}/a.tar.bz2"
+    done.set()
+    server.close()
+
+
+class TestDownload:
+    def test_a_stalled_transfer_times_out(self, stalling_url, tmp_path, monkeypatch):
+        monkeypatch.setattr(utils, "_DOWNLOAD_TIMEOUT_SECONDS", 0.2)
+        started = time.monotonic()
+        with pytest.raises(requests.RequestException):
+            download(stalling_url, str(tmp_path / "a.tar.bz2"))
+        assert time.monotonic() - started < 5
+        assert list(tmp_path.iterdir()) == []
 
 
 class TestVerifySha256:
