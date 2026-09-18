@@ -108,6 +108,10 @@ dev = [
     "fakeredis>=2.36.2",
 ]
 
+# vLLM runs these in each of its processes
+[project.entry-points."vllm.general_plugins"]
+modelship_logging = "modelship.logging:configure_vllm_child_logging"
+
 [project.urls]
 Homepage = "https://github.com/modelship-ai/modelship"
 Documentation = "https://docs.model-ship.ai/"

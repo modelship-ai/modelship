@@ -1,5 +1,6 @@
 import asyncio
 import io
+import os
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -73,7 +74,7 @@ from modelship.infer.vllm.parsing.detect import (
     resolve_reasoning_parser,
     resolve_tool_parser,
 )
-from modelship.logging import TRACE, get_logger
+from modelship.logging import TRACE, VLLM_CHILD_ENV, get_logger
 from modelship.metrics import _ENABLED as _METRICS_ENABLED
 from modelship.openai.protocol import (
     ChatCompletionRequest,
@@ -397,6 +398,8 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
 
             stat_loggers = [VllmRayPrometheusStatLogger]
 
+        # read by configure_vllm_child_logging in the engine and worker processes
+        os.environ[VLLM_CHILD_ENV] = "1"
         self.engine = VllmAsyncLLM.from_vllm_config(
             vllm_config=vllm_config,
             usage_context=usage_context,

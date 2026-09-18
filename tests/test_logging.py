@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import socket
+from importlib.metadata import entry_points
 from logging.handlers import SysLogHandler
 from unittest.mock import patch
 
@@ -13,12 +14,14 @@ from modelship.logging import (
     _LIB_ENV_VARS,
     _LIB_LOGGERS,
     _LOWERCASE_LEVEL_LIBS,
+    VLLM_CHILD_ENV,
     ModelshipJsonFormatter,
     ModelshipTextFormatter,
     RequestContextFilter,
     _parse_syslog_target,
     _setup_otel,
     configure_logging,
+    configure_vllm_child_logging,
     get_logger,
     identity_tier_var,
     identity_var,
@@ -171,6 +174,22 @@ class TestVllmConfigureLoggingOptOut:
         with patch.dict(os.environ, {"VLLM_CONFIGURE_LOGGING": "1"}):
             propagate_lib_log_env("INFO")
             assert os.environ["VLLM_CONFIGURE_LOGGING"] == "1"
+
+
+class TestVllmChildLogging:
+    def test_registered_as_a_vllm_plugin(self):
+        [plugin] = [ep for ep in entry_points(group="vllm.general_plugins") if ep.name == "modelship_logging"]
+        assert plugin.load() is configure_vllm_child_logging
+
+    def test_configures_only_a_marked_process(self):
+        with patch.dict(os.environ):
+            os.environ.pop(VLLM_CHILD_ENV, None)
+            configure_vllm_child_logging()
+            assert not logging.getLogger("modelship").handlers
+
+            os.environ[VLLM_CHILD_ENV] = "1"
+            configure_vllm_child_logging()
+            assert logging.getLogger("vllm").handlers
 
 
 class TestRequestContextFilter:
