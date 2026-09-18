@@ -6,7 +6,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import huggingface_hub._snapshot_download
+import huggingface_hub.constants
 import pytest
+from huggingface_hub._tree_cache import TreeCacheEntry, write_tree_cache
 from huggingface_hub.utils.tqdm import _create_progress_bar
 
 from modelship.infer.sources import (
@@ -17,6 +19,8 @@ from modelship.infer.sources import (
     check_model_source,
     download_model_source,
     hf,
+    is_cached,
+    remove_leftovers,
     resolve_model_source,
 )
 from modelship.infer.sources.hf import _TRANSFER_BAR, _DownloadProgressLogger, _select_patterns
@@ -424,3 +428,83 @@ class TestDownloadErrorClassification:
         # Deliberately not a subclass of a "permanent" error type —
         # ModelDeployment.__init__ special-cases it to skip reporting fatal.
         assert issubclass(ModelDownloadError, Exception)
+
+
+_SHA = "a" * 40
+
+
+@pytest.fixture
+def hub(tmp_path, monkeypatch):
+    monkeypatch.setattr(huggingface_hub.constants, "HF_HUB_CACHE", str(tmp_path))
+    return tmp_path
+
+
+def _cache_files(hub: Path, files: list[str], listed: list[str] | None = None) -> Path:
+    """HF's cache layout for `org/repo` at `_SHA`; `listed` writes the tree listing snapshot_download keeps."""
+    repo = hub / "models--org--repo"
+    snapshot = repo / "snapshots" / _SHA
+    snapshot.mkdir(parents=True)
+    for name in files:
+        (snapshot / name).write_bytes(b"x")
+    if listed is not None:
+        entry = TreeCacheEntry(size=1, blob_id="b" * 40, lfs_sha256=None, lfs_size=None, xet_hash=None)
+        write_tree_cache(str(repo), _SHA, dict.fromkeys(listed, entry))
+    return repo
+
+
+def _file(filename: str) -> HfSource:
+    return HfSource("org/repo", _SHA, filename, None, None, None)
+
+
+def _snapshot() -> HfSource:
+    return HfSource("org/repo", _SHA, None, ["*.json", "*.safetensors"], None, None)
+
+
+class TestIsHfCached:
+    def test_single_file(self, hub):
+        _cache_files(hub, ["model.gguf"])
+        assert is_cached(_file("model.gguf"))
+        assert not is_cached(_file("other.gguf"))
+
+    def test_file_cached_as_missing(self, hub):
+        repo = _cache_files(hub, [])
+        (repo / ".no_exist" / _SHA).mkdir(parents=True)
+        (repo / ".no_exist" / _SHA / "model.gguf").touch()
+        assert not is_cached(_file("model.gguf"))
+
+    def test_complete_snapshot(self, hub):
+        files = ["config.json", "model.safetensors"]
+        _cache_files(hub, files, listed=[*files, "README.md"])
+        assert is_cached(_snapshot())
+
+    def test_partial_snapshot(self, hub):
+        _cache_files(hub, ["config.json"], listed=["config.json", "model.safetensors"])
+        assert not is_cached(_snapshot())
+
+    @pytest.mark.parametrize("files", [["config.json"], ["config.json", "model.safetensors"]])
+    def test_snapshot_without_a_tree_listing(self, hub, files):
+        _cache_files(hub, files)
+        assert not is_cached(_snapshot())
+
+    def test_uncached_repo(self, hub):
+        assert not is_cached(_snapshot())
+        assert not is_cached(_file("model.gguf"))
+
+
+class TestRemoveHfLeftovers:
+    def test_removes_only_unfinished_blobs(self, hub):
+        blobs = hub / "models--org--repo" / "blobs"
+        blobs.mkdir(parents=True)
+        (blobs / "abc").write_bytes(b"done")
+        (blobs / "def.1a2b3c4d.incomplete").write_bytes(b"part")
+        (blobs / "ghi.5e6f7a8b.incomplete").write_bytes(b"part")
+        other = hub / "models--org--other" / "blobs"
+        other.mkdir(parents=True)
+        (other / "jkl.9c0d1e2f.incomplete").write_bytes(b"part")
+
+        assert remove_leftovers(_file("model.gguf")) == 2
+        assert [p.name for p in blobs.iterdir()] == ["abc"]
+        assert (other / "jkl.9c0d1e2f.incomplete").exists()
+
+    def test_uncached_repo(self, hub):
+        assert remove_leftovers(_snapshot()) == 0

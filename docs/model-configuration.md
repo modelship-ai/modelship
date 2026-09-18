@@ -114,8 +114,9 @@ Under `MSHIP_CACHE_DIR` (default `/.cache`; may be shared storage):
 
 | Subdir | Contents | Env var |
 |---|---|---|
-| `huggingface` | HF models and tokenizers | `HF_HOME` |
+| `huggingface` | HF models and tokenizers | `HF_HOME`, `HF_HUB_CACHE` (take precedence over a node's own `HF_HOME`, `HF_HUB_CACHE` and `HUGGINGFACE_HUB_CACHE`) |
 | `sherpa_onnx/<name>-<sha256 prefix>` | sherpa-onnx registry tarballs | — |
+| `.mship-cache-id` | Identifies this cache, so nodes sharing it take turns downloading | — |
 
 Under `MSHIP_NODE_CACHE_DIR` (default `$MSHIP_HOME/node-cache` — `/opt/mship/node-cache` in the image). Never put this on storage shared between nodes: vLLM keys its GPU peer-access cache by device index alone, so nodes would read each other's results.
 
@@ -210,6 +211,7 @@ Each node downloads its own copy of whatever gets scheduled onto it — **not** 
 
 - **Shared storage (NFS/EFS) for `MSHIP_CACHE_DIR` is optional**, not required — mount it to dedupe across nodes; without it, each node downloads its own, correctly.
 - Cache paths resolve on each node from its own `MSHIP_CACHE_DIR` and `MSHIP_NODE_CACHE_DIR`, so they may differ between nodes. `mship` and the images set both; if you start a node's Ray yourself (`--use-existing-ray-cluster`), export them there, or replicas on that node refuse to start.
+- Replicas downloading the same model into the same cache take turns: one fetches while the rest wait (logging `waiting for download lease …`), then find it cached. Nodes with separate caches download in parallel. A replica killed mid-download has its partial files removed before the next attempt. The first download after a minute without any waits about 30s before it starts.
 - Every node that can host a model needs its own disk and egress (HF rate limits apply per node).
 - Every node that can host a gated model needs `HF_TOKEN` in its own environment; replicas read it from the node, not the driver.
 - A local-path `model:` is resolved on whichever node hosts the replica — the path must exist on every node that could host it; there's no cross-node copying.

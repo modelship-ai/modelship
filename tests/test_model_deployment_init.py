@@ -2,7 +2,6 @@
 reported to the coordinator as fatal, so it's retried next pass instead of
 evicted from the effective config."""
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +9,6 @@ import pytest
 from modelship.infer.infer_config import ModelLoader
 from modelship.infer.model_deployment import (
     ModelDeployment,
-    _reject_unset_cache_roots,
     _reject_unsupported_accelerator,
     _reject_unsupported_darwin_loader,
 )
@@ -91,20 +89,6 @@ class TestRejectUnsupportedAccelerator:
             _reject_unsupported_accelerator(config)  # no raise
 
 
-class TestRejectUnsetCacheRoots:
-    @pytest.mark.parametrize(
-        "env", [{}, {"MSHIP_CACHE_DIR": "/.cache"}, {"MSHIP_NODE_CACHE_DIR": "/opt/mship/node-cache"}]
-    )
-    def test_rejects_a_missing_root(self, env):
-        with patch.dict(os.environ, env, clear=True), pytest.raises(RuntimeError, match="not set on this node"):
-            _reject_unset_cache_roots()
-
-    def test_allows_both_roots(self):
-        env = {"MSHIP_CACHE_DIR": "/.cache", "MSHIP_NODE_CACHE_DIR": "/opt/mship/node-cache"}
-        with patch.dict(os.environ, env, clear=True):
-            _reject_unset_cache_roots()  # no raise
-
-
 def _patch_init_globals(**kwargs):
     # @serve.deployment cloudpickles the class, so the unwrapped __init__ carries
     # a reconstructed globals dict; patching the module attribute won't reach it.
@@ -124,7 +108,7 @@ async def test_download_error_does_not_report_fatal():
             configure_logging=MagicMock(),
             stamp_gateway=MagicMock(),
             _spawn_orphan_reaper=MagicMock(return_value=None),
-            _reject_unset_cache_roots=MagicMock(),
+            reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
             MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
@@ -156,7 +140,7 @@ async def test_generic_init_failure_reports_fatal():
             configure_logging=MagicMock(),
             stamp_gateway=MagicMock(),
             _spawn_orphan_reaper=MagicMock(return_value=None),
-            _reject_unset_cache_roots=MagicMock(),
+            reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
             MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),

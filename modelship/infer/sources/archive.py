@@ -1,6 +1,7 @@
 import contextlib
-import fcntl
+import glob
 import os
+import shutil
 from typing import NamedTuple
 
 import requests
@@ -38,43 +39,61 @@ def check_archive_source(url: str, sha256: str, dest: str, required: tuple[str, 
     return ArchiveSource(url, sha256, dest, required, total_bytes)
 
 
+def _dest(source: ArchiveSource) -> str:
+    return os.path.join(cache_dir(), source.dest)
+
+
+def is_archive_cached(source: ArchiveSource) -> bool:
+    return os.path.isdir(_dest(source))
+
+
 def download_archive_source(source: ArchiveSource) -> str:
     """Publication is extract-to-temp + `os.replace`, so an existing `dest` is
     complete; one failing `required` is reported, never deleted."""
-    dest = os.path.join(cache_dir(), source.dest)
+    dest = _dest(source)
     if os.path.isdir(dest):
         return _published(dest, source.required)
 
     root, name = os.path.split(dest)
     os.makedirs(root, exist_ok=True)
-    # flock dedups fetches only as far as the mount shares locks; unique archive paths keep the rest safe.
-    with open(os.path.join(root, f".{name}.lock"), "w") as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
+    # unique, so concurrent fetchers never share an archive
+    archive_path = os.path.join(root, f".{name}.{random_uuid()}.archive")
+    try:
+        progress = DownloadProgress(name, source.total_bytes)
+        success = False
         try:
-            if os.path.isdir(dest):
-                return _published(dest, source.required)
-            archive_path = os.path.join(root, f".{name}.{random_uuid()}.archive")
-            try:
-                progress = DownloadProgress(name, source.total_bytes)
-                success = False
-                try:
-                    download(source.url, archive_path, on_chunk=progress.add)
-                    success = True
-                finally:
-                    progress.finish(success)
-                logger.info("%s: verifying and extracting", name)
-                # the archive is already in place, so this skips its own download
-                fetch_and_extract_archive(source.url, source.sha256, archive_path, dest)
-            finally:
-                # the helper only removes it on success or a sha256 mismatch
-                with contextlib.suppress(FileNotFoundError):
-                    os.remove(archive_path)
-            # the helper suppresses os.replace errors, assuming a concurrent extractor won
-            if not os.path.isdir(dest):
-                raise OSError(f"extraction did not publish {dest!r}")
-            return _published(dest, source.required)
+            download(source.url, archive_path, on_chunk=progress.add)
+            success = True
         finally:
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
+            progress.finish(success)
+        logger.info("%s: verifying and extracting", name)
+        # the archive is already in place, so this skips its own download
+        fetch_and_extract_archive(source.url, source.sha256, archive_path, dest)
+    finally:
+        # the helper only removes it on success or a sha256 mismatch
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(archive_path)
+    # the helper suppresses os.replace errors, assuming a concurrent extractor won
+    if not os.path.isdir(dest):
+        raise OSError(f"extraction did not publish {dest!r}")
+    return _published(dest, source.required)
+
+
+def remove_archive_leftovers(source: ArchiveSource) -> int:
+    """Deletes unfinished downloads and extractions; a published `dest` is kept."""
+    root, name = os.path.split(_dest(source))
+    root, name = glob.escape(root), glob.escape(name)
+    removed = 0
+    # the archive and download()'s temp beside it
+    for path in glob.glob(os.path.join(root, f".{name}.*.archive*")):
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(path)
+            removed += 1
+    # fetch_and_extract_archive's extraction dirs
+    for path in glob.glob(os.path.join(root, f"{name}.*.tmp")):
+        shutil.rmtree(path, ignore_errors=True)
+        removed += 1
+    return removed
 
 
 def _published(dest: str, required: tuple[str, ...]) -> str:
