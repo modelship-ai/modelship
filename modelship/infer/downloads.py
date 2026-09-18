@@ -44,12 +44,24 @@ async def locked_download(source: PinnedSource, model_name: str) -> str:
     holder = f"{model_name}@{socket.gethostname()}/{os.getpid()}/{random_uuid()[:8]}"
     node_id = ray.get_runtime_context().get_node_id()
     leases = await _acquire(key, source, holder, node_id, model_name)
+    # a cancel stops neither the cleanup task nor the download thread, so the lease must outlive it too
+    held = asyncio.create_task(_download_held(leases, key, holder, node_id, source, model_name))
+    _held.add(held)
+    held.add_done_callback(_held.discard)
+    return await asyncio.shield(held)
+
+
+# keeps a held section running after its caller is cancelled
+_held: set[asyncio.Task] = set()
+
+
+async def _download_held(leases, key: str, holder: str, node_id: str, source: RemoteSource, model_name: str) -> str:
     renewer = asyncio.create_task(_renew_forever(leases, key, holder, model_name))
     try:
         removed = await remove_leftovers_on(node_id, source)
         if removed:
             logger.info("%s: removed %d leftover download file(s)", model_name, removed)
-        return await loop.run_in_executor(None, download_model_source, source)
+        return await asyncio.get_running_loop().run_in_executor(None, download_model_source, source)
     finally:
         renewer.cancel()
         # an unreleased lease expires on its own

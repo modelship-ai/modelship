@@ -3,6 +3,7 @@ it does while holding it."""
 
 import asyncio
 import inspect
+import threading
 import time
 from unittest.mock import MagicMock
 
@@ -118,6 +119,29 @@ class TestHoldsTheLease:
         monkeypatch.setattr(downloads, "download_model_source", MagicMock(side_effect=OSError("network blip")))
         with pytest.raises(OSError, match="network blip"):
             await downloads.locked_download(_SOURCE, "m")
+        assert len(env.leases.release.calls) == 1
+
+    async def test_a_cancel_keeps_the_lease_until_the_download_ends(self, env, monkeypatch):
+        started, finish = threading.Event(), threading.Event()
+
+        def download(source):
+            started.set()
+            finish.wait(5)
+            return "/cache/model.gguf"
+
+        monkeypatch.setattr(downloads, "download_model_source", download)
+        caller = asyncio.create_task(downloads.locked_download(_SOURCE, "m"))
+        await asyncio.to_thread(started.wait, 5)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        await asyncio.sleep(0.05)
+        assert env.leases.release.calls == []
+        assert env.leases.renew.calls
+
+        finish.set()
+        [held] = downloads._held
+        assert await held == "/cache/model.gguf"
         assert len(env.leases.release.calls) == 1
 
 
