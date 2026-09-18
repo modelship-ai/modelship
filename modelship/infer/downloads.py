@@ -44,6 +44,8 @@ async def locked_download(source: PinnedSource, model_name: str) -> str:
     holder = f"{model_name}@{socket.gethostname()}/{os.getpid()}/{random_uuid()[:8]}"
     node_id = ray.get_runtime_context().get_node_id()
     leases = await _acquire(key, source, holder, node_id, model_name)
+    if leases is None:
+        return await loop.run_in_executor(None, download_model_source, source)
     # a cancel stops neither the cleanup task nor the download thread
     held = asyncio.create_task(_download_held(leases, key, holder, node_id, source, model_name))
     _held.add(held)
@@ -81,7 +83,9 @@ def lease_key(source: RemoteSource) -> str:
 
 
 async def _acquire(key: str, source: RemoteSource, holder: str, node_id: str, model_name: str):
-    """Polls until granted, without limit; the lease actor being unreachable is a retryable failure."""
+    """Polls until granted, without limit, or None once `source` is cached meanwhile;
+    the lease actor being unreachable is a retryable failure."""
+    loop = asyncio.get_running_loop()
     leases = get_or_create_leases()
     lookups = 1
     logged: tuple[str, float] | None = None
@@ -102,6 +106,8 @@ async def _acquire(key: str, source: RemoteSource, holder: str, node_id: str, mo
             logger.info("%s: waiting for download lease %s (%s)", model_name, key, blocker)
             logged = (blocker, now)
         await asyncio.sleep(POLL_SECONDS)
+        if await loop.run_in_executor(None, is_cached, source):
+            return None
 
 
 async def _renew_forever(leases, key: str, holder: str, model_name: str) -> None:

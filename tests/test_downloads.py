@@ -86,6 +86,15 @@ class TestSkipsTheLease:
         assert env.leases.acquire.calls == []
         assert env.events == [("download", _SOURCE)]
 
+    async def test_cached_while_waiting(self, env, monkeypatch):
+        env.leases = _FakeLeases(blockers=["held by x"] * 5)
+        cached = iter([False, True])
+        monkeypatch.setattr(downloads, "is_cached", lambda source: next(cached))
+        assert await downloads.locked_download(_SOURCE, "m") == "/cache/model.gguf"
+        assert len(env.leases.acquire.calls) == 1
+        assert env.events == [("download", _SOURCE)]
+        assert env.leases.release.calls == []
+
     async def test_local_source(self, env, tmp_path, monkeypatch):
         monkeypatch.setattr(downloads, "download_model_source", lambda source: source.path)
         assert await downloads.locked_download(LocalSource(str(tmp_path)), "m") == str(tmp_path)
