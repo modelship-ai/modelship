@@ -499,7 +499,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         """Sets up the render/parse pipeline `create_chat_completion` drives directly
         (see engine_ops), if the model supports it. Leaves `openai_serving_render`
         unset otherwise — callers gate on `hasattr(self, "openai_serving_render")`."""
-        logger.info("init_serving_chat: %s, %s", self.supported_tasks, self.model_config.usecase)
         if not (self.model_config.usecase is ModelUsecase.generate and "generate" in self.supported_tasks):
             return
 
@@ -593,7 +592,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         return _VllmPrepared(vllm_request, engine_input, sampling_params)
 
     async def init_serving_embedding(self) -> VllmServingEmbedding | None:
-        logger.info("init_serving_embedding: %s, %s", self.supported_tasks, self.model_config.usecase)
         return (
             VllmServingEmbedding(
                 engine_client=self.engine,
@@ -610,7 +608,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         )
 
     async def init_serving_transcription(self) -> VllmOpenAIServingTranscription | None:
-        logger.info("init_serving_transcription: %s, %s", self.supported_tasks, self.model_config.usecase)
         return (
             VllmOpenAIServingTranscription(
                 engine_client=self.engine,
@@ -626,7 +623,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         )
 
     async def init_serving_translation(self) -> VllmOpenAIServingTranslation | None:
-        logger.info("init_serving_translation: %s, %s", self.supported_tasks, self.model_config.usecase)
         return (
             VllmOpenAIServingTranslation(
                 engine_client=self.engine,
