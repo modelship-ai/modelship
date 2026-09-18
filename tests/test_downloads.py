@@ -74,7 +74,7 @@ def env(monkeypatch):
     monkeypatch.setattr(downloads.os, "_exit", env.exits.append)
     monkeypatch.setattr(downloads, "POLL_SECONDS", 0.01)
     monkeypatch.setattr(downloads, "RENEW_SECONDS", 0.01)
-    monkeypatch.setattr(downloads, "_RENEW_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(downloads, "_RPC_TIMEOUT_SECONDS", 0.05)
     return env
 
 
@@ -120,6 +120,10 @@ class TestHoldsTheLease:
         with pytest.raises(OSError, match="network blip"):
             await downloads.locked_download(_SOURCE, "m")
         assert len(env.leases.release.calls) == 1
+
+    async def test_a_hung_release_does_not_hold_up_the_path(self, env):
+        env.leases.release = _Method(lambda *_: asyncio.sleep(10))
+        assert await asyncio.wait_for(downloads.locked_download(_SOURCE, "m"), 1) == "/cache/model.gguf"
 
     async def test_a_cancel_keeps_the_lease_until_the_download_ends(self, env, monkeypatch):
         started, finish = threading.Event(), threading.Event()

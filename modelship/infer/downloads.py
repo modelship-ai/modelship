@@ -27,7 +27,7 @@ from modelship.utils.cache import shared_cache_id
 logger = get_logger("startup")
 
 POLL_SECONDS = 2.0
-_RENEW_TIMEOUT_SECONDS = 5.0
+_RPC_TIMEOUT_SECONDS = 5.0
 _WAIT_LOG_SECONDS = 60.0
 # an idle-exiting actor's name resolves for ~2s after it stops answering
 _MAX_LOOKUPS = 3
@@ -66,7 +66,7 @@ async def _download_held(leases, key: str, holder: str, node_id: str, source: Re
         renewer.cancel()
         # an unreleased lease expires on its own
         with contextlib.suppress(Exception):
-            await leases.release.remote(key, holder)
+            await asyncio.wait_for(leases.release.remote(key, holder), _RPC_TIMEOUT_SECONDS)
 
 
 def lease_key(source: RemoteSource) -> str:
@@ -109,7 +109,7 @@ async def _renew_forever(leases, key: str, holder: str, model_name: str) -> None
     while True:
         await asyncio.sleep(RENEW_SECONDS)
         try:
-            renewed = await asyncio.wait_for(leases.renew.remote(key, holder), _RENEW_TIMEOUT_SECONDS)
+            renewed = await asyncio.wait_for(leases.renew.remote(key, holder), _RPC_TIMEOUT_SECONDS)
             reason = "renewal refused"
         except Exception as e:
             renewed, reason = False, repr(e)
