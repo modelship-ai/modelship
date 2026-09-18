@@ -44,14 +44,14 @@ async def locked_download(source: PinnedSource, model_name: str) -> str:
     holder = f"{model_name}@{socket.gethostname()}/{os.getpid()}/{random_uuid()[:8]}"
     node_id = ray.get_runtime_context().get_node_id()
     leases = await _acquire(key, source, holder, node_id, model_name)
-    # a cancel stops neither the cleanup task nor the download thread, so the lease must outlive it too
+    # a cancel stops neither the cleanup task nor the download thread
     held = asyncio.create_task(_download_held(leases, key, holder, node_id, source, model_name))
     _held.add(held)
     held.add_done_callback(_held.discard)
     return await asyncio.shield(held)
 
 
-# keeps a held section running after its caller is cancelled
+# asyncio references tasks only weakly
 _held: set[asyncio.Task] = set()
 
 

@@ -138,6 +138,6 @@ def get_or_create_leases():
         # a restart would trust an empty table; a fresh actor waits out a lease period instead
         max_restarts=0,
         resources={"node:__internal_head__": 0.001},
-        # unset, a caller's placement group captures it, and no bundle has the head resource
+        # unset, a caller's placement group captures it
         scheduling_strategy="DEFAULT",
     ).remote()
