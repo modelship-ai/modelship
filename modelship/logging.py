@@ -206,6 +206,17 @@ def configure_logging() -> None:
     propagate_lib_log_env(level_name)
 
 
+# Set by the vLLM loader; the engine and worker processes it starts inherit it.
+VLLM_CHILD_ENV = "MSHIP_VLLM_CHILD"
+
+
+def configure_vllm_child_logging() -> None:
+    """vLLM general plugin, run in every process that loads vLLM's plugins; only
+    the engine and worker processes a replica starts lack modelship's logging."""
+    if os.environ.get(VLLM_CHILD_ENV):
+        configure_logging()
+
+
 # pyright: reportMissingImports=false
 def _setup_otel(root_logger: logging.Logger, endpoint: str, level: int) -> None:
     """Attach an OpenTelemetry log exporter to *root_logger*.
