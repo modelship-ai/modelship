@@ -58,6 +58,12 @@ def rand_suffix(length: int = 5) -> str:
     return "".join(random.choices(_RAND_CHARS, k=length))
 
 
+def head_node_options() -> dict[str, Any]:
+    """Actor options that place a cluster singleton on the head node."""
+    # scheduling_strategy unset: a caller's placement group captures the actor
+    return {"resources": {"node:__internal_head__": 0.001}, "scheduling_strategy": "DEFAULT"}
+
+
 def is_pathy(s: str) -> bool:
     """A local-path-shaped string (`/...`, `./...`, `~...`), as opposed to an
     HF repo id, registry name, or other bare identifier."""

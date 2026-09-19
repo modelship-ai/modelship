@@ -593,10 +593,10 @@ Three pieces of state share one pluggable store: this gateway's **effective conf
 
 | URI | Backend | Durability |
 |---|---|---|
-| `memory://` (default) | dict shared cluster-wide by a detached Ray actor | survives a deploy re-run, coordinator restart, gateway-replica restart — **not** cluster death |
+| `memory://` (default) | dict shared cluster-wide by a detached Ray actor on the head node | survives a deploy re-run, coordinator restart, gateway-replica restart — **not** cluster death |
 | `redis://[:pw@]host:6379/0` (`rediss://` = TLS) | one JSON value per key in Redis | survives head/coordinator death **and** cluster loss; password parsed from the URL by `redis.from_url` |
 
-`memory://` is cluster-scoped, not process-local — every gateway replica and model actor shares one detached Ray actor, so it's correct at any replica count. Sized for small-traffic single-node deployments: every operation is a Ray RPC through that one actor, and large values spill to the object store.
+`memory://` is cluster-scoped, not process-local — every gateway replica and model actor shares one detached Ray actor on the head node, so it's correct at any replica count and outlives any worker node. Sized for small-traffic single-node deployments: every operation is a Ray RPC through that one actor, and large values spill to the object store.
 
 The Helm chart always sets `redis://…` in Kubernetes; the same Redis also backs Ray GCS fault tolerance (chart's **Head-node HA** section) and is what lets the gateway self-heal routing after a head restart instead of needing a redeploy.
 

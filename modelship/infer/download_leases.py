@@ -11,6 +11,7 @@ from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 from modelship.deploy.actor_options import build_cache_env_vars
 from modelship.infer.sources import RemoteSource, remove_leftovers
 from modelship.logging import configure_logging, get_logger
+from modelship.utils import head_node_options
 from modelship.utils.cache import reject_unset_cache_roots
 
 logger = get_logger("download_leases")
@@ -137,7 +138,5 @@ def get_or_create_leases():
         lifetime="detached",
         # a restart would trust an empty table; a fresh actor waits out a lease period instead
         max_restarts=0,
-        resources={"node:__internal_head__": 0.001},
-        # unset, a caller's placement group captures it
-        scheduling_strategy="DEFAULT",
+        **head_node_options(),
     ).remote()

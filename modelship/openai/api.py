@@ -335,7 +335,7 @@ class ModelshipAPI:
     async def _coord_async(self):
         """Resolve (and cache) the replica-coordinator handle without blocking the event
         loop. Cached fast path is a no-op; only after a reset (coordinator restart) does
-        this do work, and get_or_create's synchronous ray.get_actor can stall on a
+        this do work, and get_or_create's synchronous GCS lookup can stall on a
         recovering GCS — so hop it to a thread to keep concurrent requests flowing."""
         if self._replica_coord is None:
             self._replica_coord = await asyncio.to_thread(replica_coordinator.get_or_create_replica_coordinator)

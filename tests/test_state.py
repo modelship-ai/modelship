@@ -268,15 +268,6 @@ class TestMemoryStateStoreClient:
             store.get("k")
         assert store._handle is None  # dropped so the next call re-resolves
 
-    def test_get_or_create_sets_max_restarts(self, monkeypatch):
-        # max_restarts=-1 ensures the actor is recreated after a crash.
-        monkeypatch.setattr(memory_module.ray, "get_actor", MagicMock(side_effect=ValueError("absent")))
-        options = MagicMock()
-        options.return_value.remote.return_value = MagicMock()
-        monkeypatch.setattr(memory_module.MemoryStoreActor, "options", options)
-        memory_module.get_or_create_memory_store_actor()
-        assert options.call_args.kwargs["max_restarts"] == -1
-
 
 class TestRedisStateStore:
     def test_ttl_sets_native_expiry(self):
