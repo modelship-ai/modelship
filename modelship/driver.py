@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> None:
         supervise_join_node,
     )
     from modelship.deploy.strategy import DeployContext, compute_deploy_plan, run_deploy_loop
-    from modelship.infer.deploy_coordinator import OperatorProbe, get_or_create_coordinator
+    from modelship.infer.deploy_coordinator import create_operator_probe, get_or_create_coordinator
     from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
     from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
     from modelship.openai.compaction_crypto import ensure_key_seeded
@@ -269,7 +269,7 @@ def main(argv: list[str] | None = None) -> None:
 
         # Driver-owned: Ray releases the coordinator lock if this process dies.
         operator_id = make_operator_id()
-        probe = OperatorProbe.options(num_cpus=0).remote()
+        probe = create_operator_probe()
         logger.info("Operator id=%s; coordinator acquired.", operator_id)
 
         ctx = DeployContext(

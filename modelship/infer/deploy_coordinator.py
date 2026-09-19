@@ -10,8 +10,8 @@ atomic check, so operators never race.
 
 Design:
 
-- `DeployCoordinator` is a detached, named Ray actor. The first
-  operator to start creates it; subsequent operators look it up by name.
+- `DeployCoordinator` is a detached, named Ray actor on the head node. The
+  first operator to start creates it; subsequent operators look it up by name.
 - Operators reserve via `try_reserve(operator_id, probe, num_gpus, num_cpus)`.
   Granted only when the lock is unheld AND the cluster has the requested
   resources available right now.
@@ -20,6 +20,7 @@ Design:
   ungraceful operator death (SIGKILL, host crash, partition). Because the
   probe is owned by the operator driver, Ray tears it down when the driver
   dies — the coordinator sees `RayActorError` and force-releases the lock.
+  It runs on the driver's node, so no other node's death can kill it.
 - Graceful shutdown uses `release(operator_id)` from the operator's
   try/finally, cancelling the liveness watcher cleanly.
 
@@ -34,6 +35,7 @@ import time
 
 import ray
 from ray import exceptions as ray_exceptions
+from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 from modelship.logging import get_logger
 from modelship.metrics import (
@@ -41,6 +43,7 @@ from modelship.metrics import (
     DEPLOY_RESERVATIONS_TOTAL,
     OPERATOR_FORCE_RELEASE_TOTAL,
 )
+from modelship.utils import head_node_options
 
 logger = get_logger("deploy_coordinator")
 
@@ -226,18 +229,21 @@ class DeployCoordinator:
 
 
 def get_or_create_coordinator():
-    """Return the cluster-wide coordinator handle, creating it if absent."""
-    try:
-        return ray.get_actor(COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_NAMESPACE)
-    except ValueError:
-        pass
-    try:
-        return DeployCoordinator.options(
-            name=COORDINATOR_ACTOR_NAME,
-            namespace=COORDINATOR_NAMESPACE,
-            lifetime="detached",
-            num_cpus=0,
-            max_restarts=-1,
-        ).remote()
-    except ValueError:
-        return ray.get_actor(COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_NAMESPACE)
+    """Return the cluster-wide coordinator handle, creating it on the head node if absent."""
+    return DeployCoordinator.options(
+        name=COORDINATOR_ACTOR_NAME,
+        namespace=COORDINATOR_NAMESPACE,
+        get_if_exists=True,
+        lifetime="detached",
+        num_cpus=0,
+        max_restarts=-1,
+        **head_node_options(),
+    ).remote()
+
+
+def create_operator_probe():
+    """An OperatorProbe owned by this driver, on this driver's node."""
+    node_id = ray.get_runtime_context().get_node_id()
+    return OperatorProbe.options(
+        num_cpus=0, scheduling_strategy=NodeAffinitySchedulingStrategy(node_id, soft=False)
+    ).remote()

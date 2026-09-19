@@ -1,10 +1,10 @@
 """Cluster-wide routing registry shared by every gateway replica.
 
-`ReplicaCoordinator` is a detached, named Ray actor holding the durable mapping of
-model deployments each gateway owns. `mship_deploy.py` writes to it as models are
-(un)deployed; every gateway replica long-polls `wait_for_change` and reconciles its
-own routing table from `get_routing` — the driver never pushes to individual
-replicas.
+`ReplicaCoordinator` is a detached, named Ray actor on the head node holding the
+durable mapping of model deployments each gateway owns. `mship_deploy.py` writes to
+it as models are (un)deployed; every gateway replica long-polls `wait_for_change`
+and reconciles its own routing table from `get_routing` — the driver never pushes
+to individual replicas.
 
 The registry is persisted through `get_state_store()` — cluster-scoped even on the
 default `memory://` (backed by its own detached actor, see `modelship.state.memory`)
@@ -24,6 +24,7 @@ from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import COORDINATOR_GENERATION
 from modelship.state import MemoryStateStore, get_state_store
+from modelship.utils import head_node_options
 
 logger = get_logger("replica_coordinator")
 
@@ -42,9 +43,7 @@ class ReplicaCoordinator:
     """Durable per-gateway routing registry with long-poll change notification."""
 
     def __init__(self):
-        # MSHIP_LOG_* rides along via the actor's runtime_env (see serve_utils) — this
-        # actor never otherwise runs configure_logging(), so without this its own
-        # logger falls back to Python's bare, unprefixed lastResort handler.
+        # Nothing else configures logging here; without it the logger falls back to Python's lastResort handler.
         configure_logging()
         # Durable ownership registry: gateway_name -> {deployment_name -> model_name}.
         # The driver writes it on (un)deploy; gateway replicas reconcile their
@@ -161,18 +160,13 @@ class ReplicaCoordinator:
 
 
 def get_or_create_replica_coordinator():
-    """Return the cluster-wide replica-routing coordinator handle, creating it if absent."""
-    try:
-        return ray.get_actor(REPLICA_COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_NAMESPACE)
-    except ValueError:
-        pass
-    try:
-        return ReplicaCoordinator.options(
-            name=REPLICA_COORDINATOR_ACTOR_NAME,
-            namespace=COORDINATOR_NAMESPACE,
-            lifetime="detached",
-            num_cpus=0,
-            max_restarts=-1,
-        ).remote()
-    except ValueError:
-        return ray.get_actor(REPLICA_COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_NAMESPACE)
+    """Return the cluster-wide replica-routing coordinator handle, creating it on the head node if absent."""
+    return ReplicaCoordinator.options(
+        name=REPLICA_COORDINATOR_ACTOR_NAME,
+        namespace=COORDINATOR_NAMESPACE,
+        get_if_exists=True,
+        lifetime="detached",
+        num_cpus=0,
+        max_restarts=-1,
+        **head_node_options(),
+    ).remote()

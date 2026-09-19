@@ -1,4 +1,4 @@
-"""In-memory StateStore — a dict shared cluster-wide through a detached Ray actor.
+"""In-memory StateStore — a dict shared cluster-wide through a detached Ray actor on the head node.
 
 The default backend. Every process and gateway replica in the cluster shares one
 ``MemoryStoreActor``, so writes from one process (e.g. the deploy driver) are
@@ -19,6 +19,7 @@ from ray import exceptions as ray_exceptions
 
 from modelship.logging import get_logger
 from modelship.state.base import JsonValue, StateStore, StateStoreUnavailableError, normalize_prefix
+from modelship.utils import head_node_options
 
 logger = get_logger("startup")
 
@@ -168,22 +169,16 @@ class MemoryStoreActor(StateStore):
 
 
 def get_or_create_memory_store_actor():
-    """Return the cluster-wide memory-store actor handle, creating it if absent.
-    Mirrors deploy_coordinator.get_or_create_coordinator's race-safe pattern."""
-    try:
-        return ray.get_actor(_ACTOR_NAME, namespace=_ACTOR_NAMESPACE)
-    except ValueError:
-        pass
-    try:
-        return MemoryStoreActor.options(
-            name=_ACTOR_NAME,
-            namespace=_ACTOR_NAMESPACE,
-            lifetime="detached",
-            num_cpus=0,
-            max_restarts=-1,
-        ).remote()
-    except ValueError:
-        return ray.get_actor(_ACTOR_NAME, namespace=_ACTOR_NAMESPACE)
+    """Return the cluster-wide memory-store actor handle, creating it on the head node if absent."""
+    return MemoryStoreActor.options(
+        name=_ACTOR_NAME,
+        namespace=_ACTOR_NAMESPACE,
+        get_if_exists=True,
+        lifetime="detached",
+        num_cpus=0,
+        max_restarts=-1,
+        **head_node_options(),
+    ).remote()
 
 
 class MemoryStateStore(StateStore):
@@ -209,8 +204,8 @@ class MemoryStateStore(StateStore):
         except ray_exceptions.RayActorError as exc:
             # The actor died and won't come back reachable via this stale handle
             # (max_restarts keeps the same actor id alive, but a fresh
-            # ray.get_actor() re-resolves it) — drop the cache and let the next
-            # call re-resolve.
+            # lookup re-resolves it) — drop the cache and let the next call
+            # re-resolve.
             self._handle = None
             raise StateStoreUnavailableError(f"memory:// store actor unreachable: {exc}") from exc
 
