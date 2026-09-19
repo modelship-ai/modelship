@@ -100,7 +100,7 @@ class TestChatLlamaServer:
             messages=[{"role": "user", "content": "What is the weather in Paris?"}],
             tools=[_WEATHER_TOOL],
             tool_choice="auto",
-            max_tokens=128,
+            max_tokens=512,  # headroom for the reasoning preamble to not crowd out the answer
         )
         tool_calls = completion.choices[0].message.tool_calls
         assert tool_calls, f"expected a tool call, got content={completion.choices[0].message.content!r}"
@@ -116,7 +116,7 @@ class TestChatLlamaServer:
             messages=[{"role": "user", "content": "What is the weather in Paris?"}],
             tools=[_WEATHER_TOOL],
             tool_choice="auto",
-            max_tokens=128,
+            max_tokens=512,  # headroom for the reasoning preamble to not crowd out the answer
             stream=True,
         )
 
