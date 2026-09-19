@@ -1,0 +1,207 @@
+# Modelship Prometheus Alerting Rules
+#
+# Import into Prometheus:
+#   rule_files:
+#     - /path/to/prometheus-alerts.yml
+#
+# All thresholds are starting points — tune per deployment based on
+# your model sizes, traffic patterns, and hardware.
+
+groups:
+  - name: modelship-critical
+    rules:
+      - alert: ModelshipHighErrorRate
+        expr: |
+          sum(rate(ray_modelship_request_errors_total[5m]))
+          / clamp_min(sum(rate(ray_modelship_request_total[5m])), 1)
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High request error rate (> 5%)"
+          description: >-
+            Error rate is {{ $value | humanizePercentage }} of total traffic
+            over the last 5 minutes.
+
+      - alert: ModelshipNoModelsLoaded
+        expr: ray_modelship_models_loaded == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No models loaded"
+          description: >-
+            ray_modelship_models_loaded has been 0 for 2 minutes.
+            The server is running but cannot serve any requests.
+
+      - alert: ModelshipModelLoadFailure
+        expr: increase(ray_modelship_model_load_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Model load failure detected"
+          description: >-
+            {{ $labels.model }} ({{ $labels.loader }}) failed to load.
+
+      - alert: ModelshipKVCacheExhausted
+        expr: ray_vllm_kv_cache_usage_perc > 0.95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "vLLM KV cache near exhaustion (> 95%)"
+          description: >-
+            KV cache usage is {{ $value | humanizePercentage }}.
+            Requests will queue or be preempted.
+
+  - name: modelship-warning
+    rules:
+      - alert: ModelshipHighP99Latency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(ray_modelship_request_duration_seconds_bucket[5m])) by (le)
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Request latency P99 > 30s"
+          description: >-
+            P99 gateway latency is {{ $value | humanizeDuration }}.
+
+      - alert: ModelshipHighQueueDepth
+        expr: ray_vllm_num_requests_waiting > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "vLLM request queue depth > 10"
+          description: >-
+            {{ $value }} requests waiting in the vLLM queue.
+
+      - alert: ModelshipPreemptions
+        expr: rate(ray_vllm_num_preemptions_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "vLLM preemptions occurring"
+          description: >-
+            Preemptions indicate GPU memory pressure — requests are being
+            evicted and recomputed.
+
+      - alert: ModelshipClientDisconnects
+        expr: sum(rate(ray_modelship_client_disconnects_total[5m])) > 0.0167
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Client disconnects > 1/min"
+          description: >-
+            {{ $value | humanize }} disconnects/s — clients may be timing out.
+
+      - alert: ModelshipGPUMemoryPressure
+        expr: ray_node_gram_available < 1024
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU memory available < 1 GB"
+          description: >-
+            GPU {{ $labels.GpuIndex }} has only {{ $value | humanize }}MB free.
+
+      - alert: ModelshipHighTTFT
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(ray_vllm_time_to_first_token_seconds_bucket[5m])) by (le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Time to first token P99 > 5s"
+          description: >-
+            TTFT P99 is {{ $value | humanizeDuration }} — users are waiting
+            too long for the first token.
+
+  # HA control-plane alerts. These cover the coordinator, state store, and gateway
+  # routing introduced with the Helm chart — failures here don't fail requests
+  # immediately but break deploys, self-heal, and routing consistency.
+  - name: modelship-ha
+    rules:
+      - alert: ModelshipDeployLockStuck
+        expr: min_over_time(ray_modelship_deploy_lock_held[10m]) == 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Deploy lock held continuously for 10m"
+          description: >-
+            The cluster-wide deploy lock has been held for 10 minutes — a deploy
+            is hung or an operator died without releasing it. New deploys are blocked.
+
+      - alert: ModelshipOperatorForceReleased
+        expr: increase(ray_modelship_operator_force_release_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Deploy lock force-released after operator death"
+          description: >-
+            {{ $value }} force-release(s) ({{ $labels.reason }}) — a deploy operator
+            died ungracefully and the coordinator reclaimed the lock.
+
+      - alert: ModelshipStateStoreErrors
+        expr: sum(rate(ray_modelship_state_store_operations_total{result="error"}[5m])) by (backend) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "State store errors ({{ $labels.backend }})"
+          description: >-
+            The {{ $labels.backend }} state store is failing operations — durable
+            HA state (routing registry, effective config) is at risk, breaking self-heal.
+
+      - alert: ModelshipGatewayRoutingDivergence
+        expr: |
+          (max by (gateway) (ray_modelship_coordinator_generation)
+           - min by (gateway) (ray_modelship_gateway_routing_generation)) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway replicas lagging coordinator routing ({{ $labels.gateway }})"
+          description: >-
+            A gateway replica has not reconciled to the coordinator's routing
+            generation for 10m — it may be routing from a stale table.
+
+  # KubeRay / cluster-health alerts. These require kube-state-metrics and the
+  # KubeRay operator metrics endpoint to be scraped — adjust label selectors to
+  # your namespace/release. Left here as ready-to-enable starting points.
+  - name: modelship-kuberay
+    rules:
+      - alert: ModelshipRayWorkerNotReady
+        expr: |
+          kube_pod_status_ready{condition="true", pod=~".*-worker-.*"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ray worker pod not ready ({{ $labels.pod }})"
+          description: >-
+            Ray worker {{ $labels.pod }} has been not-ready for 5m — cluster
+            capacity is degraded.
+
+      - alert: ModelshipDeployJobFailed
+        expr: |
+          kube_job_status_failed{job_name=~".*-deploy.*"} > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Modelship deploy RayJob failed ({{ $labels.job_name }})"
+          description: >-
+            The deploy RayJob failed — models from the last helm upgrade may not
+            be deployed. Check the job logs.
