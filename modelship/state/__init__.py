@@ -4,7 +4,7 @@ A store is selected by a connection URI whose **scheme** picks the backend and
 whose body carries that backend's connection:
 
     memory://                     dict shared cluster-wide via a Ray actor (default)
-    redis://[:pw@]host:6379/0      one JSON value per key in Redis (rediss:// = TLS)
+    redis://host:6379/0           one JSON value per key in Redis (rediss:// = TLS)
 
 One arg covers a full Redis connection, and a new backend is one entry in
 ``_BUILDERS`` with zero new flags. ``get_state_store()`` reads the configured URI
@@ -14,8 +14,9 @@ from ``MSHIP_STATE_STORE``.
 from __future__ import annotations
 
 import os
+import re
 import time
-from urllib.parse import ParseResult, urlparse
+from urllib.parse import ParseResult, parse_qs, quote, urlparse, urlsplit, urlunsplit
 
 from modelship.metrics import STATE_STORE_OPERATION_DURATION_SECONDS, STATE_STORE_OPERATIONS_TOTAL
 from modelship.state.base import JsonValue, StateStore, StateStoreUnavailableError
@@ -28,6 +29,9 @@ __all__ = [
     "StateStore",
     "StateStoreUnavailableError",
     "get_state_store",
+    "reject_inline_password",
+    "resolve_state_store_uri",
+    "state_store_env_var",
     "state_store_from_uri",
 ]
 
@@ -35,6 +39,13 @@ __all__ = [
 # is opted into explicitly (the chart sets one for k8s).
 _STATE_STORE_ENV = "MSHIP_STATE_STORE"
 _DEFAULT_URI = "memory://"
+
+# Kept out of the forwarded URI: each process reads it from its own node's env.
+REDIS_PASSWORD_ENV = "MSHIP_REDIS_PASSWORD"
+_REDIS_SCHEMES = ("redis", "rediss")
+
+# The two forms os.path.expandvars substitutes.
+_ENV_REF = re.compile(r"\$(\w+|\{[^}]*\})")
 
 
 class _InstrumentedStateStore(StateStore):
@@ -163,7 +174,49 @@ def state_store_from_uri(uri: str) -> StateStore:
     return _InstrumentedStateStore(builder(parsed), backend=scheme)
 
 
+def _with_password(uri: str, password: str) -> str:
+    """*uri* with *password* percent-encoded into its netloc; unchanged for non-redis or when
+    one is present. Encoding keeps `/`, `#`, `?`, `%` from being re-read as URI syntax."""
+    parts = urlsplit(uri)
+    if parts.scheme not in _REDIS_SCHEMES or parts.password:
+        return uri
+    host = parts.netloc.rpartition("@")[2]
+    user = parts.username or ""
+    return urlunsplit(parts._replace(netloc=f"{user}:{quote(password, safe='')}@{host}"))
+
+
+def reject_inline_password(uri: str) -> None:
+    """Refuse a password written into the URI — netloc or ``?password=`` (redis-py reads
+    both), directly or via an env var the URI expands to."""
+    parts = urlsplit(os.path.expandvars(uri))
+    if parts.password or any(parse_qs(parts.query).get("password", ())):
+        raise ValueError(
+            f"{_STATE_STORE_ENV} must not contain a password — runtime_env carries this URI to every "
+            f"replica as plain-text cluster metadata. Drop it from the URI and set {REDIS_PASSWORD_ENV} "
+            "on every node instead."
+        )
+
+
+def state_store_env_var() -> dict[str, str]:
+    """``{MSHIP_STATE_STORE: uri}`` to forward. It carries no password: each node applies
+    its own MSHIP_REDIS_PASSWORD. Empty when this process has no URI to forward."""
+    uri = os.environ.get(_STATE_STORE_ENV)
+    return {_STATE_STORE_ENV: uri} if uri else {}
+
+
+def resolve_state_store_uri() -> str:
+    """The URI this process connects with: env vars in it expanded from this node's own
+    env, then MSHIP_REDIS_PASSWORD applied if the URI carries none."""
+    uri = os.environ.get(_STATE_STORE_ENV) or _DEFAULT_URI
+    missing = sorted({m.group(1).strip("{}") for m in _ENV_REF.finditer(uri)} - set(os.environ))
+    if missing:
+        raise ValueError(f"{_STATE_STORE_ENV}={uri!r} references env vars not set on this node: {', '.join(missing)}")
+    expanded = os.path.expandvars(uri)
+    password = os.environ.get(REDIS_PASSWORD_ENV)
+    return _with_password(expanded, password) if password else expanded
+
+
 def get_state_store() -> StateStore:
     """The configured default StateStore, from ``MSHIP_STATE_STORE`` (default
     ``memory://``)."""
-    return state_store_from_uri(os.environ.get(_STATE_STORE_ENV) or _DEFAULT_URI)
+    return state_store_from_uri(resolve_state_store_uri())

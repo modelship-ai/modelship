@@ -43,7 +43,9 @@ from modelship.metrics import (
     DEPLOY_RESERVATIONS_TOTAL,
     OPERATOR_FORCE_RELEASE_TOTAL,
 )
+from modelship.state import state_store_env_var
 from modelship.utils import head_node_options
+from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
 
 logger = get_logger("deploy_coordinator")
 
@@ -237,6 +239,8 @@ def get_or_create_coordinator():
         lifetime="detached",
         num_cpus=0,
         max_restarts=-1,
+        # The store URI, which _retire passes on when it recreates the replica coordinator.
+        runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS) | state_store_env_var()},
         **head_node_options(),
     ).remote()
 

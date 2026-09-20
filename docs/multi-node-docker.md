@@ -147,6 +147,10 @@ instead of coming back empty. See [State store
 the full connection-URI reference — the head is otherwise a single point of
 failure for this state, same as it is for Ray's GCS itself.
 
+If that Redis needs a password, pass `-e MSHIP_REDIS_PASSWORD=…` on every node
+and keep it out of the URI: gateway replicas can run on any node, and the URI
+they get is password-free — each node adds its own before connecting.
+
 ## Co-location: running more than one node per physical box
 
 Co-location is a supported topology, not a footgun to avoid — the two patterns
