@@ -599,7 +599,7 @@ Three pieces of state share one pluggable store: this gateway's **effective conf
 
 `memory://` is cluster-scoped, not process-local — every gateway replica and model actor shares one detached Ray actor on the head node, so it's correct at any replica count and outlives any worker node. Sized for small-traffic single-node deployments: every operation is a Ray RPC through that one actor, and large values spill to the object store.
 
-A password belongs in `MSHIP_REDIS_PASSWORD` on every node, not in the URI: the driver forwards the URI to gateway replicas in `runtime_env`, which is plain-text cluster metadata, so it travels as a `${MSHIP_REDIS_PASSWORD}` placeholder that each node fills in from its own environment. A password inside `--state-store`/`MSHIP_STATE_STORE` is rejected at startup.
+A password belongs in `MSHIP_REDIS_PASSWORD` on every node, not in the URI: the driver forwards the URI to gateway replicas in `runtime_env`, which is plain-text cluster metadata, so the URI travels password-free and each node adds its own before connecting (percent-encoded, so `/`, `#`, `%` and friends in a password are safe). A password inside `--state-store`/`MSHIP_STATE_STORE` is rejected at startup.
 
 The Helm chart always sets `redis://…` in Kubernetes (with the password from its Secret as `MSHIP_REDIS_PASSWORD` on every pod); the same Redis also backs Ray GCS fault tolerance (chart's **Head-node HA** section) and is what lets the gateway self-heal routing after a head restart instead of needing a redeploy.
 

@@ -2,6 +2,7 @@
 
 import os
 from unittest.mock import patch
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -38,24 +39,15 @@ class TestForwardedEnvVars:
 
 
 class TestStateStoreForwarding:
-    def test_password_travels_as_a_placeholder(self):
+    def test_the_password_is_not_forwarded(self):
         env = {"MSHIP_STATE_STORE": "redis://host:6379/0", REDIS_PASSWORD_ENV: "s3cret"}
         with patch.dict(os.environ, env, clear=True):
-            forwarded = state_store_env_var()["MSHIP_STATE_STORE"]
-        assert forwarded == "redis://:${MSHIP_REDIS_PASSWORD}@host:6379/0"
-        assert "s3cret" not in forwarded
-
-    def test_user_and_query_survive_the_rewrite(self):
-        env = {"MSHIP_STATE_STORE": "rediss://alex@host:6379/1?ssl_cert_reqs=none", REDIS_PASSWORD_ENV: "pw"}
-        with patch.dict(os.environ, env, clear=True):
-            assert (
-                state_store_env_var()["MSHIP_STATE_STORE"]
-                == "rediss://alex:${MSHIP_REDIS_PASSWORD}@host:6379/1?ssl_cert_reqs=none"
-            )
-
-    def test_no_password_set_forwards_the_uri_unchanged(self):
-        with patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True):
             assert state_store_env_var() == {"MSHIP_STATE_STORE": "redis://host:6379/0"}
+
+    def test_user_and_query_are_forwarded_as_written(self):
+        uri = "rediss://alex@host:6379/1?ssl_cert_reqs=none"
+        with patch.dict(os.environ, {"MSHIP_STATE_STORE": uri, REDIS_PASSWORD_ENV: "pw"}, clear=True):
+            assert state_store_env_var() == {"MSHIP_STATE_STORE": uri}
 
     def test_nothing_to_forward_without_a_uri(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -66,14 +58,23 @@ class TestStateStoreForwarding:
         with patch.dict(os.environ, env, clear=True):
             assert resolve_state_store_uri() == "redis://:s3cret@host:6379/0"
 
-    def test_local_reader_expands_a_placeholder_uri(self):
-        env = {"MSHIP_STATE_STORE": "redis://:${MSHIP_REDIS_PASSWORD}@host:6379/0", REDIS_PASSWORD_ENV: "s3cret"}
+    @pytest.mark.parametrize("password", ["aB3/xY+9zQ==", "p#w", "p?w", "p@w", "p%41w", "pw:pw"])
+    def test_a_reserved_character_password_survives_the_round_trip(self, password):
+        env = {"MSHIP_STATE_STORE": "redis://alex@host:6379/0", REDIS_PASSWORD_ENV: password}
         with patch.dict(os.environ, env, clear=True):
-            assert resolve_state_store_uri() == "redis://:s3cret@host:6379/0"
+            parsed = urlsplit(resolve_state_store_uri())
+        assert (parsed.hostname, parsed.port, parsed.path) == ("host", 6379, "/0")
+        # redis-py's parse_url unquotes username/password before connecting.
+        assert (unquote(parsed.username or ""), unquote(parsed.password or "")) == ("alex", password)
 
-    def test_unset_placeholder_fails_naming_the_var(self):
+    def test_local_reader_expands_an_env_var_in_the_uri(self):
+        env = {"MSHIP_STATE_STORE": "redis://${REDIS_HOST}:6379/0", "REDIS_HOST": "box"}
+        with patch.dict(os.environ, env, clear=True):
+            assert resolve_state_store_uri() == "redis://box:6379/0"
+
+    def test_unset_var_in_the_uri_fails_naming_it(self):
         with (
-            patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://:${MSHIP_REDIS_PASSWORD}@host/0"}, clear=True),
+            patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://${REDIS_HOST}:6379/0"}, clear=True),
             pytest.raises(ValueError, match="MSHIP_STATE_STORE"),
         ):
             resolve_state_store_uri()
@@ -89,8 +90,21 @@ class TestRejectInlinePassword:
             reject_inline_password("redis://:s3cret@host:6379/0")
 
     @pytest.mark.parametrize(
+        "uri", ["redis://:${MSHIP_REDIS_PASSWORD}@host:6379/0", "redis://host:6379/0?password=s3cret"]
+    )
+    def test_other_ways_of_writing_one_are_rejected_too(self, uri):
+        with pytest.raises(ValueError, match=REDIS_PASSWORD_ENV):
+            reject_inline_password(uri)
+
+    @pytest.mark.parametrize(
         "uri",
-        ["", "memory://", "redis://host:6379/0", "redis://alex@host:6379/0", "redis://:${MSHIP_REDIS_PASSWORD}@host/0"],
+        [
+            "",
+            "memory://",
+            "redis://host:6379/0",
+            "redis://alex@host:6379/0",
+            "rediss://host:6379/0?ssl_cert_reqs=none",
+        ],
     )
     def test_accepted(self, uri):
         reject_inline_password(uri)

@@ -149,7 +149,7 @@ failure for this state, same as it is for Ray's GCS itself.
 
 If that Redis needs a password, pass `-e MSHIP_REDIS_PASSWORD=…` on every node
 and keep it out of the URI: gateway replicas can run on any node, and the URI
-they get carries the password as a placeholder each node fills in itself.
+they get is password-free — each node adds its own before connecting.
 
 ## Co-location: running more than one node per physical box
 

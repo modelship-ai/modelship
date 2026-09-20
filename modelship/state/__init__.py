@@ -4,7 +4,7 @@ A store is selected by a connection URI whose **scheme** picks the backend and
 whose body carries that backend's connection:
 
     memory://                     dict shared cluster-wide via a Ray actor (default)
-    redis://[:pw@]host:6379/0      one JSON value per key in Redis (rediss:// = TLS)
+    redis://host:6379/0           one JSON value per key in Redis (rediss:// = TLS)
 
 One arg covers a full Redis connection, and a new backend is one entry in
 ``_BUILDERS`` with zero new flags. ``get_state_store()`` reads the configured URI
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 import time
-from urllib.parse import ParseResult, urlparse, urlsplit, urlunsplit
+from urllib.parse import ParseResult, parse_qs, quote, urlparse, urlsplit, urlunsplit
 
 from modelship.metrics import STATE_STORE_OPERATION_DURATION_SECONDS, STATE_STORE_OPERATIONS_TOTAL
 from modelship.state.base import JsonValue, StateStore, StateStoreUnavailableError
@@ -39,9 +39,8 @@ __all__ = [
 _STATE_STORE_ENV = "MSHIP_STATE_STORE"
 _DEFAULT_URI = "memory://"
 
-# Forwarded in runtime_env as this placeholder, expanded from each node's own env.
+# Kept out of the forwarded URI: each process reads it from its own node's env.
 REDIS_PASSWORD_ENV = "MSHIP_REDIS_PASSWORD"
-_PASSWORD_PLACEHOLDER = "${" + REDIS_PASSWORD_ENV + "}"
 _REDIS_SCHEMES = ("redis", "rediss")
 
 
@@ -172,19 +171,21 @@ def state_store_from_uri(uri: str) -> StateStore:
 
 
 def _with_password(uri: str, password: str) -> str:
-    """*uri* with *password* in its netloc; unchanged for non-redis or when one is present."""
+    """*uri* with *password* percent-encoded into its netloc; unchanged for non-redis or when
+    one is present. Encoding keeps `/`, `#`, `?`, `%` from being re-read as URI syntax."""
     parts = urlsplit(uri)
-    if parts.scheme not in _REDIS_SCHEMES or parts.password is not None:
+    if parts.scheme not in _REDIS_SCHEMES or parts.password:
         return uri
     host = parts.netloc.rpartition("@")[2]
     user = parts.username or ""
-    return urlunsplit(parts._replace(netloc=f"{user}:{password}@{host}"))
+    return urlunsplit(parts._replace(netloc=f"{user}:{quote(password, safe='')}@{host}"))
 
 
 def reject_inline_password(uri: str) -> None:
-    """Refuse a password written into the URI: it would be forwarded in runtime_env."""
-    password = urlsplit(uri).password
-    if password is not None and password != _PASSWORD_PLACEHOLDER:
+    """Refuse a password written into the URI, in the netloc or as ``?password=`` (redis-py
+    reads both): it would be forwarded in runtime_env."""
+    parts = urlsplit(uri)
+    if parts.password or any(parse_qs(parts.query).get("password", ())):
         raise ValueError(
             f"{_STATE_STORE_ENV} must not contain a password — runtime_env carries this URI to every "
             f"replica as plain-text cluster metadata. Drop it from the URI and set {REDIS_PASSWORD_ENV} "
@@ -193,17 +194,15 @@ def reject_inline_password(uri: str) -> None:
 
 
 def state_store_env_var() -> dict[str, str]:
-    """``{MSHIP_STATE_STORE: uri}`` to forward, the password left as a placeholder Ray
-    expands on each node. Empty when this process has no URI to forward."""
+    """``{MSHIP_STATE_STORE: uri}`` to forward. It carries no password: each node applies
+    its own MSHIP_REDIS_PASSWORD. Empty when this process has no URI to forward."""
     uri = os.environ.get(_STATE_STORE_ENV)
-    if not uri:
-        return {}
-    return {_STATE_STORE_ENV: _with_password(uri, _PASSWORD_PLACEHOLDER) if os.environ.get(REDIS_PASSWORD_ENV) else uri}
+    return {_STATE_STORE_ENV: uri} if uri else {}
 
 
 def resolve_state_store_uri() -> str:
-    """The URI this process connects with: placeholders expanded from its own env, then
-    MSHIP_REDIS_PASSWORD applied if the URI carries none."""
+    """The URI this process connects with: env vars in it expanded from this node's own
+    env, then MSHIP_REDIS_PASSWORD applied if the URI carries none."""
     uri = os.environ.get(_STATE_STORE_ENV) or _DEFAULT_URI
     expanded = os.path.expandvars(uri)
     if "${" in expanded:
