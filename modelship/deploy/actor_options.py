@@ -7,6 +7,7 @@ import platform
 from modelship.deploy.capabilities import deployment_capability_resources
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
+from modelship.state import state_store_env_var
 from modelship.utils.runtime_env import MODEL_ENV_VARS, build_env_vars
 
 logger = get_logger("startup")
@@ -60,6 +61,8 @@ def build_deployment_options(config: ModelshipModelConfig) -> dict:
     """kwargs for `Deployment.options(**...)`."""
     env_vars = build_cache_env_vars()
     env_vars.update(build_env_vars(MODEL_ENV_VARS))
+    # Unread here: relayed on when a replica is the one to recreate the coordinator.
+    env_vars.update(state_store_env_var())
 
     runtime_env: dict = {"env_vars": env_vars}
 

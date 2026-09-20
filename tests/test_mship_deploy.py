@@ -488,6 +488,7 @@ class TestBuildDeploymentOptions:
         monkeypatch.setenv("MSHIP_PREFLIGHT", "false")
         monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "60")
         monkeypatch.setenv("MSHIP_STATE_SWEEP_INTERVAL_S", "30")
+        monkeypatch.setenv("MSHIP_STATE_STORE", "redis://host:6379/0")
         config = ModelshipModelConfig(
             name="test-model",
             model="some-model",
@@ -502,6 +503,8 @@ class TestBuildDeploymentOptions:
         # Gateway / memory-store settings: nothing in a model replica reads them.
         assert "MSHIP_RESPONSES_TTL_S" not in env_vars
         assert "MSHIP_STATE_SWEEP_INTERVAL_S" not in env_vars
+        # Unread by the replica, but relayed if it recreates the coordinator.
+        assert env_vars["MSHIP_STATE_STORE"] == "redis://host:6379/0"
 
     def test_unset_passthrough_env_vars_not_forwarded(self, monkeypatch):
         # Unset on the driver → not forwarded, so the replica keeps its own default.
