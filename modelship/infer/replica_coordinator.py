@@ -23,8 +23,9 @@ import ray
 from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import COORDINATOR_GENERATION
-from modelship.state import MemoryStateStore, get_state_store
+from modelship.state import MemoryStateStore, get_state_store, state_store_env_var
 from modelship.utils import head_node_options
+from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
 
 logger = get_logger("replica_coordinator")
 
@@ -168,5 +169,6 @@ def get_or_create_replica_coordinator():
         lifetime="detached",
         num_cpus=0,
         max_restarts=-1,
+        runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS) | state_store_env_var()},
         **head_node_options(),
     ).remote()

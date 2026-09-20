@@ -17,14 +17,15 @@ from ray._common.utils import get_ray_temp_dir
 from ray.serve.config import HTTPOptions, ProxyLocation
 from ray.serve.schema import LoggingConfig
 
-from modelship.deploy.actor_options import build_passthrough_env_vars
 from modelship.deploy.capabilities import node_capability_resources
 from modelship.infer.infer_config import ModelshipConfig
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
+from modelship.state import state_store_env_var
 from modelship.utils import parse_memory_bytes, rand_suffix
 from modelship.utils.accelerator import detect_accelerator
+from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars
 
 if TYPE_CHECKING:
     from ray._private.node import Node
@@ -439,11 +440,9 @@ def start_gateway(gateway_name: str, serve_logging_config: LoggingConfig, route_
     logger.info("Starting API gateway...")
     gateway_replicas = _positive_int_env("MSHIP_GATEWAY_REPLICAS", 1)
     gateway_max_ongoing = _positive_int_env("MSHIP_GATEWAY_MAX_ONGOING", 1024)
-    # Forward logging/metrics/gateway-name env vars so the gateway replica configures
-    # logging at the driver's level even when it lands on a node whose env carries
-    # different (or no) values. MSHIP_GATEWAY_NAME is pinned from the gateway_name arg
-    # (not just os.environ) so metrics stamping stays correct regardless of driver env.
-    env_vars = build_passthrough_env_vars()
+    # A replica can land on any node, so these come from here, not that node's env.
+    # MSHIP_GATEWAY_NAME is pinned from the arg so metrics stamping stays correct.
+    env_vars = build_env_vars(GATEWAY_ENV_VARS) | state_store_env_var()
     env_vars["MSHIP_GATEWAY_NAME"] = gateway_name
     serve.run(
         ModelshipAPI.options(

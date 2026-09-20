@@ -565,6 +565,7 @@ Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded 
 | `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace, sherpa_onnx, etc.); may be shared storage | `/.cache` |
 | `MSHIP_NODE_CACHE_DIR` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer); must not be shared storage | `$MSHIP_HOME/node-cache` |
 | `MSHIP_STATE_STORE` | State-store connection URI for the effective config, deploy coordinator + `/v1/responses` conversations (see [State store](#state-store-mship_state_store)) | `memory://` |
+| `MSHIP_REDIS_PASSWORD` | Password for a `redis://`/`rediss://` state store. Read from each node's own environment, never forwarded by the driver | — |
 | `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship` |
 | `MSHIP_GATEWAY_REPLICAS` | Number of API gateway replicas | `1` |
 | `MSHIP_OPENAI_API_PORT` | Port for the OpenAI-compatible API | `8000` |
@@ -594,11 +595,13 @@ Three pieces of state share one pluggable store: this gateway's **effective conf
 | URI | Backend | Durability |
 |---|---|---|
 | `memory://` (default) | dict shared cluster-wide by a detached Ray actor on the head node | survives a deploy re-run, coordinator restart, gateway-replica restart — **not** cluster death |
-| `redis://[:pw@]host:6379/0` (`rediss://` = TLS) | one JSON value per key in Redis | survives head/coordinator death **and** cluster loss; password parsed from the URL by `redis.from_url` |
+| `redis://host:6379/0` (`rediss://` = TLS) | one JSON value per key in Redis | survives head/coordinator death **and** cluster loss; password comes from `MSHIP_REDIS_PASSWORD`, not the URI |
 
 `memory://` is cluster-scoped, not process-local — every gateway replica and model actor shares one detached Ray actor on the head node, so it's correct at any replica count and outlives any worker node. Sized for small-traffic single-node deployments: every operation is a Ray RPC through that one actor, and large values spill to the object store.
 
-The Helm chart always sets `redis://…` in Kubernetes; the same Redis also backs Ray GCS fault tolerance (chart's **Head-node HA** section) and is what lets the gateway self-heal routing after a head restart instead of needing a redeploy.
+A password belongs in `MSHIP_REDIS_PASSWORD` on every node, not in the URI: the driver forwards the URI to gateway replicas in `runtime_env`, which is plain-text cluster metadata, so it travels as a `${MSHIP_REDIS_PASSWORD}` placeholder that each node fills in from its own environment. A password inside `--state-store`/`MSHIP_STATE_STORE` is rejected at startup.
+
+The Helm chart always sets `redis://…` in Kubernetes (with the password from its Secret as `MSHIP_REDIS_PASSWORD` on every pod); the same Redis also backs Ray GCS fault tolerance (chart's **Head-node HA** section) and is what lets the gateway self-heal routing after a head restart instead of needing a redeploy.
 
 > A `file://` backend existed before v0.7.0 and was removed: a poor fit for per-turn conversation snapshots (one JSON file each, no native TTL, last-writer-wins across replicas). Migrate `--state-store file://…`/`MSHIP_STATE_DIR` to `redis://`, or drop to `memory://` if you don't need to survive cluster loss.
 

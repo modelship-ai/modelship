@@ -63,9 +63,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "State-store connection URI for the effective config, deploy coordinator and "
             "/v1/responses conversations (env: MSHIP_STATE_STORE, default: memory://). Schemes: "
-            "memory:// | redis://[:password@]host:port/db (rediss:// for TLS). memory:// is "
-            "cluster-scoped but dies with the cluster; redis:// survives it and also enables "
-            "GCS fault tolerance when modelship starts its own Ray head."
+            "memory:// | redis://host:port/db (rediss:// for TLS). No password in the URI — set "
+            "MSHIP_REDIS_PASSWORD on every node instead. memory:// is cluster-scoped but dies with "
+            "the cluster; redis:// survives it."
         ),
     )
     parser.add_argument(

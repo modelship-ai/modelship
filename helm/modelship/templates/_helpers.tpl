@@ -204,25 +204,22 @@ Explicit env for every Ray pod (head + workers): the state-store URI the
 coordinator, effective-config and /v1/responses read via get_state_store(). It MUST
 be on every pod so the coordinator — scheduled on any node — agrees with the driver.
 
-Always redis://[:$(REDIS_PASSWORD)@]<addr>/<db> (password kept in the Secret; k8s
-expands $(REDIS_PASSWORD) so it never lands in the manifest/argv). The same Redis
-also backs GCS fault tolerance. The chart wires an address but does not deploy Redis,
-so redis.address is required — there is no durable fallback to degrade to.
+Always redis://<addr>/<db>, password-free: the driver forwards this URI in runtime_env,
+so the password rides as a ${MSHIP_REDIS_PASSWORD} placeholder each pod fills from its
+own env (the Secret). The same Redis also backs GCS fault tolerance. The chart wires an
+address but does not deploy Redis, so redis.address is required.
 */}}
 {{- define "modelship.env" -}}
 {{- $addr := required "redis.address is required: modelship on k8s stores its effective config, routing registry and /v1/responses conversations in Redis. Point redis.address at a Redis instance (see the chart README)." .Values.redis.address }}
 {{- if or .Values.redis.password .Values.redis.existingSecret }}
-- name: REDIS_PASSWORD
+- name: MSHIP_REDIS_PASSWORD
   valueFrom:
     secretKeyRef:
       name: {{ include "modelship.redisSecretName" . }}
       key: {{ .Values.redis.passwordKey }}
-- name: MSHIP_STATE_STORE
-  value: "redis://:$(REDIS_PASSWORD)@{{ $addr }}/{{ .Values.redis.db }}"
-{{- else }}
+{{- end }}
 - name: MSHIP_STATE_STORE
   value: "redis://{{ $addr }}/{{ .Values.redis.db }}"
-{{- end }}
 {{- end -}}
 
 {{/*

@@ -13,6 +13,7 @@ from modelship.infer.sources import RemoteSource, remove_leftovers
 from modelship.logging import configure_logging, get_logger
 from modelship.utils import head_node_options
 from modelship.utils.cache import reject_unset_cache_roots
+from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
 
 logger = get_logger("download_leases")
 
@@ -138,5 +139,6 @@ def get_or_create_leases():
         lifetime="detached",
         # a restart would trust an empty table; a fresh actor waits out a lease period instead
         max_restarts=0,
+        runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS)},
         **head_node_options(),
     ).remote()

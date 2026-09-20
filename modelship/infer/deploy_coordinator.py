@@ -44,6 +44,7 @@ from modelship.metrics import (
     OPERATOR_FORCE_RELEASE_TOTAL,
 )
 from modelship.utils import head_node_options
+from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
 
 logger = get_logger("deploy_coordinator")
 
@@ -237,6 +238,7 @@ def get_or_create_coordinator():
         lifetime="detached",
         num_cpus=0,
         max_restarts=-1,
+        runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS)},
         **head_node_options(),
     ).remote()
 

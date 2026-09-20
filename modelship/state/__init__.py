@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 import time
-from urllib.parse import ParseResult, urlparse
+from urllib.parse import ParseResult, urlparse, urlsplit, urlunsplit
 
 from modelship.metrics import STATE_STORE_OPERATION_DURATION_SECONDS, STATE_STORE_OPERATIONS_TOTAL
 from modelship.state.base import JsonValue, StateStore, StateStoreUnavailableError
@@ -28,6 +28,9 @@ __all__ = [
     "StateStore",
     "StateStoreUnavailableError",
     "get_state_store",
+    "reject_inline_password",
+    "resolve_state_store_uri",
+    "state_store_env_var",
     "state_store_from_uri",
 ]
 
@@ -35,6 +38,11 @@ __all__ = [
 # is opted into explicitly (the chart sets one for k8s).
 _STATE_STORE_ENV = "MSHIP_STATE_STORE"
 _DEFAULT_URI = "memory://"
+
+# Forwarded in runtime_env as this placeholder, expanded from each node's own env.
+REDIS_PASSWORD_ENV = "MSHIP_REDIS_PASSWORD"
+_PASSWORD_PLACEHOLDER = "${" + REDIS_PASSWORD_ENV + "}"
+_REDIS_SCHEMES = ("redis", "rediss")
 
 
 class _InstrumentedStateStore(StateStore):
@@ -163,7 +171,48 @@ def state_store_from_uri(uri: str) -> StateStore:
     return _InstrumentedStateStore(builder(parsed), backend=scheme)
 
 
+def _with_password(uri: str, password: str) -> str:
+    """*uri* with *password* in its netloc; unchanged for non-redis or when one is present."""
+    parts = urlsplit(uri)
+    if parts.scheme not in _REDIS_SCHEMES or parts.password is not None:
+        return uri
+    host = parts.netloc.rpartition("@")[2]
+    user = parts.username or ""
+    return urlunsplit(parts._replace(netloc=f"{user}:{password}@{host}"))
+
+
+def reject_inline_password(uri: str) -> None:
+    """Refuse a password written into the URI: it would be forwarded in runtime_env."""
+    password = urlsplit(uri).password
+    if password is not None and password != _PASSWORD_PLACEHOLDER:
+        raise ValueError(
+            f"{_STATE_STORE_ENV} must not contain a password — runtime_env carries this URI to every "
+            f"replica as plain-text cluster metadata. Drop it from the URI and set {REDIS_PASSWORD_ENV} "
+            "on every node instead."
+        )
+
+
+def state_store_env_var() -> dict[str, str]:
+    """``{MSHIP_STATE_STORE: uri}`` to forward, the password left as a placeholder Ray
+    expands on each node. Empty when this process has no URI to forward."""
+    uri = os.environ.get(_STATE_STORE_ENV)
+    if not uri:
+        return {}
+    return {_STATE_STORE_ENV: _with_password(uri, _PASSWORD_PLACEHOLDER) if os.environ.get(REDIS_PASSWORD_ENV) else uri}
+
+
+def resolve_state_store_uri() -> str:
+    """The URI this process connects with: placeholders expanded from its own env, then
+    MSHIP_REDIS_PASSWORD applied if the URI carries none."""
+    uri = os.environ.get(_STATE_STORE_ENV) or _DEFAULT_URI
+    expanded = os.path.expandvars(uri)
+    if "${" in expanded:
+        raise ValueError(f"{_STATE_STORE_ENV}={uri!r} references an env var that is not set on this node")
+    password = os.environ.get(REDIS_PASSWORD_ENV)
+    return _with_password(expanded, password) if password else expanded
+
+
 def get_state_store() -> StateStore:
     """The configured default StateStore, from ``MSHIP_STATE_STORE`` (default
     ``memory://``)."""
-    return state_store_from_uri(os.environ.get(_STATE_STORE_ENV) or _DEFAULT_URI)
+    return state_store_from_uri(resolve_state_store_uri())

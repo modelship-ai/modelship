@@ -8,13 +8,13 @@ import pytest
 from modelship.deploy.actor_options import (
     build_cache_env_vars,
     build_deployment_options,
-    build_passthrough_env_vars,
     total_cpu_reservation,
     total_gpu_reservation,
 )
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, VllmEngineConfig
 from modelship.utils import parse_memory_bytes, rand_suffix
 from modelship.utils.cli import apply_args_to_env, parse_args
+from modelship.utils.runtime_env import MODEL_ENV_VARS, build_env_vars
 
 
 class TestParseMemoryBytes:
@@ -499,8 +499,9 @@ class TestBuildDeploymentOptions:
         assert env_vars["MSHIP_METRICS"] == "false"
         assert env_vars["MSHIP_GATEWAY_NAME"] == "edge"
         assert env_vars["MSHIP_PREFLIGHT"] == "false"
-        assert env_vars["MSHIP_RESPONSES_TTL_S"] == "60"
-        assert env_vars["MSHIP_STATE_SWEEP_INTERVAL_S"] == "30"
+        # Gateway / memory-store settings: nothing in a model replica reads them.
+        assert "MSHIP_RESPONSES_TTL_S" not in env_vars
+        assert "MSHIP_STATE_SWEEP_INTERVAL_S" not in env_vars
 
     def test_unset_passthrough_env_vars_not_forwarded(self, monkeypatch):
         # Unset on the driver → not forwarded, so the replica keeps its own default.
@@ -517,11 +518,11 @@ class TestBuildDeploymentOptions:
         assert "MSHIP_METRICS" not in env_vars
         assert "MSHIP_PREFLIGHT" not in env_vars
 
-    def test_log_level_in_passthrough_and_deployment_env(self):
-        # MSHIP_LOG_LEVEL must flow through the shared passthrough helper into a model
-        # deployment's runtime_env, alongside cache vars (which the gateway path omits).
+    def test_log_level_in_forwarded_and_deployment_env(self):
+        # MSHIP_LOG_LEVEL must reach a model deployment's runtime_env, alongside the
+        # cache vars (which the gateway path omits).
         with patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "TRACE"}, clear=True):
-            assert build_passthrough_env_vars()["MSHIP_LOG_LEVEL"] == "TRACE"
+            assert build_env_vars(MODEL_ENV_VARS)["MSHIP_LOG_LEVEL"] == "TRACE"
 
             config = ModelshipModelConfig(
                 name="test-model",

@@ -2,31 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import platform
 
 from modelship.deploy.capabilities import deployment_capability_resources
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
+from modelship.utils.runtime_env import MODEL_ENV_VARS, build_env_vars
 
 logger = get_logger("startup")
-
-# Read in the replica's process; flags only set them on the driver, so they're forwarded.
-_PASSTHROUGH_ENV_VARS = (
-    "MSHIP_LOG_LEVEL",
-    "MSHIP_LOG_FORMAT",
-    "MSHIP_LOG_TARGET",
-    "MSHIP_GATEWAY_NAME",
-    "MSHIP_METRICS",
-    "MSHIP_PREFLIGHT",
-    "MSHIP_RESPONSES_TTL_S",
-    "MSHIP_STATE_SWEEP_INTERVAL_S",
-)
-
-
-def build_passthrough_env_vars() -> dict[str, str]:
-    """The driver's set _PASSTHROUGH_ENV_VARS, for model and gateway replicas."""
-    return {var: os.environ[var] for var in _PASSTHROUGH_ENV_VARS if os.environ.get(var) is not None}
 
 
 def build_cache_env_vars() -> dict[str, str]:
@@ -76,7 +59,7 @@ def _total_reservation(deploy_opts: dict, bundle_key: str, actor_key: str) -> fl
 def build_deployment_options(config: ModelshipModelConfig) -> dict:
     """kwargs for `Deployment.options(**...)`."""
     env_vars = build_cache_env_vars()
-    env_vars.update(build_passthrough_env_vars())
+    env_vars.update(build_env_vars(MODEL_ENV_VARS))
 
     runtime_env: dict = {"env_vars": env_vars}
 

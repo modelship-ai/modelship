@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> None:
     from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
     from modelship.openai.compaction_crypto import ensure_key_seeded
     from modelship.preflight import detect_gpus
-    from modelship.state import MemoryStateStore, get_state_store
+    from modelship.state import MemoryStateStore, get_state_store, reject_inline_password
 
     # Read before the env write below overwrites it.
     explicit_gateway = "MSHIP_GATEWAY_NAME" in os.environ
@@ -75,6 +75,7 @@ def main(argv: list[str] | None = None) -> None:
     os.environ["MSHIP_GATEWAY_NAME"] = gateway_name
     # Validate before connect_ray.
     route_prefix = gateway_route_prefix(gateway_name)
+    reject_inline_password(os.environ.get("MSHIP_STATE_STORE", ""))
     # apply_args_to_env folded --use-existing-ray-cluster/--address into these.
     joined_cluster = bool(os.environ.get("MSHIP_ADDRESS"))
     owns_cluster = os.environ.get("MSHIP_USE_EXISTING_RAY_CLUSTER", "false").lower() != "true" and not joined_cluster
