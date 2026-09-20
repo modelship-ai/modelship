@@ -182,9 +182,9 @@ def _with_password(uri: str, password: str) -> str:
 
 
 def reject_inline_password(uri: str) -> None:
-    """Refuse a password written into the URI, in the netloc or as ``?password=`` (redis-py
-    reads both): it would be forwarded in runtime_env."""
-    parts = urlsplit(uri)
+    """Refuse a password written into the URI — netloc or ``?password=`` (redis-py reads
+    both), directly or via an env var the URI expands to."""
+    parts = urlsplit(os.path.expandvars(uri))
     if parts.password or any(parse_qs(parts.query).get("password", ())):
         raise ValueError(
             f"{_STATE_STORE_ENV} must not contain a password — runtime_env carries this URI to every "

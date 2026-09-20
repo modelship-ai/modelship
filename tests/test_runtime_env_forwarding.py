@@ -96,6 +96,14 @@ class TestRejectInlinePassword:
         with pytest.raises(ValueError, match=REDIS_PASSWORD_ENV):
             reject_inline_password(uri)
 
+    @pytest.mark.parametrize("value", [":s3cret@host:6379/0", "host:6379/0?password=s3cret"])
+    def test_a_password_an_env_var_expands_to_is_rejected(self, value):
+        with (
+            patch.dict(os.environ, {"REDIS_URL": value}, clear=True),
+            pytest.raises(ValueError, match=REDIS_PASSWORD_ENV),
+        ):
+            reject_inline_password("redis://${REDIS_URL}")
+
     @pytest.mark.parametrize(
         "uri",
         [
