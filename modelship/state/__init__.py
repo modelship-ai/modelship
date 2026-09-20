@@ -14,6 +14,7 @@ from ``MSHIP_STATE_STORE``.
 from __future__ import annotations
 
 import os
+import re
 import time
 from urllib.parse import ParseResult, parse_qs, quote, urlparse, urlsplit, urlunsplit
 
@@ -42,6 +43,9 @@ _DEFAULT_URI = "memory://"
 # Kept out of the forwarded URI: each process reads it from its own node's env.
 REDIS_PASSWORD_ENV = "MSHIP_REDIS_PASSWORD"
 _REDIS_SCHEMES = ("redis", "rediss")
+
+# The two forms os.path.expandvars substitutes.
+_ENV_REF = re.compile(r"\$(\w+|\{[^}]*\})")
 
 
 class _InstrumentedStateStore(StateStore):
@@ -204,9 +208,10 @@ def resolve_state_store_uri() -> str:
     """The URI this process connects with: env vars in it expanded from this node's own
     env, then MSHIP_REDIS_PASSWORD applied if the URI carries none."""
     uri = os.environ.get(_STATE_STORE_ENV) or _DEFAULT_URI
+    missing = sorted({m.group(1).strip("{}") for m in _ENV_REF.finditer(uri)} - set(os.environ))
+    if missing:
+        raise ValueError(f"{_STATE_STORE_ENV}={uri!r} references env vars not set on this node: {', '.join(missing)}")
     expanded = os.path.expandvars(uri)
-    if "${" in expanded:
-        raise ValueError(f"{_STATE_STORE_ENV}={uri!r} references an env var that is not set on this node")
     password = os.environ.get(REDIS_PASSWORD_ENV)
     return _with_password(expanded, password) if password else expanded
 

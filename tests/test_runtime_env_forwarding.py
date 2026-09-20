@@ -6,6 +6,7 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
+from modelship.infer import deploy_coordinator, replica_coordinator
 from modelship.state import (
     REDIS_PASSWORD_ENV,
     reject_inline_password,
@@ -67,21 +68,41 @@ class TestStateStoreForwarding:
         # redis-py's parse_url unquotes username/password before connecting.
         assert (unquote(parsed.username or ""), unquote(parsed.password or "")) == ("alex", password)
 
-    def test_local_reader_expands_an_env_var_in_the_uri(self):
-        env = {"MSHIP_STATE_STORE": "redis://${REDIS_HOST}:6379/0", "REDIS_HOST": "box"}
-        with patch.dict(os.environ, env, clear=True):
+    @pytest.mark.parametrize("uri", ["redis://${REDIS_HOST}:6379/0", "redis://$REDIS_HOST:6379/0"])
+    def test_local_reader_expands_an_env_var_in_the_uri(self, uri):
+        with patch.dict(os.environ, {"MSHIP_STATE_STORE": uri, "REDIS_HOST": "box"}, clear=True):
             assert resolve_state_store_uri() == "redis://box:6379/0"
 
-    def test_unset_var_in_the_uri_fails_naming_it(self):
+    @pytest.mark.parametrize("uri", ["redis://${REDIS_HOST}:6379/0", "redis://$REDIS_HOST:6379/0"])
+    def test_unset_var_in_the_uri_fails_naming_it(self, uri):
         with (
-            patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://${REDIS_HOST}:6379/0"}, clear=True),
-            pytest.raises(ValueError, match="MSHIP_STATE_STORE"),
+            patch.dict(os.environ, {"MSHIP_STATE_STORE": uri}, clear=True),
+            pytest.raises(ValueError, match="REDIS_HOST"),
         ):
             resolve_state_store_uri()
 
     def test_memory_uri_is_untouched(self):
         with patch.dict(os.environ, {REDIS_PASSWORD_ENV: "s3cret"}, clear=True):
             assert resolve_state_store_uri() == "memory://"
+
+
+class TestCoordinatorCreation:
+    @pytest.mark.parametrize(
+        ("actor_cls", "getter"),
+        [
+            (deploy_coordinator.DeployCoordinator, deploy_coordinator.get_or_create_coordinator),
+            (replica_coordinator.ReplicaCoordinator, replica_coordinator.get_or_create_replica_coordinator),
+        ],
+    )
+    def test_both_coordinators_are_created_with_the_store_uri(self, actor_cls, getter):
+        # The deploy coordinator recreates the replica coordinator in _retire, so it has
+        # to hold the URI itself to pass it on.
+        with (
+            patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),
+            patch.object(actor_cls, "options") as options,
+        ):
+            getter()
+        assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
 
 
 class TestRejectInlinePassword:
