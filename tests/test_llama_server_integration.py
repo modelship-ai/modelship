@@ -435,7 +435,7 @@ class TestChatLlamaServerResponseFormat:
                 "type": "json_schema",
                 "json_schema": {"name": "location", "schema": schema, "strict": True},
             },
-            max_tokens=64,
+            max_tokens=512,  # headroom for the reasoning preamble to not crowd out the answer
         )
         assert not completion.choices[0].message.tool_calls
         content = completion.choices[0].message.content
