@@ -189,9 +189,10 @@ jobs:
           # dry-run the chart: the API server validates the CRs (incl.
           # gcsFaultToleranceOptions) against the real CRD schemas. Head-only (no
           # workers/cache) so nothing needs GPUs or PVCs.
-          # The vendored copy (Chart.lock), not the repo's latest: the CRDs must be the
-          # version the chart declares.
-          helm install kuberay-operator helm/modelship/charts/kuberay-operator --wait --timeout 5m
+          # The locked dependency (Chart.lock), not the repo's latest: the CRDs must be
+          # the version the chart declares. Already fetched by the lint step; a no-op here.
+          helm dependency build helm/modelship
+          helm install kuberay-operator helm/modelship/charts/kuberay-operator-*.tgz --wait --timeout 5m
           for pw in "" "--set redis.password=pw"; do
             echo "== dry-run redis.password=${pw:-none} =="
             helm install modelship helm/modelship \
