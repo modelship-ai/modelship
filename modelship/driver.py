@@ -267,21 +267,23 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
         remove_apps(apps_to_remove, replica_coord, gateway_name)
         apps_to_remove = []
 
-    # Driver-owned: Ray releases the coordinator lock if this process dies.
-    operator_id = make_operator_id()
-    probe = create_operator_probe()
-    logger.info("Operator id=%s; coordinator acquired.", operator_id)
+    pass_count, fatally_failed = 0, []
+    if plan.models_to_add:
+        # Driver-owned: Ray releases the coordinator lock if this process dies.
+        operator_id = make_operator_id()
+        probe = create_operator_probe()
+        logger.info("Operator id=%s; coordinator acquired.", operator_id)
 
-    ctx = DeployContext(
-        coordinator=coordinator,
-        replica_coordinator=replica_coord,
-        probe=probe,
-        operator_id=operator_id,
-        gateway_name=gateway_name,
-        serve_logging_config=serve_logging_config,
-        deployed_this_run=deployed_this_run,
-    )
-    pass_count, fatally_failed = run_deploy_loop(plan.models_to_add, ctx)
+        ctx = DeployContext(
+            coordinator=coordinator,
+            replica_coordinator=replica_coord,
+            probe=probe,
+            operator_id=operator_id,
+            gateway_name=gateway_name,
+            serve_logging_config=serve_logging_config,
+            deployed_this_run=deployed_this_run,
+        )
+        pass_count, fatally_failed = run_deploy_loop(plan.models_to_add, ctx)
 
     logger.info(
         "Deploy complete. %d new deployment(s) from this run (over %d pass(es)).",
