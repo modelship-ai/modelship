@@ -18,22 +18,33 @@ reconciles the live cluster back to the recorded set.
 
 - A Kubernetes cluster (a local [kind](https://kind.sigs.k8s.io/) cluster works
   for the CPU image; GPU models need real GPU nodes with the NVIDIA device plugin).
-- **The KubeRay operator + CRDs.** This is a cluster-scoped, install-once
-  dependency. Either install it yourself:
+- **The KubeRay operator + CRDs, 1.6 or newer** (tested on 1.7.1). This is a
+  cluster-scoped, install-once dependency. Either install it yourself:
 
   ```bash
   helm repo add kuberay https://ray-project.github.io/kuberay-helm/
-  helm install kuberay-operator kuberay/kuberay-operator
+  helm install kuberay-operator kuberay/kuberay-operator --version 1.7.1
   ```
 
   …or, on a single-tenant cluster, let this chart bootstrap it:
   `--set kuberay-operator.enabled=true`.
+
+  To upgrade an existing operator, apply the new CRDs first; `helm upgrade`
+  never updates them:
+
+  ```bash
+  helm pull kuberay/kuberay-operator --version 1.7.1 --untar
+  kubectl apply --server-side --force-conflicts -f kuberay-operator/crds/
+  helm upgrade kuberay-operator kuberay/kuberay-operator --version 1.7.1
+  ```
 - For GPU models: a node pool with `nvidia.com/gpu` resources.
 
 ## Install
 
 ```bash
-# From the repo (path install):
+# From the repo (path install; fetch the vendored operator subchart first):
+helm repo add kuberay https://ray-project.github.io/kuberay-helm/
+helm dependency build ./helm/modelship
 helm install mship ./helm/modelship -f my-values.yaml
 
 # From GHCR (OCI). Chart version is kept in lockstep with the app/image version
@@ -162,15 +173,15 @@ runtime, never landing in the pod manifest or argv.
 Off by default — the same posture as a single-node deploy, and consistent with
 Ray's own insecure-by-default stance (see the ShadowRay/CVE-2023-48022
 background in the main [multi-node docs](../../docs/multi-node-docker.md)).
-Enable it and every Ray pod — the head, every worker group, **and** the RayJob
-submitter (the pod that runs `ray job submit` to deploy your `models.yaml`) —
-gets `RAY_AUTH_MODE=token` plus the same `RAY_AUTH_TOKEN`. All three must agree:
-a mismatch breaks cluster-internal RPC or job submission, not just one of them.
+Enabling it sets the RayCluster's `authOptions`. KubeRay then gives the same
+token to the head, every worker group **and** the RayJob submitter (the pod that
+runs `ray job submit` to deploy your `models.yaml`), and uses it for its own
+job-status calls.
 
 ```yaml
 rayAuth:
   enabled: true
-  token: "s0me-long-random-string"   # or existingSecret + tokenKey
+  token: "s0me-long-random-string"   # or existingSecret, holding key auth_token
 ```
 
 Unlike `mship start` on Docker — where Ray generates and owns the
@@ -201,8 +212,8 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `deploy.replaceStrategy` | `blue_green` | How changed models are replaced |
 | `redis.address` | `""` | **Required.** `host:port` of your Redis — backs GCS-FT + the state store (see [Redis](#redis-required)) |
 | `redis.password` / `redis.existingSecret` | `""` | Redis password inline, or reference an existing Secret (`passwordKey`) |
-| `rayAuth.enabled` | `false` | Ray cluster authentication (`RAY_AUTH_MODE=token`) across head, workers, and the RayJob submitter (see [Ray cluster authentication](#ray-cluster-authentication-optional)) |
-| `rayAuth.token` / `rayAuth.existingSecret` | `""` | Auth token inline, or reference an existing Secret (`tokenKey`). Required when `rayAuth.enabled` |
+| `rayAuth.enabled` | `false` | Ray cluster authentication (`RAY_AUTH_MODE=token`) through KubeRay's `authOptions` (see [Ray cluster authentication](#ray-cluster-authentication-optional)) |
+| `rayAuth.token` / `rayAuth.existingSecret` | `""` | Auth token inline, or an existing Secret holding it under key `auth_token`. Required when `rayAuth.enabled` |
 | `service.type` | `ClusterIP` | Set `LoadBalancer` to expose externally |
 | `podMonitor.enabled` | `false` | Prometheus Operator scraping |
 | `prometheusRule.enabled` | `false` | Ship the modelship alert rules as a PrometheusRule |

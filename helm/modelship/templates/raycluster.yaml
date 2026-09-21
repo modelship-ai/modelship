@@ -6,6 +6,15 @@ metadata:
     {{- include "modelship.labels" . | nindent 4 }}
 spec:
   rayVersion: {{ .Values.rayVersion | quote }}
+  {{- if .Values.rayAuth.enabled }}
+  {{- if not (or .Values.rayAuth.token .Values.rayAuth.existingSecret) }}
+  {{- fail "rayAuth.enabled is true but neither rayAuth.token nor rayAuth.existingSecret is set — Ray token auth needs an actual token (see the chart README)." }}
+  {{- end }}
+  # KubeRay injects the token into every Ray pod and the RayJob submitter.
+  authOptions:
+    mode: token
+    secretName: {{ include "modelship.rayAuthSecretName" . }}
+  {{- end }}
   # GCS fault tolerance: back the head's GCS with Redis so a restarted head pod
   # recovers cluster state (workers + model actors survive) instead of taking the
   # cluster down. externalStorageNamespace is pinned so a recreated cluster (same
@@ -54,9 +63,6 @@ spec:
               - { name: metrics, containerPort: {{ .Values.metrics.port }} }
             env:
               {{- include "modelship.env" . | nindent 14 }}
-              {{- if .Values.rayAuth.enabled }}
-              {{- include "modelship.rayAuthEnv" . | nindent 14 }}
-              {{- end }}
             envFrom:
               {{- include "modelship.envFrom" . | nindent 14 }}
             resources:
@@ -140,9 +146,6 @@ spec:
                 - { name: metrics, containerPort: {{ $.Values.metrics.port }} }
               env:
                 {{- include "modelship.env" $ | nindent 16 }}
-                {{- if $.Values.rayAuth.enabled }}
-                {{- include "modelship.rayAuthEnv" $ | nindent 16 }}
-                {{- end }}
               envFrom:
                 {{- include "modelship.envFrom" $ | nindent 16 }}
               resources:

@@ -117,8 +117,6 @@ jobs:
         run: |
           helm repo add kuberay https://ray-project.github.io/kuberay-helm/
           helm dependency build helm/modelship
-          # helm 3.16 leaves only the .tgz in charts/; template/lint need the dir form.
-          ( cd helm/modelship/charts && for f in *.tgz; do tar xzf "$f"; done )
           helm lint helm/modelship
 
       - name: Validate rendered manifests (kubeconform)
@@ -133,6 +131,7 @@ jobs:
             "--set image.variant=cpu" \
             "--set redis.password=pw" \
             "--set podMonitor.enabled=true" \
+            "--set rayAuth.enabled=true --set rayAuth.token=t" \
             "--set workerGroups[0].name=cuda --set workerGroups[0].replicas=1 --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1"; do
             echo "== helm template $args =="
             helm template modelship helm/modelship --set redis.address=cache:6379 $args \
@@ -187,18 +186,18 @@ jobs:
         run: |
           # Install the operator so the RayCluster/RayJob CRDs exist, then server-side
           # dry-run the chart: the API server validates the CRs (incl.
-          # gcsFaultToleranceOptions) against the real CRD schemas. Head-only (no
-          # workers/cache) so nothing needs GPUs or PVCs.
+          # gcsFaultToleranceOptions and authOptions) against the real CRD schemas.
+          # Head-only (no workers/cache) so nothing needs GPUs or PVCs.
           # The locked dependency (Chart.lock), not the repo's latest: the CRDs must be
           # the version the chart declares. Already fetched by the lint step; a no-op here.
           helm dependency build helm/modelship
           helm install kuberay-operator helm/modelship/charts/kuberay-operator-*.tgz --wait --timeout 5m
-          for pw in "" "--set redis.password=pw"; do
-            echo "== dry-run redis.password=${pw:-none} =="
+          for args in "" "--set redis.password=pw" "--set rayAuth.enabled=true --set rayAuth.token=t"; do
+            echo "== dry-run ${args:-defaults} =="
             helm install modelship helm/modelship \
               --set kuberay-operator.enabled=false \
               --set cache.enabled=false \
               --set redis.address=cache:6379 \
-              $pw \
+              $args \
               --dry-run=server
           done

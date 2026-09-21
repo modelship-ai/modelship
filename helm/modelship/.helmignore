@@ -10,4 +10,3 @@
 .vscode/
 # Local rendering / test output
 ci/
-*.tgz

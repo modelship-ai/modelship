@@ -28,6 +28,6 @@ maintainers:
 # `--set kuberay-operator.enabled=true`.
 dependencies:
   - name: kuberay-operator
-    version: "1.4.2"
+    version: "1.7.1"
     repository: https://ray-project.github.io/kuberay-helm/
     condition: kuberay-operator.enabled

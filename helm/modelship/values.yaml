@@ -79,27 +79,20 @@ secrets:
   # Comma-separated keys; when non-empty the gateway requires Authorization.
   apiKeys: ""
 
-# -- Ray cluster authentication (RAY_AUTH_MODE=token). Off by default — the same
-# insecure-by-default posture Ray itself ships with, and consistent with a
-# single-node deploy. When enabled, the head, every worker group, AND the RayJob
-# submitter all get RAY_AUTH_MODE=token plus the SAME RAY_AUTH_TOKEN — they must
-# agree, or cluster-internal RPC (head<->worker) and job submission
-# (`ray job submit`, which is how the RayJob deploys models.yaml) fail. Never
-# gates the OpenAI API (gateway.port) or Prometheus metrics (metrics.port).
+# -- Ray cluster authentication (RAY_AUTH_MODE=token). Off by default, as in Ray
+# itself. Sets the RayCluster's `authOptions` (KubeRay 1.6+): KubeRay injects the
+# token into the head, every worker group and the RayJob submitter, and uses it
+# for its own job-status calls. Never gates the OpenAI API (gateway.port) or
+# Prometheus metrics (metrics.port).
 #
-# Unlike modelship's own-head Docker path (where Ray generates and owns the
-# token at ~/.ray/auth_token — there's no "before the head exists" moment there),
-# the chart has no such moment either way: YOU supply the token. Any string
-# works — Ray's own check is a shared-secret equality comparison, not an issued
-# credential (see docs/multi-node-docker.md) — e.g. `ray get-auth-token
-# --generate` run anywhere, or `openssl rand -hex 32`.
+# You supply the token. Any string works (Ray compares a shared secret), e.g.
+# `openssl rand -hex 32`.
 rayAuth:
   enabled: false
-  # Inline token, rendered into the chart's own Secret alongside HF_TOKEN/MSHIP_API_KEYS.
+  # Inline token, rendered into a Secret the chart creates.
   token: ""
-  # Reference an existing Secret you manage instead (key: tokenKey below).
+  # Or an existing Secret you manage, holding the token under key `auth_token`.
   existingSecret: ""
-  tokenKey: "RAY_AUTH_TOKEN"
 
 # -- Shared model-weight cache. vLLM/diffusers download weights here.
 # Multi-node clusters REQUIRE ReadWriteMany so every worker shares one copy;

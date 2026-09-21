@@ -130,32 +130,11 @@ Name of the Secret holding the Redis password (existing or the chart's own).
 {{- end -}}
 
 {{/*
-Name of the Secret holding the Ray auth token (existing or the chart's own).
+Name of the Secret holding the Ray auth token under key `auth_token` (existing or
+the chart's own).
 */}}
 {{- define "modelship.rayAuthSecretName" -}}
-{{- .Values.rayAuth.existingSecret | default (include "modelship.secretName" .) -}}
-{{- end -}}
-
-{{/*
-Env for Ray cluster authentication (RAY_AUTH_MODE=token + RAY_AUTH_TOKEN). Included
-identically on the head, every worker group, AND the RayJob submitter pod — all
-three must present the same token or cluster-internal RPC / `ray job submit`
-fails (see the auth half-match finding in docs/multi-node-docker.md). Empty (no
-env at all) when disabled, matching Ray's own unauthenticated-by-default posture.
-*/}}
-{{- define "modelship.rayAuthEnv" -}}
-{{- if .Values.rayAuth.enabled }}
-{{- if not (or .Values.rayAuth.token .Values.rayAuth.existingSecret) }}
-{{ fail "rayAuth.enabled is true but neither rayAuth.token nor rayAuth.existingSecret is set — Ray token auth needs an actual token (see the chart README)." }}
-{{- end }}
-- name: RAY_AUTH_MODE
-  value: "token"
-- name: RAY_AUTH_TOKEN
-  valueFrom:
-    secretKeyRef:
-      name: {{ include "modelship.rayAuthSecretName" . }}
-      key: {{ .Values.rayAuth.tokenKey }}
-{{- end }}
+{{- .Values.rayAuth.existingSecret | default (printf "%s-ray-auth" (include "modelship.fullname" .)) -}}
 {{- end -}}
 
 {{/*

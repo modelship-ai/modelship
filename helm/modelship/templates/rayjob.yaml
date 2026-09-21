@@ -45,13 +45,5 @@ spec:
         - name: ray-job-submitter
           image: {{ include "modelship.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- if .Values.rayAuth.enabled }}
-          # `ray job submit` (what this pod runs) authenticates to the head's dashboard
-          # job-submission API the same way any Ray client does — via RAY_AUTH_TOKEN in
-          # its own environment. Must match the head/workers' token exactly (see
-          # modelship.rayAuthEnv) or submission is rejected.
-          env:
-            {{- include "modelship.rayAuthEnv" . | nindent 12 }}
-          {{- end }}
           resources:
             {{- toYaml .Values.deploy.resources | nindent 12 }}

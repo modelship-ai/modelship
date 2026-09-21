@@ -222,8 +222,8 @@ sides' footprints actually fit together on the card.
 
 - [helm/modelship/README.md](https://github.com/modelship-ai/modelship/blob/main/helm/modelship/README.md) — the Kubernetes rung:
   same image variants and version-pinning rule, but autoscaling, self-healing
-  pod scheduling, and (unlike this page's manual token setup) no Ray
-  cluster-auth wiring yet.
+  pod scheduling, and Ray cluster auth set with one value (`rayAuth`) instead
+  of this page's manual token setup.
 - [development.md](development.md) — the full CLI/env var reference table,
   image variants, and dev-container setup.
 - [model-configuration.md](model-configuration.md) — `models.yaml` reference,
