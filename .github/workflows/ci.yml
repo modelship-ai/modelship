@@ -22,6 +22,7 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'modelship/deploy/capabilities.py'
               - 'scripts/check_chart_capability_parity.py'
+              - 'scripts/check_chart_entrypoint.py'
 
   lint:
     runs-on: ubuntu-latest
@@ -176,6 +177,10 @@ jobs:
       - name: Chart/Python capability-resource parity
         run: |
           uv run --with pyyaml python scripts/check_chart_capability_parity.py
+
+      - name: RayJob entrypoint delivers models.yaml intact
+        run: |
+          uv run --no-project --with pyyaml python scripts/check_chart_entrypoint.py
 
       - name: Create kind cluster
         uses: helm/kind-action@v1

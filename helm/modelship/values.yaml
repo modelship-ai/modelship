@@ -61,12 +61,9 @@ redis:
   # recovers its state. Defaults to the release fullname.
   externalStorageNamespace: ""
 
-# -- models.yaml. Either render the inline `config` into a ConfigMap, or point
-# at an existing ConfigMap (key: models.yaml) you manage yourself.
+# -- models.yaml, carried inside the deploy RayJob. Replace with your real model
+# set; see config/examples/ in the repo.
 models:
-  existingConfigMap: ""
-  # Inline models.yaml (ignored when existingConfigMap is set). Replace with your
-  # real model set; see config/examples/ in the repo.
   config: |
     models: []
 

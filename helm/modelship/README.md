@@ -60,7 +60,8 @@ completion — watch `kubectl get rayjob` and the gateway `/readyz` for readines
 ## Configure your models
 
 Set `models.config` to your `models.yaml` contents (see `config/examples/` in the
-repo), or point at a ConfigMap you manage with `models.existingConfigMap`.
+repo). The deploy RayJob carries its own copy, so each `helm upgrade` applies
+exactly the config it was given.
 
 ```yaml
 models:
@@ -202,7 +203,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `image.variant` | `cuda` | `cuda`\|`cpu`\|`thin`. Worker default — appends `-cuda`/`-cpu` to the tag (`thin` is bare). Set `cpu` on CPU-only clusters, or per worker group for a mixed cluster. Does **not** affect the head (see below) |
 | `head.image.variant` | `thin` | The head/RayJob submitter always default to `thin` regardless of `image.variant` above — override only if you genuinely want model capacity on the head |
 | `rayVersion` | `2.54.1` | Must match the Ray in the image |
-| `models.config` / `models.existingConfigMap` | `models: []` | Your model set |
+| `models.config` | `models: []` | Your model set |
 | `gateway.replicas` | `1` | API gateway replicas; raise (with ≥1 worker) for routing/ingress HA |
 | `secrets.huggingfaceToken` / `secrets.apiKeys` | `""` | HF token / gateway API keys |
 | `cache.size` / `cache.accessModes` | `100Gi` / `[ReadWriteOnce]` | Shared weight cache |

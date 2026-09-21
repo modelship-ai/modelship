@@ -72,17 +72,6 @@ both are coordination-only (no models scheduled there), so both default to `thin
 {{- end -}}
 
 {{/*
-Name of the ConfigMap holding models.yaml (existing or chart-templated).
-*/}}
-{{- define "modelship.configMapName" -}}
-{{- if .Values.models.existingConfigMap -}}
-{{- .Values.models.existingConfigMap -}}
-{{- else -}}
-{{- printf "%s-models" (include "modelship.fullname" .) -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
 Name of the Secret holding the HF token / API keys (existing or templated).
 */}}
 {{- define "modelship.secretName" -}}

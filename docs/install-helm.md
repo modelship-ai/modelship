@@ -49,8 +49,7 @@ watch `kubectl get rayjob` and the gateway's `/readyz` for readiness.
 
 ## Configure your models
 
-Set `models.config` to your `models.yaml` contents, or point at a ConfigMap you
-manage with `models.existingConfigMap`:
+Set `models.config` to your `models.yaml` contents; the deploy RayJob carries it:
 
 ```yaml
 models:

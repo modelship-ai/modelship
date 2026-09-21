@@ -68,19 +68,12 @@ spec:
             resources:
               {{- toYaml .Values.head.resources | nindent 14 }}
             volumeMounts:
-              # models.yaml for the RayJob deploy entrypoint, which runs on the head.
-              - name: models-config
-                mountPath: /etc/modelship
-                readOnly: true
               {{- include "modelship.volumeMounts" . | nindent 14 }}
             lifecycle:
               preStop:
                 exec:
                   command: ["/bin/sh", "-c", "ray stop"]
         volumes:
-          - name: models-config
-            configMap:
-              name: {{ include "modelship.configMapName" . }}
           {{- include "modelship.volumes" . | nindent 10 }}
         {{- with .Values.head.nodeSelector }}
         nodeSelector:
