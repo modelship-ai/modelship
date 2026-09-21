@@ -1,6 +1,6 @@
 """Request-id helpers. A leaf module deliberately free of any Ray import so
 `modelship.utils` (and thus modelship.utils.cli) stays importable before
-`import ray` — mship_deploy parses argv and resolves Ray auth env vars ahead of
+`import ray` — the driver parses argv and resolves Ray auth env vars ahead of
 that import. RawRequestProxy is referenced for typing only."""
 
 from __future__ import annotations

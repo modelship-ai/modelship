@@ -22,7 +22,7 @@ One command, one model. Pick your hardware.
 
     ```bash
     docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
-      ghcr.io/modelship-ai/modelship:latest-cpu deploy \
+      ghcr.io/modelship-ai/modelship:latest-cpu start \
       --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
       --usecase generate --num-cpus 4
     ```
@@ -33,7 +33,7 @@ One command, one model. Pick your hardware.
 
     ```bash
     docker run --rm --shm-size=8g --gpus all -p 8000:8000 -v modelship-cache:/.cache \
-      ghcr.io/modelship-ai/modelship:latest-cuda deploy \
+      ghcr.io/modelship-ai/modelship:latest-cuda start \
       --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
       --usecase generate --num-gpus 1
     ```
@@ -44,7 +44,7 @@ One command, one model. Pick your hardware.
 
     ```bash
     uv tool install mship && mship bootstrap --metal
-    mship deploy --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+    mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
       --usecase generate --num-gpus 1
     ```
 

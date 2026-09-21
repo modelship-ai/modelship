@@ -70,7 +70,6 @@ ENV UV_CACHE_DIR=/opt/uv/cache
 ENV MSHIP_CACHE_DIR=/.cache
 ENV MSHIP_NODE_CACHE_DIR=/opt/mship/node-cache
 ENV CUDA_DEVICE_ORDER=PCI_BUS_ID
-ENV MSHIP_USE_EXISTING_RAY_CLUSTER=false
 ENV MSHIP_METRICS=true
 ENV RAY_METRICS_EXPORT_PORT=8079
 ENV MSHIP_LOG_LEVEL=INFO
@@ -206,6 +205,6 @@ ADD --chown=$UID:$GID ./config/examples config/examples
 
 USER root
 
-# Prepends the command, so `docker run <image> deploy --config …` reaches the
+# Prepends the command, so `docker run <image> start --config …` reaches the
 # same CLI as a native install.
 ENTRYPOINT ["/modelship/scripts/entrypoint.sh", "mship"]

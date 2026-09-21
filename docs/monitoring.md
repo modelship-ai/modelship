@@ -59,13 +59,13 @@ Ship logs to a remote syslog server instead of stderr. Useful for centralized lo
 
 ```bash
 # UDP (default)
-mship deploy --log-target syslog://192.168.1.50:514
+mship start --log-target syslog://192.168.1.50:514
 
 # TCP (reliable delivery)
-mship deploy --log-target syslog+tcp://192.168.1.50:514
+mship start --log-target syslog+tcp://192.168.1.50:514
 
 # Via environment variable
-MSHIP_LOG_TARGET=syslog://192.168.1.50:514 mship deploy
+MSHIP_LOG_TARGET=syslog://192.168.1.50:514 mship start
 ```
 
 Supported URI formats:
@@ -92,10 +92,10 @@ Then configure the endpoint:
 
 ```bash
 # Via CLI
-mship deploy --otel-endpoint http://collector:4317
+mship start --otel-endpoint http://collector:4317
 
 # Via environment variable
-OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317 mship deploy
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317 mship start
 ```
 
 When OTel is enabled:
@@ -130,7 +130,7 @@ docker run --rm --shm-size=8g --gpus all \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 -p 8079:8079 -p 8265:8265 \
-  ghcr.io/modelship-ai/modelship:latest-cuda deploy
+  ghcr.io/modelship-ai/modelship:latest-cuda start
 ```
 
 > The dashboard always starts and binds `127.0.0.1` by default — `MSHIP_RAY_DASHBOARD=0.0.0.0` above is what makes the published `8265` port actually reachable. Only do this on a trusted/private network (see [troubleshooting.md](troubleshooting.md)). Pair it with `--ray-auth=token` to require a bearer token for the now-reachable dashboard — retrieve it with `docker exec <container> cat /home/modelship/.ray/auth_token`.
@@ -138,7 +138,7 @@ docker run --rm --shm-size=8g --gpus all \
 | Env Var | Default | Description |
 |---|---|---|
 | `MSHIP_METRICS` | `true` | Master toggle. Enables all metrics and the Ray metrics export port. |
-| `RAY_METRICS_EXPORT_PORT` | `8079` | Port for the Ray metrics agent. Only takes effect on the own-head path (a joining worker picks up the head's port automatically via Ray's service discovery). |
+| `RAY_METRICS_EXPORT_PORT` | `8079` | Port for the Ray metrics agent. Only takes effect on `mship start` (a joining worker picks up the head's port automatically via Ray's service discovery). |
 
 Set `MSHIP_METRICS=false` to disable all metrics collection — port 8079 is not exposed.
 

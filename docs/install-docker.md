@@ -2,7 +2,7 @@
 
 The images are built by running the [native install](install-native.md) against the
 release wheel — `mship bootstrap` provisions the environment at image-build time, so
-a container starts straight into `mship deploy` and installs nothing at runtime.
+a container starts straight into `mship start` and installs nothing at runtime.
 
 ## Image variants
 
@@ -32,7 +32,7 @@ docker run --rm --shm-size=8g \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v modelship-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cpu deploy
+  ghcr.io/modelship-ai/modelship:latest-cpu start
 ```
 
 GPU, with the NVIDIA Container Toolkit installed:
@@ -43,7 +43,7 @@ docker run --rm --shm-size=8g --gpus all \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v modelship-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cuda deploy
+  ghcr.io/modelship-ai/modelship:latest-cuda start
 ```
 
 `deploy` reads `/modelship/config/models.yaml` by default; pass `--config` for

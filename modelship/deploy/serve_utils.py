@@ -49,12 +49,7 @@ def gateway_route_prefix(gateway_name: str) -> str:
     return f"/{slug}"
 
 
-# This container's own Ray node when it joined another cluster (connect_ray's
-# join branch), created in-process via ray._private.node.Node(head=False). None
-# on the other two branches (own-head, existing-cluster). Module-level so
-# mship_deploy can supervise it (stay-resident) and leave_ray_cluster can tear
-# it down — the raylet/agent subprocesses are owned by this Node object, not a
-# `ray start` wrapper we babysit.
+# Worker node started by join_cluster, owning its raylet/agent subprocesses; None otherwise.
 _join_node: Node | None = None
 
 
@@ -150,7 +145,7 @@ def _own_cluster_init_kwargs() -> dict[str, object]:
         kwargs["_memory"] = node_memory["memory"]
         kwargs["object_store_memory"] = node_memory["object_store_memory"]
     if os.environ.get("MSHIP_METRICS", "true").lower() == "true":
-        # _metrics_export_port is a private ray.init kwarg; guarded by a connect_ray test.
+        # _metrics_export_port is a private ray.init kwarg; guarded by a start_head test.
         kwargs["_metrics_export_port"] = int(os.environ.get("RAY_METRICS_EXPORT_PORT", "8079"))
     return kwargs
 
@@ -176,16 +171,11 @@ def prune_ray_sessions() -> None:
     container/process restarts and slowly fill the disk on long-lived self-hosted
     boxes.
 
-    Called when we start our OWN head, or when we join another cluster as an
-    additional node (connect_ray's own-cluster and join branches) — never on
-    the existing-cluster (KubeRay) branch, whose temp root we don't own. Called
-    before ray.init/ray start creates this run's session — so this run's dir
-    doesn't exist yet and can't be removed. A session whose owning pid is still
-    alive is kept: on a single machine a second non---use-existing deploy joins
-    this machine's running head (ray.init reads /tmp/ray/ray_current_cluster), so
-    a live head may be present even on the own-cluster path. The `session_latest`
-    symlink and non-session files (e.g. ray_current_cluster) never match and are
-    left alone.
+    Called at node startup (start_head, join_cluster), before this run's session
+    exists, so it can't be removed. A session whose owning pid is still alive is
+    kept: another node on this machine may share the temp root. The
+    `session_latest` symlink and non-session files (e.g. ray_current_cluster)
+    never match and are left alone.
 
     Best-effort: pruning never aborts startup — any failure is logged as a
     warning and the deploy proceeds. Set MSHIP_PRUNE_RAY_SESSIONS=false to disable
@@ -273,8 +263,7 @@ def _join_ray_cluster(address: str) -> Node:
     # node down.
     node = Node(ray_params, head=False, shutdown_at_exit=True, spawn_reaper=True)
     node.check_version_info()
-    # Write the local discovery marker so the driver's ray.init(address="auto")
-    # below finds THIS node (ray start does this itself; Node() does not).
+    # Ray's local discovery marker, read by Ray CLI tools; `ray start` writes it, Node() doesn't.
     write_ray_address(bootstrap, node.get_temp_dir_path())
     _join_node = node
     logger.info("Joined Ray cluster at %s.", address)
@@ -349,62 +338,44 @@ def _validate_node_gpu_reservation() -> None:
         )
 
 
-def connect_ray(lib_level: int) -> None:
-    use_existing_cluster = os.environ.get("MSHIP_USE_EXISTING_RAY_CLUSTER", "false").lower() == "true"
-    join_address = os.environ.get("MSHIP_ADDRESS")
-    if use_existing_cluster and join_address:
-        raise RuntimeError(
-            "--address/MSHIP_ADDRESS and --use-existing-ray-cluster/MSHIP_USE_EXISTING_RAY_CLUSTER "
-            "are mutually exclusive — pick one."
-        )
-    if not use_existing_cluster:
-        # KubeRay sizes the pod itself (rayStartParams/pod resources); MSHIP_NODE_NUM_GPUS
-        # isn't read on that branch at all, so there's nothing to validate against.
-        _validate_node_gpu_reservation()
-    os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
+def local_ray_clusters() -> set[str]:
+    """GCS addresses of this machine's live Ray nodes, heads and workers, from their raylets' command lines."""
+    from ray._private.services import find_gcs_addresses
 
-    if use_existing_cluster:
-        # We don't own the cluster: attach to the running one. The driver must run
-        # ON a cluster node (Docker co-located / k8s RayJob / bare-metal node) —
-        # "auto" finds the local raylet + GCS. A driver cannot attach via a remote
-        # GCS address from off-cluster.
-        ray.init(address="auto", ignore_reinit_error=True, logging_level=lib_level)
-    elif join_address:
-        # Join an existing cluster as an additional node: create this container's
-        # own node in-process (Node(head=False)), then attach the driver to it.
-        # A bad/missing token surfaces as an auth error from the join itself.
-        # RAY_AUTH_MODE/RAY_AUTH_TOKEN are already resolved upfront (before
-        # `import ray`, see resolve_ray_auth_env) — setting them now would be too
-        # late for this process's latched auth singleton anyway.
-        os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
-        prune_ray_sessions()
-        _join_ray_cluster(join_address)  # assigns _join_node itself, see its docstring
-        # address="auto", NOT a bare init: bare ray.init() silently forms a NEW
-        # local cluster if discovery fails — a split-brain node. "auto" raises
-        # instead, and is the same attach call the existing-cluster branch uses.
-        ray.init(address="auto", ignore_reinit_error=True, logging_level=lib_level)
-    else:
-        # We own the cluster: start a local head sized from MSHIP_NODE_NUM_* (what
-        # start_ray.sh used to do). mship_deploy stays alive as the operator and
-        # tears it down on exit (owns_cluster in mship_deploy).
-        os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
-        # RAY_GCS_SERVER_PORT is the only hook ray.init() exposes for this — it's not a
-        # kwarg. Left unset, Ray picks a random GCS port every head start, which breaks a
-        # joiner's --address across restarts — so pin a stable default here rather than
-        # requiring every operator to pass --ray-port (setdefault: an operator's explicit
-        # RAY_GCS_SERVER_PORT always wins over both).
-        ray_port = os.environ.get("MSHIP_RAY_PORT", str(_DEFAULT_RAY_GCS_PORT))
-        os.environ.setdefault("RAY_GCS_SERVER_PORT", ray_port)
-        # RAY_AUTH_MODE/RAY_AUTH_TOKEN are already resolved upfront (before
-        # `import ray`, see resolve_ray_auth_env). A no-auth cluster already
-        # running here surfaces as Ray's own AuthenticationError on ray.init()
-        # below — no local guard needed.
-        # Reclaim disk from prior runs' leftover session dirs before this run's
-        # session is created. Skipped on the existing-cluster branch (KubeRay /
-        # an operator we don't own manages its own temp root).
-        prune_ray_sessions()
-        ray.init(ignore_reinit_error=True, logging_level=lib_level, **_own_cluster_init_kwargs())
-    # ray.init re-sets ray.* loggers, so re-pin them after init.
+    return find_gcs_addresses()
+
+
+def start_head(lib_level: int) -> None:
+    """Start this machine's Ray head in-process, sized from MSHIP_NODE_*."""
+    _validate_node_gpu_reservation()
+    os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
+    os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
+    # ray.init's only hook for the GCS port; unset, Ray picks a random one per start.
+    os.environ.setdefault("RAY_GCS_SERVER_PORT", os.environ.get("MSHIP_RAY_PORT", str(_DEFAULT_RAY_GCS_PORT)))
+    prune_ray_sessions()
+    # "local" always starts a new instance, ignoring RAY_ADDRESS and the discovery marker.
+    ray.init(address="local", ignore_reinit_error=True, logging_level=lib_level, **_own_cluster_init_kwargs())
+    _pin_ray_log_levels(lib_level)
+
+
+def join_cluster(address: str) -> None:
+    """Start this machine's Ray node as a worker of the cluster at *address*."""
+    _validate_node_gpu_reservation()
+    os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
+    os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
+    prune_ray_sessions()
+    _join_ray_cluster(address)
+
+
+def attach_cluster(lib_level: int) -> None:
+    """Connect this process as a driver to the cluster of a node on this machine."""
+    os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
+    ray.init(address="auto", ignore_reinit_error=True, logging_level=lib_level)
+    _pin_ray_log_levels(lib_level)
+
+
+def _pin_ray_log_levels(lib_level: int) -> None:
+    # ray.init re-sets ray.* loggers.
     logging.getLogger("ray").setLevel(lib_level)
     logging.getLogger("ray._private.worker").setLevel(lib_level)
 

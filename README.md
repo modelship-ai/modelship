@@ -26,7 +26,7 @@ One command, one model. Pick your hardware:
 
 ```bash
 docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
-  ghcr.io/modelship-ai/modelship:latest-cpu deploy \
+  ghcr.io/modelship-ai/modelship:latest-cpu start \
   --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
   --usecase generate --num-cpus 4
 ```
@@ -35,7 +35,7 @@ docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
 
 ```bash
 docker run --rm --shm-size=8g --gpus all -p 8000:8000 -v modelship-cache:/.cache \
-  ghcr.io/modelship-ai/modelship:latest-cuda deploy \
+  ghcr.io/modelship-ai/modelship:latest-cuda start \
   --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
   --usecase generate --num-gpus 1
 ```
@@ -44,7 +44,7 @@ docker run --rm --shm-size=8g --gpus all -p 8000:8000 -v modelship-cache:/.cache
 
 ```bash
 uv tool install mship && mship bootstrap --metal
-mship deploy --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
   --usecase generate --num-gpus 1
 ```
 
@@ -175,7 +175,7 @@ A model name maps to exactly one deployment — swapping GPU/CPU or backend repl
 ```bash
 docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
   -v ./models.yaml:/modelship/config/models.yaml \
-  ghcr.io/modelship-ai/modelship:latest-cpu deploy
+  ghcr.io/modelship-ai/modelship:latest-cpu start
 ```
 
 `deploy` reads `config/models.yaml` by default; `--config <path>` picks another.
@@ -192,7 +192,7 @@ mship bootstrap --cpu      # CPU node (includes vLLM CPU)
 mship bootstrap --metal    # Apple Silicon
 mship bootstrap --thin     # coordinator/head only, no capacity
 
-mship deploy --config models.yaml
+mship start --config models.yaml
 ```
 
 `mship bootstrap` installs a pinned Python 3.12.10 environment for that role and records it, so `deploy` afterwards needs no variant flag and installs nothing. A new node joins the cluster by running the same two commands. Platform prerequisites apply — see [Native install](docs/install-native.md).

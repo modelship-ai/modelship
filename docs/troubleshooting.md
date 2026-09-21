@@ -7,7 +7,7 @@ Common issues hit during first-run and deployment.
 Some HuggingFace models (Llama 3, Gemma, Mistral variants) require accepting a license and authenticating. Get a token from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens), accept the model license on its HF page, then pass the token in:
 
 ```bash
-docker run ... -e HF_TOKEN=hf_xxx ghcr.io/modelship-ai/modelship:latest-cpu deploy
+docker run ... -e HF_TOKEN=hf_xxx ghcr.io/modelship-ai/modelship:latest-cpu start
 ```
 
 Ungated models (e.g. `lmstudio-community/Qwen2.5-7B-Instruct-GGUF`) don't need a token.
@@ -63,4 +63,4 @@ The API binds to `0.0.0.0:8000` by default, but if you're on a remote machine, m
 - Set `MSHIP_LOG_LEVEL=DEBUG` for verbose logs.
 - Set `MSHIP_LOG_LEVEL=TRACE` to log full request/response payloads (and enable llama.cpp `verbose` mode).
 - The Ray dashboard is **always on**, publish port `8265` to reach it. It binds to `127.0.0.1` inside the container by default — set `MSHIP_RAY_DASHBOARD=0.0.0.0` (or a specific interface) to expose it beyond the container. This is the exposure vector behind ShadowRay/CVE-2023-48022, so only do this on a trusted/private network. Prometheus metrics on `8079` are exported regardless.
-- Ray cluster authentication is **off by default**. Pass `--ray-auth=token` when modelship starts its own head to require a bearer token for the dashboard and cluster-internal RPC — the dashboard UI will then ask for one on first load; retrieve it with `docker exec <container> cat /home/modelship/.ray/auth_token` and paste it in once. The OpenAI API on `8000` and Prometheus metrics on `8079` are never gated by this either way.
+- Ray cluster authentication is **off by default**. Pass `--ray-auth=token` to `mship start` to require a bearer token for the dashboard and cluster-internal RPC — the dashboard UI will then ask for one on first load; retrieve it with `docker exec <container> cat /home/modelship/.ray/auth_token` and paste it in once. The OpenAI API on `8000` and Prometheus metrics on `8079` are never gated by this either way.

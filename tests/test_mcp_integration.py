@@ -67,7 +67,7 @@ def _mcp_tool(dice_server, **overrides):
 @pytest.mark.vllm
 class TestMcpIntegration:
     """Real model + real MCP server, end to end through the actual gateway
-    subprocess (mship_deploy.py --reconcile), not the loop function directly."""
+    subprocess (mship deploy --reconcile), not the loop function directly."""
 
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):

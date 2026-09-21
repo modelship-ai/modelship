@@ -3,7 +3,7 @@
 Modelship has two well-worn rungs: one container running its own Ray head, or full
 Kubernetes via the [Helm chart](https://github.com/modelship-ai/modelship/blob/main/helm/modelship/README.md). This page covers the
 rung in between — a handful of plain `docker run` VMs, no cluster orchestrator,
-joined into one Ray cluster via `--address`/`--token`.
+joined into one cluster: `mship start` on one of them, `mship join` on the rest.
 
 If you're choosing a topology from scratch: single container is right until you
 need more GPUs than one box has; this page is right for a few-VM fleet you manage
@@ -47,7 +47,7 @@ docker run -d --network=host --shm-size=8g \
   -v ./models-cache:/.cache \
   -e MSHIP_STATE_STORE=redis://your-redis-host:6379/0 \
   -e HF_TOKEN=your_token_here \
-  ghcr.io/modelship-ai/modelship:0.6.5 deploy \
+  ghcr.io/modelship-ai/modelship:0.6.5 start \
   --ray-auth=token --ray-port=6380
 ```
 
@@ -62,24 +62,25 @@ writes or logs it):
 docker exec <head-container> cat ~/.ray/auth_token
 ```
 
+`mship deploy` against this cluster needs it too: `--ray-auth=token` on VM A,
+where the token file is, `--token=<token>` on any other node.
+
 **VM B — joins VM A as a GPU worker:**
 
 ```bash
 docker run -d --network=host --shm-size=8g --gpus all \
   -v ./models-cache:/.cache \
   -e HF_TOKEN=your_token_here \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda deploy \
-  --address=<vm-a-private-ip>:6380 --token=<token-from-above>
+  ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
+  --cluster=<vm-a-private-ip>:6380 --token=<token-from-above>
 ```
 
 `HF_TOKEN` goes on every node: the head checks model sources with it, and each
 replica reads it from its own node's environment — the driver never forwards it.
 
-No `--config` is needed on the joiner — it contributes compute and reconciles
-the cluster to whatever the head's effective config already wants deployed (the
-same self-heal mechanism `--reconcile` uses after a cluster loss). Pass
-`--config`/`--reconcile` on a joiner only if you also want it to change the
-desired model set, not just add capacity.
+A joiner only adds capacity: replicas waiting for room schedule onto it on
+their own. To change the model set, run `mship deploy` on any node of the
+cluster; a model the last deploy gave up on is retried by `mship deploy --reconcile`.
 
 **`--token` only means anything if the head runs `--ray-auth=token`.** Joining
 with a token against a head that has auth disabled doesn't fail — the joiner's
@@ -94,9 +95,9 @@ pair you set deliberately, not independent toggles.
 | Port | What | Configurable via |
 |---|---|---|
 | `8000` | Gateway HTTP API (`ProxyLocation.EveryNode` — every node with ≥1 replica runs a proxy) | `--openai-api-port` |
-| `8079` | Prometheus metrics | `RAY_METRICS_EXPORT_PORT` (own-head); left dynamic on a joiner by design, since the head's own service-discovery file picks it up automatically |
+| `8079` | Prometheus metrics | `RAY_METRICS_EXPORT_PORT` (`start`); left dynamic on a joiner by design, since the head's own service-discovery file picks it up automatically |
 | `8265` | Ray dashboard (head only) | `--dashboard-port` (bind host separately via `MSHIP_RAY_DASHBOARD`, default `127.0.0.1` — keep it there unless you have a specific reason to expose it) |
-| GCS (head control plane) | what a joiner's `--address` points at | `--ray-port` (default `6380`) |
+| GCS (head control plane) | what `mship join --cluster` points at | `--ray-port` (default `6380`) |
 | `10002–19999` + node/object manager | Ray's dynamic worker range | not configurable; open the range between fleet nodes |
 
 Open cluster ports **only between fleet nodes** on the private network. From
@@ -140,9 +141,9 @@ auto-detection is wrong or you want to disable a loader on one node.
 Without it, the effective config (this gateway's desired model set) and the
 deploy coordinator's routing registry live in a cluster-scoped Ray actor — they
 survive a redeploy or coordinator restart, but not the loss of the head/cluster
-itself. A `redis://` store survives cluster loss too, so `--reconcile` with no
-`--config` on a fresh cluster (or a rejoining node) restores the real model set
-instead of coming back empty. See [State store
+itself. A `redis://` store survives cluster loss too, so `mship start --reconcile`
+with no `--config` on a fresh cluster restores the real model set instead of
+coming back empty. See [State store
 (`MSHIP_STATE_STORE`)](model-configuration.md#state-store-mship_state_store) for
 the full connection-URI reference — the head is otherwise a single point of
 failure for this state, same as it is for Ray's GCS itself.
@@ -169,26 +170,28 @@ containers were actually handed distinct physical cards.
 ### Head-farm: several cluster heads on one machine
 
 One box can host the control plane for 3-4 independent modelship clusters, each
-a separate own-head container with its own distinct ports:
+a separate `mship start` container with its own distinct ports. Each needs its own
+process namespace (no `--pid=host`): `mship start` refuses to run while it can see
+another Ray node.
 
 ```bash
 docker run -d --network=host --shm-size=8g \
   -v ./cluster-a/models.yaml:/modelship/config/models.yaml \
   -v ./cluster-a/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 deploy \
+  ghcr.io/modelship-ai/modelship:0.6.5 start \
   --ray-port=6380 --openai-api-port=8000 --dashboard-port=8265
 
 docker run -d --network=host --shm-size=8g \
   -v ./cluster-b/models.yaml:/modelship/config/models.yaml \
   -v ./cluster-b/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 deploy \
+  ghcr.io/modelship-ai/modelship:0.6.5 start \
   --ray-port=6381 --openai-api-port=8001 --dashboard-port=8266
 ```
 
 Each head needs a distinct `--ray-port`, `--openai-api-port`, `--dashboard-port`,
 and `RAY_METRICS_EXPORT_PORT` — see the port table above for what each one
 gates. Workers on other machines join whichever cluster they're meant to serve,
-by pointing `--address` at that head's GCS port.
+by pointing `mship join --cluster` at that head's GCS port.
 
 ### One GPU, shared across two clusters
 
@@ -200,13 +203,13 @@ cluster's resource ledger is independent and has no visibility into the other's:
 ```bash
 # Joins cluster A
 docker run -d --network=host --gpus device=0 \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda deploy \
-  --address=<cluster-a-head>:6380 --node-num-gpus=1
+  ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
+  --cluster=<cluster-a-head>:6380 --node-num-gpus=1
 
 # Joins cluster B — same physical GPU, different cluster
 docker run -d --network=host --gpus device=0 \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda deploy \
-  --address=<cluster-b-head>:6380 --node-num-gpus=1
+  ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
+  --cluster=<cluster-b-head>:6380 --node-num-gpus=1
 ```
 
 Ray does not arbitrate VRAM across independent clusters — that budget is

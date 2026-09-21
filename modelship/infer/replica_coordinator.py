@@ -1,8 +1,8 @@
 """Cluster-wide routing registry shared by every gateway replica.
 
 `ReplicaCoordinator` is a detached, named Ray actor on the head node holding the
-durable mapping of model deployments each gateway owns. `mship_deploy.py` writes to
-it as models are (un)deployed; every gateway replica long-polls `wait_for_change`
+durable mapping of model deployments each gateway owns. `mship start`/`mship deploy`
+write to it as models are (un)deployed; every gateway replica long-polls `wait_for_change`
 and reconciles its own routing table from `get_routing` — the driver never pushes
 to individual replicas.
 

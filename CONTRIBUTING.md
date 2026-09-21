@@ -21,7 +21,7 @@ The recommended way to develop is via the VS Code Dev Container. See [docs/devel
 
 ```bash
 uv sync --extra dev
-uv run mship_deploy.py   # starts its own Ray head, auto-detecting CPUs/GPUs
+uv run python -m modelship.launcher start   # starts its own Ray head, auto-detecting CPUs/GPUs
 ```
 
 ## Code Style

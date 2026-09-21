@@ -173,7 +173,7 @@ rayAuth:
   token: "s0me-long-random-string"   # or existingSecret + tokenKey
 ```
 
-Unlike modelship's own-head Docker path — where Ray generates and owns the
+Unlike `mship start` on Docker — where Ray generates and owns the
 token at `~/.ray/auth_token` because there's no "before the head exists" moment
 — the chart has no such moment either way, so **you** supply the token. Any
 string works: Ray's own check is a shared-secret equality comparison, not an

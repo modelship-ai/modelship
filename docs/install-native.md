@@ -16,7 +16,7 @@ uv tool install mship       # or: pipx install mship / pip install mship
 Then, with no variant flag:
 
 ```bash
-mship deploy --config models.yaml
+mship start --config models.yaml
 ```
 
 Bootstrapping with no variant is an error that lists these options; there is no
@@ -55,7 +55,7 @@ Run: mship bootstrap --cuda
 So upgrading is `uv tool upgrade mship` followed by `mship bootstrap`.
 
 To bootstrap more than one variant on a host, run `bootstrap` for each — the last
-one is the recorded default, and `mship deploy --thin` selects another explicitly.
+one is the recorded default, and `mship start --thin` selects another explicitly.
 
 Bootstrapping never checks for the accelerator itself, so `--cuda` provisions on a
 host with no GPU — a golden image, or a node whose driver is not up yet. The variant
@@ -123,7 +123,7 @@ unit:
 ```ini
 [Service]
 EnvironmentFile=/home/youruser/.modelship/env
-ExecStart=/home/youruser/.local/bin/mship deploy --config /etc/modelship/models.yaml
+ExecStart=/home/youruser/.local/bin/mship start --config /etc/modelship/models.yaml
 ```
 
 Change it with `mship bootstrap`, not by hand.
@@ -138,5 +138,5 @@ shared storage. To reset a variant, delete
 ## Scaling beyond one node
 
 To join multiple hosts into one Ray cluster, see
-[Multi-node without Kubernetes](multi-node-docker.md) — the `--address`/`--token`
-flags work the same for a native node as for a container.
+[Multi-node without Kubernetes](multi-node-docker.md) — `mship join --cluster`/`--token`
+work the same for a native node as for a container.

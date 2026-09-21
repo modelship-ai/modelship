@@ -1,11 +1,8 @@
-"""Same-box integration test for the --address/--token cluster join path
-(mship_deploy.py's connect_ray join branch, modelship/deploy/serve_utils.py).
+"""Same-box integration test for `mship join --cluster/--token` and for `mship start`
+refusing to run beside another node.
 
-Its own file/process, separate from test_integration.py's shared
-`mship_cluster` fixture: runs its own throwaway mship_deploy.py head (own-head,
-not a bare `ray start --head`, so it carries real mship_<loader> capability
-resources) on distinct ports + RAY_TMPDIR, and only ever signals its own
-processes — never `ray stop`.
+Its own throwaway head — a bare ray.init(address="local") with token auth, on distinct
+ports + RAY_TMPDIR — and only ever signals its own processes, never `ray stop`.
 """
 
 import os
@@ -22,7 +19,15 @@ import pytest
 # defaults (6380/8265/8000) — must never collide with a real cluster on this box.
 _THROWAWAY_HEAD_PORT = 6480
 _THROWAWAY_DASHBOARD_PORT = 6481
-_THROWAWAY_GATEWAY_PORT = 6482
+
+_HEAD_SCRIPT = f"""
+import signal, ray
+ray.init(address="local", num_cpus=1, num_gpus=0, dashboard_port={_THROWAWAY_DASHBOARD_PORT})
+signal.pause()
+"""
+
+
+_MSHIP = ["uv", "run", "python", "-m", "modelship.launcher"]
 
 
 def _terminate_process_group(proc: subprocess.Popen) -> None:
@@ -72,9 +77,8 @@ def _ray_status(env: dict) -> subprocess.CompletedProcess | None:
 
 @pytest.fixture
 def throwaway_head(tmp_path):
-    """A fully independent modelship own-head cluster, token auth on. RAY_TMPDIR
-    is a short /tmp-rooted dir (AF_UNIX socket path length limit), not tmp_path.
-    Yields (port, token, env)."""
+    """A fully independent Ray head, token auth on. RAY_TMPDIR is a short /tmp-rooted
+    dir (AF_UNIX socket path length limit), not tmp_path. Yields (port, token, env)."""
     head_home = tmp_path / "head_home"
     head_home.mkdir()
     head_ray_tmp = tempfile.mkdtemp(prefix="mship-join-test-head-")
@@ -86,30 +90,14 @@ def throwaway_head(tmp_path):
         "RAY_TMPDIR": head_ray_tmp,
         "PYTHONUNBUFFERED": "1",
         "RAY_AUTH_MODE": "token",
+        "RAY_GCS_SERVER_PORT": str(_THROWAWAY_HEAD_PORT),
     }
     env.pop("RAY_AUTH_TOKEN", None)
 
     log_path = tmp_path / "head.log"
     with open(log_path, "w") as log_file:
         proc = subprocess.Popen(
-            [
-                "uv",
-                "run",
-                "mship_deploy.py",
-                "--config",
-                _empty_config_path(head_home),
-                "--ray-port",
-                str(_THROWAWAY_HEAD_PORT),
-                "--dashboard-port",
-                str(_THROWAWAY_DASHBOARD_PORT),
-                "--openai-api-port",
-                str(_THROWAWAY_GATEWAY_PORT),
-                "--ray-auth",
-                "token",
-                "--no-metrics",
-                "--prune-ray-sessions",
-                "false",
-            ],
+            ["uv", "run", "python", "-c", _HEAD_SCRIPT],
             env=env,
             stdout=log_file,
             stderr=subprocess.STDOUT,
@@ -117,7 +105,7 @@ def throwaway_head(tmp_path):
         )
 
         try:
-            # ray.init()'s own-cluster path auto-generates ~/.ray/auth_token itself
+            # A ray.init()-started head auto-generates ~/.ray/auth_token itself
             # (unlike `ray start`'s CLI path, which requires one to already exist).
             deadline = time.time() + 60
             while _ray_status(env) is None:
@@ -162,7 +150,7 @@ def _join_node_procs_alive(join_ray_tmp: str) -> bool:
 @pytest.mark.cluster_join
 class TestClusterJoin:
     def _joiner_env(self, tmp_path, suffix: str) -> tuple[dict, str, str]:
-        """Returns (env, join_ray_tmp, config_path) for a joiner subprocess."""
+        """Returns (env, join_ray_tmp, config_path) for an mship subprocess."""
         join_home = tmp_path / suffix
         join_home.mkdir(exist_ok=True)
         join_ray_tmp = tempfile.mkdtemp(prefix=f"mship-join-test-{suffix}-")
@@ -173,20 +161,16 @@ class TestClusterJoin:
         return env, join_ray_tmp, _empty_config_path(join_home)
 
     def _run_joiner(self, tmp_path, head_port, token, suffix="join_home") -> subprocess.CompletedProcess:
-        env, join_ray_tmp, config_path = self._joiner_env(tmp_path, suffix)
+        env, join_ray_tmp, _ = self._joiner_env(tmp_path, suffix)
         args = [
-            "uv",
-            "run",
-            "mship_deploy.py",
-            "--config",
-            config_path,
-            "--address",
+            *_MSHIP,
+            "join",
+            "--cluster",
             f"127.0.0.1:{head_port}",
             "--node-num-cpus",
             "0",
             "--node-num-gpus",
             "0",
-            "--no-metrics",  # avoid a real 8079 collision on this shared test box
             "--prune-ray-sessions",
             "false",
         ]
@@ -209,29 +193,23 @@ class TestClusterJoin:
 
     def test_join_with_correct_token_adds_node_then_leaves_cleanly(self, tmp_path, throwaway_head):
         head_port, token, head_env = throwaway_head
-        env, join_ray_tmp, config_path = self._joiner_env(tmp_path, "join_home")
+        env, join_ray_tmp, _ = self._joiner_env(tmp_path, "join_home")
 
         log_path = tmp_path / "joiner.log"
         try:
             with open(log_path, "w") as log_file:
                 proc = subprocess.Popen(
                     [
-                        "uv",
-                        "run",
-                        "mship_deploy.py",
-                        "--config",
-                        config_path,
-                        "--address",
+                        *_MSHIP,
+                        "join",
+                        "--cluster",
                         f"127.0.0.1:{head_port}",
                         "--token",
                         token,
-                        "--gateway-name",
-                        "join-test-gateway",
                         "--node-num-cpus",
                         "0",
                         "--node-num-gpus",
                         "0",
-                        "--no-metrics",
                         "--prune-ray-sessions",
                         "false",
                     ],
@@ -248,7 +226,7 @@ class TestClusterJoin:
                         f"Log:\n{log_path.read_text()}"
                     )
 
-                    # SIGTERM triggers _cleanup -> leave_ray_cluster (this node only).
+                    # SIGTERM -> leave_ray_cluster (this node only).
                     proc.send_signal(signal.SIGTERM)
                     proc.wait(timeout=60)
                     assert _poll(lambda: not _join_node_procs_alive(join_ray_tmp), deadline_s=60), (
@@ -266,3 +244,18 @@ class TestClusterJoin:
                             proc.wait(timeout=10)
         finally:
             shutil.rmtree(join_ray_tmp, ignore_errors=True)
+
+    def test_start_refuses_while_a_node_runs_here(self, tmp_path, throwaway_head):
+        env, start_ray_tmp, config_path = self._joiner_env(tmp_path, "start_home")
+        try:
+            result = subprocess.run(
+                [*_MSHIP, "start", "--config", config_path, "--prune-ray-sessions", "false"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+        finally:
+            shutil.rmtree(start_ray_tmp, ignore_errors=True)
+        assert result.returncode != 0
+        assert "already running on this machine" in result.stderr

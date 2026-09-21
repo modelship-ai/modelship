@@ -1,6 +1,6 @@
 """Per-gateway *effective config* — the durable desired-state for deploys.
 
-Every ``mship_deploy`` invocation, whatever its mode, folds the user's input into
+Every deploy (``mship start`` / ``mship deploy``), whatever its mode, folds the user's input into
 the gateway's effective set (additive = union; reconcile = replace), then
 the deploy ALWAYS reconciles the live cluster to that effective set. Self-heal is
 then just "re-run the deploy": it reads the persisted effective set and reconciles

@@ -107,8 +107,8 @@ This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu
 
 | File | Purpose |
 |------|---------|
-| `modelship/launcher.py` | Entry point behind `mship deploy` / `python -m modelship.launcher deploy` — resolves cache root, checks Python version, detects accelerator, hands off to `driver.py` |
-| `modelship/driver.py` | Ray init + deploy loop: additive by default, `--reconcile` to converge exactly |
+| `modelship/launcher.py` | Entry point behind `mship start` / `join` / `deploy` (`python -m modelship.launcher <command>`) — resolves cache root, checks Python version, detects accelerator, hands off to `driver.py` |
+| `modelship/driver.py` | `start` / `join` / `deploy`: bring up or attach to Ray, then the deploy loop — additive by default, `--reconcile` to converge exactly |
 | `modelship/openai/api.py` | FastAPI gateway with OpenAI endpoints |
 | `modelship/openai/protocol/responses/` | `/v1/responses` schemas, chat adapter (`adapter.py`), streaming translator (`streaming.py`) |
 | `modelship/state/` | Generic pluggable KV store (`memory://` via a detached Ray actor, `redis://`). Domain layers: `openai/state/responses.py`, `deploy/effective_config.py` |
