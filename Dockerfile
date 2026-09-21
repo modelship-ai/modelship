@@ -205,6 +205,6 @@ ADD --chown=$UID:$GID ./config/examples config/examples
 
 USER root
 
-# Prepends the command, so `docker run <image> deploy --config …` reaches the
+# Prepends the command, so `docker run <image> start --config …` reaches the
 # same CLI as a native install.
 ENTRYPOINT ["/modelship/scripts/entrypoint.sh", "mship"]

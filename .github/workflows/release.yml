@@ -187,7 +187,7 @@ jobs:
             ```bash
             uv tool install mship
             mship bootstrap --metal
-            mship deploy --config models.yaml
+            mship start --config models.yaml
             ```
 
             ## Docker images
@@ -229,7 +229,7 @@ jobs:
               -v ./models.yaml:/modelship/config/models.yaml \
               -v ./models-cache:/.cache \
               -p 8000:8000 \
-              ghcr.io/${{ github.repository }}:${{ needs.version.outputs.version }}-cpu deploy
+              ghcr.io/${{ github.repository }}:${{ needs.version.outputs.version }}-cpu start
             ```
 
             ## Configuration

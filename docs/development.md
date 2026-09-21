@@ -27,12 +27,12 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
 4. Start the server. It starts its own Ray head, auto-detecting CPUs/GPUs unless `MSHIP_NODE_NUM_CPUS` / `MSHIP_NODE_NUM_GPUS` are set:
 
    ```bash
-   uv run mship_deploy.py
+   uv run python -m modelship.launcher start
    ```
 
-> **Why not `mship deploy`?** That console script ships only in the separate `bootstrap/` package (the `mship` installer), never synced into this repo's venv. `mship_deploy.py` and `python -m modelship.launcher deploy` are equivalent here.
+> **Why not `mship start`?** That console script ships only in the separate `bootstrap/` package (the `mship` installer), never synced into this repo's venv; `python -m modelship.launcher <command>` is its equivalent here.
 >
-> **Why the extra steps?** The `dev` target is built for source work: it syncs dependencies from `uv.lock` into `/.venv` and never installs the project, so you sync and start it yourself. The published images instead run `mship bootstrap` at build time and start at `mship deploy` — see [Docker install](install-docker.md).
+> **Why the extra steps?** The `dev` target is built for source work: it syncs dependencies from `uv.lock` into `/.venv` and never installs the project, so you sync and start it yourself. The published images instead run `mship bootstrap` at build time and start at `mship start` — see [Docker install](install-docker.md).
 
 The Dev Container automatically:
 - Builds the dev image from `Dockerfile` (target: `dev`)
@@ -50,16 +50,15 @@ The following environment variables are set in the dev image with sensible defau
 | `MSHIP_NODE_NUM_CPUS` | *(unset)* | **Optional override:** CPUs this node reserves (`--node-num-cpus` flag). Node-scoped, not head-only — the same knob a future worker node sizes itself from. If unset, auto-detects. |
 | `MSHIP_NODE_NUM_GPUS` | *(unset)* | **Optional override:** GPUs this node reserves (`--node-num-gpus` flag). If unset, auto-detects. |
 | `MSHIP_NODE_MEMORY` | *(unset)* | **Optional override:** this node's total memory budget, e.g. `8Gi` (`--node-memory` flag). Split into Ray's `object_store_memory` and schedulable `memory` resource via Ray's own object-store proportion. If unset, auto-detects from actually-free host RAM (not Ray's own uncapped-cgroup estimate, which can miss non-Docker consumers) — still double/triple-counts when co-locating multiple modelship containers on one host without per-container cgroup memory limits, see the sharp-edge note in `AGENTS.md`. |
-| `MSHIP_RAY_DASHBOARD` | `127.0.0.1` | Ray dashboard bind host, own-head only. The dashboard always starts; this sets *where* it binds — `0.0.0.0` exposes it beyond the container (ShadowRay/CVE-2023-48022 exposure vector; only do this on a trusted/private network). |
-| `MSHIP_RAY_AUTH` | `none` | Ray cluster authentication, own-head only (`--ray-auth` flag). `token` requires a bearer token for the dashboard and cluster-internal RPC. Never gates the OpenAI API or Prometheus metrics. |
-| `MSHIP_RAY_PORT` | `6380` | Ray GCS server port, own-head only (`--ray-port` flag). Pinned by default (not `6379`, which collides with the recommended same-host Redis state store under `--network=host`) so a joiner's `--address` has a stable target across head restarts. |
-| `MSHIP_RAY_DASHBOARD_PORT` | `8265` | **Optional override:** Ray dashboard port, own-head only (`--dashboard-port` flag). Only needed to run multiple modelship heads on one host under `--network=host`, where Ray's fixed default would otherwise collide between them. |
-| `MSHIP_ADDRESS` | *(unset)* | **Optional:** join an existing Ray cluster as an additional compute node, given the head's GCS address as `host:port` (`--address` flag). See [Multi-node without Kubernetes](multi-node-docker.md). Mutually exclusive with `MSHIP_USE_EXISTING_RAY_CLUSTER`. |
-| `MSHIP_RAY_AUTH_TOKEN` | *(unset)* | **Optional:** cluster auth token for joining a head running `--ray-auth=token` (`--token` flag). Only meaningful with `MSHIP_ADDRESS`. |
+| `MSHIP_RAY_DASHBOARD` | `127.0.0.1` | Ray dashboard bind host, `start` only. The dashboard always starts; this sets *where* it binds — `0.0.0.0` exposes it beyond the container (ShadowRay/CVE-2023-48022 exposure vector; only do this on a trusted/private network). |
+| `MSHIP_RAY_AUTH` | `none` | Ray cluster authentication (`--ray-auth` flag). `token` makes `start` require a bearer token for the dashboard and cluster-internal RPC, and makes `deploy` send it. Never gates the OpenAI API or Prometheus metrics. |
+| `MSHIP_RAY_PORT` | `6380` | Ray GCS server port, `start` only (`--ray-port` flag). Pinned by default (not `6379`, which collides with the recommended same-host Redis state store under `--network=host`) so `mship join --cluster` has a stable target across head restarts. |
+| `MSHIP_RAY_DASHBOARD_PORT` | `8265` | **Optional override:** Ray dashboard port, `start` only (`--dashboard-port` flag). Only needed to run multiple modelship heads on one host under `--network=host`, where Ray's fixed default would otherwise collide between them. |
+| `MSHIP_CLUSTER` | *(unset)* | The head's GCS address as `host:port` that `mship join` joins (`--cluster` flag). See [Multi-node without Kubernetes](multi-node-docker.md). |
+| `MSHIP_RAY_AUTH_TOKEN` | *(unset)* | **Optional:** auth token for `join`/`deploy` against a cluster started with `--ray-auth=token` (`--token` flag). |
 | `MSHIP_CACHE_DIR` | `/.cache` | Model cache directory (`--cache-dir` flag). May be shared storage. |
 | `MSHIP_NODE_CACHE_DIR` | `/opt/mship/node-cache` | Node-local vLLM/Triton/FlashInfer compile caches (`--node-cache-dir` flag). Must not be shared storage. |
-| `MSHIP_STATE_STORE` | `memory://` | State-store URI for the effective config, deploy coordinator + `/v1/responses` conversations: `memory://` or `redis://[:pw@]host:port/db`. See [model-configuration.md](model-configuration.md#state-store-mship_state_store). The chart always sets `redis://` for k8s. |
-| `MSHIP_USE_EXISTING_RAY_CLUSTER` | `false` | Set to `true` to connect to a Ray cluster you manage (must run on a cluster node) instead of starting one; implies deploy-and-exit |
+| `MSHIP_STATE_STORE` | `memory://` | State-store URI for the effective config, deploy coordinator + `/v1/responses` conversations: `memory://` or `redis://host:port/db`, with any password in `MSHIP_REDIS_PASSWORD` on every node. See [model-configuration.md](model-configuration.md#state-store-mship_state_store). The chart always sets `redis://` for k8s. |
 | `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas. Raise for routing/ingress HA and to spread request-proxying load under high concurrency; replicas keep routing tables in sync via the deploy coordinator's watch loop. |
 | `MSHIP_GATEWAY_MAX_ONGOING` | `1024` | Per-replica Ray Serve concurrency cap for the gateway. The gateway holds a slot for the whole lifetime of each streamed response, so a low cap throttles before the engine does. |
 | `MSHIP_LLAMA_SERVER_BIN` | `/opt/mship/bin/llama-server.sh` in the Dev Container (unset otherwise) | Unified `llama` executable used by the `llama_server` loader and its preflight; see [llama-server binary](#llama-server-binary-llama_server-loader). |
@@ -110,7 +109,7 @@ docker run -it --rm --shm-size=8g \
 The dev image drops into a shell. Start the server — it starts its own Ray head, auto-detecting resources:
 
 ```bash
-uv run mship_deploy.py
+uv run python -m modelship.launcher start
 ```
 
 ## llama-server binary (`llama_server` loader)
