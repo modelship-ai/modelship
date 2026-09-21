@@ -27,33 +27,38 @@ if TYPE_CHECKING:
 _REQUIRED_PYTHON = (3, 12, 10)
 
 
+_COMMANDS = ("start", "join", "deploy", "info")
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    if not argv or argv[0] not in ("deploy", "info"):
-        print("usage: python -m modelship.launcher {deploy,info} [args]", file=sys.stderr)
+    if not argv or argv[0] not in _COMMANDS:
+        print(f"usage: python -m modelship.launcher {{{','.join(_COMMANDS)}}} [args]", file=sys.stderr)
         sys.exit(2)
 
     command, rest = argv[0], argv[1:]
     if command == "info":
         _cmd_info()
     else:
-        _cmd_deploy(rest)
+        _cmd_run(command, rest)
 
 
-def _cmd_deploy(argv: list[str]) -> None:
+def _cmd_run(command: str, argv: list[str]) -> None:
     from modelship.utils.cli import apply_args_to_env, parse_args
 
-    args = parse_args(argv)
+    args = parse_args(command, argv)
     apply_args_to_env(args)
     _guard_python_version()
 
-    config = _validate_config(args)
-    if config is not None and _is_own_head_deploy():
-        _check_loader_capabilities({m.loader.value for m in config.models})
+    if command != "join":
+        config = _validate_config(args)
+        # Only a start with capacity of its own runs models in this environment.
+        if config is not None and command == "start" and not _advertises_no_capacity():
+            _check_loader_capabilities({m.loader.value for m in config.models})
 
-    from modelship.driver import main as driver_main
+    from modelship.driver import run
 
-    driver_main(argv)
+    run(command, argv)
 
 
 def _cmd_info() -> None:
@@ -77,17 +82,6 @@ def _guard_python_version() -> None:
         got = ".".join(map(str, sys.version_info[:3]))
         print(f"mship requires Python {'.'.join(map(str, _REQUIRED_PYTHON))} exactly, found {got}.", file=sys.stderr)
         sys.exit(1)
-
-
-def _is_own_head_deploy() -> bool:
-    """True only when this driver IS the node the model will run on (no --address
-    join, no --use-existing-ray-cluster, some capacity of its own) — the only
-    topology where this local module-presence check is meaningful."""
-    if os.environ.get("MSHIP_ADDRESS"):
-        return False
-    if os.environ.get("MSHIP_USE_EXISTING_RAY_CLUSTER", "false").lower() == "true":
-        return False
-    return not _advertises_no_capacity()
 
 
 def _advertises_no_capacity() -> bool:

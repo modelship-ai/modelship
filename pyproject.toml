@@ -226,6 +226,6 @@ markers = [
 pythonVersion = "3.12"
 venvPath = "/"
 venv = ".venv"
-include = ["modelship", "mship_deploy.py"]
+include = ["modelship"]
 exclude = [".cache", ".venv"]
 typeCheckingMode = "basic"

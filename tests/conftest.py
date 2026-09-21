@@ -40,7 +40,7 @@ OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 HEALTH_URL = "http://localhost:8000/modelship/health"
 
 # Per-model configs; Deployer.deploy(*names) writes a subset into a one-shot
-# models.yaml and runs `mship_deploy.py --reconcile` to swap the deployed set.
+# models.yaml and runs `mship deploy --reconcile` to swap the deployed set.
 # 64x64 solid red PNG — one unambiguous color, large enough to survive image preprocessing.
 RED_IMAGE_DATA_URI = (
     "data:image/png;base64,"
@@ -266,7 +266,7 @@ def _model_flags(config: dict) -> list[str]:
 
 
 class _Deployer:
-    """Runs `mship_deploy.py --reconcile` against the running gateway to swap the
+    """Runs `mship deploy --reconcile` against the running gateway to swap the
     deployed set; re-deploying the same set is a no-op. A lone CLI-expressible model
     goes through the `--model` flags, everything else through a one-shot models.yaml.
     """
@@ -317,15 +317,14 @@ class _Deployer:
                 [
                     "uv",
                     "run",
-                    "mship_deploy.py",
+                    "python",
+                    "-m",
+                    "modelship.launcher",
+                    "deploy",
                     *input_args,
                     "--reconcile",
                     "--replace-strategy",
                     replace_strategy,
-                    "--prune-ray-sessions",
-                    "false",
-                    # Attach to mship_cluster's already-running head instead of starting a second one.
-                    "--use-existing-ray-cluster",
                 ],
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
@@ -335,21 +334,20 @@ class _Deployer:
         if result.returncode != 0:
             tail = log_path.read_text()[-4000:]
             pytest.fail(
-                f"mship_deploy --reconcile failed for {slug} ({replace_strategy}, exit {result.returncode}).\n"
+                f"mship deploy --reconcile failed for {slug} ({replace_strategy}, exit {result.returncode}).\n"
                 f"Log file: {log_path}\nLast 4KB:\n{tail}"
             )
 
 
 @pytest.fixture(scope="session")
 def mship_cluster(tmp_path_factory):
-    """Starts a Ray cluster and a long-lived `mship_deploy` process bound to an empty
+    """Starts a cluster with a long-lived `mship start` process bound to an empty
     models.yaml; per-test code deploys models additively via `_Deployer.deploy(...)`."""
     tmp_dir = tmp_path_factory.mktemp("mship_integration")
     empty_config = tmp_dir / "empty-models.yaml"
-    log_path = tmp_dir / "mship_deploy.log"
+    log_path = tmp_dir / "mship_start.log"
 
-    # Don't pre-start a head: a pre-started head forces ray.init() into attach-mode,
-    # which rejects the explicit num_gpus/num_cpus mship_deploy.py passes on a GPU host.
+    # `start` refuses while another Ray node runs on this machine.
     subprocess.run(["ray", "stop", "--force"], check=False)
 
     with open(empty_config, "w") as f:
@@ -361,7 +359,10 @@ def mship_cluster(tmp_path_factory):
         [
             "uv",
             "run",
-            "mship_deploy.py",
+            "python",
+            "-m",
+            "modelship.launcher",
+            "start",
             "--config",
             str(empty_config),
             "--gateway-replicas",

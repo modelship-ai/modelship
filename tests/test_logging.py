@@ -44,7 +44,7 @@ def _reset_logging():
     saved_lib_handlers = {name: list(logging.getLogger(name).handlers) for name in _LIB_LOGGERS}
     saved_lib_propagate = {name: logging.getLogger(name).propagate for name in _LIB_LOGGERS}
     saved_env = {k: os.environ.get(k) for k in _LIB_ENV_VARS}
-    # Clear so each test gets a clean setdefault path; importing mship_deploy.py in
+    # Clear so each test gets a clean setdefault path; importing modelship.driver in
     # another test runs propagate_lib_log_env() and leaves these vars set.
     for k in _LIB_ENV_VARS:
         os.environ.pop(k, None)

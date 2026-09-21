@@ -346,7 +346,7 @@ def _build_util_metrics():
             boundaries=_STATE_STORE_BOUNDARIES,
             tag_keys=("backend", "op"),
         ),
-        # -- Deploy driver (RayJob / mship_deploy run) --
+        # -- Deploy driver (mship start / mship deploy) --
         "deploy_duration_seconds": Histogram(
             "modelship_deploy_duration_seconds",
             description="Wall-clock time for a deploy run to settle, in seconds.",

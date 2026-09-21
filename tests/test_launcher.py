@@ -51,7 +51,7 @@ class TestValidateConfig:
         return str(path)
 
     def _args(self, *argv):
-        return parse_args(list(argv))
+        return parse_args("deploy", list(argv))
 
     def test_absent_config_returns_none(self, tmp_path):
         with patch("modelship.deploy.config.default_config_path", return_value=tmp_path / "nope.yaml"):
@@ -99,7 +99,7 @@ class TestValidateConfig:
 
 class TestValidateConfigFromModelFlag:
     def _args(self, *argv):
-        return parse_args(list(argv))
+        return parse_args("deploy", list(argv))
 
     def test_model_flag_returns_parsed_model(self):
         parsed = launcher._validate_config(
@@ -135,7 +135,7 @@ class TestFlaggedErrors:
 
     def test_field_paths_become_flags(self, capsys):
         with pytest.raises(SystemExit):
-            launcher._validate_config(parse_args(["--model", "x/y"]))
+            launcher._validate_config(parse_args("deploy", ["--model", "x/y"]))
         err = capsys.readouterr().err
         assert "--usecase" in err and "--loader" in err
         assert "models.0." not in err
@@ -144,119 +144,74 @@ class TestFlaggedErrors:
         config = tmp_path / "models.yaml"
         config.write_text("models:\n  - name: m\n    model: x\n")
         with pytest.raises(SystemExit):
-            launcher._validate_config(parse_args(["--config", str(config)]))
+            launcher._validate_config(parse_args("deploy", ["--config", str(config)]))
         assert "models.0." in capsys.readouterr().err
 
 
-class TestIsOwnHeadDeploy:
-    """The driver-local capability gate only applies to the own-head path —
-    join and existing-cluster paths hand scheduling to Ray's own capability resources."""
-
-    def test_bare_own_head_returns_true(self):
-        with patch.dict(os.environ, {}, clear=True):
-            assert launcher._is_own_head_deploy() is True
-
-    def test_address_set_returns_false(self):
-        with patch.dict(os.environ, {"MSHIP_ADDRESS": "10.0.0.1:6380"}, clear=True):
-            assert launcher._is_own_head_deploy() is False
-
-    def test_use_existing_ray_cluster_true_returns_false(self):
-        with patch.dict(os.environ, {"MSHIP_USE_EXISTING_RAY_CLUSTER": "true"}, clear=True):
-            assert launcher._is_own_head_deploy() is False
-
-    def test_use_existing_ray_cluster_false_returns_true(self):
-        with patch.dict(os.environ, {"MSHIP_USE_EXISTING_RAY_CLUSTER": "false"}, clear=True):
-            assert launcher._is_own_head_deploy() is True
-
-    def test_zero_capacity_coordinator_returns_false(self):
+class TestAdvertisesNoCapacity:
+    def test_zero_capacity_coordinator(self):
         """The thin head holds the config for models that only a joiner can run."""
         env = {"MSHIP_NODE_NUM_CPUS": "0", "MSHIP_NODE_NUM_GPUS": "0"}
         with patch.dict(os.environ, env, clear=True):
-            assert launcher._is_own_head_deploy() is False
+            assert launcher._advertises_no_capacity() is True
 
     @pytest.mark.parametrize(
         "env",
         [
+            {},
             {"MSHIP_NODE_NUM_CPUS": "0"},
             {"MSHIP_NODE_NUM_CPUS": "0", "MSHIP_NODE_NUM_GPUS": "1"},
             {"MSHIP_NODE_NUM_CPUS": "4", "MSHIP_NODE_NUM_GPUS": "0"},
             {"MSHIP_NODE_NUM_CPUS": "", "MSHIP_NODE_NUM_GPUS": ""},
         ],
     )
-    def test_any_reserved_capacity_still_gates(self, env):
+    def test_any_reserved_or_detected_capacity(self, env):
         with patch.dict(os.environ, env, clear=True):
-            assert launcher._is_own_head_deploy() is True
+            assert launcher._advertises_no_capacity() is False
 
 
-class TestCmdDeploy:
-    def test_forwards_argv_to_driver_after_gates(self):
-        argv = ["--config", "models.yaml", "--reconcile"]
+class TestCmdRun:
+    def _run(self, command, argv):
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
-            patch.object(launcher, "detect_accelerator", return_value="cpu"),
-            patch.object(launcher, "_validate_config", return_value=MagicMock(models=[])),
+            patch.object(launcher, "_validate_config", return_value=MagicMock(models=[])) as mock_validate,
             patch.object(launcher, "_check_loader_capabilities") as mock_gate,
             patch.object(launcher, "_guard_python_version") as mock_guard,
-            patch("modelship.driver.main") as mock_driver_main,
+            patch("modelship.driver.run") as mock_run,
         ):
-            launcher._cmd_deploy(argv)
+            launcher._cmd_run(command, argv)
+        return mock_validate, mock_gate, mock_guard, mock_run
 
+    def test_forwards_argv_to_driver_after_gates(self):
+        argv = ["--config", "models.yaml", "--reconcile"]
+        _, mock_gate, mock_guard, mock_run = self._run("start", argv)
         mock_guard.assert_called_once()
         mock_gate.assert_called_once()
-        mock_driver_main.assert_called_once_with(argv)
+        mock_run.assert_called_once_with("start", argv)
 
-    def test_gate_skipped_on_address_join(self):
-        argv = ["--address", "10.0.0.1:6380", "--node-num-gpus", "0"]
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
-            patch.object(launcher, "detect_accelerator", return_value="cpu"),
-            patch.object(launcher, "_validate_config", return_value=MagicMock(models=[])),
-            patch.object(launcher, "_check_loader_capabilities") as mock_gate,
-            patch.object(launcher, "_guard_python_version"),
-            patch("modelship.driver.main"),
-        ):
-            launcher._cmd_deploy(argv)
+    def test_gate_skipped_on_deploy(self):
+        _, mock_gate, _, mock_run = self._run("deploy", ["--reconcile"])
+        mock_gate.assert_not_called()
+        mock_run.assert_called_once_with("deploy", ["--reconcile"])
+
+    def test_join_validates_no_config(self):
+        mock_validate, mock_gate, _, _ = self._run("join", ["--cluster", "10.0.0.1:6380"])
+        mock_validate.assert_not_called()
         mock_gate.assert_not_called()
 
-    def test_gate_skipped_on_use_existing_ray_cluster(self):
-        argv = ["--use-existing-ray-cluster"]
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
-            patch.object(launcher, "detect_accelerator", return_value="cpu"),
-            patch.object(launcher, "_validate_config", return_value=MagicMock(models=[])),
-            patch.object(launcher, "_check_loader_capabilities") as mock_gate,
-            patch.object(launcher, "_guard_python_version"),
-            patch("modelship.driver.main"),
-        ):
-            launcher._cmd_deploy(argv)
+    def test_gate_skipped_on_a_zero_capacity_start(self):
+        _, mock_gate, _, _ = self._run("start", ["--node-num-cpus", "0", "--node-num-gpus", "0"])
         mock_gate.assert_not_called()
 
-    def test_gate_runs_on_own_head(self):
+    def test_driver_not_run_when_guard_exits(self):
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
-            patch.object(launcher, "detect_accelerator", return_value="cpu"),
-            patch.object(launcher, "_validate_config", return_value=MagicMock(models=[])),
-            patch.object(launcher, "_check_loader_capabilities") as mock_gate,
-            patch.object(launcher, "_guard_python_version"),
-            patch("modelship.driver.main"),
-        ):
-            launcher._cmd_deploy([])
-        mock_gate.assert_called_once()
-
-    def test_driver_not_imported_when_guard_exits(self):
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "resolve_cache_root", return_value="/tmp/mship-test-cache"),
             patch.object(launcher, "_guard_python_version", side_effect=SystemExit(1)),
-            patch("modelship.driver.main") as mock_driver_main,
+            patch("modelship.driver.run") as mock_run,
             pytest.raises(SystemExit),
         ):
-            launcher._cmd_deploy([])
-        mock_driver_main.assert_not_called()
+            launcher._cmd_run("start", [])
+        mock_run.assert_not_called()
 
 
 class TestMain:
@@ -265,15 +220,17 @@ class TestMain:
             launcher.main([])
         assert exc.value.code == 2
 
-    def test_unknown_command_exits_2(self):
+    @pytest.mark.parametrize("command", ["bogus", "bootstrap"])
+    def test_unknown_command_exits_2(self, command):
         with pytest.raises(SystemExit) as exc:
-            launcher.main(["bogus"])
+            launcher.main([command])
         assert exc.value.code == 2
 
-    def test_deploy_dispatches_to_cmd_deploy(self):
-        with patch.object(launcher, "_cmd_deploy") as mock_cmd:
-            launcher.main(["deploy", "--reconcile"])
-        mock_cmd.assert_called_once_with(["--reconcile"])
+    @pytest.mark.parametrize("command", ["start", "join", "deploy"])
+    def test_verbs_dispatch_to_cmd_run(self, command):
+        with patch.object(launcher, "_cmd_run") as mock_cmd:
+            launcher.main([command, "--log-format", "json"])
+        mock_cmd.assert_called_once_with(command, ["--log-format", "json"])
 
     def test_info_dispatches_to_cmd_info(self):
         with patch.object(launcher, "_cmd_info") as mock_cmd:

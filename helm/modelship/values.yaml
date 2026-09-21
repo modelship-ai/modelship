@@ -208,8 +208,8 @@ workerGroups: []
   #   affinity: {}
   #   annotations: {}
 
-# -- The deploy RayJob: runs `mship deploy` on the head
-# (--use-existing-ray-cluster), which deploys then exits. Re-run (helm upgrade)
+# -- The deploy RayJob: runs `mship deploy` on the head, which deploys then
+# exits. Re-run (helm upgrade)
 # to apply models.yaml changes.
 deploy:
   # Diff models.yaml against what this gateway already owns and remove the

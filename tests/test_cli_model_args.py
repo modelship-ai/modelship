@@ -16,7 +16,7 @@ from modelship.utils.model_flags import GENERATED_MODEL_ARGS
 
 
 def _args(*argv):
-    return parse_args(list(argv))
+    return parse_args("deploy", list(argv))
 
 
 def _raw(*argv):
@@ -156,9 +156,9 @@ class TestResolveInputModels:
 class TestFailsBeforeRay:
     def test_bad_model_flag_exits_without_importing_ray(self):
         code = (
-            "import sys; from modelship.launcher import _cmd_deploy\n"
+            "import sys; from modelship.launcher import _cmd_run\n"
             "try:\n"
-            "    _cmd_deploy(['--model', 'Qwen/Qwen3-8B'])\n"
+            "    _cmd_run('start', ['--model', 'Qwen/Qwen3-8B'])\n"
             "except SystemExit as e:\n"
             "    print('exit', e.code, 'ray' in sys.modules)\n"
         )

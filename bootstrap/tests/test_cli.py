@@ -53,11 +53,12 @@ class TestVariantRequired:
 
 
 class TestExec:
-    def test_execs_the_engine_via_module(self, provisioned, tmp_path):
-        cli.main(["deploy", "--cpu", "--config", "models.yaml"])
+    @pytest.mark.parametrize("command", ["start", "join", "deploy"])
+    def test_execs_the_engine_via_module(self, provisioned, command):
+        cli.main([command, "--cpu", "--log-format", "json"])
         python, args, _env = provisioned.call_args[0]
         assert python == paths.venv_python("cpu")
-        assert args == [python, "-m", "modelship.launcher", "deploy", "--config", "models.yaml"]
+        assert args == [python, "-m", "modelship.launcher", command, "--log-format", "json"]
 
     def test_variant_flag_is_not_passed_to_the_engine(self, provisioned):
         cli.main(["deploy", "--cuda", "--reconcile"])

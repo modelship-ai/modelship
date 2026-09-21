@@ -1,4 +1,4 @@
-{{- $args := list "mship" "deploy" "--use-existing-ray-cluster"
+{{- $args := list "mship" "deploy"
   "--gateway-name" (.Values.gateway.name | quote)
   "--gateway-replicas" (.Values.gateway.replicas | toString)
   "--config" "/etc/modelship/models.yaml"

@@ -10,12 +10,14 @@ from . import __version__, engine, gates, llama_cpp, paths, uv_binary, variants
 from .variants import VariantError, split_variant_flag
 from .variants import resolve as resolve_variant
 
-_COMMANDS = ("bootstrap", "deploy", "info")
+_COMMANDS = ("bootstrap", "start", "join", "deploy", "info")
 
-_USAGE = """usage: mship {bootstrap,deploy,info} [--cuda|--cpu|--metal|--thin] [args]
+_USAGE = """usage: mship {bootstrap,start,join,deploy,info} [--cuda|--cpu|--metal|--thin] [args]
 
   bootstrap   install the engine environment for a variant (run once)
-  deploy      serve models, using the bootstrapped environment
+  start       start a cluster on this machine and serve models; stays running
+  join        add this machine to a running cluster as a worker; stays running
+  deploy      change the models of the cluster running on this machine, then exit
   info        report bootstrapper state, or the engine's own report with a variant
 """
 
@@ -68,7 +70,7 @@ def _bootstrap(variant, rest: list[str]) -> None:
     variants.write_recorded(paths.env_file(), variant.name)
 
     print(f"\nmship {__version__} bootstrapped for --{variant.name} in {paths.env_dir(variant.name)}")
-    print(f"Recorded in {paths.env_file()}; `mship deploy` now needs no variant flag.")
+    print(f"Recorded in {paths.env_file()}; `mship start` now needs no variant flag.")
 
 
 def _engine_env(variant) -> dict[str, str]:
