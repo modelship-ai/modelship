@@ -113,8 +113,8 @@ secrets:
 
 ## Reaching the gateway
 
-The gateway Service load-balances across the Serve proxy on every Ray node, gated
-per-pod by proxy health (a pod only joins once its proxy is up). Check `/readyz`
+The gateway Service load-balances across the `serve` port of every Ray pod. Serve
+runs a proxy only on nodes hosting at least one replica. Check `/readyz`
 for app-level readiness — it returns 503 until all models are loaded (use it for
 an external LB/Ingress health check). Port-forward for local access, or set
 `service.type=LoadBalancer`:

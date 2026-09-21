@@ -222,8 +222,8 @@ deploy:
       memory: 2Gi
 
 # -- Gateway Service. ClusterIP by default; switch to LoadBalancer/NodePort to
-# expose the OpenAI API outside the cluster. Load-balances across the Serve HTTP
-# proxy on every Ray node (head + workers), gated per-pod by proxy health.
+# expose the OpenAI API outside the cluster. Load-balances across the `serve` port
+# of every Ray pod; Serve runs a proxy only on nodes hosting a replica.
 service:
   type: ClusterIP
   annotations: {}
