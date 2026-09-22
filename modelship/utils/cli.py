@@ -42,7 +42,7 @@ _ARG_TO_ENV: dict[str, str] = {
     "ray_auth": "MSHIP_RAY_AUTH",
     "ray_port": "MSHIP_RAY_PORT",
     "ray_dashboard_host": "MSHIP_RAY_DASHBOARD_HOST",
-    "dashboard_port": "MSHIP_RAY_DASHBOARD_PORT",
+    "ray_dashboard_port": "MSHIP_RAY_DASHBOARD_PORT",
     "metrics_port": "MSHIP_METRICS_PORT",
     "node_num_cpus": "MSHIP_NODE_NUM_CPUS",
     "node_num_gpus": "MSHIP_NODE_NUM_GPUS",
@@ -233,7 +233,7 @@ def _add_head_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
-        "--dashboard-port",
+        "--ray-dashboard-port",
         type=int,
         help=(
             "Port for Ray's dashboard (env: MSHIP_RAY_DASHBOARD_PORT, default: 8265, Ray's own "

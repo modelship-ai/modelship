@@ -96,7 +96,7 @@ pair you set deliberately, not independent toggles.
 |---|---|---|
 | `8000` | Gateway HTTP API (`ProxyLocation.EveryNode` — every node with ≥1 replica runs a proxy) | `--openai-api-port` |
 | `8079` | Prometheus metrics | `--metrics-port`; random on a joiner unless set, and listed in the head's service-discovery file either way |
-| `8265` | Ray dashboard (head only) | `--dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1` — keep it there unless you have a specific reason to expose it) |
+| `8265` | Ray dashboard (head only) | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1` — keep it there unless you have a specific reason to expose it) |
 | GCS (head control plane) | what `mship join --cluster` points at | `--ray-port` (default `6380`) |
 | `10002–19999` + node/object manager | Ray's dynamic worker range | not configurable; open the range between fleet nodes |
 
@@ -179,16 +179,16 @@ docker run -d --network=host --shm-size=8g \
   -v ./cluster-a/models.yaml:/modelship/config/models.yaml \
   -v ./cluster-a/cache:/.cache \
   ghcr.io/modelship-ai/modelship:0.6.5 start \
-  --ray-port=6380 --openai-api-port=8000 --dashboard-port=8265 --metrics-port=8079
+  --ray-port=6380 --openai-api-port=8000 --ray-dashboard-port=8265 --metrics-port=8079
 
 docker run -d --network=host --shm-size=8g \
   -v ./cluster-b/models.yaml:/modelship/config/models.yaml \
   -v ./cluster-b/cache:/.cache \
   ghcr.io/modelship-ai/modelship:0.6.5 start \
-  --ray-port=6381 --openai-api-port=8001 --dashboard-port=8266 --metrics-port=8089
+  --ray-port=6381 --openai-api-port=8001 --ray-dashboard-port=8266 --metrics-port=8089
 ```
 
-Each head needs a distinct `--ray-port`, `--openai-api-port`, `--dashboard-port`,
+Each head needs a distinct `--ray-port`, `--openai-api-port`, `--ray-dashboard-port`,
 and `--metrics-port` — see the port table above for what each one
 gates. Workers on other machines join whichever cluster they're meant to serve,
 by pointing `mship join --cluster` at that head's GCS port.

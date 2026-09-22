@@ -20,7 +20,7 @@ exits. Each takes the arguments marked for it (env vars work as fallbacks; CLI w
 | `--ray-auth` | start, deploy | `MSHIP_RAY_AUTH` | `none` | With `token`, `start` makes the cluster require the bearer token Ray generates at `~/.ray/auth_token` for the dashboard and cluster-internal RPC, and `deploy` sends it from that file |
 | `--ray-port` | start | `MSHIP_RAY_PORT` | `6380` | Ray GCS server port — what `mship join --cluster` points at |
 | `--ray-dashboard-host` | start | `MSHIP_RAY_DASHBOARD_HOST` | `127.0.0.1` | Ray dashboard bind address. The dashboard's job API runs arbitrary code, so bind beyond loopback only on a private network and with `--ray-auth=token` |
-| `--dashboard-port` | start | `MSHIP_RAY_DASHBOARD_PORT` | `8265` | Ray dashboard port. Only needed to run multiple modelship heads on one host under `--network=host` |
+| `--ray-dashboard-port` | start | `MSHIP_RAY_DASHBOARD_PORT` | `8265` | Ray dashboard port. Only needed to run multiple modelship heads on one host under `--network=host` |
 | `--node-num-cpus` | start, join | `MSHIP_NODE_NUM_CPUS` | auto-detect | CPUs this node reserves |
 | `--node-num-gpus` | start, join | `MSHIP_NODE_NUM_GPUS` | auto-detect | GPUs this node reserves. Refused at startup if it exceeds what the container can actually see |
 | `--node-memory` | start, join | `MSHIP_NODE_MEMORY` | auto-detect | This node's total memory budget, e.g. `8Gi`. Set explicitly when co-locating multiple modelship containers on one host without per-container cgroup memory limits |
