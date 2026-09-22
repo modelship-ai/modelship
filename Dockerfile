@@ -27,7 +27,8 @@ RUN apt-get update -y && \
         libc6-dev \
         libgomp1 \
         libnuma1 \
-        ninja-build && \
+        ninja-build \
+        tini && \
     rm -rf /var/lib/apt/lists/*
 
 # nvcc/cuobjdump stay in the runtime image because torch, triton and flashinfer
@@ -205,5 +206,5 @@ ADD --chown=$UID:$GID ./config/examples config/examples
 USER root
 
 # Prepends the command, so `docker run <image> start --config …` reaches the
-# same CLI as a native install.
-ENTRYPOINT ["/modelship/scripts/entrypoint.sh", "mship"]
+# same CLI as a native install. tini is PID 1: it reaps orphaned processes, and forwards signals.
+ENTRYPOINT ["/usr/bin/tini", "--", "/modelship/scripts/entrypoint.sh", "mship"]
