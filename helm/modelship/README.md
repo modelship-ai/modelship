@@ -251,7 +251,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `rayAuth.enabled` | `false` | Ray cluster authentication (`RAY_AUTH_MODE=token`) through KubeRay's `authOptions` (see [Ray cluster authentication](#ray-cluster-authentication-optional)) |
 | `rayAuth.token` / `rayAuth.existingSecret` | `""` | Auth token inline, or an existing Secret holding it under key `auth_token`. Required when `rayAuth.enabled` |
 | `service.type` | `ClusterIP` | Set `LoadBalancer` to expose externally |
-| `podMonitor.enabled` | `false` | Prometheus Operator scraping |
+| `podMonitor.enabled` | `false` | Prometheus Operator scraping; needs `metrics.enabled` |
 | `prometheusRule.enabled` | `false` | Ship the modelship alert rules as a PrometheusRule |
 | `grafanaDashboard.enabled` | `false` | Ship the Grafana dashboard as a sidecar-imported ConfigMap |
 | `kuberay-operator.enabled` | `false` | Bootstrap the operator as a subchart |

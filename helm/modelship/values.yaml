@@ -231,6 +231,7 @@ service:
 # -- Prometheus Operator PodMonitor for the metrics port (optional). A PodMonitor
 # (not ServiceMonitor) because every Ray pod — head and workers — exports on the
 # metrics port, so scraping is per-pod by label rather than via one Service.
+# Needs metrics.enabled.
 podMonitor:
   enabled: false
   interval: 30s

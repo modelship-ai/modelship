@@ -1,4 +1,7 @@
 {{- if .Values.podMonitor.enabled }}
+{{- if not .Values.metrics.enabled }}
+{{- fail "podMonitor.enabled needs metrics.enabled: with metrics off, nothing listens on the metrics port." }}
+{{- end }}
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:

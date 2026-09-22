@@ -79,13 +79,12 @@ spec:
               - --no-metrics
               {{- end }}
             # The RayJob controller builds the job-submission URL from the named
-            # `dashboard` port (8265, mship start's default).
+            # `dashboard` port (8265, mship start's default). KubeRay adds
+            # `metrics: 8080` to a Ray container that declares no `metrics` port.
             ports:
               - { name: dashboard, containerPort: 8265 }
               - { name: serve, containerPort: {{ .Values.gateway.port }} }
-              {{- if .Values.metrics.enabled }}
               - { name: metrics, containerPort: {{ .Values.metrics.port }} }
-              {{- end }}
             env:
               {{- include "modelship.env" . | nindent 14 }}
               {{- with .Values.head.env }}
@@ -163,9 +162,7 @@ spec:
               # Service. Serve runs a proxy only on nodes hosting at least one replica.
               ports:
                 - { name: serve, containerPort: {{ $.Values.gateway.port }} }
-                {{- if $.Values.metrics.enabled }}
                 - { name: metrics, containerPort: {{ $.Values.metrics.port }} }
-                {{- end }}
               env:
                 {{- include "modelship.env" $ | nindent 16 }}
                 {{- include "modelship.nodeResourceEnv" (dict "resources" .resources "env" .env "container" "ray-worker") | nindent 16 }}

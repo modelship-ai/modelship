@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """CI check: the chart's Ray pods run `mship start`/`mship join` under KubeRay's
-overwrite-container-cmd, with worker sizing env derived from the pod's resources."""
+overwrite-container-cmd, with worker sizing env derived from the pod's resources and a
+fixed metrics port."""
 
 from __future__ import annotations
 
@@ -14,12 +15,17 @@ import yaml
 _CHART_DIR = Path(__file__).resolve().parent.parent / "helm" / "modelship"
 
 
-def _cluster(values: dict) -> dict:
+def _render(values: dict) -> subprocess.CompletedProcess[str]:
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
         yaml.safe_dump({"redis": {"address": "cache:6379"}} | values, f)
-    out = subprocess.run(
-        ["helm", "template", "modelship", str(_CHART_DIR), "-f", f.name], capture_output=True, text=True, check=True
+    return subprocess.run(
+        ["helm", "template", "modelship", str(_CHART_DIR), "-f", f.name], capture_output=True, text=True
     )
+
+
+def _cluster(values: dict) -> dict:
+    out = _render(values)
+    assert out.returncode == 0, out.stderr
     return next(d for d in yaml.safe_load_all(out.stdout) if d and d.get("kind") == "RayCluster")
 
 
@@ -44,8 +50,8 @@ def _field_ref(container: dict, name: str) -> str | None:
     return entry["valueFrom"]["resourceFieldRef"]["resource"]
 
 
-def _port_names(container: dict) -> set[str]:
-    return {p["name"] for p in container["ports"]}
+def _ports(container: dict) -> dict[str, int]:
+    return {p["name"]: p["containerPort"] for p in container["ports"]}
 
 
 def main() -> int:
@@ -82,7 +88,7 @@ def main() -> int:
     for worker in (req, lim, own, bare):
         assert worker["args"] == ["join", "--cluster", "$(RAY_ADDRESS)", "--metrics-port", "8079"], worker["args"]
     assert all("lifecycle" not in c for c in (head, req, lim, own, bare))
-    assert all("metrics" in _port_names(c) for c in (head, req, lim, own, bare))
+    assert all(_ports(c)["metrics"] == 8079 for c in (head, req, lim, own, bare))
 
     assert _field_ref(req, "MSHIP_NODE_NUM_CPUS") == "requests.cpu"
     assert _field_ref(req, "MSHIP_NODE_MEMORY") == "requests.memory"
@@ -96,7 +102,9 @@ def main() -> int:
     head, (worker,) = _containers(_cluster({"metrics": {"enabled": False}, "workerGroups": [_group("w")]}))
     assert head["args"][-1] == "--no-metrics" and "--metrics-port" not in head["args"], head["args"]
     assert worker["args"] == ["join", "--cluster", "$(RAY_ADDRESS)"], worker["args"]
-    assert "metrics" not in _port_names(head) | _port_names(worker)
+    assert _ports(head)["metrics"] == _ports(worker)["metrics"] == 8079
+    out = _render({"metrics": {"enabled": False}, "podMonitor": {"enabled": True}})
+    assert out.returncode != 0 and "podMonitor.enabled needs metrics.enabled" in out.stderr, out.stderr
 
     print("OK: head runs mship start, workers run mship join, sizing env follows pod resources")
     return 0
