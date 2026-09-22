@@ -39,6 +39,8 @@ reconciles the live cluster back to the recorded set.
   helm upgrade kuberay-operator kuberay/kuberay-operator --version 1.7.1
   ```
 - For GPU models: a node pool with `nvidia.com/gpu` resources.
+- Helm 3 or 4. If a Helm 4 upgrade fails with a conflict on `.spec.workerGroupSpecs`,
+  rerun it once with `--force-conflicts`; Helm owns the list from then on.
 
 ## Install
 
@@ -106,9 +108,9 @@ secrets:
   example ships in `values.yaml`). This is a **list — Helm replaces it wholesale**
   (no per-item merge), so always declare the full set you want; omitting the key
   keeps the empty default. Each worker runs `mship join`, which detects the
-  loaders its image can run. Its CPU count comes from the group's CPU limit (else
-  request) and its memory budget from the memory limit; set `MSHIP_NODE_*` in the
-  group's `env` to override.
+  loaders its image can run. Its CPU count and memory budget come from the group's
+  limits, else its requests; set `MSHIP_NODE_*` in the group's `env` to override.
+  With neither, the worker counts the host's free memory as its own.
 - **Cache** — a shared PVC for model weights at `/.cache`. Single-node clusters
   can use `ReadWriteOnce`; **multi-node requires `ReadWriteMany`** so every worker
   shares one copy.
@@ -166,14 +168,33 @@ One Redis backs three things at once:
 | full cluster loss, Redis also gone | `helm upgrade` |
 
 `externalStorageNamespace` is pinned to the release name so a recreated cluster
-recovers; the password is injected via the Secret and expanded into the URI at
-runtime, never landing in the pod manifest or argv.
+recovers. The password comes from the Secret and never lands in the pod manifest;
+Ray itself passes it on the command line of the head's `gcs_server` and `raylet`.
 
 > Before v0.7.0 `redis.enabled=false` fell back to a `file://` state store on the
 > cache PVC. That backend is gone — see the main
 > [state-store docs](../../docs/model-configuration.md#state-store-mship_state_store).
 > Outside k8s the default is `memory://`, which is cluster-scoped but dies with the
 > cluster.
+
+## Uninstall
+
+```bash
+helm uninstall modelship
+kubectl delete rayjob modelship-deploy   # a Helm hook: uninstall leaves it behind
+```
+
+KubeRay deletes Ray's own keys from Redis with the RayCluster. modelship's state
+(`modelship/state/*`: effective config, routing registry, conversations) stays, so a
+reinstall on the same Redis db redeploys the previous release's models. Delete
+those keys, or use another `redis.db`, for a clean start. Give each release its own
+Redis db: the keys aren't per-release.
+
+**Known issue:** with a Secret the chart created (`redis.password` or
+`rayAuth.token`), uninstall takes about 5 minutes and leaves Ray's keys in Redis.
+KubeRay's Redis cleanup Job needs that Secret, which Helm has already deleted.
+Referencing your own Secrets (`redis.existingSecret`, `rayAuth.existingSecret`)
+avoids it.
 
 ## Ray cluster authentication (optional)
 

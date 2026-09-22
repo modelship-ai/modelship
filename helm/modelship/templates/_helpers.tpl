@@ -127,8 +127,9 @@ the chart's own).
 {{- end -}}
 
 {{/*
-MSHIP_NODE_NUM_CPUS/MSHIP_NODE_MEMORY for a worker, from its container's CPU limit (else
-request) and memory limit via the downward API. Skips a var the group's own env sets.
+MSHIP_NODE_NUM_CPUS/MSHIP_NODE_MEMORY for a worker, from its container's limits (else
+requests) via the downward API. Skips a var the group's own env sets. An explicit
+`divisor` survives KubeRay's write-back unchanged.
 Call with (dict "resources" <resources> "env" <group env> "container" <container name>).
 */}}
 {{- define "modelship.nodeResourceEnv" -}}
@@ -137,19 +138,15 @@ Call with (dict "resources" <resources> "env" <group env> "container" <container
 {{- $requests := $resources.requests | default dict -}}
 {{- $names := list -}}
 {{- range .env }}{{- $names = append $names .name -}}{{- end -}}
-{{- if and (or $limits.cpu $requests.cpu) (not (has "MSHIP_NODE_NUM_CPUS" $names)) }}
-- name: MSHIP_NODE_NUM_CPUS
+{{- range $var, $res := dict "MSHIP_NODE_NUM_CPUS" "cpu" "MSHIP_NODE_MEMORY" "memory" }}
+{{- if and (or (get $limits $res) (get $requests $res)) (not (has $var $names)) }}
+- name: {{ $var }}
   valueFrom:
     resourceFieldRef:
-      containerName: {{ .container }}
-      resource: {{ ternary "limits.cpu" "requests.cpu" (hasKey $limits "cpu") }}
+      containerName: {{ $.container }}
+      resource: {{ ternary "limits" "requests" (hasKey $limits $res) }}.{{ $res }}
+      divisor: "1"
 {{- end }}
-{{- if and $limits.memory (not (has "MSHIP_NODE_MEMORY" $names)) }}
-- name: MSHIP_NODE_MEMORY
-  valueFrom:
-    resourceFieldRef:
-      containerName: {{ .container }}
-      resource: limits.memory
 {{- end }}
 {{- end -}}
 
