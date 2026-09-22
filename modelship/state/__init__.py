@@ -5,6 +5,7 @@ whose body carries that backend's connection:
 
     memory://                     dict shared cluster-wide via a Ray actor (default)
     redis://host:6379/0           one JSON value per key in Redis (rediss:// = TLS)
+    redis://host:6379/0?namespace=ns   the same, keys under modelship/state/ns/
 
 One arg covers a full Redis connection, and a new backend is one entry in
 ``_BUILDERS`` with zero new flags. ``get_state_store()`` reads the configured URI
@@ -16,7 +17,7 @@ from __future__ import annotations
 import os
 import re
 import time
-from urllib.parse import ParseResult, parse_qs, quote, urlparse, urlsplit, urlunsplit
+from urllib.parse import ParseResult, parse_qs, quote, urlencode, urlparse, urlsplit, urlunsplit
 
 from modelship.metrics import STATE_STORE_OPERATION_DURATION_SECONDS, STATE_STORE_OPERATIONS_TOTAL
 from modelship.state.base import JsonValue, StateStore, StateStoreUnavailableError
@@ -148,10 +149,15 @@ def _build_memory(parsed: ParseResult) -> StateStore:
 
 
 def _build_redis(parsed: ParseResult) -> StateStore:
-    # Hand the whole URL back to redis-py (it parses host/port/db/user/password/TLS).
+    # Hand the URL minus `namespace` back to redis-py (it parses host/port/db/user/password/TLS).
     from modelship.state.redis import RedisStateStore
 
-    return RedisStateStore(parsed.geturl())
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    namespaces = query.pop("namespace", [])
+    if len(namespaces) > 1:
+        raise ValueError(f"state-store URI sets namespace more than once: {namespaces}")
+    url = parsed._replace(query=urlencode(query, doseq=True)).geturl()
+    return RedisStateStore(url, namespace=namespaces[0] if namespaces else None)
 
 
 # scheme -> builder. Add a backend here (lazy-importing its client) — no CLI change.

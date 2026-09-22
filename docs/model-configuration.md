@@ -601,6 +601,8 @@ Three pieces of state share one pluggable store: this gateway's **effective conf
 | `memory://` (default) | dict shared cluster-wide by a detached Ray actor on the head node | survives a deploy re-run, coordinator restart, gateway-replica restart — **not** cluster death |
 | `redis://host:6379/0` (`rediss://` = TLS) | one JSON value per key in Redis | survives head/coordinator death **and** cluster loss; password comes from `MSHIP_REDIS_PASSWORD`, not the URI |
 
+Redis keys live under `modelship/state/`. Add `?namespace=<name>` (letters, digits, `.`, `_`, `-`) to put them under `modelship/state/<name>/`, so clusters sharing one Redis db keep separate state. The Helm chart sets it per release.
+
 `memory://` is cluster-scoped, not process-local — every gateway replica and model actor shares one detached Ray actor on the head node, so it's correct at any replica count and outlives any worker node. Sized for small-traffic single-node deployments: every operation is a Ray RPC through that one actor, and large values spill to the object store.
 
 A password belongs in `MSHIP_REDIS_PASSWORD` on every node, not in the URI: the driver forwards the URI to gateway replicas in `runtime_env`, which is plain-text cluster metadata, so the URI travels password-free and each node adds its own before connecting (percent-encoded, so `/`, `#`, `%` and friends in a password are safe). A password inside `--state-store`/`MSHIP_STATE_STORE` is rejected at startup.
