@@ -31,6 +31,8 @@ spec:
   # submits the entrypoint to run ON the head (where a raylet exists).
   clusterSelector:
     ray.io/cluster: {{ include "modelship.fullname" . }}
+  # Places the job on the head by resource, not node ID: it waits while the head is replaced.
+  entrypointResources: '{"node:__internal_head__": 0.001}'
   shutdownAfterJobFinishes: false
   # NB: backoffLimit is rejected by KubeRay in clusterSelector mode, so it is not set.
   {{- if .Values.deploy.ttlSecondsAfterFinished }}
