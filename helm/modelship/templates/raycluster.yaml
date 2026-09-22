@@ -111,6 +111,7 @@ spec:
           {{- toYaml . | nindent 10 }}
         {{- end }}
   # ---- Workers: one group per entry in .Values.workerGroups. ----
+  {{- if .Values.workerGroups }}
   workerGroupSpecs:
     {{- range .Values.workerGroups }}
     - groupName: {{ .name }}
@@ -190,3 +191,4 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
     {{- end }}
+  {{- end }}

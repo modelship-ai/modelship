@@ -106,6 +106,9 @@ def main() -> int:
     out = _render({"metrics": {"enabled": False}, "podMonitor": {"enabled": True}})
     assert out.returncode != 0 and "podMonitor.enabled needs metrics.enabled" in out.stderr, out.stderr
 
+    for values in ({}, {"workerGroups": None}):
+        assert "workerGroupSpecs" not in _cluster(values)["spec"]
+
     print("OK: head runs mship start, workers run mship join, sizing env follows pod resources")
     return 0
 
