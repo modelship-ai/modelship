@@ -128,8 +128,7 @@ the chart's own).
 
 {{/*
 MSHIP_NODE_NUM_CPUS/MSHIP_NODE_MEMORY for a worker, from its container's limits (else
-requests) via the downward API. Skips a var the group's own env sets. An explicit
-`divisor` survives KubeRay's write-back unchanged.
+requests) via the downward API. Skips a var the group's own env sets.
 Call with (dict "resources" <resources> "env" <group env> "container" <container name>).
 */}}
 {{- define "modelship.nodeResourceEnv" -}}
@@ -145,7 +144,6 @@ Call with (dict "resources" <resources> "env" <group env> "container" <container
     resourceFieldRef:
       containerName: {{ $.container }}
       resource: {{ ternary "limits" "requests" (hasKey $limits $res) }}.{{ $res }}
-      divisor: "1"
 {{- end }}
 {{- end }}
 {{- end -}}

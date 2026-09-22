@@ -192,15 +192,16 @@ jobs:
 
       - name: Server-side upgrade has no field conflicts
         run: |
-          # KubeRay's finalizer update must leave workerGroupSpecs to Helm. No hooks, no image
-          # pulls: only the RayCluster must exist.
+          # Quantities KubeRay would store in another form (integer cpu, 1024Mi). No hooks, no
+          # image pulls: only the RayCluster must exist.
           args=(--no-hooks --set kuberay-operator.enabled=false --set cache.enabled=false
             --set redis.address=cache:6379 --set image.pullPolicy=Never
             --set workerGroups[0].name=cpu --set workerGroups[0].replicas=1
             --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1
-            --set-string workerGroups[0].resources.limits.cpu=1
-            --set-string workerGroups[0].resources.limits.memory=1Gi)
+            --set workerGroups[0].resources.limits.cpu=1
+            --set-string workerGroups[0].resources.limits.memory=1024Mi)
           helm install modelship helm/modelship --server-side "${args[@]}"
+          # KubeRay creates the head Service only once its finalizer is on the RayCluster.
           kubectl wait raycluster/modelship --timeout=2m \
-            --for=jsonpath='{.metadata.finalizers[0]}'=ray.io/gcs-ft-redis-cleanup-finalizer
+            --for=jsonpath='{.status.head.serviceName}'=modelship-head-svc
           helm upgrade modelship helm/modelship "${args[@]}" --set gateway.replicas=2

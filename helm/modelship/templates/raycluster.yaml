@@ -7,6 +7,9 @@ metadata:
   annotations:
     # KubeRay keeps each Ray container's own args (mship start/join) instead of running `ray start`.
     ray.io/overwrite-container-cmd: "true"
+  # Present from creation: KubeRay otherwise adds it by rewriting the whole object.
+  finalizers:
+    - ray.io/gcs-ft-redis-cleanup-finalizer
 spec:
   rayVersion: {{ .Values.rayVersion | quote }}
   {{- if .Values.rayAuth.enabled }}
@@ -117,8 +120,6 @@ spec:
       maxReplicas: {{ .maxReplicas }}
       {{- $img := .image | default dict }}
       rayStartParams: {}
-      # As KubeRay writes it back, so its updates leave this list unchanged.
-      scaleStrategy: {}
       template:
         metadata:
           labels:

@@ -39,8 +39,7 @@ reconciles the live cluster back to the recorded set.
   helm upgrade kuberay-operator kuberay/kuberay-operator --version 1.7.1
   ```
 - For GPU models: a node pool with `nvidia.com/gpu` resources.
-- Helm 3 or 4. If a Helm 4 upgrade fails with a conflict on `.spec.workerGroupSpecs`,
-  rerun it once with `--force-conflicts`; Helm owns the list from then on.
+- Helm 3 or 4.
 
 ## Install
 
@@ -195,6 +194,14 @@ Redis db: the keys aren't per-release.
 KubeRay's Redis cleanup Job needs that Secret, which Helm has already deleted.
 Referencing your own Secrets (`redis.existingSecret`, `rayAuth.existingSecret`)
 avoids it.
+
+The RayCluster carries KubeRay's Redis cleanup finalizer from creation. An operator
+run with `ENABLE_GCS_FT_REDIS_CLEANUP=false` never removes it, so the cluster stays
+up after uninstall until you do:
+
+```bash
+kubectl patch raycluster modelship --type=merge -p '{"metadata":{"finalizers":null}}'
+```
 
 ## Ray cluster authentication (optional)
 

@@ -41,9 +41,7 @@ def _field_ref(container: dict, name: str) -> str | None:
     entry = _env(container).get(name)
     if not entry or "valueFrom" not in entry:
         return None
-    ref = entry["valueFrom"]["resourceFieldRef"]
-    assert ref["divisor"] == "1", ref
-    return ref["resource"]
+    return entry["valueFrom"]["resourceFieldRef"]["resource"]
 
 
 def _port_names(container: dict) -> set[str]:
@@ -67,9 +65,9 @@ def main() -> int:
     )
     head, (req, lim, own, bare) = _containers(cluster)
     assert cluster["metadata"]["annotations"]["ray.io/overwrite-container-cmd"] == "true"
+    assert cluster["metadata"]["finalizers"] == ["ray.io/gcs-ft-redis-cleanup-finalizer"]
     assert cluster["spec"]["headGroupSpec"]["rayStartParams"] == {}
     assert all(g["rayStartParams"] == {} for g in cluster["spec"]["workerGroupSpecs"])
-    assert all(g["scaleStrategy"] == {} for g in cluster["spec"]["workerGroupSpecs"])
     assert head["args"][:5] == ["start", "--ray-port", "$(RAY_PORT)", "--ray-dashboard-host", "0.0.0.0"], head["args"]
     assert head["args"][5:] == [
         "--gateway-name",
