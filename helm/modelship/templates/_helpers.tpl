@@ -127,6 +127,17 @@ the chart's own).
 {{- end -}}
 
 {{/*
+This release's namespace in Redis, for Ray's GCS keys and modelship's state keys alike.
+*/}}
+{{- define "modelship.storageNamespace" -}}
+{{- $ns := .Values.redis.externalStorageNamespace | default (include "modelship.fullname" .) -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" $ns) -}}
+{{- fail (printf "redis.externalStorageNamespace %q must be letters, digits, '.', '_' or '-'." $ns) -}}
+{{- end -}}
+{{- $ns -}}
+{{- end -}}
+
+{{/*
 MSHIP_NODE_NUM_CPUS/MSHIP_NODE_MEMORY for a worker, from its container's limits (else
 requests) via the downward API. Skips a var the group's own env sets.
 Call with (dict "resources" <resources> "env" <group env> "container" <container name>).
@@ -153,10 +164,10 @@ Explicit env for every Ray pod (head + workers): the state-store URI the
 coordinator, effective-config and /v1/responses read via get_state_store(). It MUST
 be on every pod so the coordinator — scheduled on any node — agrees with the driver.
 
-Always redis://<addr>/<db>, password-free: the driver forwards this URI in runtime_env,
-and each pod adds MSHIP_REDIS_PASSWORD from its own env (the Secret). The same Redis also
-backs GCS fault tolerance. The chart wires an address but does not deploy Redis, so
-redis.address is required.
+Always redis://<addr>/<db>?namespace=<storage namespace>, password-free: the driver
+forwards this URI in runtime_env, and each pod adds MSHIP_REDIS_PASSWORD from its own env
+(the Secret). The same Redis also backs GCS fault tolerance. The chart wires an address
+but does not deploy Redis, so redis.address is required.
 */}}
 {{- define "modelship.env" -}}
 {{- $addr := required "redis.address is required: modelship on k8s stores its effective config, routing registry and /v1/responses conversations in Redis. Point redis.address at a Redis instance (see the chart README)." .Values.redis.address }}
@@ -168,7 +179,7 @@ redis.address is required.
       key: {{ .Values.redis.passwordKey }}
 {{- end }}
 - name: MSHIP_STATE_STORE
-  value: "redis://{{ $addr }}/{{ .Values.redis.db }}"
+  value: "redis://{{ $addr }}/{{ .Values.redis.db }}?namespace={{ include "modelship.storageNamespace" . }}"
 {{- end -}}
 
 {{/*

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CI check: the chart's Ray pods run `mship start`/`mship join` under KubeRay's
-overwrite-container-cmd, with worker sizing env derived from the pod's resources and a
-fixed metrics port."""
+overwrite-container-cmd, with worker sizing env derived from the pod's resources, a
+fixed metrics port and one Redis namespace for Ray and modelship."""
 
 from __future__ import annotations
 
@@ -98,6 +98,16 @@ def main() -> int:
     assert _env(own)["MSHIP_NODE_NUM_CPUS"]["value"] == "1"
     assert _field_ref(own, "MSHIP_NODE_MEMORY") == "limits.memory"
     assert not {"MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_MEMORY"} & (_env(bare).keys() | _env(head).keys())
+
+    assert cluster["spec"]["gcsFaultToleranceOptions"]["externalStorageNamespace"] == "modelship"
+    for c in (head, req, lim, own, bare):
+        assert _env(c)["MSHIP_STATE_STORE"]["value"] == "redis://cache:6379/0?namespace=modelship"
+    custom = _cluster({"redis": {"address": "cache:6379", "externalStorageNamespace": "edge.a_1"}})
+    assert custom["spec"]["gcsFaultToleranceOptions"]["externalStorageNamespace"] == "edge.a_1"
+    custom_head = custom["spec"]["headGroupSpec"]["template"]["spec"]["containers"][0]
+    assert _env(custom_head)["MSHIP_STATE_STORE"]["value"].endswith("?namespace=edge.a_1")
+    out = _render({"redis": {"address": "cache:6379", "externalStorageNamespace": "a/b"}})
+    assert out.returncode != 0 and "must be letters, digits" in out.stderr, out.stderr
 
     head, (worker,) = _containers(_cluster({"metrics": {"enabled": False}, "workerGroups": [_group("w")]}))
     assert head["args"][-1] == "--no-metrics" and "--metrics-port" not in head["args"], head["args"]

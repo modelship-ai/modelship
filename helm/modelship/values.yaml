@@ -58,8 +58,9 @@ redis:
   password: ""
   existingSecret: ""
   passwordKey: "REDIS_PASSWORD"
-  # GCS external-storage namespace — pinned so a recreated cluster (same release)
-  # recovers its state. Defaults to the release fullname.
+  # Namespace for this release's keys in Redis, Ray's GCS and modelship's state alike —
+  # pinned so a recreated cluster (same release) recovers its state. Letters, digits,
+  # '.', '_' or '-'. Defaults to the release fullname.
   externalStorageNamespace: ""
 
 # -- models.yaml, carried inside the deploy RayJob. Replace with your real model

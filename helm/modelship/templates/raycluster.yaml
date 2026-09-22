@@ -27,7 +27,7 @@ spec:
   # name) recovers; KubeRay injects the RAY_REDIS_* env that `mship start` reads.
   gcsFaultToleranceOptions:
     redisAddress: {{ required "redis.address is required (see the chart README)." .Values.redis.address | quote }}
-    externalStorageNamespace: {{ .Values.redis.externalStorageNamespace | default (include "modelship.fullname" .) | quote }}
+    externalStorageNamespace: {{ include "modelship.storageNamespace" . | quote }}
     {{- if or .Values.redis.password .Values.redis.existingSecret }}
     redisPassword:
       valueFrom:

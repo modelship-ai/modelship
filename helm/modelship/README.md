@@ -170,8 +170,10 @@ One Redis backs three things at once:
 | full cluster loss, Redis kept | Serve + coordinator restore from Redis; conversations intact |
 | full cluster loss, Redis also gone | `helm upgrade` |
 
-`externalStorageNamespace` is pinned to the release name so a recreated cluster
-recovers. The password comes from the Secret and never lands in the pod manifest;
+`redis.externalStorageNamespace` (default: the release name) namespaces Ray's keys and
+modelship's (`modelship/state/<namespace>/`), so a recreated cluster recovers and
+releases can share a Redis db. Same-named releases in two k8s namespaces need
+distinct values. The password comes from the Secret and never lands in the pod manifest;
 Ray itself passes it on the command line of the head's `gcs_server` and `raylet`.
 
 > Before v0.7.0 `redis.enabled=false` fell back to a `file://` state store on the
@@ -188,10 +190,9 @@ kubectl delete rayjob modelship-deploy   # a Helm hook: uninstall leaves it behi
 ```
 
 KubeRay deletes Ray's own keys from Redis with the RayCluster. modelship's state
-(`modelship/state/*`: effective config, routing registry, conversations) stays, so a
-reinstall on the same Redis db redeploys the previous release's models. Delete
-those keys, or use another `redis.db`, for a clean start. Give each release its own
-Redis db: the keys aren't per-release.
+(`modelship/state/<namespace>/*`: effective config, routing registry, conversations)
+stays, so a reinstall under the same namespace redeploys the previous release's models.
+Delete those keys for a clean start.
 
 **Known issue:** with a Secret the chart created (`redis.password` or
 `rayAuth.token`), uninstall takes about 5 minutes and leaves Ray's keys in Redis.
