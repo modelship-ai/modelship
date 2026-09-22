@@ -110,6 +110,10 @@ secrets:
   loaders its image can run. Its CPU count and memory budget come from the group's
   limits, else its requests; set `MSHIP_NODE_*` in the group's `env` to override.
   With neither, the worker counts the host's free memory as its own.
+  KubeRay never deletes the pods of a group removed from the list, renamed ones
+  included ([kuberay#1739](https://github.com/ray-project/kuberay/issues/1739)): scale
+  the group to 0 (`replicas`, `minReplicas`, `maxReplicas`) in one upgrade, then
+  remove it in the next.
 - **Cache** — a shared PVC for model weights at `/.cache`. Single-node clusters
   can use `ReadWriteOnce`; **multi-node requires `ReadWriteMany`** so every worker
   shares one copy.
@@ -202,6 +206,10 @@ up after uninstall until you do:
 ```bash
 kubectl patch raycluster modelship --type=merge -p '{"metadata":{"finalizers":null}}'
 ```
+
+Ray's keys then stay in Redis, as in the known issue above, and a reinstall under
+the same `redis.externalStorageNamespace` starts from the old cluster's state.
+Delete `RAY<namespace>@*` too for a clean start.
 
 ## Ray cluster authentication (optional)
 
