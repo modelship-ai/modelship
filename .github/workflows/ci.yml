@@ -22,6 +22,7 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'scripts/check_chart_entrypoint.py'
               - 'scripts/check_chart_nodes.py'
+              - 'scripts/check_chart_uninstall.py'
 
   lint:
     runs-on: ubuntu-latest
@@ -164,6 +165,10 @@ jobs:
       - name: RayJob entrypoint delivers models.yaml intact
         run: |
           uv run --no-project --with pyyaml python scripts/check_chart_entrypoint.py
+
+      - name: Uninstall hook deletes the cluster, then its state
+        run: |
+          uv run --no-project --with pyyaml python scripts/check_chart_uninstall.py
 
       - name: Create kind cluster
         uses: helm/kind-action@v1

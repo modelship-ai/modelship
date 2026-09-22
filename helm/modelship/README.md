@@ -186,31 +186,32 @@ Ray itself passes it on the command line of the head's `gcs_server` and `raylet`
 
 ```bash
 helm uninstall modelship
-kubectl delete rayjob modelship-deploy   # a Helm hook: uninstall leaves it behind
 ```
 
-KubeRay deletes Ray's own keys from Redis with the RayCluster. modelship's state
-(`modelship/state/<namespace>/*`: effective config, routing registry, conversations)
-stays, so a reinstall under the same namespace redeploys the previous release's models.
-Delete those keys for a clean start.
+Uninstall first runs a Job (a pre-delete hook) that:
+1. deletes the deploy RayJob and the RayCluster;
+2. waits up to 3 minutes for the RayCluster to go, while KubeRay deletes Ray's keys
+   from Redis;
+3. deletes modelship's keys (`modelship/state/<namespace>/*`: effective config, routing
+   registry, `/v1/responses` conversations).
 
-**Known issue:** with a Secret the chart created (`redis.password` or
-`rayAuth.token`), uninstall takes about 5 minutes and leaves Ray's keys in Redis.
-KubeRay's Redis cleanup Job needs that Secret, which Helm has already deleted.
-Referencing your own Secrets (`redis.existingSecret`, `rayAuth.existingSecret`)
-avoids it.
+Nothing of the release stays in Redis; back it up first to keep conversations. If the
+Job fails, Helm stops the uninstall there, and `kubectl logs job/modelship-uninstall`
+says why. `helm uninstall --no-hooks` skips it: the RayJob and modelship's keys stay,
+and with a chart-created Secret KubeRay's cleanup can't start, so the RayCluster takes
+5 minutes to go and leaves Ray's keys.
 
 The RayCluster carries KubeRay's Redis cleanup finalizer from creation. An operator
-run with `ENABLE_GCS_FT_REDIS_CLEANUP=false` never removes it, so the cluster stays
-up after uninstall until you do:
+run with `ENABLE_GCS_FT_REDIS_CLEANUP=false` never removes it: the Job waits its 3
+minutes, and the cluster stays up after uninstall until you run
 
 ```bash
 kubectl patch raycluster modelship --type=merge -p '{"metadata":{"finalizers":null}}'
 ```
 
-Ray's keys then stay in Redis, as in the known issue above, and a reinstall under
-the same `redis.externalStorageNamespace` starts from the old cluster's state.
-Delete `RAY<namespace>@*` too for a clean start.
+Ray's keys then stay in Redis, and a reinstall under the same
+`redis.externalStorageNamespace` starts from the old cluster's state. Delete
+`RAY<namespace>@*` too for a clean start.
 
 ## Ray cluster authentication (optional)
 

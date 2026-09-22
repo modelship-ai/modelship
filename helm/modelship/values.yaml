@@ -214,6 +214,7 @@ deploy:
   extraArgs: []
   # Clean up the finished RayJob automatically after N seconds (null = keep).
   ttlSecondsAfterFinished: null
+  # For the RayJob's submitter pod and the uninstall Job.
   resources:
     requests:
       cpu: "500m"
