@@ -297,6 +297,56 @@ class TestDriverVerbs:
         assert exc.value.code == 1
 
 
+class TestStopHead:
+    def _stop(self, env, pop=()):
+        from modelship import driver
+        from modelship.deploy import removal, serve_utils
+
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch.object(removal, "delete_apps_quietly") as mock_delete,
+            patch.object(serve_utils, "shutdown_ray") as mock_shutdown,
+        ):
+            for key in pop:
+                os.environ.pop(key, None)
+            driver._stop_head({"a-1": "a", "b-2": "b"})
+        return mock_delete, mock_shutdown
+
+    def test_deletes_this_runs_apps_then_stops_serve_and_ray(self):
+        mock_delete, mock_shutdown = self._stop({}, pop=("RAY_REDIS_ADDRESS",))
+        assert list(mock_delete.call_args.args[0]) == ["b-2", "a-1"]
+        mock_shutdown.assert_called_once_with()
+
+    def test_redis_backed_gcs_keeps_the_apps(self):
+        mock_delete, mock_shutdown = self._stop({"RAY_REDIS_ADDRESS": "redis:6379"})
+        mock_delete.assert_not_called()
+        mock_shutdown.assert_called_once_with(keep_serve=True)
+
+
+class TestShutdownRay:
+    def test_stops_serve_then_ray(self):
+        from modelship.deploy import serve_utils
+
+        calls = []
+        with (
+            patch.object(serve_utils.serve, "shutdown", side_effect=lambda: calls.append("serve")),
+            patch.object(serve_utils.ray, "shutdown", side_effect=lambda: calls.append("ray")),
+        ):
+            serve_utils.shutdown_ray()
+        assert calls == ["serve", "ray"]
+
+    def test_keep_serve_stops_only_ray(self):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.object(serve_utils.serve, "shutdown") as mock_serve,
+            patch.object(serve_utils.ray, "shutdown") as mock_ray,
+        ):
+            serve_utils.shutdown_ray(keep_serve=True)
+        mock_serve.assert_not_called()
+        mock_ray.assert_called_once()
+
+
 class TestSignalHandlersOutliveRay:
     """ray.init and Node() each install a SIGTERM handler of their own; ours must win."""
 
@@ -1020,6 +1070,25 @@ class TestStartHead:
     def test_omits_metrics_port_when_disabled(self):
         kwargs = self._init_call({"MSHIP_METRICS": "false"})
         assert "_metrics_export_port" not in kwargs
+
+    def test_redis_credentials_passed_with_a_redis_backed_gcs(self):
+        kwargs = self._init_call({"RAY_REDIS_ADDRESS": "redis:6379", "REDIS_PASSWORD": "pw", "REDIS_USERNAME": "u"})
+        assert kwargs["_redis_password"] == "pw"
+        assert kwargs["_redis_username"] == "u"
+
+    def test_redis_credentials_ignored_without_a_redis_backed_gcs(self):
+        kwargs = self._init_call({"REDIS_PASSWORD": "pw", "REDIS_USERNAME": "u"}, pop=("RAY_REDIS_ADDRESS",))
+        assert "_redis_password" not in kwargs
+        assert "_redis_username" not in kwargs
+
+    def test_ray_init_still_takes_the_private_redis_kwargs(self):
+        import inspect
+
+        import ray
+
+        source = inspect.getsource(ray.init)
+        assert '"_redis_password"' in source
+        assert '"_redis_username"' in source
 
     def test_ray_port_sets_gcs_server_port(self):
         from modelship.deploy import serve_utils

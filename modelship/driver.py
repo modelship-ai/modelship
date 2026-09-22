@@ -41,8 +41,7 @@ def run(command: str, argv: list[str] | None = None) -> None:
 
 
 def _start(args) -> None:
-    from modelship.deploy.removal import delete_apps_quietly
-    from modelship.deploy.serve_utils import local_ray_clusters, shutdown_ray, start_gateway, start_head, start_serve
+    from modelship.deploy.serve_utils import local_ray_clusters, start_gateway, start_head, start_serve
     from modelship.state import reject_inline_password
 
     gateway_name, route_prefix, _ = _gateway_from_env()
@@ -58,9 +57,8 @@ def _start(args) -> None:
     deployed_this_run: dict[str, str] = {}
 
     def _cleanup(sig, _frame) -> None:
-        logger.info("Shutting down (signal %s), cleaning up deployments from this run...", sig)
-        delete_apps_quietly(reversed(deployed_this_run))
-        shutdown_ray()
+        logger.info("Shutting down (signal %s)...", sig)
+        _stop_head(deployed_this_run)
         sys.exit(0)
 
     # Before start_head, which spawns processes a signal must still clean up.
@@ -80,13 +78,27 @@ def _start(args) -> None:
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
-        logger.exception("Startup failed, cleaning up deployments from this run...")
-        delete_apps_quietly(reversed(deployed_this_run))
-        shutdown_ray()
+        logger.exception("Startup failed, shutting down...")
+        _stop_head(deployed_this_run)
         raise
 
-    # Resident even on fatal failures; _cleanup deletes deployments before stopping Ray.
+    # Resident even on fatal failures; a signal stops the head via _cleanup.
     signal.pause()
+
+
+def _stop_head(deployed_this_run: dict[str, str]) -> None:
+    """Delete this run's deployments, then stop Serve and Ray. With a Redis-backed GCS
+    every app stays, for the next head to restore."""
+    from modelship.deploy.removal import delete_apps_quietly
+    from modelship.deploy.serve_utils import shutdown_ray
+
+    if os.environ.get("RAY_REDIS_ADDRESS"):
+        logger.info("GCS is stored in Redis; leaving the Serve apps for the next head.")
+        shutdown_ray(keep_serve=True)
+        return
+    logger.info("Cleaning up deployments from this run...")
+    delete_apps_quietly(reversed(deployed_this_run))
+    shutdown_ray()
 
 
 def _join() -> None:

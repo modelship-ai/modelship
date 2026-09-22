@@ -28,6 +28,8 @@ from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ray._private.node import Node
 
 logger = get_logger("startup")
@@ -75,9 +77,12 @@ def get_existing_apps() -> set[str]:
         return set()
 
 
-def shutdown_ray() -> None:
-    """Shut down Ray Serve and Ray. Logs but swallows errors."""
-    for label, fn in (("serve.shutdown()", serve.shutdown), ("ray.shutdown()", ray.shutdown)):
+def shutdown_ray(keep_serve: bool = False) -> None:
+    """Shut down Ray Serve (unless *keep_serve*) and Ray. Logs but swallows errors."""
+    steps: list[tuple[str, Callable[[], None]]] = [("ray.shutdown()", ray.shutdown)]
+    if not keep_serve:
+        steps.insert(0, ("serve.shutdown()", serve.shutdown))
+    for label, fn in steps:
         try:
             fn()
         except Exception:
@@ -148,6 +153,12 @@ def _own_cluster_init_kwargs() -> dict[str, object]:
     if os.environ.get("MSHIP_METRICS", "true").lower() == "true":
         # _metrics_export_port is a private ray.init kwarg; guarded by a start_head test.
         kwargs["_metrics_export_port"] = int(os.environ.get("MSHIP_METRICS_PORT", str(_DEFAULT_METRICS_PORT)))
+    if os.environ.get("RAY_REDIS_ADDRESS"):
+        # The GCS's Redis credentials, under the env names KubeRay sets. Private ray.init kwargs.
+        if password := os.environ.get("REDIS_PASSWORD"):
+            kwargs["_redis_password"] = password
+        if username := os.environ.get("REDIS_USERNAME"):
+            kwargs["_redis_username"] = username
     return kwargs
 
 
