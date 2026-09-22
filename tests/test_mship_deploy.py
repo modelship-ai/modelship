@@ -83,6 +83,9 @@ class TestParseArgs:
             ("deploy", ["--ray-auth", "token"], "ray_auth", "token"),
             ("start", ["--ray-port", "6380"], "ray_port", 6380),
             ("start", ["--dashboard-port", "8266"], "dashboard_port", 8266),
+            ("start", ["--ray-dashboard-host", "0.0.0.0"], "ray_dashboard_host", "0.0.0.0"),
+            ("start", ["--metrics-port", "9090"], "metrics_port", 9090),
+            ("join", ["--cluster", "h:1", "--metrics-port", "9090"], "metrics_port", 9090),
             ("join", ["--cluster", "mship-head:6380"], "cluster", "mship-head:6380"),
             ("join", ["--cluster", "h:1", "--token", "secret"], "token", "secret"),
             ("deploy", ["--token", "secret"], "token", "secret"),
@@ -111,6 +114,8 @@ class TestParseArgs:
             ("join", ["--cluster", "h:1", "--config", "models.yaml"]),
             ("join", ["--cluster", "h:1", "--model", "org/repo"]),
             ("join", ["--cluster", "h:1", "--ray-port", "6380"]),
+            ("join", ["--cluster", "h:1", "--ray-dashboard-host", "0.0.0.0"]),
+            ("deploy", ["--metrics-port", "9090"]),
             ("join", ["--cluster", "h:1", "--state-store", "redis://h:6379/0"]),
         ],
     )
@@ -143,6 +148,8 @@ class TestApplyArgsToEnv:
             ("deploy", ["--ray-auth", "token"], "MSHIP_RAY_AUTH", "token"),
             ("start", ["--ray-port", "6380"], "MSHIP_RAY_PORT", "6380"),
             ("start", ["--dashboard-port", "8266"], "MSHIP_RAY_DASHBOARD_PORT", "8266"),
+            ("start", ["--ray-dashboard-host", "0.0.0.0"], "MSHIP_RAY_DASHBOARD_HOST", "0.0.0.0"),
+            ("join", ["--cluster", "h:1", "--metrics-port", "9090"], "MSHIP_METRICS_PORT", "9090"),
             ("join", ["--cluster", "mship-head:6380"], "MSHIP_CLUSTER", "mship-head:6380"),
             ("deploy", ["--token", "secret"], "MSHIP_RAY_AUTH_TOKEN", "secret"),
             ("join", ["--cluster", "h:1", "--node-num-cpus", "4"], "MSHIP_NODE_NUM_CPUS", "4"),
@@ -906,12 +913,14 @@ class TestStartHead:
         assert self._init_call({"RAY_ADDRESS": "10.0.0.9:6380"})["address"] == "local"
 
     def test_starts_head_with_metrics_port(self):
-        kwargs = self._init_call(
-            {"MSHIP_METRICS": "true", "RAY_METRICS_EXPORT_PORT": "8079", "MSHIP_NODE_NUM_CPUS": "4"}
-        )
+        kwargs = self._init_call({"MSHIP_METRICS": "true", "MSHIP_NODE_NUM_CPUS": "4"}, pop=("MSHIP_METRICS_PORT",))
         assert kwargs["num_cpus"] == 4
         # Guards the private ray.init kwarg that pins Ray's metrics agent port.
         assert kwargs["_metrics_export_port"] == 8079
+
+    def test_metrics_port_overridable(self):
+        kwargs = self._init_call({"MSHIP_METRICS": "true", "MSHIP_METRICS_PORT": "9090"})
+        assert kwargs["_metrics_export_port"] == 9090
 
     def test_cuda_multi_gpu_left_unset_for_autodetect(self):
         """A cuda/rocm/xpu node must not be pinned to 1 GPU when MSHIP_NODE_NUM_GPUS
@@ -989,13 +998,12 @@ class TestStartHead:
         assert kwargs["resources"] == {"mship_vllm": 1}
 
     def test_dashboard_always_on_bound_localhost(self):
-        kwargs = self._init_call({}, pop=("MSHIP_RAY_DASHBOARD",))
+        kwargs = self._init_call({}, pop=("MSHIP_RAY_DASHBOARD_HOST",))
         assert kwargs["include_dashboard"] is True
         assert kwargs["dashboard_host"] == "127.0.0.1"
 
     def test_dashboard_host_overridable(self):
-        kwargs = self._init_call({"MSHIP_RAY_DASHBOARD": "0.0.0.0"})
-        # Still on — MSHIP_RAY_DASHBOARD only ever changes the bind host now, never on/off.
+        kwargs = self._init_call({"MSHIP_RAY_DASHBOARD_HOST": "0.0.0.0"})
         assert kwargs["include_dashboard"] is True
         assert kwargs["dashboard_host"] == "0.0.0.0"
 
@@ -1232,14 +1240,13 @@ class TestJoinRayCluster:
         assert kw["object_store_memory"] == int(10 * 1024**3 * 0.3)
         assert kw["memory"] == 10 * 1024**3 - kw["object_store_memory"]
 
-    def test_metrics_export_port_always_none(self):
-        # A joining node never pins its metrics port — only the head's port needs to be
-        # fixed/predictable; the same fixed value under --network=host would collide with it.
-        kw = self._join({"MSHIP_METRICS": "true", "RAY_METRICS_EXPORT_PORT": "9999"})["params_kwargs"]
+    def test_metrics_port_random_when_unset(self):
+        kw = self._join({}, pop=("MSHIP_METRICS_PORT",))["params_kwargs"]
         assert kw["metrics_export_port"] is None
 
-        kw = self._join({"MSHIP_METRICS": "false"})["params_kwargs"]
-        assert kw["metrics_export_port"] is None
+    def test_metrics_port_pinned_when_set(self):
+        kw = self._join({"MSHIP_METRICS_PORT": "8079"})["params_kwargs"]
+        assert kw["metrics_export_port"] == 8079
 
     def test_passes_bootstrap_gcs_address(self):
         kw = self._join({}, bootstrap="10.9.9.9:6380")["params_kwargs"]

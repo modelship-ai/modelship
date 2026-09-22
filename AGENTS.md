@@ -54,7 +54,7 @@ When in doubt, check OpenAI's reference for the exact route. Existing deviations
 
 `mship start`, `mship join` and `mship deploy` are the engine commands (console script, installed via `pip`/`uv tool install "mship[metal]"`; `python -m modelship.launcher <command>` from source). `modelship/launcher.py` resolves the cache root, checks the Python version, detects the accelerator (`cuda`/`rocm`/`xpu`/`metal`/`cpu`, keyed on the installed torch build — see `modelship/utils/accelerator.py`), and on macOS auto-provisions `llama-server` before handing off to `modelship/driver.py:run`. The commands split by lifetime:
 
-- `mship start` creates this machine's Ray head (sized from `MSHIP_NODE_NUM_CPUS`/`MSHIP_NODE_NUM_GPUS`, auto-detected if unset; metrics on `RAY_METRICS_EXPORT_PORT`), brings up Serve and the gateway, deploys any `--config`/`--model`, stays running and tears the cluster down on exit. It refuses when any Ray node already runs on the machine.
+- `mship start` creates this machine's Ray head (sized from `MSHIP_NODE_NUM_CPUS`/`MSHIP_NODE_NUM_GPUS`, auto-detected if unset; metrics on `--metrics-port`, default 8079), brings up Serve and the gateway, deploys any `--config`/`--model`, stays running and tears the cluster down on exit. It refuses when any Ray node already runs on the machine.
 - `mship join --cluster HOST:PORT` starts this machine's Ray node as a worker, stays running and leaves on exit. Node only — no driver, no model changes.
 - `mship deploy` attaches to the cluster of a node on this machine, changes its models and exits; it must run **on** a cluster node (Docker co-located / k8s RayJob / bare-metal node) and cannot attach from off-cluster.
 

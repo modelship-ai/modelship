@@ -41,7 +41,9 @@ _ARG_TO_ENV: dict[str, str] = {
     "token": "MSHIP_RAY_AUTH_TOKEN",
     "ray_auth": "MSHIP_RAY_AUTH",
     "ray_port": "MSHIP_RAY_PORT",
+    "ray_dashboard_host": "MSHIP_RAY_DASHBOARD_HOST",
     "dashboard_port": "MSHIP_RAY_DASHBOARD_PORT",
+    "metrics_port": "MSHIP_METRICS_PORT",
     "node_num_cpus": "MSHIP_NODE_NUM_CPUS",
     "node_num_gpus": "MSHIP_NODE_NUM_GPUS",
     "node_memory": "MSHIP_NODE_MEMORY",
@@ -202,6 +204,14 @@ def _add_node_args(parser: argparse.ArgumentParser) -> None:
         "--api-keys",
         help="Comma-separated API keys gateway replicas on this node accept (env: MSHIP_API_KEYS)",
     )
+    parser.add_argument(
+        "--metrics-port",
+        type=int,
+        help=(
+            "Port for this node's Prometheus metrics (env: MSHIP_METRICS_PORT, default: 8079 on start, "
+            "random on join; the head lists every node's port for Prometheus service discovery)"
+        ),
+    )
 
 
 def _add_head_args(parser: argparse.ArgumentParser) -> None:
@@ -213,6 +223,13 @@ def _add_head_args(parser: argparse.ArgumentParser) -> None:
             "(env: MSHIP_RAY_PORT, default: 6380). Change this if 6380 is already taken on "
             "the host — e.g. avoid 6379, which the docs-recommended same-host Redis state "
             "store (MSHIP_STATE_STORE=redis://) may also want under --network=host."
+        ),
+    )
+    parser.add_argument(
+        "--ray-dashboard-host",
+        help=(
+            "Bind address for Ray's dashboard (env: MSHIP_RAY_DASHBOARD_HOST, default: 127.0.0.1). Its job API "
+            "runs arbitrary code: bind beyond loopback only on a private network, with --ray-auth=token."
         ),
     )
     parser.add_argument(

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 logger = get_logger("startup")
 _DEFAULT_OPENAI_API_PORT = 8000
+_DEFAULT_METRICS_PORT = 8079
 # Not 6379 (ray-start-head's default) — that collides with the docs-recommended
 # same-host Redis state store (MSHIP_STATE_STORE=redis://) under --network=host.
 _DEFAULT_RAY_GCS_PORT = 6380
@@ -132,7 +133,7 @@ def _own_cluster_init_kwargs() -> dict[str, object]:
     MSHIP_NODE_NUM_*/MSHIP_NODE_MEMORY are unset."""
     kwargs: dict[str, object] = {
         "include_dashboard": True,
-        "dashboard_host": os.environ.get("MSHIP_RAY_DASHBOARD", "127.0.0.1"),
+        "dashboard_host": os.environ.get("MSHIP_RAY_DASHBOARD_HOST", "127.0.0.1"),
         "resources": node_capability_resources(),
     }
     if dashboard_port := os.environ.get("MSHIP_RAY_DASHBOARD_PORT"):
@@ -146,7 +147,7 @@ def _own_cluster_init_kwargs() -> dict[str, object]:
         kwargs["object_store_memory"] = node_memory["object_store_memory"]
     if os.environ.get("MSHIP_METRICS", "true").lower() == "true":
         # _metrics_export_port is a private ray.init kwarg; guarded by a start_head test.
-        kwargs["_metrics_export_port"] = int(os.environ.get("RAY_METRICS_EXPORT_PORT", "8079"))
+        kwargs["_metrics_export_port"] = int(os.environ.get("MSHIP_METRICS_PORT", str(_DEFAULT_METRICS_PORT)))
     return kwargs
 
 
@@ -235,11 +236,8 @@ def _join_ray_cluster(address: str) -> Node:
     cpus = os.environ.get("MSHIP_NODE_NUM_CPUS")
     num_gpus = _resolve_node_num_gpus()
     node_memory = _resolve_node_memory_kwargs()
-    # Unlike the head, a joining node never needs a fixed metrics port: nothing external
-    # targets it directly, and the head's PrometheusServiceDiscoveryWriter already picks up
-    # whatever port Ray actually binds (via GCS) every few seconds. Leaving this None lets
-    # Ray assign an ephemeral port, which also avoids colliding with the head's own fixed
-    # port when both share a host network namespace (e.g. Docker --network=host).
+    # Unset, Ray picks a free port, which the head's Prometheus service-discovery list includes.
+    metrics_port = os.environ.get("MSHIP_METRICS_PORT")
     ray_params = RayParams(
         gcs_address=bootstrap,
         node_ip_address=services.get_node_ip_address(bootstrap),
@@ -247,7 +245,7 @@ def _join_ray_cluster(address: str) -> Node:
         num_gpus=num_gpus,
         memory=node_memory.get("memory"),
         object_store_memory=node_memory.get("object_store_memory"),
-        metrics_export_port=None,
+        metrics_export_port=int(metrics_port) if metrics_port else None,
         resources=node_capability_resources(),
     )
 

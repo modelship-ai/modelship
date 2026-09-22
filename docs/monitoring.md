@@ -1,6 +1,6 @@
 # Monitoring & Logging
 
-Modelship exposes Prometheus metrics through a single port via Ray's metrics agent. When enabled, all metrics — Ray cluster, Ray Serve, vLLM engine, and custom Modelship metrics — are available on one scrape endpoint.
+Each Ray node exposes Prometheus metrics on one port via Ray's metrics agent. When enabled, all of a node's metrics — Ray cluster, Ray Serve, vLLM engine, and custom Modelship metrics — are available on that node's scrape endpoint.
 
 ## Logging
 
@@ -126,19 +126,18 @@ Metrics are enabled by default. Set `MSHIP_METRICS=false` to disable:
 ```bash
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token \
-  -e MSHIP_RAY_DASHBOARD=0.0.0.0 \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 -p 8079:8079 -p 8265:8265 \
-  ghcr.io/modelship-ai/modelship:latest-cuda start
+  ghcr.io/modelship-ai/modelship:latest-cuda start --ray-dashboard-host 0.0.0.0
 ```
 
-> The dashboard always starts and binds `127.0.0.1` by default — `MSHIP_RAY_DASHBOARD=0.0.0.0` above is what makes the published `8265` port actually reachable. Only do this on a trusted/private network (see [troubleshooting.md](troubleshooting.md)). Pair it with `--ray-auth=token` to require a bearer token for the now-reachable dashboard — retrieve it with `docker exec <container> cat /home/modelship/.ray/auth_token`.
+> The dashboard always starts and binds `127.0.0.1` by default — `--ray-dashboard-host 0.0.0.0` above is what makes the published `8265` port actually reachable. Only do this on a trusted/private network (see [troubleshooting.md](troubleshooting.md)). Pair it with `--ray-auth=token` to require a bearer token for the now-reachable dashboard — retrieve it with `docker exec <container> cat /home/modelship/.ray/auth_token`.
 
 | Env Var | Default | Description |
 |---|---|---|
 | `MSHIP_METRICS` | `true` | Master toggle. Enables all metrics and the Ray metrics export port. |
-| `RAY_METRICS_EXPORT_PORT` | `8079` | Port for the Ray metrics agent. Only takes effect on `mship start` (a joining worker picks up the head's port automatically via Ray's service discovery). |
+| `MSHIP_METRICS_PORT` | `8079` on `start`, random on `join` | This node's metrics port (`--metrics-port`). |
 
 Set `MSHIP_METRICS=false` to disable all metrics collection — port 8079 is not exposed.
 
@@ -154,7 +153,7 @@ scrape_configs:
       - targets: ["<modelship-host>:8079"]
 ```
 
-For multi-node Ray clusters, use Ray's auto-generated service discovery file instead of static targets:
+In a multi-node cluster every node serves only its own metrics, so Prometheus scrapes each node. The head lists every node's address and port in a service discovery file, which Prometheus can read when it runs on the head's host:
 
 ```yaml
 scrape_configs:
@@ -162,6 +161,8 @@ scrape_configs:
     file_sd_configs:
       - files: ["/tmp/ray/prom_metrics_service_discovery.json"]
 ```
+
+Otherwise pin `--metrics-port` on every node and list the nodes as static targets. The Helm chart pins it, and its PodMonitor scrapes each pod's `metrics` port.
 
 ## Connecting to Grafana
 

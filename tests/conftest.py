@@ -371,11 +371,11 @@ def mship_cluster(tmp_path_factory):
             "false",
         ],
         # MSHIP_TRUSTED_IDENTITY_HEADER lets tests simulate distinct identities via
-        # extra_headers; MSHIP_RAY_DASHBOARD binds the dashboard to 0.0.0.0.
+        # extra_headers; MSHIP_RAY_DASHBOARD_HOST binds the dashboard to 0.0.0.0.
         env={
             **os.environ,
             "MSHIP_TRUSTED_IDENTITY_HEADER": "X-Mship-Test-Identity",
-            "MSHIP_RAY_DASHBOARD": "0.0.0.0",
+            "MSHIP_RAY_DASHBOARD_HOST": "0.0.0.0",
             # One visible card, so Ray has nowhere to spread fractional deploys.
             # No fixture uses tensor/pipeline parallelism, so nothing needs a second.
             "CUDA_VISIBLE_DEVICES": "0",
