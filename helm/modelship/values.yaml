@@ -1,6 +1,7 @@
 # Default values for the modelship chart.
-# Topology: a KubeRay RayCluster (head + worker groups) plus a RayJob that submits
-# `mship deploy` to run on the head and deploy the models in models.yaml.
+# Topology: a KubeRay RayCluster whose head runs `mship start` and whose workers run
+# `mship join`, plus a RayJob that runs `mship deploy` on the head to deploy the
+# models in models.yaml.
 
 # -- Container image. Used by every worker pod; the Ray head and the RayJob
 # submitter instead default to the `thin` variant regardless of this (see
@@ -37,11 +38,11 @@ kuberay-operator:
 gateway:
   name: "modelship"
   port: 8000
-  # Number of gateway replicas (maps to `mship deploy` --gateway-replicas /
-  # MSHIP_GATEWAY_REPLICAS).
+  # Number of gateway replicas (`mship start --gateway-replicas`).
   replicas: 1
 
-# -- Metrics exporter (Ray + modelship Prometheus metrics).
+# -- Metrics exporter (Ray + modelship Prometheus metrics), pinned to `port` on
+# every Ray pod.
 metrics:
   enabled: true
   port: 8079
@@ -121,18 +122,16 @@ podSecurityContext:
   runAsGroup: 1000
   fsGroup: 1000
 
-# -- Ray head: CPU-only coordination node. No models are scheduled here
-# (num-gpus=0, num-cpus=0) so no capacity is ever wasted on the GCS/dashboard/proxy.
+# -- Ray head: coordination node. The thin image advertises no CPUs or GPUs, so no
+# model is scheduled here.
 head:
   image:
     # Overrides the head's image variant, which otherwise always defaults to
     # `thin` (no torch/vllm) regardless of the top-level image.variant — set this
     # only if you genuinely want model capacity on the head (rare).
     variant: ""
-  # Overrides only — the chart already pins num-gpus=0, num-cpus=0,
-  # dashboard-host=0.0.0.0, and metrics-export-port (=metrics.port) on the head.
-  # Add extra ray start flags here.
-  rayStartParams: {}
+  # Extra env for the head's `mship start` (e.g. MSHIP_LOG_LEVEL).
+  env: []
   resources:
     requests:
       cpu: "2"
@@ -163,7 +162,9 @@ workerGroups: []
   #   replicas: 1
   #   minReplicas: 1
   #   maxReplicas: 1
-  #   rayStartParams: {}
+  #   # Extra env for this group's `mship join`. Its node sizing comes from
+  #   # `resources` (MSHIP_NODE_NUM_CPUS, MSHIP_NODE_MEMORY) unless set here.
+  #   env: []
   #   resources:
   #     requests:
   #       cpu: "4"
@@ -184,8 +185,6 @@ workerGroups: []
   #   replicas: 1
   #   minReplicas: 1
   #   maxReplicas: 1
-  #   rayStartParams:
-  #     num-gpus: "0"
   #   resources:
   #     requests:
   #       cpu: "4"

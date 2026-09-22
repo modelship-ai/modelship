@@ -127,44 +127,30 @@ the chart's own).
 {{- end -}}
 
 {{/*
-Capability resources for an image variant — mirrors modelship/deploy/capabilities.py's
-ALL_CAPABILITY_LOADERS (kept in lockstep by a CI check comparing this against that table).
-The chart can't probe like the Python side does (KubeRay starts the raylet, so no
-modelship code runs first); it doesn't need to, since the variant already determines
-what's installed. Call with a variant string, e.g. (include "modelship.capabilityResources" "cuda").
+MSHIP_NODE_NUM_CPUS/MSHIP_NODE_MEMORY for a worker, from its container's CPU limit (else
+request) and memory limit via the downward API. Skips a var the group's own env sets.
+Call with (dict "resources" <resources> "env" <group env> "container" <container name>).
 */}}
-{{- define "modelship.capabilityResources" -}}
-{{- if eq . "cuda" -}}
-{"mship_vllm": 1, "mship_diffusers": 1, "mship_llama_server": 1, "mship_stable_diffusion_cpp": 1, "mship_whispercpp": 1, "mship_sherpa_onnx": 1}
-{{- else if eq . "cpu" -}}
-{"mship_vllm": 1, "mship_llama_server": 1, "mship_stable_diffusion_cpp": 1, "mship_whispercpp": 1, "mship_sherpa_onnx": 1}
-{{- else -}}
-{}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Full rayStartParams for a Ray node: chart-managed defaults plus the caller's
-overrides (overrides win). metrics-export-port is pinned to metrics.port on every
-node so Ray's Prometheus endpoint matches the `metrics` containerPort + PodMonitor
-(unset, ray start binds a random port and scrapes fail). The head is additionally
-pinned to num-gpus/num-cpus 0 (it's coordination-only) and binds the dashboard on
-all interfaces; workers instead render `resources` from their resolved variant, so
-a model can't schedule onto a node missing its loader's backend.
-Call with (dict "root" $ "isHead" <bool> "params" <rayStartParams> "variant" <variant, workers only>).
-*/}}
-{{- define "modelship.rayStartParams" -}}
-{{- $defaults := dict "metrics-export-port" (.root.Values.metrics.port | toString) -}}
-{{- if .isHead -}}
-{{- $_ := set $defaults "num-gpus" "0" -}}
-{{- $_ := set $defaults "num-cpus" "0" -}}
-{{- $_ := set $defaults "dashboard-host" "0.0.0.0" -}}
-{{- else -}}
-{{- $capabilities := include "modelship.capabilityResources" .variant | fromJson | toJson -}}
-{{- $escaped := $capabilities | replace "\"" "\\\"" -}}
-{{- $_ := set $defaults "resources" (printf "\"%s\"" $escaped) -}}
-{{- end -}}
-{{- merge (deepCopy (.params | default dict)) $defaults | toYaml -}}
+{{- define "modelship.nodeResourceEnv" -}}
+{{- $resources := .resources | default dict -}}
+{{- $limits := $resources.limits | default dict -}}
+{{- $requests := $resources.requests | default dict -}}
+{{- $names := list -}}
+{{- range .env }}{{- $names = append $names .name -}}{{- end -}}
+{{- if and (or $limits.cpu $requests.cpu) (not (has "MSHIP_NODE_NUM_CPUS" $names)) }}
+- name: MSHIP_NODE_NUM_CPUS
+  valueFrom:
+    resourceFieldRef:
+      containerName: {{ .container }}
+      resource: {{ ternary "limits.cpu" "requests.cpu" (hasKey $limits "cpu") }}
+{{- end }}
+{{- if and $limits.memory (not (has "MSHIP_NODE_MEMORY" $names)) }}
+- name: MSHIP_NODE_MEMORY
+  valueFrom:
+    resourceFieldRef:
+      containerName: {{ .container }}
+      resource: limits.memory
+{{- end }}
 {{- end -}}
 
 {{/*

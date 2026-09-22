@@ -3,8 +3,9 @@
 Deploy [modelship](https://github.com/modelship-ai/modelship) — an OpenAI-compatible,
 multi-model inference server — on Kubernetes via [KubeRay](https://github.com/ray-project/kuberay).
 
-The chart brings up a **RayCluster** (one CPU-only head + worker groups) and a
-**RayJob** that runs `mship deploy` **on** the cluster (KubeRay's
+The chart brings up a **RayCluster** whose head runs `mship start` and whose
+worker groups run `mship join` — the same commands as a Docker or native install —
+and a **RayJob** that runs `mship deploy` **on** the cluster (KubeRay's
 supported way to run a driver against a RayCluster) and deploy the models
 declared in your `models.yaml`. Re-running (`helm upgrade`) re-applies the config
 additively, or reconciles it when `deploy.reconcile=true`.
@@ -86,11 +87,13 @@ secrets:
 
 ## Topology
 
-- **Head** — coordination-only (`num-gpus: 0`, `num-cpus: 0`); runs GCS and the
-  gateway. Always runs the `thin` image (no torch/vllm) regardless of the
-  cluster-wide `image.variant`, so no model can schedule there even if it only
-  asks for CPU — override with `head.image.variant` if you genuinely want
+- **Head** — coordination-only; runs `mship start`, which brings up GCS, Serve
+  and the gateway. Always runs the `thin` image (no torch/vllm, and it advertises
+  no CPUs or GPUs) regardless of the cluster-wide `image.variant`, so no model can
+  schedule there — override with `head.image.variant` if you genuinely want
   capacity on the head. The RayJob submitter pod uses the same (thin) image.
+  KubeRay's `ray.io/overwrite-container-cmd` annotation keeps these commands
+  instead of generating `ray start`.
 - **Serve HTTP proxies** — one runs on **every** Ray node (`proxy_location=EveryNode`),
   not just the head, and the gateway Service load-balances across all of them so
   ingress survives losing any single pod. Each proxy can route to any gateway
@@ -102,7 +105,10 @@ secrets:
   groups that match your hardware under `workerGroups` (a commented cuda+cpu
   example ships in `values.yaml`). This is a **list — Helm replaces it wholesale**
   (no per-item merge), so always declare the full set you want; omitting the key
-  keeps the empty default.
+  keeps the empty default. Each worker runs `mship join`, which detects the
+  loaders its image can run. Its CPU count comes from the group's CPU limit (else
+  request) and its memory budget from the memory limit; set `MSHIP_NODE_*` in the
+  group's `env` to override.
 - **Cache** — a shared PVC for model weights at `/.cache`. Single-node clusters
   can use `ReadWriteOnce`; **multi-node requires `ReadWriteMany`** so every worker
   shares one copy.
@@ -209,6 +215,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `cache.size` / `cache.accessModes` | `100Gi` / `[ReadWriteOnce]` | Shared weight cache |
 | `nodeCache.sizeLimit` | `""` (uncapped) | Per-pod compile-cache emptyDir; a pod over the cap is evicted |
 | `workerGroups` | `[]` | Worker pool layout (a list — set the full set; copy the example in `values.yaml`) |
+| `head.env` / `workerGroups[].env` | `[]` | Extra env for the head's `mship start` / a group's `mship join` (e.g. `MSHIP_NODE_NUM_GPUS`) |
 | `deploy.reconcile` | `false` | Remove dropped models on upgrade |
 | `deploy.replaceStrategy` | `blue_green` | How changed models are replaced |
 | `redis.address` | `""` | **Required.** `host:port` of your Redis — backs GCS-FT + the state store (see [Redis](#redis-required)) |

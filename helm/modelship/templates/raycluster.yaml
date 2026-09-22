@@ -4,6 +4,9 @@ metadata:
   name: {{ include "modelship.fullname" . }}
   labels:
     {{- include "modelship.labels" . | nindent 4 }}
+  annotations:
+    # KubeRay keeps each Ray container's own args (mship start/join) instead of running `ray start`.
+    ray.io/overwrite-container-cmd: "true"
 spec:
   rayVersion: {{ .Values.rayVersion | quote }}
   {{- if .Values.rayAuth.enabled }}
@@ -18,7 +21,7 @@ spec:
   # GCS fault tolerance: back the head's GCS with Redis so a restarted head pod
   # recovers cluster state (workers + model actors survive) instead of taking the
   # cluster down. externalStorageNamespace is pinned so a recreated cluster (same
-  # name) recovers; KubeRay injects the RAY_REDIS_* env for us.
+  # name) recovers; KubeRay injects the RAY_REDIS_* env that `mship start` reads.
   gcsFaultToleranceOptions:
     redisAddress: {{ required "redis.address is required (see the chart README)." .Values.redis.address | quote }}
     externalStorageNamespace: {{ .Values.redis.externalStorageNamespace | default (include "modelship.fullname" .) | quote }}
@@ -31,8 +34,7 @@ spec:
     {{- end }}
   # ---- Head: CPU-only coordination (GCS, dashboard, Serve proxy). ----
   headGroupSpec:
-    rayStartParams:
-      {{- include "modelship.rayStartParams" (dict "root" $ "isHead" true "params" .Values.head.rayStartParams) | nindent 6 }}
+    rayStartParams: {}
     template:
       metadata:
         labels:
@@ -48,31 +50,48 @@ spec:
         imagePullSecrets:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-        # KubeRay treats containers[0] as the Ray container (injects `ray start`).
+        # KubeRay treats containers[0] as the Ray container.
         containers:
           - name: ray-head
             image: {{ include "modelship.image" . }}
             imagePullPolicy: {{ .Values.image.pullPolicy }}
-            # KubeRay manages gcs/client internally, but the RayJob controller
-            # reads the dashboard port from this named `dashboard` containerPort to
-            # build the job-submission URL — so it MUST be declared (8265 = Ray's
-            # default; change it together with rayStartParams.dashboard-port).
+            # RAY_PORT is KubeRay's GCS port (6379); its RayJob submitter reaches the
+            # dashboard through the head Service.
+            args:
+              - start
+              - --ray-port
+              - "$(RAY_PORT)"
+              - --ray-dashboard-host
+              - "0.0.0.0"
+              - --gateway-name
+              - {{ .Values.gateway.name | quote }}
+              - --gateway-replicas
+              - {{ .Values.gateway.replicas | quote }}
+              - --openai-api-port
+              - {{ .Values.gateway.port | quote }}
+              {{- if .Values.metrics.enabled }}
+              - --metrics-port
+              - {{ .Values.metrics.port | quote }}
+              {{- else }}
+              - --no-metrics
+              {{- end }}
+            # The RayJob controller builds the job-submission URL from the named
+            # `dashboard` port (8265, mship start's default).
             ports:
               - { name: dashboard, containerPort: 8265 }
               - { name: serve, containerPort: {{ .Values.gateway.port }} }
               - { name: metrics, containerPort: {{ .Values.metrics.port }} }
             env:
               {{- include "modelship.env" . | nindent 14 }}
+              {{- with .Values.head.env }}
+              {{- toYaml . | nindent 14 }}
+              {{- end }}
             envFrom:
               {{- include "modelship.envFrom" . | nindent 14 }}
             resources:
               {{- toYaml .Values.head.resources | nindent 14 }}
             volumeMounts:
               {{- include "modelship.volumeMounts" . | nindent 14 }}
-            lifecycle:
-              preStop:
-                exec:
-                  command: ["/bin/sh", "-c", "ray stop"]
         volumes:
           {{- include "modelship.volumes" . | nindent 10 }}
         {{- with .Values.head.nodeSelector }}
@@ -95,9 +114,7 @@ spec:
       minReplicas: {{ .minReplicas }}
       maxReplicas: {{ .maxReplicas }}
       {{- $img := .image | default dict }}
-      {{- $variant := $img.variant | default $.Values.image.variant | default "cuda" }}
-      rayStartParams:
-        {{- include "modelship.rayStartParams" (dict "root" $ "isHead" false "params" .rayStartParams "variant" $variant) | nindent 8 }}
+      rayStartParams: {}
       template:
         metadata:
           labels:
@@ -123,12 +140,20 @@ spec:
           # (repository/tag/variant/pullPolicy); any field left unset falls back to
           # the cluster-wide `image`. Lets a lean CPU image run cluster-wide while
           # the GPU group pulls the full CUDA image — set `variant: cuda` on that
-          # group (both built at the same Ray version). $img/$variant are defined
-          # above, alongside rayStartParams.
+          # group (both built at the same Ray version). $img is defined above.
           containers:
             - name: ray-worker
               image: {{ printf "%s:%s" ($img.repository | default $.Values.image.repository) (include "modelship.imageTag" (dict "root" $ "tag" $img.tag "variant" $img.variant)) }}
               imagePullPolicy: {{ $img.pullPolicy | default $.Values.image.pullPolicy }}
+              # RAY_ADDRESS is KubeRay's head Service address and GCS port.
+              args:
+                - join
+                - --cluster
+                - "$(RAY_ADDRESS)"
+                {{- if $.Values.metrics.enabled }}
+                - --metrics-port
+                - {{ $.Values.metrics.port | quote }}
+                {{- end }}
               # `serve` is the node's Ray Serve HTTP proxy port, targeted by the gateway
               # Service. Serve runs a proxy only on nodes hosting at least one replica.
               ports:
@@ -136,16 +161,16 @@ spec:
                 - { name: metrics, containerPort: {{ $.Values.metrics.port }} }
               env:
                 {{- include "modelship.env" $ | nindent 16 }}
+                {{- include "modelship.nodeResourceEnv" (dict "resources" .resources "env" .env "container" "ray-worker") | nindent 16 }}
+                {{- with .env }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
               envFrom:
                 {{- include "modelship.envFrom" $ | nindent 16 }}
               resources:
                 {{- toYaml .resources | nindent 16 }}
               volumeMounts:
                 {{- include "modelship.volumeMounts" $ | nindent 16 }}
-              lifecycle:
-                preStop:
-                  exec:
-                    command: ["/bin/sh", "-c", "ray stop"]
           volumes:
             {{- include "modelship.volumes" $ | nindent 12 }}
           {{- with .nodeSelector }}

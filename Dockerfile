@@ -74,7 +74,7 @@ ENV MSHIP_METRICS=true
 ENV MSHIP_LOG_LEVEL=INFO
 ENV MSHIP_LOG_FORMAT=text
 
-# On PATH, not just in the entrypoint: KubeRay injects its own `ray start`.
+# On PATH, not just in the entrypoint: KubeRay runs `ray` itself (init container, job submitter).
 ENV PATH="${MSHIP_HOME}/envs/${MSHIP_VARIANT}/.venv/bin:${UV_TOOL_BIN_DIR}:$PATH"
 
 RUN mkdir -p /.cache /opt/mship/node-cache /opt/uv && \

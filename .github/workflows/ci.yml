@@ -20,9 +20,8 @@ jobs:
             chart:
               - 'helm/**'
               - '.github/workflows/ci.yml'
-              - 'modelship/deploy/capabilities.py'
-              - 'scripts/check_chart_capability_parity.py'
               - 'scripts/check_chart_entrypoint.py'
+              - 'scripts/check_chart_nodes.py'
 
   lint:
     runs-on: ubuntu-latest
@@ -150,33 +149,17 @@ jobs:
       - name: Head and RayJob submitter default to the thin image
         run: |
           # The head/submitter never schedule models, so both must stay on the bare
-          # (thin) tag regardless of the cluster-wide image.variant — and the head's
-          # rayStartParams must pin num-cpus/num-gpus to 0 (KubeRay starts the raylet,
-          # so thin's baked MSHIP_NODE_NUM_CPUS/GPUS=0 env doesn't apply on k8s).
+          # (thin) tag regardless of the cluster-wide image.variant.
           rendered=$(helm template modelship helm/modelship --set redis.address=cache:6379 --set image.variant=cpu)
           echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:[0-9]+\.[0-9]+\.[0-9]+$'
           ! echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:[^ ]*-(cpu|cuda)$'
-          echo "$rendered" | grep -q 'num-cpus: "0"'
-          echo "$rendered" | grep -q 'num-gpus: "0"'
 
-      - name: Worker resources rayStartParam matches its image variant
-        run: |
-          # cpu omits mship_diffusers (not in the cpu extra — see pyproject.toml's
-          # [tool.uv] conflicts).
-          common="--set redis.address=cache:6379 --set workerGroups[0].name=w --set workerGroups[0].replicas=1 --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1"
-          cuda=$(helm template modelship helm/modelship $common --set workerGroups[0].image.variant=cuda)
-          echo "$cuda" | grep -q 'resources:.*mship_diffusers'
-          echo "$cuda" | grep -q 'resources:.*mship_vllm'
-          cpu=$(helm template modelship helm/modelship $common --set workerGroups[0].image.variant=cpu)
-          ! echo "$cpu" | grep -q 'resources:.*mship_diffusers'
-          echo "$cpu" | grep -q 'resources:.*mship_vllm'
-
-      - name: Install uv (for the capability-parity check)
+      - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Chart/Python capability-resource parity
+      - name: Ray nodes run mship start and join
         run: |
-          uv run --with pyyaml python scripts/check_chart_capability_parity.py
+          uv run --no-project --with pyyaml python scripts/check_chart_nodes.py
 
       - name: RayJob entrypoint delivers models.yaml intact
         run: |

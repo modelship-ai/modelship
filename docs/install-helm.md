@@ -1,9 +1,9 @@
 # Helm / Kubernetes install
 
-The chart brings up a **RayCluster** (one CPU-only head plus worker groups) and a
-**RayJob** that runs `mship deploy` **on** the cluster — KubeRay's supported way to
-run a driver against a RayCluster — deploying the models declared in your
-`models.yaml`.
+The chart brings up a **RayCluster** whose head runs `mship start` and whose
+worker groups run `mship join`, and a **RayJob** that runs `mship deploy` **on**
+the cluster — KubeRay's supported way to run a driver against a RayCluster —
+deploying the models declared in your `models.yaml`.
 
 The [chart README](https://github.com/modelship-ai/modelship/tree/main/helm/modelship)
 is the full values reference; this page covers getting one installed.

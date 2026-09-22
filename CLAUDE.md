@@ -37,9 +37,11 @@ When running tests on your own initiative, skip the slow integration suite: `uv 
 
 Three engine commands, split by lifetime (`modelship/launcher.py` → `modelship/driver.py`); `python -m modelship.launcher <command>` runs them from source:
 
-- `mship start` — creates this machine's Ray head (`ray.init(address="local")`), brings up Serve and the gateway, deploys any `--config`/`--model`, stays running, and tears the cluster down on exit. Refuses when any Ray node already runs on the machine — detected by a raylet scan (`local_ray_clusters()` in `serve_utils.py`), never Ray's discovery marker, which outlives its node.
+- `mship start` — creates this machine's Ray head (`ray.init(address="local")`), brings up Serve and the gateway, deploys any `--config`/`--model`, stays running, and tears the cluster down on exit (with a Redis-backed GCS, `RAY_REDIS_ADDRESS`, it keeps the Serve apps for the next head instead). Refuses when any Ray node already runs on the machine — detected by a raylet scan (`local_ray_clusters()` in `serve_utils.py`), never Ray's discovery marker, which outlives its node.
 - `mship join --cluster HOST:PORT` — starts this machine's Ray node as a worker (in-process `Node(head=False)`), stays running, leaves on exit. Node only: no driver, no model changes.
 - `mship deploy` — attaches to the cluster of a node on this machine (`ray.init(address="auto")`), changes its models, and exits (non-zero on fatal failures); errors when no Ray node runs here. It creates a gateway only for an explicit `--gateway-name` that doesn't exist yet. k8s runs it on the head via a KubeRay RayJob.
+
+On k8s the chart runs the same commands: KubeRay's `ray.io/overwrite-container-cmd` annotation keeps the head's `mship start` and the workers' `mship join` args instead of generating `ray start`.
 
 Flags belong to specific commands (`modelship/utils/cli.py`; the table is in `docs/model-configuration.md`). `start` and `deploy` share the model handling:
 
