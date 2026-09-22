@@ -170,24 +170,21 @@ jobs:
         with:
           cluster_name: modelship-ci
 
-      - name: Server dry-run against real KubeRay CRDs
+      - name: Server-side dry-run apply against real KubeRay CRDs
         run: |
-          # Install the operator so the RayCluster/RayJob CRDs exist, then server-side
-          # dry-run the chart: the API server validates the CRs (incl.
-          # gcsFaultToleranceOptions and authOptions) against the real CRD schemas.
-          # Head-only (no workers/cache) so nothing needs GPUs or PVCs.
+          # The API server validates every rendered object, hooks included, against the
+          # operator's CRDs and persists nothing. Head-only: nothing needs GPUs or PVCs.
           # The locked dependency (Chart.lock), not the repo's latest: the CRDs must be
           # the version the chart declares. Already fetched by the lint step; a no-op here.
           helm dependency build helm/modelship
           helm install kuberay-operator helm/modelship/charts/kuberay-operator-*.tgz --wait --timeout 5m
           for args in "" "--set redis.password=pw" "--set rayAuth.enabled=true --set rayAuth.token=t"; do
             echo "== dry-run ${args:-defaults} =="
-            helm install modelship helm/modelship \
+            helm template modelship helm/modelship \
               --set kuberay-operator.enabled=false \
               --set cache.enabled=false \
               --set redis.address=cache:6379 \
-              $args \
-              --dry-run=server
+              $args | kubectl apply --server-side --dry-run=server -f -
           done
 
       - name: Server-side upgrade has no field conflicts
