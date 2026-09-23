@@ -10,12 +10,8 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
-  # Load-balance across every Ray pod (head + workers), each running a Serve HTTP
-  # proxy (proxy_location=EveryNode) — so ingress survives losing any single pod,
-  # the head included. KubeRay stamps `ray.io/cluster` on every node pod; because
-  # each Ray container declares a port named `serve`, KubeRay gates the pod's
-  # readiness on a proxy /-/healthz check, so the Service only routes to a pod once
-  # its proxy is up (and, via the gateway /readyz, once models are loaded).
+  # Routes to the `serve` port of every Ray pod (head + workers; KubeRay stamps
+  # `ray.io/cluster` on each). Serve runs a proxy only on nodes hosting a replica.
   selector:
     ray.io/cluster: {{ include "modelship.fullname" . }}
   ports:

@@ -41,8 +41,7 @@ def run(command: str, argv: list[str] | None = None) -> None:
 
 
 def _start(args) -> None:
-    from modelship.deploy.removal import delete_apps_quietly
-    from modelship.deploy.serve_utils import local_ray_clusters, shutdown_ray, start_gateway, start_head, start_serve
+    from modelship.deploy.serve_utils import local_ray_clusters, start_gateway, start_head, start_serve
     from modelship.state import reject_inline_password
 
     gateway_name, route_prefix, _ = _gateway_from_env()
@@ -58,9 +57,8 @@ def _start(args) -> None:
     deployed_this_run: dict[str, str] = {}
 
     def _cleanup(sig, _frame) -> None:
-        logger.info("Shutting down (signal %s), cleaning up deployments from this run...", sig)
-        delete_apps_quietly(reversed(deployed_this_run))
-        shutdown_ray()
+        logger.info("Shutting down (signal %s)...", sig)
+        _stop_head(deployed_this_run)
         sys.exit(0)
 
     # Before start_head, which spawns processes a signal must still clean up.
@@ -80,13 +78,27 @@ def _start(args) -> None:
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
-        logger.exception("Startup failed, cleaning up deployments from this run...")
-        delete_apps_quietly(reversed(deployed_this_run))
-        shutdown_ray()
+        logger.exception("Startup failed, shutting down...")
+        _stop_head(deployed_this_run)
         raise
 
-    # Resident even on fatal failures; _cleanup deletes deployments before stopping Ray.
+    # Resident even on fatal failures; a signal stops the head via _cleanup.
     signal.pause()
+
+
+def _stop_head(deployed_this_run: dict[str, str]) -> None:
+    """Delete this run's deployments, then stop Serve and Ray. With a Redis-backed GCS
+    every app stays, for the next head to restore."""
+    from modelship.deploy.removal import delete_apps_quietly
+    from modelship.deploy.serve_utils import shutdown_ray
+
+    if os.environ.get("RAY_REDIS_ADDRESS"):
+        logger.info("GCS is stored in Redis; leaving the Serve apps for the next head.")
+        shutdown_ray(keep_serve=True)
+        return
+    logger.info("Cleaning up deployments from this run...")
+    delete_apps_quietly(reversed(deployed_this_run))
+    shutdown_ray()
 
 
 def _join() -> None:
@@ -267,21 +279,23 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
         remove_apps(apps_to_remove, replica_coord, gateway_name)
         apps_to_remove = []
 
-    # Driver-owned: Ray releases the coordinator lock if this process dies.
-    operator_id = make_operator_id()
-    probe = create_operator_probe()
-    logger.info("Operator id=%s; coordinator acquired.", operator_id)
+    pass_count, fatally_failed = 0, []
+    if plan.models_to_add:
+        # Driver-owned: Ray releases the coordinator lock if this process dies.
+        operator_id = make_operator_id()
+        probe = create_operator_probe()
+        logger.info("Operator id=%s; coordinator acquired.", operator_id)
 
-    ctx = DeployContext(
-        coordinator=coordinator,
-        replica_coordinator=replica_coord,
-        probe=probe,
-        operator_id=operator_id,
-        gateway_name=gateway_name,
-        serve_logging_config=serve_logging_config,
-        deployed_this_run=deployed_this_run,
-    )
-    pass_count, fatally_failed = run_deploy_loop(plan.models_to_add, ctx)
+        ctx = DeployContext(
+            coordinator=coordinator,
+            replica_coordinator=replica_coord,
+            probe=probe,
+            operator_id=operator_id,
+            gateway_name=gateway_name,
+            serve_logging_config=serve_logging_config,
+            deployed_this_run=deployed_this_run,
+        )
+        pass_count, fatally_failed = run_deploy_loop(plan.models_to_add, ctx)
 
     logger.info(
         "Deploy complete. %d new deployment(s) from this run (over %d pass(es)).",

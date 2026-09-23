@@ -1,6 +1,7 @@
 # Default values for the modelship chart.
-# Topology: a KubeRay RayCluster (head + worker groups) plus a RayJob that submits
-# `mship deploy` to run on the head and deploy the models in models.yaml.
+# Topology: a KubeRay RayCluster whose head runs `mship start` and whose workers run
+# `mship join`, plus a RayJob that runs `mship deploy` on the head to deploy the
+# models in models.yaml.
 
 # -- Container image. Used by every worker pod; the Ray head and the RayJob
 # submitter instead default to the `thin` variant regardless of this (see
@@ -37,11 +38,11 @@ kuberay-operator:
 gateway:
   name: "modelship"
   port: 8000
-  # Number of gateway replicas (maps to `mship deploy` --gateway-replicas /
-  # MSHIP_GATEWAY_REPLICAS).
+  # Number of gateway replicas (`mship start --gateway-replicas`).
   replicas: 1
 
-# -- Metrics exporter (Ray + modelship Prometheus metrics).
+# -- Metrics exporter (Ray + modelship Prometheus metrics), pinned to `port` on
+# every Ray pod.
 metrics:
   enabled: true
   port: 8079
@@ -57,16 +58,14 @@ redis:
   password: ""
   existingSecret: ""
   passwordKey: "REDIS_PASSWORD"
-  # GCS external-storage namespace — pinned so a recreated cluster (same release)
-  # recovers its state. Defaults to the release fullname.
+  # Namespace for this release's keys in Redis, Ray's GCS and modelship's state alike —
+  # pinned so a recreated cluster (same release) recovers its state. Letters, digits,
+  # '.', '_' or '-'. Defaults to the release fullname.
   externalStorageNamespace: ""
 
-# -- models.yaml. Either render the inline `config` into a ConfigMap, or point
-# at an existing ConfigMap (key: models.yaml) you manage yourself.
+# -- models.yaml, carried inside the deploy RayJob. Replace with your real model
+# set; see config/examples/ in the repo.
 models:
-  existingConfigMap: ""
-  # Inline models.yaml (ignored when existingConfigMap is set). Replace with your
-  # real model set; see config/examples/ in the repo.
   config: |
     models: []
 
@@ -79,27 +78,20 @@ secrets:
   # Comma-separated keys; when non-empty the gateway requires Authorization.
   apiKeys: ""
 
-# -- Ray cluster authentication (RAY_AUTH_MODE=token). Off by default — the same
-# insecure-by-default posture Ray itself ships with, and consistent with a
-# single-node deploy. When enabled, the head, every worker group, AND the RayJob
-# submitter all get RAY_AUTH_MODE=token plus the SAME RAY_AUTH_TOKEN — they must
-# agree, or cluster-internal RPC (head<->worker) and job submission
-# (`ray job submit`, which is how the RayJob deploys models.yaml) fail. Never
-# gates the OpenAI API (gateway.port) or Prometheus metrics (metrics.port).
+# -- Ray cluster authentication (RAY_AUTH_MODE=token). Off by default, as in Ray
+# itself. Sets the RayCluster's `authOptions` (KubeRay 1.6+): KubeRay injects the
+# token into the head, every worker group and the RayJob submitter, and uses it
+# for its own job-status calls. Never gates the OpenAI API (gateway.port) or
+# Prometheus metrics (metrics.port).
 #
-# Unlike modelship's own-head Docker path (where Ray generates and owns the
-# token at ~/.ray/auth_token — there's no "before the head exists" moment there),
-# the chart has no such moment either way: YOU supply the token. Any string
-# works — Ray's own check is a shared-secret equality comparison, not an issued
-# credential (see docs/multi-node-docker.md) — e.g. `ray get-auth-token
-# --generate` run anywhere, or `openssl rand -hex 32`.
+# You supply the token. Any string works (Ray compares a shared secret), e.g.
+# `openssl rand -hex 32`.
 rayAuth:
   enabled: false
-  # Inline token, rendered into the chart's own Secret alongside HF_TOKEN/MSHIP_API_KEYS.
+  # Inline token, rendered into a Secret the chart creates.
   token: ""
-  # Reference an existing Secret you manage instead (key: tokenKey below).
+  # Or an existing Secret you manage, holding the token under key `auth_token`.
   existingSecret: ""
-  tokenKey: "RAY_AUTH_TOKEN"
 
 # -- Shared model-weight cache. vLLM/diffusers download weights here.
 # Multi-node clusters REQUIRE ReadWriteMany so every worker shares one copy;
@@ -131,18 +123,16 @@ podSecurityContext:
   runAsGroup: 1000
   fsGroup: 1000
 
-# -- Ray head: CPU-only coordination node. No models are scheduled here
-# (num-gpus=0, num-cpus=0) so no capacity is ever wasted on the GCS/dashboard/proxy.
+# -- Ray head: coordination node. The thin image advertises no CPUs or GPUs, so no
+# model is scheduled here.
 head:
   image:
     # Overrides the head's image variant, which otherwise always defaults to
     # `thin` (no torch/vllm) regardless of the top-level image.variant — set this
     # only if you genuinely want model capacity on the head (rare).
     variant: ""
-  # Overrides only — the chart already pins num-gpus=0, num-cpus=0,
-  # dashboard-host=0.0.0.0, and metrics-export-port (=metrics.port) on the head.
-  # Add extra ray start flags here.
-  rayStartParams: {}
+  # Extra env for the head's `mship start` (e.g. MSHIP_LOG_LEVEL).
+  env: []
   resources:
     requests:
       cpu: "2"
@@ -173,7 +163,10 @@ workerGroups: []
   #   replicas: 1
   #   minReplicas: 1
   #   maxReplicas: 1
-  #   rayStartParams: {}
+  #   # Extra env for this group's `mship join`. Its node sizing comes from the
+  #   # `resources` limits, else requests (MSHIP_NODE_NUM_CPUS, MSHIP_NODE_MEMORY),
+  #   # unless set here.
+  #   env: []
   #   resources:
   #     requests:
   #       cpu: "4"
@@ -194,8 +187,6 @@ workerGroups: []
   #   replicas: 1
   #   minReplicas: 1
   #   maxReplicas: 1
-  #   rayStartParams:
-  #     num-gpus: "0"
   #   resources:
   #     requests:
   #       cpu: "4"
@@ -223,6 +214,7 @@ deploy:
   extraArgs: []
   # Clean up the finished RayJob automatically after N seconds (null = keep).
   ttlSecondsAfterFinished: null
+  # For the RayJob's submitter pod and the uninstall Job.
   resources:
     requests:
       cpu: "500m"
@@ -232,8 +224,8 @@ deploy:
       memory: 2Gi
 
 # -- Gateway Service. ClusterIP by default; switch to LoadBalancer/NodePort to
-# expose the OpenAI API outside the cluster. Load-balances across the Serve HTTP
-# proxy on every Ray node (head + workers), gated per-pod by proxy health.
+# expose the OpenAI API outside the cluster. Load-balances across the `serve` port
+# of every Ray pod; Serve runs a proxy only on nodes hosting a replica.
 service:
   type: ClusterIP
   annotations: {}
@@ -241,6 +233,7 @@ service:
 # -- Prometheus Operator PodMonitor for the metrics port (optional). A PodMonitor
 # (not ServiceMonitor) because every Ray pod — head and workers — exports on the
 # metrics port, so scraping is per-pod by label rather than via one Service.
+# Needs metrics.enabled.
 podMonitor:
   enabled: false
   interval: 30s

@@ -17,8 +17,7 @@ _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
 def _fake_redis_store():
     fakeredis = pytest.importorskip("fakeredis")
     server = fakeredis.FakeServer()
-    s = RedisStateStore.__new__(RedisStateStore)
-    s._url = "redis://fake"
+    s = RedisStateStore("redis://fake")
     s._sync_client = fakeredis.FakeRedis(server=server, decode_responses=True)
     s._async_client = fakeredis.FakeAsyncRedis(server=server, decode_responses=True)
     return s

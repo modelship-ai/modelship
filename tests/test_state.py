@@ -21,13 +21,12 @@ from modelship.state.redis import RedisStateStore
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
 
 
-def _fake_redis_store():
+def _fake_redis_store(namespace=None, server=None):
     """A RedisStateStore whose sync + async clients share one fakeredis server, so
     a value written via one path is visible from the other."""
     fakeredis = pytest.importorskip("fakeredis")
-    server = fakeredis.FakeServer()
-    s = RedisStateStore.__new__(RedisStateStore)
-    s._url = "redis://fake"
+    server = server or fakeredis.FakeServer()
+    s = RedisStateStore("redis://fake", namespace=namespace)
     s._sync_client = fakeredis.FakeRedis(server=server, decode_responses=True)
     s._async_client = fakeredis.FakeAsyncRedis(server=server, decode_responses=True)
     return s
@@ -306,12 +305,33 @@ class TestRedisStateStore:
             def get(self, *a, **k):
                 raise RedisConnectionError("down")
 
-        store = RedisStateStore.__new__(RedisStateStore)
-        store._url = "redis://fake"
+        store = RedisStateStore("redis://fake")
         store._sync_client = Boom()
-        store._async_client = None
         with pytest.raises(StateStoreUnavailableError):
             store.get("k")
+
+    @pytest.mark.asyncio
+    async def test_namespace_prefixes_every_key(self):
+        store = _fake_redis_store(namespace="rel-a")
+        store.set("cfg/x", 1)
+        await store.append_async("log/a", {"sequence_number": 0})
+        assert sorted(store._sync_client.keys()) == ["modelship/state/rel-a/cfg/x", "modelship/state/rel-a/log/a"]
+        assert sorted(store.list("")) == ["cfg/x", "log/a"]
+        assert await store.list_async("cfg") == ["cfg/x"]
+
+    def test_namespaces_are_isolated(self):
+        fakeredis = pytest.importorskip("fakeredis")
+        server = fakeredis.FakeServer()
+        a = _fake_redis_store(namespace="a", server=server)
+        b = _fake_redis_store(namespace="b", server=server)
+        a.set("k", "from a")
+        assert b.get("k") is None
+        assert b.list("") == []
+
+    @pytest.mark.parametrize("namespace", ["", "a/b", "rel*", "x y"])
+    def test_rejects_bad_namespace(self, namespace):
+        with pytest.raises(ValueError, match="namespace"):
+            RedisStateStore("redis://fake", namespace=namespace)
 
 
 class TestStateStoreFromUri:
@@ -338,6 +358,22 @@ class TestStateStoreFromUri:
     def test_redis_scheme_builds_redis_store(self):
         # Construction is inert (clients are lazy) — no server contacted.
         assert isinstance(state_store_from_uri("redis://cache:6379/0").inner, RedisStateStore)
+
+    def test_redis_namespace_is_taken_out_of_the_url(self):
+        inner = state_store_from_uri("redis://cache:6379/0?namespace=rel-a&socket_timeout=5").inner
+        assert inner.namespace == "rel-a"
+        assert inner._url == "redis://cache:6379/0?socket_timeout=5"
+
+    def test_redis_without_namespace(self):
+        assert state_store_from_uri("redis://cache:6379/0").inner.namespace is None
+
+    def test_redis_namespace_set_twice_raises(self):
+        with pytest.raises(ValueError, match="more than once"):
+            state_store_from_uri("redis://cache:6379/0?namespace=a&namespace=b")
+
+    def test_redis_empty_namespace_raises(self):
+        with pytest.raises(ValueError, match="namespace"):
+            state_store_from_uri("redis://cache:6379/0?namespace=")
 
     def test_unknown_scheme_raises(self):
         with pytest.raises(ValueError, match="unknown state-store scheme"):

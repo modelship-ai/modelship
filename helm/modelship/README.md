@@ -3,8 +3,9 @@
 Deploy [modelship](https://github.com/modelship-ai/modelship) — an OpenAI-compatible,
 multi-model inference server — on Kubernetes via [KubeRay](https://github.com/ray-project/kuberay).
 
-The chart brings up a **RayCluster** (one CPU-only head + worker groups) and a
-**RayJob** that runs `mship deploy` **on** the cluster (KubeRay's
+The chart brings up a **RayCluster** whose head runs `mship start` and whose
+worker groups run `mship join` — the same commands as a Docker or native install —
+and a **RayJob** that runs `mship deploy` **on** the cluster (KubeRay's
 supported way to run a driver against a RayCluster) and deploy the models
 declared in your `models.yaml`. Re-running (`helm upgrade`) re-applies the config
 additively, or reconciles it when `deploy.reconcile=true`.
@@ -18,22 +19,34 @@ reconciles the live cluster back to the recorded set.
 
 - A Kubernetes cluster (a local [kind](https://kind.sigs.k8s.io/) cluster works
   for the CPU image; GPU models need real GPU nodes with the NVIDIA device plugin).
-- **The KubeRay operator + CRDs.** This is a cluster-scoped, install-once
-  dependency. Either install it yourself:
+- **The KubeRay operator + CRDs, 1.6 or newer** (tested on 1.7.1). This is a
+  cluster-scoped, install-once dependency. Either install it yourself:
 
   ```bash
   helm repo add kuberay https://ray-project.github.io/kuberay-helm/
-  helm install kuberay-operator kuberay/kuberay-operator
+  helm install kuberay-operator kuberay/kuberay-operator --version 1.7.1
   ```
 
   …or, on a single-tenant cluster, let this chart bootstrap it:
   `--set kuberay-operator.enabled=true`.
+
+  To upgrade an existing operator, apply the new CRDs first; `helm upgrade`
+  never updates them:
+
+  ```bash
+  helm pull kuberay/kuberay-operator --version 1.7.1 --untar
+  kubectl apply --server-side --force-conflicts -f kuberay-operator/crds/
+  helm upgrade kuberay-operator kuberay/kuberay-operator --version 1.7.1
+  ```
 - For GPU models: a node pool with `nvidia.com/gpu` resources.
+- Helm 3 or 4.
 
 ## Install
 
 ```bash
-# From the repo (path install):
+# From the repo (path install; fetch the vendored operator subchart first):
+helm repo add kuberay https://ray-project.github.io/kuberay-helm/
+helm dependency build ./helm/modelship
 helm install mship ./helm/modelship -f my-values.yaml
 
 # From GHCR (OCI). Chart version is kept in lockstep with the app/image version
@@ -49,7 +62,8 @@ completion — watch `kubectl get rayjob` and the gateway `/readyz` for readines
 ## Configure your models
 
 Set `models.config` to your `models.yaml` contents (see `config/examples/` in the
-repo), or point at a ConfigMap you manage with `models.existingConfigMap`.
+repo). The deploy RayJob carries its own copy, so each `helm upgrade` applies
+exactly the config it was given.
 
 ```yaml
 models:
@@ -74,11 +88,13 @@ secrets:
 
 ## Topology
 
-- **Head** — coordination-only (`num-gpus: 0`, `num-cpus: 0`); runs GCS and the
-  gateway. Always runs the `thin` image (no torch/vllm) regardless of the
-  cluster-wide `image.variant`, so no model can schedule there even if it only
-  asks for CPU — override with `head.image.variant` if you genuinely want
+- **Head** — coordination-only; runs `mship start`, which brings up GCS, Serve
+  and the gateway. Always runs the `thin` image (no torch/vllm, and it advertises
+  no CPUs or GPUs) regardless of the cluster-wide `image.variant`, so no model can
+  schedule there — override with `head.image.variant` if you genuinely want
   capacity on the head. The RayJob submitter pod uses the same (thin) image.
+  KubeRay's `ray.io/overwrite-container-cmd` annotation keeps these commands
+  instead of generating `ray start`.
 - **Serve HTTP proxies** — one runs on **every** Ray node (`proxy_location=EveryNode`),
   not just the head, and the gateway Service load-balances across all of them so
   ingress survives losing any single pod. Each proxy can route to any gateway
@@ -90,7 +106,14 @@ secrets:
   groups that match your hardware under `workerGroups` (a commented cuda+cpu
   example ships in `values.yaml`). This is a **list — Helm replaces it wholesale**
   (no per-item merge), so always declare the full set you want; omitting the key
-  keeps the empty default.
+  keeps the empty default. Each worker runs `mship join`, which detects the
+  loaders its image can run. Its CPU count and memory budget come from the group's
+  limits, else its requests; set `MSHIP_NODE_*` in the group's `env` to override.
+  With neither, the worker counts the host's free memory as its own.
+  KubeRay never deletes the pods of a group removed from the list, renamed ones
+  included ([kuberay#1739](https://github.com/ray-project/kuberay/issues/1739)): scale
+  the group to 0 (`replicas`, `minReplicas`, `maxReplicas`) in one upgrade, then
+  remove it in the next.
 - **Cache** — a shared PVC for model weights at `/.cache`. Single-node clusters
   can use `ReadWriteOnce`; **multi-node requires `ReadWriteMany`** so every worker
   shares one copy.
@@ -101,8 +124,8 @@ secrets:
 
 ## Reaching the gateway
 
-The gateway Service load-balances across the Serve proxy on every Ray node, gated
-per-pod by proxy health (a pod only joins once its proxy is up). Check `/readyz`
+The gateway Service load-balances across the `serve` port of every Ray pod. Serve
+runs a proxy only on nodes hosting at least one replica. Check `/readyz`
 for app-level readiness — it returns 503 until all models are loaded (use it for
 an external LB/Ingress health check). Port-forward for local access, or set
 `service.type=LoadBalancer`:
@@ -147,9 +170,11 @@ One Redis backs three things at once:
 | full cluster loss, Redis kept | Serve + coordinator restore from Redis; conversations intact |
 | full cluster loss, Redis also gone | `helm upgrade` |
 
-`externalStorageNamespace` is pinned to the release name so a recreated cluster
-recovers; the password is injected via the Secret and expanded into the URI at
-runtime, never landing in the pod manifest or argv.
+`redis.externalStorageNamespace` (default: the release name) namespaces Ray's keys and
+modelship's (`modelship/state/<namespace>/`), so a recreated cluster recovers and
+releases can share a Redis db. Same-named releases in two k8s namespaces need
+distinct values. The password comes from the Secret and never lands in the pod manifest;
+Ray itself passes it on the command line of the head's `gcs_server` and `raylet`.
 
 > Before v0.7.0 `redis.enabled=false` fell back to a `file://` state store on the
 > cache PVC. That backend is gone — see the main
@@ -157,20 +182,51 @@ runtime, never landing in the pod manifest or argv.
 > Outside k8s the default is `memory://`, which is cluster-scoped but dies with the
 > cluster.
 
+## Uninstall
+
+```bash
+helm uninstall modelship
+```
+
+Uninstall first runs a Job (a pre-delete hook) that:
+1. deletes the deploy RayJob and the RayCluster;
+2. waits up to 3 minutes for the RayCluster to go, while KubeRay deletes Ray's keys
+   from Redis;
+3. deletes modelship's keys (`modelship/state/<namespace>/*`: effective config, routing
+   registry, `/v1/responses` conversations).
+
+Nothing of the release stays in Redis; back it up first to keep conversations. If the
+Job fails, Helm stops the uninstall there, and `kubectl logs job/modelship-uninstall`
+says why. `helm uninstall --no-hooks` skips it: the RayJob and modelship's keys stay,
+and with a chart-created Secret KubeRay's cleanup can't start, so the RayCluster takes
+5 minutes to go and leaves Ray's keys.
+
+The RayCluster carries KubeRay's Redis cleanup finalizer from creation. An operator
+run with `ENABLE_GCS_FT_REDIS_CLEANUP=false` never removes it: the Job waits its 3
+minutes, and the cluster stays up after uninstall until you run
+
+```bash
+kubectl patch raycluster modelship --type=merge -p '{"metadata":{"finalizers":null}}'
+```
+
+Ray's keys then stay in Redis, and a reinstall under the same
+`redis.externalStorageNamespace` starts from the old cluster's state. Delete
+`RAY<namespace>@*` too for a clean start.
+
 ## Ray cluster authentication (optional)
 
 Off by default — the same posture as a single-node deploy, and consistent with
 Ray's own insecure-by-default stance (see the ShadowRay/CVE-2023-48022
 background in the main [multi-node docs](../../docs/multi-node-docker.md)).
-Enable it and every Ray pod — the head, every worker group, **and** the RayJob
-submitter (the pod that runs `ray job submit` to deploy your `models.yaml`) —
-gets `RAY_AUTH_MODE=token` plus the same `RAY_AUTH_TOKEN`. All three must agree:
-a mismatch breaks cluster-internal RPC or job submission, not just one of them.
+Enabling it sets the RayCluster's `authOptions`. KubeRay then gives the same
+token to the head, every worker group **and** the RayJob submitter (the pod that
+runs `ray job submit` to deploy your `models.yaml`), and uses it for its own
+job-status calls.
 
 ```yaml
 rayAuth:
   enabled: true
-  token: "s0me-long-random-string"   # or existingSecret + tokenKey
+  token: "s0me-long-random-string"   # or existingSecret, holding key auth_token
 ```
 
 Unlike `mship start` on Docker — where Ray generates and owns the
@@ -191,20 +247,21 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `image.variant` | `cuda` | `cuda`\|`cpu`\|`thin`. Worker default — appends `-cuda`/`-cpu` to the tag (`thin` is bare). Set `cpu` on CPU-only clusters, or per worker group for a mixed cluster. Does **not** affect the head (see below) |
 | `head.image.variant` | `thin` | The head/RayJob submitter always default to `thin` regardless of `image.variant` above — override only if you genuinely want model capacity on the head |
 | `rayVersion` | `2.54.1` | Must match the Ray in the image |
-| `models.config` / `models.existingConfigMap` | `models: []` | Your model set |
+| `models.config` | `models: []` | Your model set |
 | `gateway.replicas` | `1` | API gateway replicas; raise (with ≥1 worker) for routing/ingress HA |
 | `secrets.huggingfaceToken` / `secrets.apiKeys` | `""` | HF token / gateway API keys |
 | `cache.size` / `cache.accessModes` | `100Gi` / `[ReadWriteOnce]` | Shared weight cache |
 | `nodeCache.sizeLimit` | `""` (uncapped) | Per-pod compile-cache emptyDir; a pod over the cap is evicted |
 | `workerGroups` | `[]` | Worker pool layout (a list — set the full set; copy the example in `values.yaml`) |
+| `head.env` / `workerGroups[].env` | `[]` | Extra env for the head's `mship start` / a group's `mship join` (e.g. `MSHIP_NODE_NUM_GPUS`) |
 | `deploy.reconcile` | `false` | Remove dropped models on upgrade |
 | `deploy.replaceStrategy` | `blue_green` | How changed models are replaced |
 | `redis.address` | `""` | **Required.** `host:port` of your Redis — backs GCS-FT + the state store (see [Redis](#redis-required)) |
 | `redis.password` / `redis.existingSecret` | `""` | Redis password inline, or reference an existing Secret (`passwordKey`) |
-| `rayAuth.enabled` | `false` | Ray cluster authentication (`RAY_AUTH_MODE=token`) across head, workers, and the RayJob submitter (see [Ray cluster authentication](#ray-cluster-authentication-optional)) |
-| `rayAuth.token` / `rayAuth.existingSecret` | `""` | Auth token inline, or reference an existing Secret (`tokenKey`). Required when `rayAuth.enabled` |
+| `rayAuth.enabled` | `false` | Ray cluster authentication (`RAY_AUTH_MODE=token`) through KubeRay's `authOptions` (see [Ray cluster authentication](#ray-cluster-authentication-optional)) |
+| `rayAuth.token` / `rayAuth.existingSecret` | `""` | Auth token inline, or an existing Secret holding it under key `auth_token`. Required when `rayAuth.enabled` |
 | `service.type` | `ClusterIP` | Set `LoadBalancer` to expose externally |
-| `podMonitor.enabled` | `false` | Prometheus Operator scraping |
+| `podMonitor.enabled` | `false` | Prometheus Operator scraping; needs `metrics.enabled` |
 | `prometheusRule.enabled` | `false` | Ship the modelship alert rules as a PrometheusRule |
 | `grafanaDashboard.enabled` | `false` | Ship the Grafana dashboard as a sidecar-imported ConfigMap |
 | `kuberay-operator.enabled` | `false` | Bootstrap the operator as a subchart |

@@ -27,7 +27,8 @@ RUN apt-get update -y && \
         libc6-dev \
         libgomp1 \
         libnuma1 \
-        ninja-build && \
+        ninja-build \
+        tini && \
     rm -rf /var/lib/apt/lists/*
 
 # nvcc/cuobjdump stay in the runtime image because torch, triton and flashinfer
@@ -71,11 +72,10 @@ ENV MSHIP_CACHE_DIR=/.cache
 ENV MSHIP_NODE_CACHE_DIR=/opt/mship/node-cache
 ENV CUDA_DEVICE_ORDER=PCI_BUS_ID
 ENV MSHIP_METRICS=true
-ENV RAY_METRICS_EXPORT_PORT=8079
 ENV MSHIP_LOG_LEVEL=INFO
 ENV MSHIP_LOG_FORMAT=text
 
-# On PATH, not just in the entrypoint: KubeRay injects its own `ray start`.
+# On PATH, not just in the entrypoint: KubeRay runs `ray` itself (init container, job submitter).
 ENV PATH="${MSHIP_HOME}/envs/${MSHIP_VARIANT}/.venv/bin:${UV_TOOL_BIN_DIR}:$PATH"
 
 RUN mkdir -p /.cache /opt/mship/node-cache /opt/uv && \
@@ -206,5 +206,5 @@ ADD --chown=$UID:$GID ./config/examples config/examples
 USER root
 
 # Prepends the command, so `docker run <image> start --config …` reaches the
-# same CLI as a native install.
-ENTRYPOINT ["/modelship/scripts/entrypoint.sh", "mship"]
+# same CLI as a native install. tini is PID 1: it reaps orphaned processes, and forwards signals.
+ENTRYPOINT ["/usr/bin/tini", "--", "/modelship/scripts/entrypoint.sh", "mship"]

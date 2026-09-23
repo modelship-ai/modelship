@@ -20,8 +20,9 @@ jobs:
             chart:
               - 'helm/**'
               - '.github/workflows/ci.yml'
-              - 'modelship/deploy/capabilities.py'
-              - 'scripts/check_chart_capability_parity.py'
+              - 'scripts/check_chart_entrypoint.py'
+              - 'scripts/check_chart_nodes.py'
+              - 'scripts/check_chart_uninstall.py'
 
   lint:
     runs-on: ubuntu-latest
@@ -111,14 +112,12 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
-          version: v3.16.3
+          version: v4.3.0
 
       - name: Lint chart
         run: |
           helm repo add kuberay https://ray-project.github.io/kuberay-helm/
           helm dependency build helm/modelship
-          # helm 3.16 leaves only the .tgz in charts/; template/lint need the dir form.
-          ( cd helm/modelship/charts && for f in *.tgz; do tar xzf "$f"; done )
           helm lint helm/modelship
 
       - name: Validate rendered manifests (kubeconform)
@@ -133,6 +132,7 @@ jobs:
             "--set image.variant=cpu" \
             "--set redis.password=pw" \
             "--set podMonitor.enabled=true" \
+            "--set rayAuth.enabled=true --set rayAuth.token=t" \
             "--set workerGroups[0].name=cuda --set workerGroups[0].replicas=1 --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1"; do
             echo "== helm template $args =="
             helm template modelship helm/modelship --set redis.address=cache:6379 $args \
@@ -150,55 +150,60 @@ jobs:
       - name: Head and RayJob submitter default to the thin image
         run: |
           # The head/submitter never schedule models, so both must stay on the bare
-          # (thin) tag regardless of the cluster-wide image.variant — and the head's
-          # rayStartParams must pin num-cpus/num-gpus to 0 (KubeRay starts the raylet,
-          # so thin's baked MSHIP_NODE_NUM_CPUS/GPUS=0 env doesn't apply on k8s).
+          # (thin) tag regardless of the cluster-wide image.variant.
           rendered=$(helm template modelship helm/modelship --set redis.address=cache:6379 --set image.variant=cpu)
           echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:[0-9]+\.[0-9]+\.[0-9]+$'
           ! echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:[^ ]*-(cpu|cuda)$'
-          echo "$rendered" | grep -q 'num-cpus: "0"'
-          echo "$rendered" | grep -q 'num-gpus: "0"'
 
-      - name: Worker resources rayStartParam matches its image variant
-        run: |
-          # cpu omits mship_diffusers (not in the cpu extra — see pyproject.toml's
-          # [tool.uv] conflicts).
-          common="--set redis.address=cache:6379 --set workerGroups[0].name=w --set workerGroups[0].replicas=1 --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1"
-          cuda=$(helm template modelship helm/modelship $common --set workerGroups[0].image.variant=cuda)
-          echo "$cuda" | grep -q 'resources:.*mship_diffusers'
-          echo "$cuda" | grep -q 'resources:.*mship_vllm'
-          cpu=$(helm template modelship helm/modelship $common --set workerGroups[0].image.variant=cpu)
-          ! echo "$cpu" | grep -q 'resources:.*mship_diffusers'
-          echo "$cpu" | grep -q 'resources:.*mship_vllm'
-
-      - name: Install uv (for the capability-parity check)
+      - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Chart/Python capability-resource parity
+      - name: Ray nodes run mship start and join
         run: |
-          uv run --with pyyaml python scripts/check_chart_capability_parity.py
+          uv run --no-project --with pyyaml python scripts/check_chart_nodes.py
+
+      - name: RayJob entrypoint delivers models.yaml intact
+        run: |
+          uv run --no-project --with pyyaml python scripts/check_chart_entrypoint.py
+
+      - name: Uninstall hook deletes the cluster, then its state
+        run: |
+          uv run --no-project --with pyyaml python scripts/check_chart_uninstall.py
 
       - name: Create kind cluster
         uses: helm/kind-action@v1
         with:
           cluster_name: modelship-ci
 
-      - name: Server dry-run against real KubeRay CRDs
+      - name: Server-side dry-run apply against real KubeRay CRDs
         run: |
-          # Install the operator so the RayCluster/RayJob CRDs exist, then server-side
-          # dry-run the chart: the API server validates the CRs (incl.
-          # gcsFaultToleranceOptions) against the real CRD schemas. Head-only (no
-          # workers/cache) so nothing needs GPUs or PVCs.
+          # The API server validates every rendered object, hooks included, against the
+          # operator's CRDs and persists nothing. Head-only: nothing needs GPUs or PVCs.
           # The locked dependency (Chart.lock), not the repo's latest: the CRDs must be
           # the version the chart declares. Already fetched by the lint step; a no-op here.
           helm dependency build helm/modelship
           helm install kuberay-operator helm/modelship/charts/kuberay-operator-*.tgz --wait --timeout 5m
-          for pw in "" "--set redis.password=pw"; do
-            echo "== dry-run redis.password=${pw:-none} =="
-            helm install modelship helm/modelship \
+          for args in "" "--set redis.password=pw" "--set rayAuth.enabled=true --set rayAuth.token=t"; do
+            echo "== dry-run ${args:-defaults} =="
+            helm template modelship helm/modelship \
               --set kuberay-operator.enabled=false \
               --set cache.enabled=false \
               --set redis.address=cache:6379 \
-              $pw \
-              --dry-run=server
+              $args | kubectl apply --server-side --dry-run=server -f -
           done
+
+      - name: Server-side upgrade has no field conflicts
+        run: |
+          # Quantities KubeRay would store in another form (integer cpu, 1024Mi). No hooks, no
+          # image pulls: only the RayCluster must exist.
+          args=(--no-hooks --set kuberay-operator.enabled=false --set cache.enabled=false
+            --set redis.address=cache:6379 --set image.pullPolicy=Never
+            --set workerGroups[0].name=cpu --set workerGroups[0].replicas=1
+            --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1
+            --set workerGroups[0].resources.limits.cpu=1
+            --set-string workerGroups[0].resources.limits.memory=1024Mi)
+          helm install modelship helm/modelship --server-side "${args[@]}"
+          # KubeRay creates the head Service only once its finalizer is on the RayCluster.
+          kubectl wait raycluster/modelship --timeout=2m \
+            --for=jsonpath='{.status.head.serviceName}'=modelship-head-svc
+          helm upgrade modelship helm/modelship "${args[@]}" --set gateway.replicas=2

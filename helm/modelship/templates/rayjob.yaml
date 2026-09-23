@@ -1,11 +1,18 @@
+{{- $config := .Values.models.config }}
+{{- $configPath := printf "/tmp/mship-models-%s.yaml" (sha256sum $config | trunc 12) }}
 {{- $args := list "mship" "deploy"
-  "--gateway-name" (.Values.gateway.name | quote)
+  "--gateway-name" .Values.gateway.name
   "--gateway-replicas" (.Values.gateway.replicas | toString)
-  "--config" "/etc/modelship/models.yaml"
+  "--config" $configPath
   "--replace-strategy" .Values.deploy.replaceStrategy -}}
 {{- if .Values.deploy.reconcile }}{{- $args = append $args "--reconcile" }}{{- end }}
 {{- if not .Values.metrics.enabled }}{{- $args = append $args "--no-metrics" }}{{- end }}
-{{- range .Values.deploy.extraArgs }}{{- $args = append $args . }}{{- end }}
+{{- range .Values.deploy.extraArgs }}{{- $args = append $args (toString .) }}{{- end }}
+{{- range $args }}
+{{- if not (regexMatch "^[A-Za-z0-9._=/:,@+-]+$" .) }}
+{{- fail (printf "deploy argument %q can't be passed in the RayJob entrypoint: use only letters, digits and ._=/:,@+-" .) }}
+{{- end }}
+{{- end }}
 apiVersion: ray.io/v1
 kind: RayJob
 metadata:
@@ -24,12 +31,16 @@ spec:
   # submits the entrypoint to run ON the head (where a raylet exists).
   clusterSelector:
     ray.io/cluster: {{ include "modelship.fullname" . }}
+  # Places the job on the head by resource, not node ID: it waits while the head is replaced.
+  entrypointResources: '{"node:__internal_head__": 0.001}'
   shutdownAfterJobFinishes: false
   # NB: backoffLimit is rejected by KubeRay in clusterSelector mode, so it is not set.
   {{- if .Values.deploy.ttlSecondsAfterFinished }}
   ttlSecondsAfterFinished: {{ .Values.deploy.ttlSecondsAfterFinished }}
   {{- end }}
-  entrypoint: {{ join " " $args | quote }}
+  # models.yaml rides base64-encoded in the entrypoint. The single-quoted `bash -c` survives
+  # the submitter's bash and `ray job submit`'s re-join, so the pipeline runs on the head.
+  entrypoint: {{ printf "bash -c 'echo %s | base64 -d > %s && exec %s'" (b64enc $config) $configPath (join " " $args) | quote }}
   # Submitter Job: pin to our image so its `ray job submit` CLI matches the
   # cluster's Ray version.
   submitterPodTemplate:
@@ -45,13 +56,5 @@ spec:
         - name: ray-job-submitter
           image: {{ include "modelship.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- if .Values.rayAuth.enabled }}
-          # `ray job submit` (what this pod runs) authenticates to the head's dashboard
-          # job-submission API the same way any Ray client does — via RAY_AUTH_TOKEN in
-          # its own environment. Must match the head/workers' token exactly (see
-          # modelship.rayAuthEnv) or submission is rejected.
-          env:
-            {{- include "modelship.rayAuthEnv" . | nindent 12 }}
-          {{- end }}
           resources:
             {{- toYaml .Values.deploy.resources | nindent 12 }}

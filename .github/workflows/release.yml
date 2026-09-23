@@ -143,20 +143,17 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
-          version: v3.16.3
+          version: v4.3.0
 
       - name: Log in to GHCR
         run: helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password ${{ secrets.GITHUB_TOKEN }}
 
       # Vendor the kuberay-operator subchart (pinned in Chart.lock) before packaging
       # so `--set kuberay-operator.enabled=true` works from the published chart.
-      # helm 3.16 leaves only the .tgz in charts/, which template/lint/package don't
-      # accept — extract it to the directory form they require.
       - name: Build chart dependencies
         run: |
           helm repo add kuberay https://ray-project.github.io/kuberay-helm/
           helm dependency build helm/modelship
-          ( cd helm/modelship/charts && for f in *.tgz; do tar xzf "$f"; done )
 
       # Chart version is stamped to the app version at release time (make _release),
       # so it equals the tag and packages to modelship-<version>.tgz.

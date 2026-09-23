@@ -72,17 +72,6 @@ both are coordination-only (no models scheduled there), so both default to `thin
 {{- end -}}
 
 {{/*
-Name of the ConfigMap holding models.yaml (existing or chart-templated).
-*/}}
-{{- define "modelship.configMapName" -}}
-{{- if .Values.models.existingConfigMap -}}
-{{- .Values.models.existingConfigMap -}}
-{{- else -}}
-{{- printf "%s-models" (include "modelship.fullname" .) -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
 Name of the Secret holding the HF token / API keys (existing or templated).
 */}}
 {{- define "modelship.secretName" -}}
@@ -130,73 +119,44 @@ Name of the Secret holding the Redis password (existing or the chart's own).
 {{- end -}}
 
 {{/*
-Name of the Secret holding the Ray auth token (existing or the chart's own).
+Name of the Secret holding the Ray auth token under key `auth_token` (existing or
+the chart's own).
 */}}
 {{- define "modelship.rayAuthSecretName" -}}
-{{- .Values.rayAuth.existingSecret | default (include "modelship.secretName" .) -}}
+{{- .Values.rayAuth.existingSecret | default (printf "%s-ray-auth" (include "modelship.fullname" .)) -}}
 {{- end -}}
 
 {{/*
-Env for Ray cluster authentication (RAY_AUTH_MODE=token + RAY_AUTH_TOKEN). Included
-identically on the head, every worker group, AND the RayJob submitter pod — all
-three must present the same token or cluster-internal RPC / `ray job submit`
-fails (see the auth half-match finding in docs/multi-node-docker.md). Empty (no
-env at all) when disabled, matching Ray's own unauthenticated-by-default posture.
+This release's namespace in Redis, for Ray's GCS keys and modelship's state keys alike.
 */}}
-{{- define "modelship.rayAuthEnv" -}}
-{{- if .Values.rayAuth.enabled }}
-{{- if not (or .Values.rayAuth.token .Values.rayAuth.existingSecret) }}
-{{ fail "rayAuth.enabled is true but neither rayAuth.token nor rayAuth.existingSecret is set — Ray token auth needs an actual token (see the chart README)." }}
-{{- end }}
-- name: RAY_AUTH_MODE
-  value: "token"
-- name: RAY_AUTH_TOKEN
+{{- define "modelship.storageNamespace" -}}
+{{- $ns := .Values.redis.externalStorageNamespace | default (include "modelship.fullname" .) -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" $ns) -}}
+{{- fail (printf "redis.externalStorageNamespace %q must be letters, digits, '.', '_' or '-'." $ns) -}}
+{{- end -}}
+{{- $ns -}}
+{{- end -}}
+
+{{/*
+MSHIP_NODE_NUM_CPUS/MSHIP_NODE_MEMORY for a worker, from its container's limits (else
+requests) via the downward API. Skips a var the group's own env sets.
+Call with (dict "resources" <resources> "env" <group env> "container" <container name>).
+*/}}
+{{- define "modelship.nodeResourceEnv" -}}
+{{- $resources := .resources | default dict -}}
+{{- $limits := $resources.limits | default dict -}}
+{{- $requests := $resources.requests | default dict -}}
+{{- $names := list -}}
+{{- range .env }}{{- $names = append $names .name -}}{{- end -}}
+{{- range $var, $res := dict "MSHIP_NODE_NUM_CPUS" "cpu" "MSHIP_NODE_MEMORY" "memory" }}
+{{- if and (or (get $limits $res) (get $requests $res)) (not (has $var $names)) }}
+- name: {{ $var }}
   valueFrom:
-    secretKeyRef:
-      name: {{ include "modelship.rayAuthSecretName" . }}
-      key: {{ .Values.rayAuth.tokenKey }}
+    resourceFieldRef:
+      containerName: {{ $.container }}
+      resource: {{ ternary "limits" "requests" (hasKey $limits $res) }}.{{ $res }}
 {{- end }}
-{{- end -}}
-
-{{/*
-Capability resources for an image variant — mirrors modelship/deploy/capabilities.py's
-ALL_CAPABILITY_LOADERS (kept in lockstep by a CI check comparing this against that table).
-The chart can't probe like the Python side does (KubeRay starts the raylet, so no
-modelship code runs first); it doesn't need to, since the variant already determines
-what's installed. Call with a variant string, e.g. (include "modelship.capabilityResources" "cuda").
-*/}}
-{{- define "modelship.capabilityResources" -}}
-{{- if eq . "cuda" -}}
-{"mship_vllm": 1, "mship_diffusers": 1, "mship_llama_server": 1, "mship_stable_diffusion_cpp": 1, "mship_whispercpp": 1, "mship_sherpa_onnx": 1}
-{{- else if eq . "cpu" -}}
-{"mship_vllm": 1, "mship_llama_server": 1, "mship_stable_diffusion_cpp": 1, "mship_whispercpp": 1, "mship_sherpa_onnx": 1}
-{{- else -}}
-{}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Full rayStartParams for a Ray node: chart-managed defaults plus the caller's
-overrides (overrides win). metrics-export-port is pinned to metrics.port on every
-node so Ray's Prometheus endpoint matches the `metrics` containerPort + PodMonitor
-(unset, ray start binds a random port and scrapes fail). The head is additionally
-pinned to num-gpus/num-cpus 0 (it's coordination-only) and binds the dashboard on
-all interfaces; workers instead render `resources` from their resolved variant, so
-a model can't schedule onto a node missing its loader's backend.
-Call with (dict "root" $ "isHead" <bool> "params" <rayStartParams> "variant" <variant, workers only>).
-*/}}
-{{- define "modelship.rayStartParams" -}}
-{{- $defaults := dict "metrics-export-port" (.root.Values.metrics.port | toString) -}}
-{{- if .isHead -}}
-{{- $_ := set $defaults "num-gpus" "0" -}}
-{{- $_ := set $defaults "num-cpus" "0" -}}
-{{- $_ := set $defaults "dashboard-host" "0.0.0.0" -}}
-{{- else -}}
-{{- $capabilities := include "modelship.capabilityResources" .variant | fromJson | toJson -}}
-{{- $escaped := $capabilities | replace "\"" "\\\"" -}}
-{{- $_ := set $defaults "resources" (printf "\"%s\"" $escaped) -}}
-{{- end -}}
-{{- merge (deepCopy (.params | default dict)) $defaults | toYaml -}}
+{{- end }}
 {{- end -}}
 
 {{/*
@@ -204,10 +164,10 @@ Explicit env for every Ray pod (head + workers): the state-store URI the
 coordinator, effective-config and /v1/responses read via get_state_store(). It MUST
 be on every pod so the coordinator — scheduled on any node — agrees with the driver.
 
-Always redis://<addr>/<db>, password-free: the driver forwards this URI in runtime_env,
-and each pod adds MSHIP_REDIS_PASSWORD from its own env (the Secret). The same Redis also
-backs GCS fault tolerance. The chart wires an address but does not deploy Redis, so
-redis.address is required.
+Always redis://<addr>/<db>?namespace=<storage namespace>, password-free: the driver
+forwards this URI in runtime_env, and each pod adds MSHIP_REDIS_PASSWORD from its own env
+(the Secret). The same Redis also backs GCS fault tolerance. The chart wires an address
+but does not deploy Redis, so redis.address is required.
 */}}
 {{- define "modelship.env" -}}
 {{- $addr := required "redis.address is required: modelship on k8s stores its effective config, routing registry and /v1/responses conversations in Redis. Point redis.address at a Redis instance (see the chart README)." .Values.redis.address }}
@@ -219,7 +179,7 @@ redis.address is required.
       key: {{ .Values.redis.passwordKey }}
 {{- end }}
 - name: MSHIP_STATE_STORE
-  value: "redis://{{ $addr }}/{{ .Values.redis.db }}"
+  value: "redis://{{ $addr }}/{{ .Values.redis.db }}?namespace={{ include "modelship.storageNamespace" . }}"
 {{- end -}}
 
 {{/*
