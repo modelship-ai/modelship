@@ -140,14 +140,18 @@ async def _acquire(key: str, holder: str, model_name: str):
 
 
 def _renew_until(leases, key: str, holder: str, model_name: str, stop: threading.Event) -> None:
-    """Exits the process once the lease is lost: a load already under way in C code
-    cannot be cancelled."""
+    """Keeps the lease alive while the model loads, and gives up once it is lost.
+
+    The load itself continues: it cannot be cancelled, and killing the replica
+    would not stop whoever took the lease next — it would only repeat the load."""
     while not stop.wait(RENEW_SECONDS):
         try:
-            renewed = ray.get(leases.renew.remote(key, holder), timeout=_RPC_TIMEOUT_SECONDS)
+            if ray.get(leases.renew.remote(key, holder), timeout=_RPC_TIMEOUT_SECONDS):
+                continue
             reason = "renewal refused"
         except Exception as e:
-            renewed, reason = False, repr(e)
-        if not renewed:
-            logger.error("%s: lost the deploy lease on this node (%s); exiting", model_name, reason)
-            os._exit(1)
+            reason = repr(e)
+        # a release the block already sent is what refuses the renewal, not a loss
+        if not stop.is_set():
+            logger.warning("%s: lost the deploy lease on this node (%s); loading anyway", model_name, reason)
+        return

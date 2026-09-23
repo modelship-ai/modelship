@@ -152,34 +152,46 @@ class TestDeployLease:
 
 
 class TestRenewThread:
-    def test_lost_lease_exits_the_process(self, monkeypatch):
-        exited = []
-
-        def fake_exit(code):
-            exited.append(code)
-            # the real os._exit never returns; SystemExit stands in for that
-            raise SystemExit(code)
-
-        monkeypatch.setattr(deploy_leases.os, "_exit", fake_exit)
-        monkeypatch.setattr(deploy_leases.ray, "get", MagicMock(return_value=False))
+    @pytest.fixture(autouse=True)
+    def _fast(self, monkeypatch):
         monkeypatch.setattr(deploy_leases, "RENEW_SECONDS", 0.01)
 
-        stop = threading.Event()
-        with pytest.raises(SystemExit):
-            deploy_leases._renew_until(MagicMock(), "node-a", "holder", "qwen", stop)
-        assert exited == [1]
+    def _renew(self, monkeypatch, stop, **mock_kwargs):
+        get = MagicMock(**mock_kwargs)
+        monkeypatch.setattr(deploy_leases.ray, "get", get)
+        deploy_leases._renew_until(MagicMock(), "node-a", "holder", "qwen", stop)
+        return get
 
-    def test_stop_ends_the_thread_without_exiting(self, monkeypatch):
-        exited = []
-        monkeypatch.setattr(deploy_leases.os, "_exit", lambda code: exited.append(code))
+    def test_a_refused_renewal_stops_renewing_and_warns(self, monkeypatch, caplog):
+        with caplog.at_level("WARNING"):
+            get = self._renew(monkeypatch, threading.Event(), return_value=False)
+        assert get.call_count == 1
+        assert "loading anyway" in caplog.text
+
+    def test_an_rpc_failure_stops_renewing_and_warns(self, monkeypatch, caplog):
+        with caplog.at_level("WARNING"):
+            self._renew(monkeypatch, threading.Event(), side_effect=RuntimeError("actor gone"))
+        assert "actor gone" in caplog.text
+
+    def test_a_refusal_after_the_block_released_is_not_reported(self, monkeypatch, caplog):
+        stop = threading.Event()
+
+        def release_then_refuse(*args, **kwargs):
+            stop.set()
+            return False
+
+        with caplog.at_level("WARNING"):
+            self._renew(monkeypatch, stop, side_effect=release_then_refuse)
+        assert caplog.text == ""
+
+    def test_renewals_continue_until_stopped(self, monkeypatch):
         monkeypatch.setattr(deploy_leases.ray, "get", MagicMock(return_value=True))
-        monkeypatch.setattr(deploy_leases, "RENEW_SECONDS", 0.01)
-
         stop = threading.Event()
-        thread = threading.Thread(target=deploy_leases._renew_until, args=(MagicMock(), "n", "h", "m", stop))
+        thread = threading.Thread(
+            target=deploy_leases._renew_until, args=(MagicMock(), "node-a", "holder", "qwen", stop)
+        )
         thread.start()
         time.sleep(0.05)
         stop.set()
         thread.join(timeout=2)
         assert not thread.is_alive()
-        assert not exited
