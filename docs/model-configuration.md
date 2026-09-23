@@ -34,7 +34,7 @@ exits. Each takes the arguments marked for it (env vars work as fallbacks; CLI w
 | `--log-format` | all | `MSHIP_LOG_FORMAT` | `text` | `text` or `json` |
 | `--log-target` | all | `MSHIP_LOG_TARGET` | `console` | `console` or syslog URI (e.g. `syslog://host:514`, `syslog+tcp://host:514`) |
 | `--otel-endpoint` | all | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OpenTelemetry OTLP endpoint (e.g. `http://collector:4317`) |
-| `--no-metrics` | start, deploy | `MSHIP_METRICS` | enabled | Disable Prometheus metrics |
+| `--no-metrics` | start, deploy | `MSHIP_METRICS` | enabled | Disable modelship's own Prometheus metrics; forwarded into every actor it deploys, so it covers the cluster. Ray's node exporter has no off switch and falls back to a random port |
 | `--metrics-port` | start, join | `MSHIP_METRICS_PORT` | `8079` on start, random on join | This node's Prometheus metrics port. A joiner's random port is listed in the head's service-discovery file; pin it where the scraper targets a fixed port, e.g. a Kubernetes PodMonitor |
 | `--no-preflight` | start, deploy | `MSHIP_PREFLIGHT` | enabled | Disable preflight hardware auto-sizing; models run on loader/library defaults plus explicit config. Useful for benchmarking |
 | `--api-keys` | start, join | `MSHIP_API_KEYS` | — | Comma-separated API keys that gateway replicas on this node accept. A replica reads them from its own node, so set them on every node |

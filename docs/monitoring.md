@@ -136,10 +136,11 @@ docker run --rm --shm-size=8g --gpus all \
 
 | Env Var | Default | Description |
 |---|---|---|
-| `MSHIP_METRICS` | `true` | Master toggle. Enables all metrics and the Ray metrics export port. |
+| `MSHIP_METRICS` | `true` | Master toggle for modelship's own metrics; also pins the Ray metrics export port. |
 | `MSHIP_METRICS_PORT` | `8079` on `start`, random on `join` | This node's metrics port (`--metrics-port`). |
 
-Set `MSHIP_METRICS=false` to disable all metrics collection — port 8079 is not exposed.
+`MSHIP_METRICS=false` turns modelship's own metrics into no-ops and leaves port 8079 free. Ray's
+per-node exporter has no off switch — it keeps serving Ray's system metrics on a random port.
 
 ## Connecting to Prometheus
 
