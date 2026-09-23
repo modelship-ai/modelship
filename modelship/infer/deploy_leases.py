@@ -48,14 +48,19 @@ class DeployLeases:
         # nothing else configures logging in this process
         configure_logging()
         self._leases: dict[str, _Lease] = {}
+        # holders of a crashed predecessor stop within one lease period
+        self._grants_from = time.monotonic() + LEASE_SECONDS
         self._reaper = asyncio.create_task(self._reap_forever())
 
     async def acquire(self, key: str, holder: str) -> str | None:
         """None when granted, else what holds `key` up."""
+        now = time.monotonic()
+        if now < self._grants_from:
+            return "lease service starting"
         lease = self._leases.get(key)
         if lease is not None:
             return f"held by {lease.holder}"
-        self._leases[key] = _Lease(holder, time.monotonic() + LEASE_SECONDS)
+        self._leases[key] = _Lease(holder, now + LEASE_SECONDS)
         return None
 
     async def renew(self, key: str, holder: str) -> bool:
@@ -89,7 +94,7 @@ def get_or_create_leases():
         namespace=LEASES_NAMESPACE,
         get_if_exists=True,
         lifetime="detached",
-        # a restart would grant against an empty table while holders are still loading
+        # a restart would trust an empty table; a fresh actor waits out a lease period instead
         max_restarts=0,
         runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS)},
         **head_node_options(),

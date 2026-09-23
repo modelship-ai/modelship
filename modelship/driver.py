@@ -201,6 +201,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     from modelship.deploy.serve_utils import get_existing_apps, seed_expected_models
     from modelship.deploy.strategy import DeployContext, compute_deploy_plan, run_deploy_loop
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
+    from modelship.infer.deploy_leases import get_or_create_leases
     from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
     from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
     from modelship.openai.compaction_crypto import ensure_key_seeded
@@ -252,9 +253,11 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
             cluster_gpus,
         )
 
-    # Detached actors: the cross-operator deploy lock and the ownership registry.
+    # Detached actors: deploy bookkeeping and the ownership registry.
     coordinator = get_or_create_coordinator()
     replica_coord = get_or_create_replica_coordinator()
+    # Started before the first replica so its grant window elapses during download.
+    get_or_create_leases()
     # Removal is scoped to the prior effective set, so an empty one removes nothing.
     plan = compute_deploy_plan(yml_conf, existing_apps, deployment_names(effective_raw, gateway_name), gateway_name)
     apps_to_remove = list(plan.apps_to_remove)

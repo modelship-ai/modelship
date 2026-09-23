@@ -23,6 +23,7 @@ def no_logging_setup(monkeypatch):
 def _fresh():
     leases = _Leases()
     leases._reaper.cancel()
+    leases._grants_from = 0.0
     return leases
 
 
@@ -53,6 +54,21 @@ class TestGrants:
         assert await leases.acquire("node", "b") == "held by a"
         await leases.release("node", "a")
         assert await leases.acquire("node", "b") is None
+
+
+@pytest.mark.asyncio
+class TestStartupWindow:
+    async def test_a_new_actor_grants_nothing_for_one_lease_period(self):
+        leases = _Leases()
+        leases._reaper.cancel()
+        assert await leases.acquire("node", "a") == "lease service starting"
+        assert leases._grants_from >= time.monotonic() + LEASE_SECONDS - 1
+
+    async def test_grants_resume_once_the_window_passes(self):
+        leases = _Leases()
+        leases._reaper.cancel()
+        leases._grants_from = time.monotonic()
+        assert await leases.acquire("node", "a") is None
 
 
 @pytest.mark.asyncio
