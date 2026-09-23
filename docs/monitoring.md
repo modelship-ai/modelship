@@ -231,8 +231,6 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | `ModelshipClientDisconnects` | Disconnect rate > 1/min | 5m | Clients timing out or dropping connections |
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
 | `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
-| `ModelshipDeployLockStuck` | `deploy_lock_held` == 1 for 10m | 0m | A deploy is hung holding the cluster-wide deploy lock |
-| `ModelshipOperatorForceReleased` | Any operator force-release | 0m | A deploy operator died ungracefully; lock reclaimed |
 | `ModelshipGatewayRoutingDivergence` | Replica generation < coordinator for 10m | 10m | A gateway replica is routing from a stale table |
 | `ModelshipRayWorkerNotReady` | Ray worker pod not ready | 5m | Cluster capacity degraded (needs kube-state-metrics) |
 
@@ -337,9 +335,6 @@ These cover the multi-node / HA machinery deployed by the Helm chart (deploy coo
 | `ray_modelship_coordinator_generation` | Gauge | `gateway` | Coordinator's current routing generation (compare to the replica gauge to spot lag) |
 | `ray_modelship_deploy_duration_seconds` | Histogram | `gateway` | Wall-clock time for a deploy run to settle |
 | `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a deploy (`action`: `add`, `remove`, `evict`) |
-| `ray_modelship_deploy_lock_held` | Gauge | | 1 while the cluster-wide deploy lock is held, else 0 |
-| `ray_modelship_deploy_reservations_total` | Counter | `result` | Deploy-lock reservation attempts (`result`: `granted`, `locked`, `insufficient_gpu`, `insufficient_cpu`) |
-| `ray_modelship_operator_force_release_total` | Counter | `reason` | Locks force-released after ungraceful operator death (`reason`: `probe_gone`, `unresponsive`) |
 | `ray_modelship_state_store_operations_total` | Counter | `backend`, `op`, `result` | State-store ops (`op`: `get`/`set`/`delete`; `result`: `ok`/`error`) |
 | `ray_modelship_state_store_operation_duration_seconds` | Histogram | `backend`, `op` | State-store operation latency |
 

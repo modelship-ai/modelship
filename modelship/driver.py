@@ -198,9 +198,9 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
         write_effective,
     )
     from modelship.deploy.removal import remove_apps
-    from modelship.deploy.serve_utils import get_existing_apps, make_operator_id, seed_expected_models
+    from modelship.deploy.serve_utils import get_existing_apps, seed_expected_models
     from modelship.deploy.strategy import DeployContext, compute_deploy_plan, run_deploy_loop
-    from modelship.infer.deploy_coordinator import create_operator_probe, get_or_create_coordinator
+    from modelship.infer.deploy_coordinator import get_or_create_coordinator
     from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
     from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
     from modelship.openai.compaction_crypto import ensure_key_seeded
@@ -279,29 +279,20 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
         remove_apps(apps_to_remove, replica_coord, gateway_name)
         apps_to_remove = []
 
-    pass_count, fatally_failed = 0, []
+    still_pending, fatally_failed = [], []
     if plan.models_to_add:
-        # Driver-owned: Ray releases the coordinator lock if this process dies.
-        operator_id = make_operator_id()
-        probe = create_operator_probe()
-        logger.info("Operator id=%s; coordinator acquired.", operator_id)
-
         ctx = DeployContext(
             coordinator=coordinator,
             replica_coordinator=replica_coord,
-            probe=probe,
-            operator_id=operator_id,
             gateway_name=gateway_name,
             serve_logging_config=serve_logging_config,
             deployed_this_run=deployed_this_run,
         )
-        pass_count, fatally_failed = run_deploy_loop(plan.models_to_add, ctx)
+        still_pending, fatally_failed = run_deploy_loop(plan.models_to_add, ctx)
 
-    logger.info(
-        "Deploy complete. %d new deployment(s) from this run (over %d pass(es)).",
-        len(deployed_this_run),
-        pass_count,
-    )
+    logger.info("Deploy complete. %d new deployment(s) from this run.", len(deployed_this_run))
+    for config, reason in still_pending:
+        logger.warning("Model '%s' is still coming up and will land on its own: %s", config.name, reason)
 
     # blue_green: routing cut over at registration; delete the drained old app.
     if apps_to_remove:

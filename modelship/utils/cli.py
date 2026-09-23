@@ -53,6 +53,7 @@ _ARG_TO_ENV: dict[str, str] = {
     "openai_api_port": "MSHIP_OPENAI_API_PORT",
     "responses_ttl_s": "MSHIP_RESPONSES_TTL_S",
     "state_sweep_interval_s": "MSHIP_STATE_SWEEP_INTERVAL_S",
+    "deploy_timeout": "MSHIP_DEPLOY_TIMEOUT_S",
 }
 
 # store_true flags -> (env var, value when passed).
@@ -287,6 +288,14 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "TTL in seconds for stored /v1/responses conversation state; <=0 disables "
             "expiry (env: MSHIP_RESPONSES_TTL_S, default: 2592000 = 30 days)"
+        ),
+    )
+    parser.add_argument(
+        "--deploy-timeout",
+        type=float,
+        help=(
+            "Seconds to wait for models to come up before reporting the rest as still "
+            "pending; they keep deploying (env: MSHIP_DEPLOY_TIMEOUT_S, default: 600)"
         ),
     )
     parser.add_argument(

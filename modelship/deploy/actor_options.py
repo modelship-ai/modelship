@@ -46,11 +46,6 @@ def total_gpu_reservation(deploy_opts: dict) -> float:
     return _total_reservation(deploy_opts, "GPU", "num_gpus")
 
 
-def total_cpu_reservation(deploy_opts: dict) -> float:
-    """CPUs this deployment consumes; the outer actor draws from bundle 0, so the bundles cover it."""
-    return _total_reservation(deploy_opts, "CPU", "num_cpus")
-
-
 def _total_reservation(deploy_opts: dict, bundle_key: str, actor_key: str) -> float:
     if "placement_group_bundles" in deploy_opts:
         return float(sum(b.get(bundle_key, 0) for b in deploy_opts["placement_group_bundles"]))

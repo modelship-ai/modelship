@@ -5,7 +5,6 @@ import os
 import re
 import shutil
 import signal
-import socket
 import sys
 import time
 from pathlib import Path
@@ -23,7 +22,7 @@ from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
 from modelship.state import state_store_env_var
-from modelship.utils import parse_memory_bytes, rand_suffix
+from modelship.utils import parse_memory_bytes
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars
 
@@ -63,10 +62,6 @@ def join_node() -> Node | None:
 # Ray names each head's session dir `session_<timestamp>_<pid>` under its temp
 # root and never cleans them up; the trailing group captures the owning pid.
 _RAY_SESSION_DIR_RE = re.compile(r"^session_.*_(\d+)$")
-
-
-def make_operator_id() -> str:
-    return f"{socket.gethostname()}-{os.getpid()}-{rand_suffix(4)}"
 
 
 def get_existing_apps() -> set[str]:

@@ -1,13 +1,14 @@
 import math
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import ray
 from ray import serve
-from ray.serve.schema import LoggingConfig
+from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview, LoggingConfig
 
-from modelship.deploy.actor_options import build_deployment_options, total_cpu_reservation, total_gpu_reservation
+from modelship.deploy.actor_options import build_deployment_options
 from modelship.deploy.removal import delete_apps_quietly
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.infer.model_deployment import ModelDeployment
@@ -16,9 +17,11 @@ from modelship.logging import get_logger
 logger = get_logger("startup")
 
 _DEPLOY_RETRY_SLEEP_S = 2.0
-# Only a pass that reached serve.run and raised consumes one; a skip never does.
 _MAX_TRANSIENT_FAILURES = 3
-_WAITING_LOG_EVERY_N_PASSES = 30  # with 2s sleep, log "still waiting" once per minute
+_POLL_SECONDS = 2.0
+_PENDING_LOG_EVERY_N_POLLS = 30  # with a 2s poll, log what's outstanding once a minute
+_TIMEOUT_ENV = "MSHIP_DEPLOY_TIMEOUT_S"
+_DEFAULT_TIMEOUT_SECONDS = 600.0
 
 
 @dataclass
@@ -96,32 +99,33 @@ def compute_deploy_plan(
 class DeployContext:
     coordinator: Any
     replica_coordinator: Any
-    probe: Any
-    operator_id: str
     gateway_name: str
     serve_logging_config: LoggingConfig
     deployed_this_run: dict[str, str]
 
 
-def try_reserve_and_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> tuple[str, str | None]:
-    """One attempt at deploying *config*. Returns (status, detail) where status is:
-    "skipped" (no progress, retry), "deployed", "transient" (deploy raised; retry,
-    detail is the exception), "fatal" (deployment reported a permanent error; skip
-    permanently)."""
-    deploy_opts = build_deployment_options(config)
-    deployment_name = config.deployment_name(ctx.gateway_name)
+@dataclass
+class _Pending:
+    config: ModelshipModelConfig
+    failures: int = 0
+    # >0 while waiting out the backoff before being submitted again
+    retry_at: float = 0.0
 
-    reserved, _reason = ray.get(
-        ctx.coordinator.try_reserve.remote(
-            ctx.operator_id,
-            deployment_name,
-            total_gpu_reservation(deploy_opts),
-            total_cpu_reservation(deploy_opts),
-            ctx.probe,
-        )
-    )
-    if not reserved:
-        return "skipped", None
+
+def deploy_timeout_seconds() -> float:
+    raw = os.environ.get(_TIMEOUT_ENV)
+    try:
+        return float(raw) if raw else _DEFAULT_TIMEOUT_SECONDS
+    except ValueError:
+        logger.warning("Ignoring %s=%r, not a number; using %s", _TIMEOUT_ENV, raw, _DEFAULT_TIMEOUT_SECONDS)
+        return _DEFAULT_TIMEOUT_SECONDS
+
+
+def submit_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> None:
+    """Hand one model to Serve and return; its replicas come up afterwards, and
+    pend rather than fail when the cluster has no room for them yet."""
+    deployment_name = config.deployment_name(ctx.gateway_name)
+    deploy_opts = build_deployment_options(config)
 
     # Mutually exclusive, enforced at config validation — pass Serve exactly one.
     if config.autoscaling_config is not None:
@@ -129,125 +133,158 @@ def try_reserve_and_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> 
     else:
         scaling_opts = {"num_replicas": config.num_replicas}
 
-    try:
-        logger.info("Deploying model: %s (deployment: %s)", config.name, deployment_name)
-        ctx.deployed_this_run[deployment_name] = config.name
-        serve.run(
-            ModelDeployment.options(
+    logger.info("Deploying model: %s (deployment: %s)", config.name, deployment_name)
+    ctx.deployed_this_run[deployment_name] = config.name
+    serve.run_many(
+        [
+            serve.RunTarget(
+                target=ModelDeployment.options(
+                    name=deployment_name,
+                    max_constructor_retry_count=1,
+                    logging_config=ctx.serve_logging_config,
+                    **scaling_opts,
+                    **deploy_opts,
+                ).bind(config),
                 name=deployment_name,
-                max_constructor_retry_count=1,
-                logging_config=ctx.serve_logging_config,
-                **scaling_opts,
-                **deploy_opts,
-            ).bind(config),
-            name=deployment_name,
-            route_prefix=None,
-        )
-        logger.info("Model ready: %s (deployment: %s)", config.name, deployment_name)
-        # Registering bumps the gateway's generation; replica watch loops pick the
-        # deployment up from there, so the driver never pushes to them.
-        try:
-            ray.get(ctx.replica_coordinator.register_deployment.remote(ctx.gateway_name, deployment_name, config.name))
-        except Exception:
-            logger.exception("Failed to record %s in deploy registry", deployment_name)
-        return "deployed", None
-    except Exception as exc:
-        # Did the deployment actively report a fatal init error before dying?
-        try:
-            fatal_err = ray.get(ctx.coordinator.pop_fatal_error.remote(deployment_name), timeout=2.0)
-        except Exception:
-            fatal_err = None
-
-        ctx.deployed_this_run.pop(deployment_name, None)
-        if fatal_err is not None:
-            logger.error(
-                "Skipping model '%s' permanently (deployment=%s): %s",
-                config.name,
-                deployment_name,
-                fatal_err,
+                route_prefix=None,
             )
-            # serve.run leaves the application behind when it raises.
-            delete_apps_quietly([deployment_name])
-            return "fatal", str(fatal_err)
-        logger.exception(
-            "Deploy failed for %s (deployment=%s); will retry next pass.",
-            config.name,
-            deployment_name,
-        )
-        return "transient", f"{type(exc).__name__}: {exc}"
-    finally:
-        # Ray may already be shut down; OperatorProbe death-detection frees the
-        # lock either way once the driver dies.
-        if ray.is_initialized():
-            try:
-                ray.get(ctx.coordinator.release.remote(ctx.operator_id))
-            except Exception:
-                logger.exception("Failed to release coordinator lock (operator=%s)", ctx.operator_id)
+        ],
+        wait_for_applications_running=False,
+    )
+
+
+def _app_statuses() -> dict[str, ApplicationStatusOverview]:
+    try:
+        return dict(serve.status().applications)
+    except Exception:
+        logger.exception("Could not read Serve status; retrying next poll")
+        return {}
 
 
 def run_deploy_loop(
     models: list[ModelshipModelConfig],
     ctx: DeployContext,
-) -> tuple[int, list[tuple[ModelshipModelConfig, str]]]:
-    """Retry-pass loop: each pass tries every not-yet-deployed model, in configured
-    order (TP>1 first). A model skipped for resources or a held lock is retried
-    indefinitely. One whose deploy raises gets `_MAX_TRANSIENT_FAILURES` attempts,
-    the pass sleep doubling each time, then is given up on as fatal — without the
-    cap it holds this loop, and the caller's removals and effective-config write,
-    forever.
+) -> tuple[list[tuple[ModelshipModelConfig, str]], list[tuple[ModelshipModelConfig, str]]]:
+    """Submit every model, then report what each one did.
 
-    Returns (pass_count, fatally_failed), pairing each permanently-failed config
-    with its error detail. The caller logs them and keeps them in the effective
-    config, so a later deploy retries."""
-    remaining = list(models)
+    Ray places the replicas, so a model the cluster has no room for pends and
+    publishes its demand instead of being held back here. A model that fails to
+    come up is retried `_MAX_TRANSIENT_FAILURES` times with a doubling backoff
+    unless its replica reported a fatal error, which is permanent.
+
+    Returns (still_pending, fatally_failed), pairing each config with a reason.
+    The caller keeps both in the effective config, so a later deploy retries."""
+    pending: dict[str, _Pending] = {}
     fatally_failed: list[tuple[ModelshipModelConfig, str]] = []
-    failures: dict[str, int] = {}
-    pass_count = 0
-    passes_with_no_progress = 0
+    for config in models:
+        pending[config.deployment_name(ctx.gateway_name)] = _Pending(config)
+    for name, item in list(pending.items()):
+        _submit(name, item, ctx, pending, fatally_failed)
 
-    while remaining:
-        pass_count += 1
-        made_progress = False
-        for config in list(remaining):
-            deployment_name = config.deployment_name(ctx.gateway_name)
-            status, detail = try_reserve_and_deploy(config, ctx)
-            if status == "deployed":
-                remaining.remove(config)
-                made_progress = True
-            elif status == "fatal":
-                fatally_failed.append((config, detail or ""))
-                remaining.remove(config)
-                made_progress = True
-            elif status == "transient":
-                failures[deployment_name] = failures.get(deployment_name, 0) + 1
-                if failures[deployment_name] >= _MAX_TRANSIENT_FAILURES:
-                    logger.error(
-                        "Giving up on model '%s' after %d failed attempt(s) (deployment=%s): %s",
-                        config.name,
-                        failures[deployment_name],
-                        deployment_name,
-                        detail,
-                    )
-                    delete_apps_quietly([deployment_name])
-                    fatally_failed.append((config, detail or ""))
-                    remaining.remove(config)
-                    made_progress = True
-            # "skipped" -> stays in `remaining` for the next pass
+    deadline = time.monotonic() + deploy_timeout_seconds()
+    polls = 0
+    statuses: dict[str, ApplicationStatusOverview] = {}
+    while pending and time.monotonic() < deadline:
+        time.sleep(_POLL_SECONDS)
+        polls += 1
+        now = time.monotonic()
+        for name, item in list(pending.items()):
+            if item.retry_at and now >= item.retry_at:
+                item.retry_at = 0.0
+                _submit(name, item, ctx, pending, fatally_failed)
 
-        if made_progress:
-            passes_with_no_progress = 0
-        else:
-            passes_with_no_progress += 1
-            if passes_with_no_progress == 1 or passes_with_no_progress % _WAITING_LOG_EVERY_N_PASSES == 0:
-                logger.info(
-                    "Waiting for capacity for %d model(s): %s",
-                    len(remaining),
-                    [c.name for c in remaining],
-                )
+        statuses = _app_statuses()
+        for name, item in list(pending.items()):
+            app = statuses.get(name)
+            if app is None or item.retry_at:
+                continue
+            if app.status == ApplicationStatus.RUNNING:
+                _record_ready(name, item.config, ctx)
+                del pending[name]
+            elif app.status in (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.UNHEALTHY):
+                _record_failure(name, item, ctx, pending, fatally_failed, app.message)
 
-        if remaining:
-            # Back off only for models that failed; a capacity wait keeps the base cadence.
-            worst = max(failures.get(c.deployment_name(ctx.gateway_name), 0) for c in remaining)
-            time.sleep(_DEPLOY_RETRY_SLEEP_S * 2**worst)
+        if pending and polls % _PENDING_LOG_EVERY_N_POLLS == 0:
+            _log_pending(pending, statuses)
 
-    return pass_count, fatally_failed
+    still_pending = [(item.config, _pending_reason(name, statuses)) for name, item in pending.items()]
+    return still_pending, fatally_failed
+
+
+def _submit(
+    name: str,
+    item: _Pending,
+    ctx: DeployContext,
+    pending: dict[str, _Pending],
+    fatally_failed: list[tuple[ModelshipModelConfig, str]],
+) -> None:
+    try:
+        submit_deploy(item.config, ctx)
+    except Exception as exc:
+        _record_failure(name, item, ctx, pending, fatally_failed, f"{type(exc).__name__}: {exc}")
+
+
+def _record_ready(name: str, config: ModelshipModelConfig, ctx: DeployContext) -> None:
+    logger.info("Model ready: %s (deployment: %s)", config.name, name)
+    # Registering bumps the gateway's generation; replica watch loops pick the
+    # deployment up from there, so the driver never pushes to them.
+    try:
+        ray.get(ctx.replica_coordinator.register_deployment.remote(ctx.gateway_name, name, config.name))
+    except Exception:
+        logger.exception("Failed to record %s in deploy registry", name)
+
+
+def _record_failure(
+    name: str,
+    item: _Pending,
+    ctx: DeployContext,
+    pending: dict[str, _Pending],
+    fatally_failed: list[tuple[ModelshipModelConfig, str]],
+    message: str,
+) -> None:
+    """A fatal error from the replica is permanent; anything else gets another
+    attempt until the cap, so a download blip doesn't evict a good model."""
+    ctx.deployed_this_run.pop(name, None)
+    try:
+        fatal_err = ray.get(ctx.coordinator.pop_fatal_error.remote(name), timeout=2.0)
+    except Exception:
+        fatal_err = None
+
+    if fatal_err is not None:
+        logger.error("Skipping model '%s' permanently (deployment=%s): %s", item.config.name, name, fatal_err)
+        delete_apps_quietly([name])
+        fatally_failed.append((item.config, str(fatal_err)))
+        del pending[name]
+        return
+
+    item.failures += 1
+    if item.failures >= _MAX_TRANSIENT_FAILURES:
+        logger.error(
+            "Giving up on model '%s' after %d failed attempt(s) (deployment=%s): %s",
+            item.config.name,
+            item.failures,
+            name,
+            message,
+        )
+        delete_apps_quietly([name])
+        fatally_failed.append((item.config, message))
+        del pending[name]
+        return
+
+    logger.warning("Deploy failed for %s (deployment=%s); will retry: %s", item.config.name, name, message)
+    # Serve keeps a failed application; the retry replaces it.
+    delete_apps_quietly([name])
+    item.retry_at = time.monotonic() + _DEPLOY_RETRY_SLEEP_S * 2**item.failures
+
+
+def _pending_reason(name: str, statuses: dict[str, ApplicationStatusOverview]) -> str:
+    app = statuses.get(name)
+    return app.message if app and app.message else "waiting to be scheduled"
+
+
+def _log_pending(pending: dict[str, _Pending], statuses: dict[str, ApplicationStatusOverview]) -> None:
+    logger.info(
+        "Waiting on %d model(s): %s",
+        len(pending),
+        ", ".join(f"{item.config.name} ({_pending_reason(name, statuses)})" for name, item in pending.items()),
+    )

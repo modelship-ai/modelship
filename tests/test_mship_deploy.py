@@ -9,7 +9,6 @@ import pytest
 from modelship.deploy.actor_options import (
     build_cache_env_vars,
     build_deployment_options,
-    total_cpu_reservation,
     total_gpu_reservation,
 )
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, VllmEngineConfig
@@ -713,11 +712,8 @@ class TestReservationTotals:
         )
         opts = build_deployment_options(config)
         assert total_gpu_reservation(opts) == 0.5
-        assert total_cpu_reservation(opts) == 2
 
     def test_multi_slot_sums_pg_bundles(self):
-        # 4 slots, each bundle reserves num_cpus from the cluster; the outer
-        # actor's CPU sits inside bundle 0 and is not additive.
         config = ModelshipModelConfig(
             name="test-model",
             model="some-model",
@@ -728,7 +724,6 @@ class TestReservationTotals:
         )
         opts = build_deployment_options(config)
         assert total_gpu_reservation(opts) == 4
-        assert total_cpu_reservation(opts) == 8
 
 
 class TestRemoveApps:
