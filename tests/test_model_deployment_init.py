@@ -1,6 +1,4 @@
-"""ModelDeployment.__init__: a ModelDownloadError must never be
-reported to the coordinator as fatal, so it's retried next pass instead of
-evicted from the effective config."""
+"""ModelDeployment.__init__: which failures are fatal, and the order of a successful load."""
 
 import contextlib
 import sys

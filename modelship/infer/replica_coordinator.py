@@ -57,9 +57,8 @@ class ReplicaCoordinator:
         # Nothing else configures logging here; without it the logger falls back to Python's lastResort handler.
         configure_logging()
         # Durable ownership registry: gateway_name -> {deployment_name -> model_name}.
-        # Model replicas register into it and the driver unregisters from it;
-        # gateway replicas reconcile their routing tables from it (see get_routing /
-        # wait_for_change).
+        # Model replicas register into it, the driver unregisters from it, and
+        # gateway replicas reconcile from it (see get_routing / wait_for_change).
         # _registry, _declared and _expected are durable (loaded below, written through on
         # every change); _generation/_change are ephemeral wakeup state. On a
         # resurrected coordinator the generation restarts at 0, which the gateway's
@@ -206,9 +205,8 @@ def get_or_create_replica_coordinator():
 
 
 async def register_loaded_deployment(gateway_name: str, deployment_name: str, model_name: str) -> None:
-    """Routes a replica's deployment once its model has loaded, retrying through a
-    coordinator restart. Looks the coordinator up rather than creating it: replicas
-    lack the state-store settings it is created with."""
+    """Routes a replica's loaded deployment, retrying through a coordinator restart.
+    Looks the coordinator up, never creates it: replicas lack its state-store settings."""
     for attempt in range(1, _REGISTER_ATTEMPTS + 1):
         try:
             coord = ray.get_actor(REPLICA_COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_NAMESPACE)
