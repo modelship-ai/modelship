@@ -171,6 +171,7 @@ class TestRenewThread:
     @pytest.fixture(autouse=True)
     def _fast(self, monkeypatch):
         monkeypatch.setattr(deploy_leases, "RENEW_SECONDS", 0.01)
+        monkeypatch.setattr(deploy_leases, "LEASE_SECONDS", 0.05)
 
     def _renew(self, monkeypatch, stop, **mock_kwargs):
         get = MagicMock(**mock_kwargs)
@@ -184,10 +185,27 @@ class TestRenewThread:
         assert get.call_count == 1
         assert "loading anyway" in caplog.text
 
-    def test_an_rpc_failure_stops_renewing_and_warns(self, monkeypatch, caplog):
+    def test_failures_are_retried_until_the_lease_would_have_expired(self, monkeypatch, caplog):
         with caplog.at_level("WARNING"):
-            self._renew(monkeypatch, threading.Event(), side_effect=RuntimeError("actor gone"))
+            get = self._renew(monkeypatch, threading.Event(), side_effect=RuntimeError("actor gone"))
+        assert get.call_count > 1
         assert "actor gone" in caplog.text
+
+    def test_a_transient_failure_is_retried_without_a_warning(self, monkeypatch, caplog):
+        stop = threading.Event()
+        results = iter([RuntimeError("timed out"), True])
+
+        def flaky(*args, **kwargs):
+            result = next(results)
+            if isinstance(result, Exception):
+                raise result
+            stop.set()
+            return result
+
+        with caplog.at_level("WARNING"):
+            get = self._renew(monkeypatch, stop, side_effect=flaky)
+        assert get.call_count == 2
+        assert caplog.text == ""
 
     def test_a_refusal_after_the_block_released_is_not_reported(self, monkeypatch, caplog):
         stop = threading.Event()
