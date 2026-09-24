@@ -18,6 +18,12 @@ _Coord = ReplicaCoordinator.__ray_metadata__.modified_class
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
 
 
+@pytest.fixture(autouse=True)
+def no_logging_setup(monkeypatch):
+    # the actor configures logging for its whole process, here pytest's
+    monkeypatch.setattr(replica_coordinator, "configure_logging", lambda: None)
+
+
 @pytest.fixture
 def coord():
     # get_state_store() returns a Ray-actor-backed client that requires a live
