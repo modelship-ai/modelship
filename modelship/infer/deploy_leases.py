@@ -44,12 +44,12 @@ class DeployLeases:
     """One lease per node id. A lease unrenewed for `LEASE_SECONDS` is freed, so a
     holder that died mid-load doesn't hold its node shut."""
 
-    def __init__(self):
+    def __init__(self, startup_window: bool = True):
         # nothing else configures logging in this process
         configure_logging()
         self._leases: dict[str, _Lease] = {}
         # holders of a crashed predecessor stop within one lease period
-        self._grants_from = time.monotonic() + LEASE_SECONDS
+        self._grants_from = time.monotonic() + (LEASE_SECONDS if startup_window else 0.0)
         self._reaper = asyncio.create_task(self._reap_forever())
 
     async def acquire(self, key: str, holder: str) -> str | None:
@@ -87,8 +87,9 @@ class DeployLeases:
                 del self._leases[key]
 
 
-def get_or_create_leases():
-    """The cluster-wide deploy-lease actor, created on the head node if absent."""
+def get_or_create_leases(startup_window: bool = True):
+    """The cluster-wide deploy-lease actor, created on the head node if absent.
+    *startup_window* applies only when this call creates it."""
     return DeployLeases.options(
         name=LEASES_ACTOR_NAME,
         namespace=LEASES_NAMESPACE,
@@ -98,7 +99,7 @@ def get_or_create_leases():
         max_restarts=0,
         runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS)},
         **head_node_options(),
-    ).remote()
+    ).remote(startup_window)
 
 
 @contextlib.asynccontextmanager

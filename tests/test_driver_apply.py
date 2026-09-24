@@ -37,6 +37,7 @@ def apply():
         replica_coord.get_routing.remote.return_value = {"models": routed or {}}
         run_deploy_loop = MagicMock(return_value=outcome or DeployOutcome([], [], []))
         remove_apps = MagicMock()
+        leases = MagicMock()
         changed = MagicMock()
         args = SimpleNamespace(reconcile=True, config="models.yaml", model=None, replace_strategy=replace_strategy)
         with ExitStack() as stack:
@@ -51,7 +52,7 @@ def apply():
                 "modelship.infer.replica_coordinator.get_or_create_replica_coordinator": MagicMock(
                     return_value=replica_coord
                 ),
-                "modelship.infer.deploy_leases.get_or_create_leases": MagicMock(),
+                "modelship.infer.deploy_leases.get_or_create_leases": leases,
                 "modelship.deploy.strategy.run_deploy_loop": run_deploy_loop,
                 "modelship.deploy.removal.remove_apps": remove_apps,
                 "modelship.metrics.DEPLOY_DURATION_SECONDS": MagicMock(),
@@ -66,6 +67,7 @@ def apply():
             submitted=run_deploy_loop.call_args.args[0] if run_deploy_loop.called else None,
             removed=[name for call in remove_apps.call_args_list for name in call.args[0]],
             replica_coord=replica_coord,
+            leases=leases,
             changed={call.kwargs["tags"]["action"]: call.args[0] for call in changed.inc.call_args_list},
         )
 
@@ -119,6 +121,21 @@ class TestLiveApps:
         r = apply([a], [a], {_app(a): ApplicationStatus.RUNNING})
         assert r.submitted is None
         r.replica_coord.register_deployment.remote.assert_called_once_with("g", _app(a), "a")
+
+
+class TestLeaseStartupWindow:
+    def test_skipped_when_this_gateway_is_the_only_app(self, apply):
+        r = apply([], [_raw("a")], {"g": ApplicationStatus.RUNNING})
+        r.leases.assert_called_once_with(startup_window=False)
+
+    def test_kept_when_a_model_app_exists(self, apply):
+        a = _raw("a")
+        r = apply([a], [a], {"g": ApplicationStatus.RUNNING, _app(a): ApplicationStatus.RUNNING})
+        r.leases.assert_called_once_with(startup_window=True)
+
+    def test_kept_when_serve_status_is_unreadable(self, apply):
+        r = apply([], [_raw("a")], {})
+        r.leases.assert_called_once_with(startup_window=True)
 
 
 class TestReporting:

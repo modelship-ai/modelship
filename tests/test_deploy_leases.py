@@ -70,6 +70,11 @@ class TestStartupWindow:
         leases._grants_from = time.monotonic()
         assert await leases.acquire("node", "a") is None
 
+    async def test_an_actor_without_the_window_grants_at_once(self):
+        leases = _Leases(startup_window=False)
+        leases._reaper.cancel()
+        assert await leases.acquire("node", "a") is None
+
 
 @pytest.mark.asyncio
 class TestReaping:

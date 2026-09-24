@@ -263,8 +263,8 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     # Detached actors: deploy bookkeeping and the ownership registry.
     coordinator = get_or_create_coordinator()
     replica_coord = get_or_create_replica_coordinator()
-    # Started before the first replica so its grant window elapses during download.
-    get_or_create_leases()
+    # With this gateway the only app, no replica can hold a lease, so a new actor grants at once.
+    get_or_create_leases(startup_window=set(app_statuses) != {gateway_name})
     # Removal is scoped to the prior effective set, so an empty one removes nothing.
     plan = compute_deploy_plan(yml_conf, app_statuses, deployment_names(effective_raw, gateway_name), gateway_name)
     apps_to_remove = list(plan.apps_to_remove)
