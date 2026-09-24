@@ -224,7 +224,8 @@ def run_deploy_loop(
                 if app.status == ApplicationStatus.RUNNING:
                     logger.info("Model ready: %s (deployment: %s)", item.config.name, name)
                     ready.append(pending.pop(name).config)
-                elif app.status in (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.UNHEALTHY):
+                # UNHEALTHY follows RUNNING while Serve replaces a replica, so it stays pending
+                elif app.status == ApplicationStatus.DEPLOY_FAILED:
                     fail(name, app.message)
 
             if pending and (polls == 1 or polls % _PENDING_LOG_EVERY_N_POLLS == 0):

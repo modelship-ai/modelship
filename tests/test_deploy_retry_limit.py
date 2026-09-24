@@ -26,6 +26,7 @@ def _app(status: ApplicationStatus, message: str = "") -> ApplicationStatusOverv
 DEPLOYING = _app(ApplicationStatus.DEPLOYING, "no room yet")
 RUNNING = _app(ApplicationStatus.RUNNING)
 FAILED = _app(ApplicationStatus.DEPLOY_FAILED, "engine died")
+UNHEALTHY = _app(ApplicationStatus.UNHEALTHY, "replica failed its health check")
 
 
 class _Clock:
@@ -150,6 +151,12 @@ class TestPendingIsNotFailure:
         assert r["ready"] == ["b"]
         assert r["pending"] == {"a": "no room yet"}
         assert r["failed"] == {}
+
+    def test_an_unhealthy_app_stays_pending_without_a_resubmit(self, loop):
+        r = loop({"a": [UNHEALTHY]}, timeout="10")
+        assert r["submitted"] == ["a"]
+        assert r["failed"] == {}
+        assert r["pending"] == {"a": "replica failed its health check"}
 
     def test_the_first_poll_logs_what_is_outstanding(self, loop, caplog):
         with caplog.at_level("INFO"):
