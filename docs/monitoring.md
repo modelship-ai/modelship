@@ -273,7 +273,7 @@ curl http://localhost:8000/modelship/readyz
 # }
 ```
 
-Per-model timings are gateway-measured: the gap between one model registering and the next (models deploy sequentially, ordered by GPU footprint), so the first model's entry includes any framework-level setup time preceding it.
+Per-model timings are gateway-measured: the gap between one model registering and the one before it. That matches load time only when models load one after another, as they do on a single node; the first model's entry includes any framework-level setup time preceding it.
 
 Use `/health` for Kubernetes liveness probes and `/readyz` for readiness probes — `/readyz` returning 503 prevents a service from flipping traffic onto the pod before models are loaded.
 

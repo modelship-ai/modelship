@@ -26,7 +26,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 
 - **Independent lifecycle** — one model crashing doesn't affect others
 - **Per-model GPU budgeting** — `num_gpus` controls VRAM allocation (e.g. `0.7` for 70%)
-- **Ordered startup** — a cluster-wide mutex (`DeployCoordinator`, pinned to the head node) admits one deploy at a time; models are ordered by GPU footprint descending (multi-GPU/TP jobs first, whole-GPU before fractional) to avoid memory spikes
+- **One load per node** — a replica loading its model holds its node's lease (`DeployLeases`, pinned to the head node), so loads on the same node run one at a time and their memory spikes don't overlap; different nodes load in parallel. Downloading happens before the lease is taken
 - **Additive by default** — `mship deploy` adds models to a running cluster without disrupting existing deployments. `--reconcile` instead makes the cluster match the config exactly (add/remove/replace); it never tears the cluster down
 - **One deployment per model name** — a model name maps to exactly one deployment; scale it with `num_replicas` (or `autoscaling_config`), which Ray Serve load-balances across replicas natively. Changing a model's config replaces its deployment (`--replace-strategy`, default `blue_green`) rather than adding a second one alongside it
 - **One download per source** — a replica fetching weights holds a cluster-wide lease (`DownloadLeases`, pinned to the head node) on that HF repo or archive in its cache; replicas needing the same source wait their turn, and an already-cached source skips the lease. A lease that stops being renewed (its replica died mid-download) has that download's unfinished files removed on its node before anyone else gets the source

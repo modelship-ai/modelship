@@ -1,4 +1,3 @@
-import math
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -50,21 +49,7 @@ def compute_deploy_plan(
     Removal is `prev_effective_names & existing_apps`: only deployments THIS
     gateway previously managed are removed, never untracked ones or another
     gateway's. An empty prev-effective set removes nothing."""
-
-    # Sort key: footprint desc, whole-GPU before fractional, larger fraction first.
-    def _gpu_footprint(c: ModelshipModelConfig) -> tuple[int, bool, float]:
-        world_size = (
-            c.vllm_engine_kwargs.tensor_parallel_size * c.vllm_engine_kwargs.pipeline_parallel_size
-            if c.vllm_engine_kwargs
-            else 1
-        )
-        footprint = max(world_size, math.ceil(c.num_gpus))
-        fractional = 0 < c.num_gpus < 1
-        return (footprint, not fractional, c.num_gpus)
-
-    sorted_models = sorted(desired_conf.models, key=_gpu_footprint, reverse=True)
-
-    desired_names = {c.deployment_name(gateway_name) for c in sorted_models}
+    desired_names = {c.deployment_name(gateway_name) for c in desired_conf.models}
 
     # Split the dropped set by liveness: live ones get serve.delete + a registry
     # drop, the rest a registry-only drop.
@@ -82,7 +67,7 @@ def compute_deploy_plan(
 
     # Already live under its fingerprint -> skip, so re-runs are idempotent and a
     # matching untracked deployment is adopted rather than redeployed.
-    models_to_add = [c for c in sorted_models if c.deployment_name(gateway_name) not in existing_apps]
+    models_to_add = [c for c in desired_conf.models if c.deployment_name(gateway_name) not in existing_apps]
     if models_to_add:
         logger.info(
             "%d deployment(s) to add: %s",
