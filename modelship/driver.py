@@ -198,8 +198,14 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
         write_effective,
     )
     from modelship.deploy.removal import remove_apps
-    from modelship.deploy.serve_utils import get_existing_apps, seed_expected_models
-    from modelship.deploy.strategy import DeployContext, compute_deploy_plan, run_deploy_loop, still_serving
+    from modelship.deploy.serve_utils import get_app_statuses, seed_expected_models
+    from modelship.deploy.strategy import (
+        DeployContext,
+        compute_deploy_plan,
+        route_live_apps,
+        run_deploy_loop,
+        still_serving,
+    )
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
     from modelship.infer.deploy_leases import get_or_create_leases
     from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
@@ -207,9 +213,9 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     from modelship.openai.compaction_crypto import ensure_key_seeded
     from modelship.state import MemoryStateStore, get_state_store
 
-    existing_apps = get_existing_apps()
-    if existing_apps:
-        logger.info("Found existing deployments: %s", ", ".join(sorted(existing_apps)))
+    app_statuses = get_app_statuses()
+    if app_statuses:
+        logger.info("Found existing deployments: %s", ", ".join(sorted(app_statuses)))
 
     # mode only picks the merge (additive=union, reconcile=replace); the deploy always reconciles.
     mode = resolve_mode(reconcile=args.reconcile)
@@ -259,7 +265,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     # Started before the first replica so its grant window elapses during download.
     get_or_create_leases()
     # Removal is scoped to the prior effective set, so an empty one removes nothing.
-    plan = compute_deploy_plan(yml_conf, existing_apps, deployment_names(effective_raw, gateway_name), gateway_name)
+    plan = compute_deploy_plan(yml_conf, app_statuses, deployment_names(effective_raw, gateway_name), gateway_name)
     apps_to_remove = list(plan.apps_to_remove)
     removed_count = len(apps_to_remove)
     deploy_started = time.monotonic()
@@ -276,6 +282,8 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
             )
         except Exception:
             logger.exception("Failed to drop stale registry entries: %s", plan.registry_only_drop)
+
+    route_live_apps(plan.models_live, app_statuses, replica_coord, gateway_name)
 
     # stop_start: remove old apps first to free their resources.
     if getattr(args, "replace_strategy", "blue_green") == "stop_start":

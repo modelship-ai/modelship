@@ -14,7 +14,7 @@ import ray
 from ray import serve
 from ray._common.utils import get_ray_temp_dir
 from ray.serve.config import HTTPOptions, ProxyLocation
-from ray.serve.schema import LoggingConfig
+from ray.serve.schema import ApplicationStatus, LoggingConfig
 
 from modelship.deploy.capabilities import node_capability_resources
 from modelship.infer.infer_config import ModelshipConfig
@@ -64,12 +64,17 @@ def join_node() -> Node | None:
 _RAY_SESSION_DIR_RE = re.compile(r"^session_.*_(\d+)$")
 
 
+def get_app_statuses() -> dict[str, ApplicationStatus]:
+    """Each Serve app's status; empty when Serve can't be read."""
+    try:
+        return {name: app.status for name, app in serve.status().applications.items()}
+    except Exception:
+        return {}
+
+
 def get_existing_apps() -> set[str]:
     """Return the set of currently deployed Serve app names."""
-    try:
-        return set(serve.status().applications.keys())
-    except Exception:
-        return set()
+    return set(get_app_statuses())
 
 
 def shutdown_ray(keep_serve: bool = False) -> None:

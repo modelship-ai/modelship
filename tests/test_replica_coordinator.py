@@ -113,6 +113,13 @@ class TestDeclaredRegistration:
         assert (await coord.get_routing("gw"))["models"] == {"qwen-NEW": "qwen"}
 
     @pytest.mark.asyncio
+    async def test_registering_a_routed_deployment_clears_its_declaration(self, coord):
+        await _route(coord, "gw", "qwen-aaaa", "qwen")
+        await coord.declare_deployment("gw", "qwen-aaaa", "qwen")
+        assert await coord.register_deployment("gw", "qwen-aaaa", "qwen")
+        assert coord._declared["gw"] == {}
+
+    @pytest.mark.asyncio
     async def test_unregister_withdraws_a_declaration(self, coord):
         await coord.set_expected("gw", ["qwen"])
         await coord.declare_deployment("gw", "qwen-aaaa", "qwen")

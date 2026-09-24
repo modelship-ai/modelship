@@ -29,15 +29,21 @@ class DeployPlan:
     """Result of diffing models.yaml against the cluster."""
 
     models_to_add: list[ModelshipModelConfig]
+    # Desired models whose app already exists and is kept as it is.
+    models_live: list[ModelshipModelConfig]
     apps_to_remove: list[str]
     # Dropped deployments with no live app to delete — only their stale coordinator
     # registry entry needs clearing, or the gateway routes to a ghost.
     registry_only_drop: list[str]
 
 
+# Serve has stopped starting replicas for these; a redeploy replaces the app.
+_NOT_LIVE = (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.DELETING)
+
+
 def compute_deploy_plan(
     desired_conf: ModelshipConfig,
-    existing_apps: set[str],
+    app_statuses: dict[str, ApplicationStatus],
     prev_effective_names: set[str],
     gateway_name: str,
 ) -> DeployPlan:
@@ -46,9 +52,10 @@ def compute_deploy_plan(
     live -> desired. Deployment names are `{model}-{fingerprint}`, so a set
     comparison detects renames and config drift.
 
-    Removal is `prev_effective_names & existing_apps`: only deployments THIS
+    Removal is `prev_effective_names & existing apps`: only deployments THIS
     gateway previously managed are removed, never untracked ones or another
     gateway's. An empty prev-effective set removes nothing."""
+    existing_apps = set(app_statuses)
     desired_names = {c.deployment_name(gateway_name) for c in desired_conf.models}
 
     # Split the dropped set by liveness: live ones get serve.delete + a registry
@@ -65,9 +72,15 @@ def compute_deploy_plan(
             registry_only_drop,
         )
 
-    # Already live under its fingerprint -> skip, so re-runs are idempotent and a
-    # matching untracked deployment is adopted rather than redeployed.
-    models_to_add = [c for c in desired_conf.models if c.deployment_name(gateway_name) not in existing_apps]
+    # An app already live under its fingerprint is kept, so re-runs are idempotent.
+    models_to_add: list[ModelshipModelConfig] = []
+    models_live: list[ModelshipModelConfig] = []
+    for c in desired_conf.models:
+        status = app_statuses.get(c.deployment_name(gateway_name))
+        if status is None or status in _NOT_LIVE:
+            models_to_add.append(c)
+        else:
+            models_live.append(c)
     if models_to_add:
         logger.info(
             "%d deployment(s) to add: %s",
@@ -76,6 +89,7 @@ def compute_deploy_plan(
         )
     return DeployPlan(
         models_to_add=models_to_add,
+        models_live=models_live,
         apps_to_remove=apps_to_remove,
         registry_only_drop=registry_only_drop,
     )
@@ -258,6 +272,34 @@ def _record_failure(name: str, item: _Pending, ctx: DeployContext, message: str)
     # resubmitting over the failed app replaces it
     item.retry_at = time.monotonic() + _DEPLOY_RETRY_SLEEP_S * 2**item.failures
     return None
+
+
+def route_live_apps(
+    configs: list[ModelshipModelConfig],
+    app_statuses: dict[str, ApplicationStatus],
+    replica_coordinator,
+    gateway_name: str,
+) -> None:
+    """Routes each live app the gateway doesn't route yet: declares it, and registers
+    it at once when RUNNING, since its replicas won't load again."""
+    if not configs:
+        return
+    try:
+        routed = cast(dict, ray.get(replica_coordinator.get_routing.remote(gateway_name)))["models"]
+    except Exception:
+        logger.exception("Could not read routing; leaving live deployments as they are")
+        return
+    for config in configs:
+        name = config.deployment_name(gateway_name)
+        if name in routed:
+            continue
+        logger.info("Routing live deployment %s for model %s", name, config.name)
+        try:
+            ray.get(replica_coordinator.declare_deployment.remote(gateway_name, name, config.name))
+            if app_statuses.get(name) == ApplicationStatus.RUNNING:
+                ray.get(replica_coordinator.register_deployment.remote(gateway_name, name, config.name))
+        except Exception:
+            logger.exception("Could not route %s", name)
 
 
 def still_serving(

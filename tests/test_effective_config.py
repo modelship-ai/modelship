@@ -1,6 +1,7 @@
 """Tests for the deploy effective-config layer."""
 
 import pytest
+from ray.serve.schema import ApplicationStatus
 
 from modelship.deploy.config import default_config_path, load_raw_models, resolve_config_path
 from modelship.deploy.effective_config import (
@@ -120,6 +121,10 @@ def _dep(name: str, gw: str = "g", **overrides) -> str:
     return ModelshipModelConfig.model_validate(_model(name, **overrides)).deployment_name(gw)
 
 
+def _running(*apps: str) -> dict[str, ApplicationStatus]:
+    return dict.fromkeys(apps, ApplicationStatus.RUNNING)
+
+
 class TestComputeDeployPlan:
     """Removal must be scoped to the previous effective set, never to everything
     live — otherwise migration over pre-existing models deletes them."""
@@ -129,7 +134,7 @@ class TestComputeDeployPlan:
 
         # effective empty (migration); A,B,C live + the gateway app; additive adds D
         desired = to_config([_model("d")])
-        existing = {_dep("a"), _dep("b"), _dep("c"), "g"}
+        existing = _running(_dep("a"), _dep("b"), _dep("c"), "g")
         plan = compute_deploy_plan(desired, existing, set(), "g")
         assert plan.apps_to_remove == []  # legacy models untouched
         assert [c.name for c in plan.models_to_add] == ["d"]
@@ -139,7 +144,7 @@ class TestComputeDeployPlan:
 
         # prev effective managed a,b; new desired (reconcile) keeps only a
         desired = to_config([_model("a")])
-        existing = {_dep("a"), _dep("b"), "g"}
+        existing = _running(_dep("a"), _dep("b"), "g")
         prev = {_dep("a"), _dep("b")}
         plan = compute_deploy_plan(desired, existing, prev, "g")
         assert plan.apps_to_remove == [_dep("b")]
@@ -150,7 +155,7 @@ class TestComputeDeployPlan:
 
         # effective grew to a,b; a already live, b to add; nothing removed
         desired = to_config([_model("a"), _model("b")])
-        existing = {_dep("a"), "g"}
+        existing = _running(_dep("a"), "g")
         plan = compute_deploy_plan(desired, existing, {_dep("a")}, "g")
         assert plan.apps_to_remove == []
         assert [c.name for c in plan.models_to_add] == ["b"]
@@ -159,7 +164,7 @@ class TestComputeDeployPlan:
         from modelship.deploy.strategy import compute_deploy_plan
 
         desired = to_config([_model("a")])
-        existing = {_dep("a"), "g"}
+        existing = _running(_dep("a"), "g")
         plan = compute_deploy_plan(desired, existing, {_dep("a")}, "g")
         assert plan.models_to_add == []
         assert plan.apps_to_remove == []
@@ -171,7 +176,7 @@ class TestComputeDeployPlan:
         from modelship.deploy.strategy import compute_deploy_plan
 
         desired = to_config([_model("a")])
-        existing = {_dep("a"), "g"}
+        existing = _running(_dep("a"), "g")
         prev = {_dep("a"), _dep("b")}
         plan = compute_deploy_plan(desired, existing, prev, "g")
         assert plan.apps_to_remove == []  # b isn't live -> nothing to serve.delete
@@ -183,11 +188,38 @@ class TestComputeDeployPlan:
         from modelship.deploy.strategy import compute_deploy_plan
 
         desired = to_config([_model("a")])
-        existing = {_dep("a"), _dep("b"), "g"}
+        existing = _running(_dep("a"), _dep("b"), "g")
         prev = {_dep("a"), _dep("b"), _dep("c")}
         plan = compute_deploy_plan(desired, existing, prev, "g")
         assert plan.apps_to_remove == [_dep("b")]
         assert plan.registry_only_drop == [_dep("c")]
+
+
+class TestComputeDeployPlanAppStatus:
+    @pytest.mark.parametrize(
+        ("status", "redeployed"),
+        [
+            (ApplicationStatus.DEPLOY_FAILED, True),
+            (ApplicationStatus.DELETING, True),
+            (ApplicationStatus.RUNNING, False),
+            (ApplicationStatus.DEPLOYING, False),
+            (ApplicationStatus.UNHEALTHY, False),
+        ],
+    )
+    def test_only_a_failed_or_deleting_app_is_deployed_again(self, status, redeployed):
+        from modelship.deploy.strategy import compute_deploy_plan
+
+        plan = compute_deploy_plan(to_config([_model("a")]), {_dep("a"): status}, {_dep("a")}, "g")
+        assert [c.name for c in plan.models_to_add] == (["a"] if redeployed else [])
+        assert [c.name for c in plan.models_live] == ([] if redeployed else ["a"])
+
+    def test_a_failed_app_is_not_removed(self):
+        from modelship.deploy.strategy import compute_deploy_plan
+
+        plan = compute_deploy_plan(
+            to_config([_model("a")]), {_dep("a"): ApplicationStatus.DEPLOY_FAILED}, {_dep("a")}, "g"
+        )
+        assert plan.apps_to_remove == []
 
 
 class TestCase2AdditiveAccumulation:

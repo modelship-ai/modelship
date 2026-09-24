@@ -128,9 +128,12 @@ class ReplicaCoordinator:
     async def register_deployment(self, gateway_name: str, deployment_name: str, model_name: str) -> bool:
         """Route model_name to a declared deployment_name, evicting any other deployment
         of that model. False when it was never declared or has since been removed."""
+        declared = self._declared.get(gateway_name, {}).pop(deployment_name, None) is not None
         if self._registry.get(gateway_name, {}).get(deployment_name) == model_name:
+            if declared:
+                await self._persist()
             return True
-        if self._declared.get(gateway_name, {}).pop(deployment_name, None) is None:
+        if not declared:
             return False
         gw = self._registry.setdefault(gateway_name, {})
         superseded = [name for name, model in gw.items() if model == model_name and name != deployment_name]

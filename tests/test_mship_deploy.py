@@ -807,6 +807,56 @@ class TestStillServing:
         assert keep == set()
 
 
+class TestRouteLiveApps:
+    def _config(self, name):
+        return ModelshipModelConfig(
+            name=name, model=f"org/{name}", usecase=ModelUsecase.generate, loader="llama_server"
+        )
+
+    def _route(self, statuses, routed, configs):
+        from modelship.deploy.strategy import route_live_apps
+
+        replica_coordinator = MagicMock()
+        replica_coordinator.get_routing.remote.return_value = {"models": routed}
+        with patch("modelship.deploy.strategy.ray.get", side_effect=lambda ref: ref):
+            route_live_apps(configs, statuses, replica_coordinator, "gw")
+        return replica_coordinator
+
+    def test_an_unrouted_running_app_is_declared_and_registered(self):
+        from ray.serve.schema import ApplicationStatus
+
+        config = self._config("qwen")
+        name = config.deployment_name("gw")
+        coord = self._route({name: ApplicationStatus.RUNNING}, {}, [config])
+        coord.declare_deployment.remote.assert_called_once_with("gw", name, "qwen")
+        coord.register_deployment.remote.assert_called_once_with("gw", name, "qwen")
+
+    def test_an_unrouted_app_still_loading_is_only_declared(self):
+        from ray.serve.schema import ApplicationStatus
+
+        config = self._config("qwen")
+        name = config.deployment_name("gw")
+        coord = self._route({name: ApplicationStatus.DEPLOYING}, {}, [config])
+        coord.declare_deployment.remote.assert_called_once_with("gw", name, "qwen")
+        coord.register_deployment.remote.assert_not_called()
+
+    def test_a_routed_app_is_left_alone(self):
+        from ray.serve.schema import ApplicationStatus
+
+        config = self._config("qwen")
+        name = config.deployment_name("gw")
+        coord = self._route({name: ApplicationStatus.RUNNING}, {name: "qwen"}, [config])
+        coord.declare_deployment.remote.assert_not_called()
+
+    def test_an_unreadable_registry_routes_nothing(self):
+        from modelship.deploy.strategy import route_live_apps
+
+        coord = MagicMock()
+        with patch("modelship.deploy.strategy.ray.get", side_effect=RuntimeError("gone")):
+            route_live_apps([self._config("qwen")], {}, coord, "gw")
+        coord.declare_deployment.remote.assert_not_called()
+
+
 class TestStartGateway:
     def _run(self, env):
         from modelship.deploy import serve_utils
