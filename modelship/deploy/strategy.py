@@ -9,7 +9,7 @@ from ray import serve
 from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview, LoggingConfig
 
 from modelship.deploy.actor_options import build_deployment_options
-from modelship.deploy.removal import delete_apps_quietly
+from modelship.deploy.removal import delete_apps_quietly, remove_apps
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.infer.model_deployment import ModelDeployment
 from modelship.logging import get_logger
@@ -134,6 +134,8 @@ def submit_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> None:
         scaling_opts = {"num_replicas": config.num_replicas}
 
     logger.info("Deploying model: %s (deployment: %s)", config.name, deployment_name)
+    # Before submitting, so the first replica to load finds itself declared.
+    ray.get(ctx.replica_coordinator.declare_deployment.remote(ctx.gateway_name, deployment_name, config.name))
     ctx.deployed_this_run[deployment_name] = config.name
     serve.run_many(
         [
@@ -199,7 +201,7 @@ def run_deploy_loop(
             if app is None or item.retry_at:
                 continue
             if app.status == ApplicationStatus.RUNNING:
-                _record_ready(name, item.config, ctx)
+                logger.info("Model ready: %s (deployment: %s)", item.config.name, name)
                 del pending[name]
             elif app.status in (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.UNHEALTHY):
                 _record_failure(name, item, ctx, pending, fatally_failed, app.message)
@@ -224,16 +226,6 @@ def _submit(
         _record_failure(name, item, ctx, pending, fatally_failed, f"{type(exc).__name__}: {exc}")
 
 
-def _record_ready(name: str, config: ModelshipModelConfig, ctx: DeployContext) -> None:
-    logger.info("Model ready: %s (deployment: %s)", config.name, name)
-    # Registering bumps the gateway's generation; replica watch loops pick the
-    # deployment up from there, so the driver never pushes to them.
-    try:
-        ray.get(ctx.replica_coordinator.register_deployment.remote(ctx.gateway_name, name, config.name))
-    except Exception:
-        logger.exception("Failed to record %s in deploy registry", name)
-
-
 def _record_failure(
     name: str,
     item: _Pending,
@@ -252,7 +244,7 @@ def _record_failure(
 
     if fatal_err is not None:
         logger.error("Skipping model '%s' permanently (deployment=%s): %s", item.config.name, name, fatal_err)
-        delete_apps_quietly([name])
+        remove_apps([name], ctx.replica_coordinator, ctx.gateway_name)
         fatally_failed.append((item.config, str(fatal_err)))
         del pending[name]
         return
@@ -266,7 +258,7 @@ def _record_failure(
             name,
             message,
         )
-        delete_apps_quietly([name])
+        remove_apps([name], ctx.replica_coordinator, ctx.gateway_name)
         fatally_failed.append((item.config, message))
         del pending[name]
         return

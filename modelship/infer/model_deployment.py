@@ -14,6 +14,7 @@ from ray import serve
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.deploy_leases import DeployLeaseError, deploy_lease
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, RawRequestProxy
+from modelship.infer.replica_coordinator import RegistrationError, register_loaded_deployment
 from modelship.infer.sources import ModelDownloadError
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
@@ -232,10 +233,14 @@ class ModelDeployment:
 
                 await self.infer.start()
                 await self.infer.warmup()
-        except (ModelDownloadError, DeployLeaseError) as e:
+
+            await register_loaded_deployment(
+                os.environ.get("MSHIP_GATEWAY_NAME", ""), serve.get_replica_context().app_name, config.name
+            )
+        except (ModelDownloadError, DeployLeaseError, RegistrationError) as e:
             # Deliberately NOT reported to the coordinator as fatal (see the
-            # except Exception branch below): a download or lease blip should
-            # retry next pass, not permanently evict an otherwise-good model.
+            # except Exception branch below): a download, lease or registry blip
+            # should retry next pass, not permanently evict an otherwise-good model.
             MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})
             self._graceful_teardown()
             logger.warning("Load failed for '%s', will retry next pass: %s", config.name, e)

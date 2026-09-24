@@ -46,7 +46,9 @@ def loop(monkeypatch):
     monkeypatch.setattr(strategy.time, "sleep", clock.sleep)
     monkeypatch.setattr(strategy.time, "monotonic", clock.monotonic)
     deleted: list[str] = []
+    removed: list[str] = []
     monkeypatch.setattr(strategy, "delete_apps_quietly", lambda names: deleted.extend(names))
+    monkeypatch.setattr(strategy, "remove_apps", lambda names, replica_coord, gateway: removed.extend(names))
     monkeypatch.setattr(strategy.ray, "get", lambda ref, **kwargs: ref)
 
     def run(scripts: dict[str, list[ApplicationStatusOverview]], fatal: dict[str, str] | None = None, timeout="30"):
@@ -56,7 +58,11 @@ def loop(monkeypatch):
         submitted: list[str] = []
         polls = {"n": -1}
 
-        monkeypatch.setattr(strategy, "submit_deploy", lambda config, ctx: submitted.append(config.name))
+        def submit(config, ctx):
+            submitted.append(config.name)
+            ctx.deployed_this_run[config.deployment_name(ctx.gateway_name)] = config.name
+
+        monkeypatch.setattr(strategy, "submit_deploy", submit)
 
         def status():
             polls["n"] += 1
@@ -69,10 +75,9 @@ def loop(monkeypatch):
 
         coordinator = MagicMock()
         coordinator.pop_fatal_error.remote.side_effect = lambda name: fatal.get(name)
-        replica_coordinator = MagicMock()
         ctx = strategy.DeployContext(
             coordinator=coordinator,
-            replica_coordinator=replica_coordinator,
+            replica_coordinator=MagicMock(),
             gateway_name="g",
             serve_logging_config=LoggingConfig(),
             deployed_this_run={},
@@ -83,7 +88,7 @@ def loop(monkeypatch):
             "failed": {c.name: detail for c, detail in failed},
             "submitted": submitted,
             "deleted": deleted,
-            "registered": [call.args[1] for call in replica_coordinator.register_deployment.remote.call_args_list],
+            "removed": removed,
             "deployed_this_run": ctx.deployed_this_run,
         }
 
@@ -96,9 +101,14 @@ class TestTransientCap:
         assert r["submitted"].count("a") == strategy._MAX_TRANSIENT_FAILURES
         assert r["failed"] == {"a": "engine died"}
 
-    def test_giving_up_deletes_the_failed_app(self, loop):
+    def test_giving_up_removes_the_failed_app(self, loop):
         r = loop({"a": [FAILED]})
-        assert _model("a").deployment_name("g") in r["deleted"]
+        assert r["removed"] == [_model("a").deployment_name("g")]
+
+    def test_a_fatal_report_removes_the_app(self, loop):
+        r = loop({"a": [FAILED]}, fatal={_model("a").deployment_name("g"): "bad config"})
+        assert r["removed"] == [_model("a").deployment_name("g")]
+        assert r["deleted"] == []
 
     def test_a_recovering_model_is_not_given_up_on(self, loop):
         r = loop({"a": [FAILED] + [DEPLOYING] * 3 + [RUNNING]})
@@ -130,8 +140,8 @@ class TestPendingIsNotFailure:
 
     def test_a_pending_model_does_not_hold_up_another(self, loop):
         r = loop({"a": [DEPLOYING], "b": [RUNNING]}, timeout="10")
-        assert r["registered"] == [_model("b").deployment_name("g")]
         assert r["pending"] == {"a": "no room yet"}
+        assert r["failed"] == {}
 
 
 class TestServeApiCanary:
@@ -140,11 +150,31 @@ class TestServeApiCanary:
         assert "wait_for_applications_running" in inspect.signature(serve.run_many).parameters
 
 
-class TestRegistration:
-    def test_a_running_model_is_registered_once(self, loop):
-        r = loop({"a": [DEPLOYING, RUNNING]})
-        assert r["registered"] == [_model("a").deployment_name("g")]
+class TestSubmit:
+    def test_declares_then_hands_off_without_waiting(self, monkeypatch):
+        calls = []
+        replica_coordinator = MagicMock()
+        replica_coordinator.declare_deployment.remote.side_effect = lambda *args: calls.append(("declare", *args))
+        monkeypatch.setattr(strategy.ray, "get", lambda ref, **kwargs: ref)
+        monkeypatch.setattr(strategy.serve, "run_many", lambda targets, **kwargs: calls.append(("run_many", kwargs)))
+        ctx = strategy.DeployContext(
+            coordinator=MagicMock(),
+            replica_coordinator=replica_coordinator,
+            gateway_name="g",
+            serve_logging_config=LoggingConfig(),
+            deployed_this_run={},
+        )
+        strategy.submit_deploy(_model("a"), ctx)
+        name = _model("a").deployment_name("g")
+        assert calls == [("declare", "g", name, "a"), ("run_many", {"wait_for_applications_running": False})]
+        assert ctx.deployed_this_run == {name: "a"}
 
-    def test_a_failed_model_is_dropped_from_this_runs_deployments(self, loop):
+
+class TestThisRunsDeployments:
+    def test_a_running_model_stays_recorded(self, loop):
+        r = loop({"a": [DEPLOYING, RUNNING]})
+        assert r["deployed_this_run"] == {_model("a").deployment_name("g"): "a"}
+
+    def test_a_failed_model_is_dropped(self, loop):
         r = loop({"a": [FAILED]}, fatal={_model("a").deployment_name("g"): "bad config"})
         assert r["deployed_this_run"] == {}

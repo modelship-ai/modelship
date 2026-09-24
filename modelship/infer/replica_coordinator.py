@@ -1,10 +1,11 @@
 """Cluster-wide routing registry shared by every gateway replica.
 
 `ReplicaCoordinator` is a detached, named Ray actor on the head node holding the
-durable mapping of model deployments each gateway owns. `mship start`/`mship deploy`
-write to it as models are (un)deployed; every gateway replica long-polls `wait_for_change`
-and reconciles its own routing table from `get_routing` — the driver never pushes
-to individual replicas.
+durable mapping of model deployments each gateway owns. The driver declares each
+deployment it submits and unregisters it on removal; the deployment's own replicas
+register it once their model has loaded. Every gateway replica long-polls
+`wait_for_change` and reconciles its own routing table from `get_routing` — nothing
+pushes to individual replicas.
 
 The registry is persisted through `get_state_store()` — cluster-scoped even on the
 default `memory://` (backed by its own detached actor, see `modelship.state.memory`)
@@ -19,6 +20,7 @@ import asyncio
 import contextlib
 
 import ray
+from ray.exceptions import ActorDiedError, ActorUnavailableError
 
 from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE
 from modelship.logging import configure_logging, get_logger
@@ -38,6 +40,14 @@ _STATE_KEY = "coordinator/state"
 # restart can leave a replica un-reconciled (it re-pulls on every return).
 _WATCH_TIMEOUT_S = 30.0
 
+_REGISTER_ATTEMPTS = 6
+_REGISTER_RETRY_SECONDS = 5.0
+_REGISTER_TIMEOUT_SECONDS = 10.0
+
+
+class RegistrationError(Exception):
+    """The routing registry could not be reached."""
+
 
 @ray.remote(num_cpus=0)
 class ReplicaCoordinator:
@@ -47,10 +57,10 @@ class ReplicaCoordinator:
         # Nothing else configures logging here; without it the logger falls back to Python's lastResort handler.
         configure_logging()
         # Durable ownership registry: gateway_name -> {deployment_name -> model_name}.
-        # The driver writes it on (un)deploy; gateway replicas reconcile their
-        # routing tables from it (see get_routing / wait_for_change), so the driver
-        # never pushes to individual replicas.
-        # _registry and _expected are durable (loaded below, written through on
+        # Model replicas register into it and the driver unregisters from it;
+        # gateway replicas reconcile their routing tables from it (see get_routing /
+        # wait_for_change).
+        # _registry, _declared and _expected are durable (loaded below, written through on
         # every change); _generation/_change are ephemeral wakeup state. On a
         # resurrected coordinator the generation restarts at 0, which the gateway's
         # wait_for_change already treats as "changed" so replicas re-pull and
@@ -72,6 +82,9 @@ class ReplicaCoordinator:
         saved = saved if isinstance(saved, dict) else {}
         registry = saved.get("registry")
         self._registry: dict[str, dict[str, str]] = registry if isinstance(registry, dict) else {}
+        # Submitted deployments allowed to register once loaded, same shape as _registry.
+        declared = saved.get("declared")
+        self._declared: dict[str, dict[str, str]] = declared if isinstance(declared, dict) else {}
         # Per-gateway change notification driving the gateway watch loop: a
         # monotonic generation bumped on every routing/expected change, plus an
         # asyncio.Event woken on each bump so a long-polling replica returns at
@@ -99,11 +112,26 @@ class ReplicaCoordinator:
         """Write the durable routing state through the StateStore. Async because a
         memory-backed store is an RPC to another actor — a sync ray.get here would
         block this actor's own event loop (and thus wait_for_change) on every write."""
-        await self._store.set_async(_STATE_KEY, {"registry": self._registry, "expected": self._expected})
+        await self._store.set_async(
+            _STATE_KEY, {"registry": self._registry, "declared": self._declared, "expected": self._expected}
+        )
 
-    async def register_deployment(self, gateway_name: str, deployment_name: str, model_name: str) -> None:
-        """Register deployment_name for model_name, evicting any other deployment
-        already registered under model_name in the same write."""
+    async def declare_deployment(self, gateway_name: str, deployment_name: str, model_name: str) -> None:
+        """Let deployment_name register once loaded, withdrawing any earlier
+        declaration for model_name."""
+        declared = self._declared.setdefault(gateway_name, {})
+        for name in [name for name, model in declared.items() if model == model_name]:
+            del declared[name]
+        declared[deployment_name] = model_name
+        await self._persist()
+
+    async def register_deployment(self, gateway_name: str, deployment_name: str, model_name: str) -> bool:
+        """Route model_name to a declared deployment_name, evicting any other deployment
+        of that model. False when it was never declared or has since been removed."""
+        if self._registry.get(gateway_name, {}).get(deployment_name) == model_name:
+            return True
+        if self._declared.get(gateway_name, {}).pop(deployment_name, None) is None:
+            return False
         gw = self._registry.setdefault(gateway_name, {})
         superseded = [name for name, model in gw.items() if model == model_name and name != deployment_name]
         for name in superseded:
@@ -113,15 +141,18 @@ class ReplicaCoordinator:
         gw[deployment_name] = model_name
         await self._persist()
         self._bump(gateway_name)
+        return True
 
     async def unregister_deployment(
         self, gateway_name: str, deployment_name: str, model_name: str | None = None
     ) -> None:
         """Drop the deployment, and the model's `_expected` entry with it once no
         other deployment serves that name. `model_name` is only needed when the
-        deployment never registered — otherwise it comes from the registry."""
+        deployment was neither registered nor declared."""
         gw = self._registry.get(gateway_name) or {}
-        model_name = gw.pop(deployment_name, None) or model_name
+        registered_as = gw.pop(deployment_name, None)
+        declared_as = (self._declared.get(gateway_name) or {}).pop(deployment_name, None)
+        model_name = registered_as or declared_as or model_name
         if model_name is not None and model_name not in gw.values():
             expected = self._expected.get(gateway_name)
             if expected is not None:
@@ -172,3 +203,26 @@ def get_or_create_replica_coordinator():
         runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS) | state_store_env_var()},
         **head_node_options(),
     ).remote()
+
+
+async def register_loaded_deployment(gateway_name: str, deployment_name: str, model_name: str) -> None:
+    """Routes a replica's deployment once its model has loaded, retrying through a
+    coordinator restart. Looks the coordinator up rather than creating it: replicas
+    lack the state-store settings it is created with."""
+    for attempt in range(1, _REGISTER_ATTEMPTS + 1):
+        try:
+            coord = ray.get_actor(REPLICA_COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_NAMESPACE)
+            registered = await asyncio.wait_for(
+                coord.register_deployment.remote(gateway_name, deployment_name, model_name),
+                _REGISTER_TIMEOUT_SECONDS,
+            )
+        except (ValueError, TimeoutError, ActorDiedError, ActorUnavailableError) as e:
+            if attempt == _REGISTER_ATTEMPTS:
+                raise RegistrationError(f"routing registry unreachable: {e!r}") from e
+            await asyncio.sleep(_REGISTER_RETRY_SECONDS)
+            continue
+        if not registered:
+            logger.warning(
+                "%s: %s was replaced or removed before it loaded; not routing it", model_name, deployment_name
+            )
+        return
