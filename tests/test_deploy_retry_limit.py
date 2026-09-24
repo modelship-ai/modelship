@@ -81,10 +81,11 @@ def loop(monkeypatch):
             serve_logging_config=LoggingConfig(),
             deployed_this_run={},
         )
-        pending, failed = strategy.run_deploy_loop([_model(name) for name in scripts], ctx)
+        outcome = strategy.run_deploy_loop([_model(name) for name in scripts], ctx)
         return {
-            "pending": {c.name: reason for c, reason in pending},
-            "failed": {c.name: detail for c, detail in failed},
+            "ready": [c.name for c in outcome.ready],
+            "pending": {c.name: reason for c, reason in outcome.still_pending},
+            "failed": {c.name: detail for c, detail in outcome.fatally_failed},
             "submitted": submitted,
             "removed": removed,
             "deployed_this_run": ctx.deployed_this_run,
@@ -146,6 +147,7 @@ class TestPendingIsNotFailure:
 
     def test_a_pending_model_does_not_hold_up_another(self, loop):
         r = loop({"a": [DEPLOYING], "b": [RUNNING]}, timeout="10")
+        assert r["ready"] == ["b"]
         assert r["pending"] == {"a": "no room yet"}
         assert r["failed"] == {}
 

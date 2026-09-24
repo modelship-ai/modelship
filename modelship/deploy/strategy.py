@@ -105,6 +105,14 @@ class DeployContext:
 
 
 @dataclass
+class DeployOutcome:
+    ready: list[ModelshipModelConfig]
+    # each paired with the reason it is still pending, or failed
+    still_pending: list[tuple[ModelshipModelConfig, str]]
+    fatally_failed: list[tuple[ModelshipModelConfig, str]]
+
+
+@dataclass
 class _Pending:
     config: ModelshipModelConfig
     failures: int = 0
@@ -167,18 +175,16 @@ def _app_statuses() -> dict[str, ApplicationStatusOverview]:
 def run_deploy_loop(
     models: list[ModelshipModelConfig],
     ctx: DeployContext,
-) -> tuple[list[tuple[ModelshipModelConfig, str]], list[tuple[ModelshipModelConfig, str]]]:
+) -> DeployOutcome:
     """Submit every model, then report what each one did.
 
     Ray places the replicas, so a model the cluster has no room for pends and
     publishes its demand instead of being held back here. A model that fails to
     come up is retried `_MAX_TRANSIENT_FAILURES` times with a doubling backoff
-    unless its replica reported a fatal error, which is permanent.
-
-    Returns (still_pending, fatally_failed), pairing each config with a reason; a
-    model still waiting to retry at the deadline is failed. The caller keeps both
-    in the effective config, so a later deploy retries."""
+    unless its replica reported a fatal error, which is permanent. A model still
+    waiting to retry at the deadline is failed."""
     pending = {config.deployment_name(ctx.gateway_name): _Pending(config) for config in models}
+    ready: list[ModelshipModelConfig] = []
     fatally_failed: list[tuple[ModelshipModelConfig, str]] = []
     statuses: dict[str, ApplicationStatusOverview] = {}
 
@@ -217,7 +223,7 @@ def run_deploy_loop(
                     continue
                 if app.status == ApplicationStatus.RUNNING:
                     logger.info("Model ready: %s (deployment: %s)", item.config.name, name)
-                    del pending[name]
+                    ready.append(pending.pop(name).config)
                 elif app.status in (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.UNHEALTHY):
                     fail(name, app.message)
 
@@ -234,7 +240,7 @@ def run_deploy_loop(
                 give_up(name, item.last_error)
 
     still_pending = [(item.config, _pending_reason(name, statuses)) for name, item in pending.items()]
-    return still_pending, fatally_failed
+    return DeployOutcome(ready, still_pending, fatally_failed)
 
 
 def _submit(config: ModelshipModelConfig, ctx: DeployContext) -> str | None:

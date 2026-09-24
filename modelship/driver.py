@@ -201,6 +201,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     from modelship.deploy.serve_utils import get_app_statuses, seed_expected_models
     from modelship.deploy.strategy import (
         DeployContext,
+        DeployOutcome,
         compute_deploy_plan,
         route_live_apps,
         run_deploy_loop,
@@ -290,7 +291,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
         remove_apps(apps_to_remove, replica_coord, gateway_name)
         apps_to_remove = []
 
-    still_pending, fatally_failed = [], []
+    outcome = DeployOutcome(ready=[], still_pending=[], fatally_failed=[])
     if plan.models_to_add:
         ctx = DeployContext(
             coordinator=coordinator,
@@ -299,15 +300,21 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
             serve_logging_config=serve_logging_config,
             deployed_this_run=deployed_this_run,
         )
-        still_pending, fatally_failed = run_deploy_loop(plan.models_to_add, ctx)
+        outcome = run_deploy_loop(plan.models_to_add, ctx)
+    fatally_failed = outcome.fatally_failed
 
-    logger.info("Deploy complete. %d new deployment(s) from this run.", len(deployed_this_run))
-    for config, reason in still_pending:
+    logger.info(
+        "Deploy complete: %d model(s) up, %d still coming up, %d failed.",
+        len(outcome.ready),
+        len(outcome.still_pending),
+        len(fatally_failed),
+    )
+    for config, reason in outcome.still_pending:
         logger.warning("Model '%s' is still coming up and will land on its own: %s", config.name, reason)
 
     # blue_green: delete the old apps, except those still serving a pending replacement's model.
     if apps_to_remove:
-        keep = still_serving(apps_to_remove, still_pending, replica_coord, gateway_name)
+        keep = still_serving(apps_to_remove, outcome.still_pending, replica_coord, gateway_name)
         for app in sorted(keep):
             logger.info("Keeping %s serving until its replacement is ready.", app)
         remove_apps([app for app in apps_to_remove if app not in keep], replica_coord, gateway_name)
@@ -317,7 +324,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
 
     DEPLOY_DURATION_SECONDS.observe(time.monotonic() - deploy_started, tags={"gateway": gateway_name})
     for action, count in (
-        ("add", len(deployed_this_run)),
+        ("add", len(outcome.ready)),
         ("remove", removed_count),
         ("fail", len(fatally_failed)),
     ):

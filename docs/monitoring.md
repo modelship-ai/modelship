@@ -334,7 +334,7 @@ These cover the multi-node / HA machinery deployed by the Helm chart (deploy coo
 | `ray_modelship_gateway_routing_generation` | Gauge | `gateway` | Routing generation a gateway replica has reconciled to |
 | `ray_modelship_coordinator_generation` | Gauge | `gateway` | Coordinator's current routing generation (compare to the replica gauge to spot lag) |
 | `ray_modelship_deploy_duration_seconds` | Histogram | `gateway` | Wall-clock time for a deploy run to settle |
-| `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a deploy (`action`: `add`, `remove`, `evict`) |
+| `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a deploy (`action`: `add` — came up before the deploy timeout, `remove`, `fail`) |
 | `ray_modelship_state_store_operations_total` | Counter | `backend`, `op`, `result` | State-store ops (`op`: `get`/`set`/`delete`; `result`: `ok`/`error`) |
 | `ray_modelship_state_store_operation_duration_seconds` | Histogram | `backend`, `op` | State-store operation latency |
 
