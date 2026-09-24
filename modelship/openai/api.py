@@ -409,6 +409,8 @@ class ModelshipAPI:
     def _get_handle(self, model_name: str | None) -> DeploymentHandle:
         self._ensure_watching()
         if model_name is None or model_name not in self.models:
+            if model_name in self.expected_models:
+                raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE.value, detail="model not ready")
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
         # The coordinator's table maps each model to one app.
         return next(reversed(self.models[model_name].values()))
@@ -827,7 +829,9 @@ class ModelshipAPI:
                 exc.err
                 if isinstance(exc, responses_utils.ResponsesApiError)
                 else create_error_response(
-                    str(exc.detail), err_type="invalid_request_error", status_code=exc.status_code
+                    str(exc.detail),
+                    err_type="invalid_request_error" if exc.status_code < 500 else "api_error",
+                    status_code=exc.status_code,
                 )
             )
             await websocket.send_text(error_ws_frame(err))

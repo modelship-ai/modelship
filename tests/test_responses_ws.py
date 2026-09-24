@@ -189,6 +189,14 @@ class TestFrameValidation:
         assert ws.types == ["error"]
         assert ws.events[0]["status"] == 404
 
+    @pytest.mark.asyncio
+    async def test_an_expected_model_with_nothing_routed_yields_a_503_frame(self, api):
+        api.expected_models = ["m"]
+        ws = _FakeWebSocket()
+        await api._run_ws_turn(ws, "unscoped", {}, _frame(model="m"), {}, MagicMock(), "req-1")
+        assert ws.events[0]["status"] == 503
+        assert ws.events[0]["error"]["type"] == "api_error"
+
 
 class TestPreviousResponseIdResolution:
     @pytest.mark.asyncio

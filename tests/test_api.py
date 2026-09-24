@@ -258,17 +258,28 @@ class TestGetHandle:
         _apply(api, {"qwen-a3f9k": "qwen", "qwen-b7x2p": "qwen"}, handles=[ha, hb])
         assert api._get_handle("qwen") is hb
 
-    def test_unknown_model_raises(self, api):
+    def test_unknown_model_is_404(self, api):
         from fastapi import HTTPException
 
-        with pytest.raises(HTTPException):
+        _apply(api, {}, expected=["qwen"])
+        with pytest.raises(HTTPException) as exc_info:
             api._get_handle("nonexistent")
+        assert exc_info.value.status_code == 404
 
-    def test_none_model_raises(self, api):
+    def test_none_model_is_404(self, api):
         from fastapi import HTTPException
 
-        with pytest.raises(HTTPException):
+        with pytest.raises(HTTPException) as exc_info:
             api._get_handle(None)
+        assert exc_info.value.status_code == 404
+
+    def test_an_expected_model_with_nothing_routed_is_503(self, api):
+        from fastapi import HTTPException
+
+        _apply(api, {}, expected=["qwen"])
+        with pytest.raises(HTTPException) as exc_info:
+            api._get_handle("qwen")
+        assert exc_info.value.status_code == 503
 
 
 class TestImageEditRoutes:
