@@ -144,6 +144,12 @@ class TestReporting:
         r = apply([], [a, b], {}, outcome=DeployOutcome([_config(a)], [(_config(b), "no room yet")], []))
         assert r.changed == {"add": 1}
 
+    def test_a_pending_model_without_a_reason_is_logged_by_name_alone(self, apply, caplog):
+        a = _raw("a")
+        with caplog.at_level("WARNING"):
+            apply([], [a], {}, outcome=DeployOutcome([], [(_config(a), "")], []))
+        assert "Model 'a' is still coming up and will land on its own" in caplog.messages
+
     def test_returns_the_models_that_failed(self, apply):
         a = _raw("a")
         r = apply([], [a], {}, outcome=DeployOutcome([], [], [(_config(a), "engine died")]))

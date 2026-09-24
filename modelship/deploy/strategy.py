@@ -107,7 +107,7 @@ class DeployContext:
 @dataclass
 class DeployOutcome:
     ready: list[ModelshipModelConfig]
-    # each paired with the reason it is still pending, or failed
+    # each paired with Serve's pending reason (may be empty), or why it failed
     still_pending: list[tuple[ModelshipModelConfig, str]]
     fatally_failed: list[tuple[ModelshipModelConfig, str]]
 
@@ -321,13 +321,16 @@ def still_serving(
 
 
 def _pending_reason(name: str, statuses: dict[str, ApplicationStatusOverview]) -> str:
+    """Serve's deployment message, else its app message; empty when Serve gives neither."""
     app = statuses.get(name)
-    return app.message if app and app.message else "waiting to be scheduled"
+    if app is None:
+        return ""
+    return next((d.message for d in app.deployments.values() if d.message), app.message)
 
 
 def _log_pending(pending: dict[str, _Pending], statuses: dict[str, ApplicationStatusOverview]) -> None:
-    logger.info(
-        "Waiting on %d model(s): %s",
-        len(pending),
-        ", ".join(f"{item.config.name} ({_pending_reason(name, statuses)})" for name, item in pending.items()),
-    )
+    waiting = []
+    for name, item in pending.items():
+        reason = _pending_reason(name, statuses)
+        waiting.append(f"{item.config.name} ({reason})" if reason else item.config.name)
+    logger.info("Waiting on %d model(s): %s", len(pending), ", ".join(waiting))

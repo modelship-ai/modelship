@@ -310,7 +310,9 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
         len(fatally_failed),
     )
     for config, reason in outcome.still_pending:
-        logger.warning("Model '%s' is still coming up and will land on its own: %s", config.name, reason)
+        logger.warning(
+            "Model '%s' is still coming up and will land on its own%s", config.name, f": {reason}" if reason else ""
+        )
 
     # blue_green: delete the old apps, except those still serving a pending replacement's model.
     if apps_to_remove:

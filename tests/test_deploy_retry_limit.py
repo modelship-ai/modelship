@@ -7,7 +7,14 @@ from unittest.mock import MagicMock
 
 import pytest
 from ray import serve
-from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview, LoggingConfig
+from ray.serve.schema import (
+    ApplicationStatus,
+    ApplicationStatusOverview,
+    DeploymentStatus,
+    DeploymentStatusOverview,
+    DeploymentStatusTrigger,
+    LoggingConfig,
+)
 
 from modelship.deploy import strategy
 from modelship.infer.infer_config import ModelshipModelConfig
@@ -19,11 +26,20 @@ def _model(name: str) -> ModelshipModelConfig:
     )
 
 
-def _app(status: ApplicationStatus, message: str = "") -> ApplicationStatusOverview:
-    return ApplicationStatusOverview(status=status, message=message, last_deployed_time_s=0.0, deployments={})
+def _app(status: ApplicationStatus, message: str = "", deployment_message: str = "") -> ApplicationStatusOverview:
+    deployment = DeploymentStatusOverview(
+        status=DeploymentStatus.UPDATING,
+        status_trigger=DeploymentStatusTrigger.CONFIG_UPDATE_STARTED,
+        replica_states={},
+        message=deployment_message,
+    )
+    return ApplicationStatusOverview(
+        status=status, message=message, last_deployed_time_s=0.0, deployments={"d": deployment}
+    )
 
 
-DEPLOYING = _app(ApplicationStatus.DEPLOYING, "no room yet")
+DEPLOYING = _app(ApplicationStatus.DEPLOYING, deployment_message="no room yet")
+STARTING = _app(ApplicationStatus.DEPLOYING)
 RUNNING = _app(ApplicationStatus.RUNNING)
 FAILED = _app(ApplicationStatus.DEPLOY_FAILED, "engine died")
 UNHEALTHY = _app(ApplicationStatus.UNHEALTHY, "replica failed its health check")
@@ -162,6 +178,15 @@ class TestPendingIsNotFailure:
         with caplog.at_level("INFO"):
             loop({"a": [DEPLOYING, RUNNING]})
         assert "Waiting on 1 model(s): a (no room yet)" in caplog.text
+
+    def test_a_model_serve_gives_no_reason_for_is_pending_with_an_empty_reason(self, loop):
+        r = loop({"a": [STARTING]}, timeout="10")
+        assert r["pending"] == {"a": ""}
+
+    def test_a_model_without_a_reason_is_logged_by_name_alone(self, loop, caplog):
+        with caplog.at_level("INFO"):
+            loop({"a": [STARTING, RUNNING]})
+        assert "Waiting on 1 model(s): a" in caplog.messages
 
     def test_a_model_waiting_to_retry_at_the_deadline_is_failed(self, loop):
         r = loop({"a": [FAILED]}, timeout="5")
