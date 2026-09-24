@@ -176,13 +176,8 @@ def run_deploy_loop(
     models: list[ModelshipModelConfig],
     ctx: DeployContext,
 ) -> DeployOutcome:
-    """Submit every model, then report what each one did.
-
-    Ray places the replicas, so a model the cluster has no room for pends and
-    publishes its demand instead of being held back here. A model that fails to
-    come up is retried `_MAX_TRANSIENT_FAILURES` times with a doubling backoff
-    unless its replica reported a fatal error, which is permanent. A model still
-    waiting to retry at the deadline is failed."""
+    """Submits every model and polls until each is up, failed or out of time. A failed deploy is retried
+    with a doubling backoff, up to `_MAX_TRANSIENT_FAILURES` times, unless its replica reported it fatal."""
     pending = {config.deployment_name(ctx.gateway_name): _Pending(config) for config in models}
     ready: list[ModelshipModelConfig] = []
     fatally_failed: list[tuple[ModelshipModelConfig, str]] = []
