@@ -199,7 +199,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     )
     from modelship.deploy.removal import remove_apps
     from modelship.deploy.serve_utils import get_existing_apps, seed_expected_models
-    from modelship.deploy.strategy import DeployContext, compute_deploy_plan, run_deploy_loop
+    from modelship.deploy.strategy import DeployContext, compute_deploy_plan, run_deploy_loop, still_serving
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
     from modelship.infer.deploy_leases import get_or_create_leases
     from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
@@ -297,9 +297,12 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     for config, reason in still_pending:
         logger.warning("Model '%s' is still coming up and will land on its own: %s", config.name, reason)
 
-    # blue_green: routing cut over at registration; delete the drained old app.
+    # blue_green: delete the old apps, except those still serving a pending replacement's model.
     if apps_to_remove:
-        remove_apps(apps_to_remove, replica_coord, gateway_name)
+        keep = still_serving(apps_to_remove, still_pending, replica_coord, gateway_name)
+        for app in sorted(keep):
+            logger.info("Keeping %s serving until its replacement is ready.", app)
+        remove_apps([app for app in apps_to_remove if app not in keep], replica_coord, gateway_name)
 
     # Includes fatally-failed models, so the next deploy retries them.
     write_effective(store, gateway_name, desired_raw)

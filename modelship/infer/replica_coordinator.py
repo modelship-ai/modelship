@@ -3,9 +3,9 @@
 `ReplicaCoordinator` is a detached, named Ray actor on the head node holding the
 durable mapping of model deployments each gateway owns. The driver declares each
 deployment it submits and unregisters it on removal; the deployment's own replicas
-register it once their model has loaded. Every gateway replica long-polls
-`wait_for_change` and reconciles its own routing table from `get_routing` — nothing
-pushes to individual replicas.
+register it once their model has loaded, and the app it replaces is then deleted.
+Every gateway replica long-polls `wait_for_change` and reconciles its own routing
+table from `get_routing` — nothing pushes to individual replicas.
 
 The registry is persisted through `get_state_store()` — cluster-scoped even on the
 default `memory://` (backed by its own detached actor, see `modelship.state.memory`)
@@ -92,6 +92,7 @@ class ReplicaCoordinator:
         expected = saved.get("expected")
         self._expected: dict[str, list[str]] = expected if isinstance(expected, dict) else {}
         self._change: dict[str, asyncio.Event] = {}
+        self._deletions: set[asyncio.Task] = set()
 
     # These are async so every registry / generation / Event mutation runs on the
     # actor's single event loop, serialised with wait_for_change and race-free.
@@ -137,10 +138,23 @@ class ReplicaCoordinator:
             del gw[name]
         if superseded:
             logger.info("routing for model %s: %s -> %s", model_name, superseded, deployment_name)
+            task = asyncio.create_task(self._delete_after_cutover(gateway_name, superseded))
+            self._deletions.add(task)
+            task.add_done_callback(self._deletions.discard)
         gw[deployment_name] = model_name
         await self._persist()
         self._bump(gateway_name)
         return True
+
+    async def _delete_after_cutover(self, gateway_name: str, apps: list[str]) -> None:
+        """Deletes replaced apps once every gateway replica has had a watch period to
+        re-pull, skipping any routed or declared again meanwhile."""
+        from modelship.deploy.removal import delete_apps_quietly
+
+        await asyncio.sleep(_WATCH_TIMEOUT_S)
+        in_use = set(self._registry.get(gateway_name, {})) | set(self._declared.get(gateway_name, {}))
+        # serve.delete blocks until the app is gone
+        await asyncio.to_thread(delete_apps_quietly, [app for app in apps if app not in in_use])
 
     async def unregister_deployment(
         self, gateway_name: str, deployment_name: str, model_name: str | None = None

@@ -3,7 +3,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import ray
 from ray import serve
@@ -273,6 +273,22 @@ def _record_failure(name: str, item: _Pending, ctx: DeployContext, message: str)
     # resubmitting over the failed app replaces it
     item.retry_at = time.monotonic() + _DEPLOY_RETRY_SLEEP_S * 2**item.failures
     return None
+
+
+def still_serving(
+    apps: list[str], still_pending: list[tuple[ModelshipModelConfig, str]], replica_coordinator, gateway_name: str
+) -> set[str]:
+    """The apps still routing a model whose replacement is pending; that
+    replacement's registration deletes them."""
+    waiting = {config.name for config, _ in still_pending}
+    if not waiting:
+        return set()
+    try:
+        routed = cast(dict, ray.get(replica_coordinator.get_routing.remote(gateway_name)))["models"]
+    except Exception:
+        logger.exception("Could not read routing; removing replaced deployments now")
+        return set()
+    return {app for app in apps if routed.get(app) in waiting}
 
 
 def _pending_reason(name: str, statuses: dict[str, ApplicationStatusOverview]) -> str:

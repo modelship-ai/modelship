@@ -2,6 +2,7 @@
 
 import os
 import signal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -766,6 +767,44 @@ class TestRemoveApps:
             removal.remove_apps(["a-1234567890", "b-1234567890"], replica_coordinator, "gw")
         # Both deletes attempted even though the first raised.
         assert mock_delete.call_count == 2
+
+
+class TestStillServing:
+    def _routed(self, models):
+        replica_coordinator = MagicMock()
+        replica_coordinator.get_routing.remote.return_value = {"models": models}
+        return replica_coordinator
+
+    def test_keeps_an_app_routing_a_model_still_pending(self):
+        from modelship.deploy.strategy import still_serving
+
+        replica_coordinator = self._routed({"qwen-old": "qwen", "kokoro-old": "kokoro"})
+        with patch("modelship.deploy.strategy.ray.get", side_effect=lambda ref: ref):
+            keep = still_serving(
+                ["qwen-old", "kokoro-old"], [(SimpleNamespace(name="qwen"), "")], replica_coordinator, "gw"
+            )
+        assert keep == {"qwen-old"}
+
+    def test_an_unrouted_app_is_not_kept(self):
+        from modelship.deploy.strategy import still_serving
+
+        with patch("modelship.deploy.strategy.ray.get", side_effect=lambda ref: ref):
+            keep = still_serving(["qwen-old"], [(SimpleNamespace(name="qwen"), "")], self._routed({}), "gw")
+        assert keep == set()
+
+    def test_nothing_pending_needs_no_lookup(self):
+        from modelship.deploy.strategy import still_serving
+
+        replica_coordinator = MagicMock()
+        assert still_serving(["qwen-old"], [], replica_coordinator, "gw") == set()
+        replica_coordinator.get_routing.remote.assert_not_called()
+
+    def test_an_unreadable_registry_keeps_nothing(self):
+        from modelship.deploy.strategy import still_serving
+
+        with patch("modelship.deploy.strategy.ray.get", side_effect=RuntimeError("gone")):
+            keep = still_serving(["qwen-old"], [(SimpleNamespace(name="qwen"), "")], MagicMock(), "gw")
+        assert keep == set()
 
 
 class TestStartGateway:

@@ -121,6 +121,36 @@ class TestDeclaredRegistration:
         assert (await coord.get_routing("gw"))["expected"] == []
 
 
+class TestCutoverDeletesTheReplacedApp:
+    @pytest.fixture
+    def deleted(self, monkeypatch):
+        deleted = []
+        monkeypatch.setattr(replica_coordinator, "_WATCH_TIMEOUT_S", 0)
+        monkeypatch.setattr("modelship.deploy.removal.delete_apps_quietly", lambda apps: deleted.extend(apps))
+        return deleted
+
+    @pytest.mark.asyncio
+    async def test_the_replaced_app_is_deleted(self, coord, deleted):
+        await _route(coord, "gw", "qwen-OLD", "qwen")
+        await _route(coord, "gw", "qwen-NEW", "qwen")
+        await asyncio.gather(*coord._deletions)
+        assert deleted == ["qwen-OLD"]
+
+    @pytest.mark.asyncio
+    async def test_a_first_registration_deletes_nothing(self, coord, deleted):
+        await _route(coord, "gw", "qwen-aaaa", "qwen")
+        assert not coord._deletions
+
+    @pytest.mark.asyncio
+    async def test_an_app_declared_again_before_the_delete_is_kept(self, coord, deleted, monkeypatch):
+        monkeypatch.setattr(replica_coordinator, "_WATCH_TIMEOUT_S", 0.05)
+        await _route(coord, "gw", "qwen-OLD", "qwen")
+        await _route(coord, "gw", "qwen-NEW", "qwen")
+        await coord.declare_deployment("gw", "qwen-OLD", "qwen")
+        await asyncio.gather(*coord._deletions)
+        assert deleted == []
+
+
 class TestRegisterLoadedDeployment:
     @pytest.fixture(autouse=True)
     def _fast(self, monkeypatch):
