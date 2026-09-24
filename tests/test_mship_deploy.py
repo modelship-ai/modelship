@@ -952,6 +952,15 @@ class TestGatewayRoutePrefix:
             serve_utils.gateway_route_prefix("!!!")
 
 
+class TestGatewayFromEnv:
+    def test_a_name_with_a_dot_is_rejected(self, monkeypatch):
+        from modelship import driver
+
+        monkeypatch.setenv("MSHIP_GATEWAY_NAME", "edge.eu")
+        with pytest.raises(SystemExit, match=r"must not contain '\.'"):
+            driver._gateway_from_env()
+
+
 class TestValidateNodeGpuReservation:
     """--node-num-gpus must not exceed what this container can actually see — an
     inflated value would surface much later, at a replica's model load, instead of at startup."""

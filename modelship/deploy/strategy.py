@@ -49,7 +49,7 @@ def compute_deploy_plan(
 ) -> DeployPlan:
     """Diff the desired effective set against what's live. The merge verb already
     folded additive/reconcile into `desired_conf`, so this always reconciles
-    live -> desired. Deployment names are `{model}-{fingerprint}`, so a set
+    live -> desired. Deployment names are `{gateway}.{model}-{fingerprint}`, so a set
     comparison detects renames and config drift.
 
     Removal is `prev_effective_names & existing apps`: only deployments THIS

@@ -119,7 +119,7 @@ def deployment_names(raw_models: list[dict], gateway_name: str) -> set[str]:
     under this gateway's effective management. Passed to the deploy plan so a
     reconcile only removes deployments that WERE effective-managed (never legacy /
     un-tracked deployments or another gateway's apps). Relies on the effective
-    config being per-gateway and the gateway being folded into each fingerprint."""
+    config being per-gateway and the gateway prefixing each deployment name."""
     return {_deployment_name(d, gateway_name) for d in raw_models}
 
 

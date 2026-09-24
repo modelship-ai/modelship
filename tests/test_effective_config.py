@@ -107,7 +107,7 @@ class TestRawRoundTrip:
         assert m.num_gpus == 1.0
         assert m.vllm_engine_kwargs.tensor_parallel_size == 2
         # identity preserved: same fingerprint as a fresh validate of the original
-        assert m.fingerprint("g") == ModelshipModelConfig.model_validate(raw).fingerprint("g")
+        assert m.fingerprint() == ModelshipModelConfig.model_validate(raw).fingerprint()
 
     def test_stored_value_is_raw_not_normalized(self):
         # The persisted value keeps the user's num_gpus=2, not the normalized 1.0.

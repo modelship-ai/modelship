@@ -67,11 +67,11 @@ def _blue_green_config(n_ctx: int) -> dict:
 
 def _app_names_for(model_name: str) -> set[str]:
     """Live Serve app names currently routing `model_name` (app name is
-    `<model_name>-<fingerprint>`), read from the Serve REST status API."""
+    `modelship.<model_name>-<fingerprint>`), read from the Serve REST status API."""
     resp = httpx.get(SERVE_STATUS_URL, timeout=10)
     resp.raise_for_status()
     apps = resp.json().get("applications", {})
-    return {name for name in apps if name == model_name or name.startswith(f"{model_name}-")}
+    return {name for name in apps if name.startswith(f"modelship.{model_name}-")}
 
 
 @pytest.mark.integration
