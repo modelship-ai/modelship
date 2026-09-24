@@ -112,6 +112,21 @@ class TestUnused:
         assert _route({OTHER: _app(ApplicationStatus.DELETING)}, {"m": NEW}).unused == set()
 
 
+class TestRetiring:
+    def test_an_unused_app_is_retiring(self):
+        assert _route({OLD: _app(), NEW: _app(deployed_at=1)}, {"m": NEW}).retiring == {OLD}
+
+    def test_an_app_being_deleted_is_retiring(self):
+        assert _route({NEW: _app(), OTHER: _app(ApplicationStatus.DELETING)}, {"m": NEW}).retiring == {OTHER}
+
+    def test_an_older_app_still_serving_is_not_retiring(self):
+        apps = {OLD: _app(), NEW: _app(ApplicationStatus.DEPLOYING, running=0)}
+        assert _route(apps, {"m": NEW}).retiring == set()
+
+    def test_another_gateways_app_being_deleted_is_not_retiring(self):
+        assert _route({"edge.m-aaaaaaaaaa": _app(ApplicationStatus.DELETING)}, {}).retiring == set()
+
+
 class TestExpected:
     def test_a_model_whose_target_exists_is_expected(self):
         apps = {NEW: _app(ApplicationStatus.DEPLOYING, running=0)}
@@ -136,3 +151,7 @@ class TestUnknownTargets:
 
     def test_nothing_is_unused(self):
         assert _route({OLD: _app(deployed_at=1), NEW: _app(deployed_at=2)}, None).unused == set()
+
+    def test_only_apps_being_deleted_are_retiring(self):
+        apps = {OLD: _app(ApplicationStatus.DELETING), NEW: _app(deployed_at=2)}
+        assert _route(apps, None).retiring == {OLD}

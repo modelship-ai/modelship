@@ -207,6 +207,80 @@ class TestGetRouting:
             await coord.get_routing("gw")
 
 
+class TestGetRetiring:
+    @pytest.mark.asyncio
+    async def test_lists_the_gateways_unused_apps(self, cluster):
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
+        coord = _coordinator()
+        read = asyncio.create_task(coord.get_retiring("gw"))
+        await asyncio.sleep(0)
+        await _pass(coord)
+        assert await read == [_app_name(OLD)]
+
+    @pytest.mark.asyncio
+    async def test_answers_from_a_pass_started_after_the_call(self, cluster):
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
+        coord = _coordinator()
+        await _pass(coord)
+        read = asyncio.create_task(coord.get_retiring("gw"))
+        await asyncio.sleep(0)
+        assert not read.done()
+        del cluster.apps[_app_name(OLD)]
+        await _pass(coord)
+        assert await read == []
+
+    @pytest.mark.asyncio
+    async def test_a_pass_already_running_does_not_answer(self, cluster, monkeypatch):
+        release = threading.Event()
+        status = replica_coordinator.serve.status
+
+        def slow_status():
+            release.wait(5)
+            return status()
+
+        monkeypatch.setattr(replica_coordinator.serve, "status", slow_status)
+        coord = _coordinator()
+        running = asyncio.create_task(coord._compute())
+        await asyncio.sleep(0)
+        read = asyncio.create_task(coord.get_retiring("gw"))
+        await asyncio.sleep(0)
+        release.set()
+        await running
+        await asyncio.sleep(0)
+        assert not read.done()
+        await _pass(coord)
+        assert await read == []
+
+    @pytest.mark.asyncio
+    async def test_a_failed_pass_does_not_answer(self, cluster, monkeypatch):
+        coord = _coordinator()
+        read = asyncio.create_task(coord.get_retiring("gw"))
+        await asyncio.sleep(0)
+
+        def unavailable():
+            raise RuntimeError("controller restarting")
+
+        status = replica_coordinator.serve.status
+        monkeypatch.setattr(replica_coordinator.serve, "status", unavailable)
+        with pytest.raises(RuntimeError):
+            await coord._compute()
+        await asyncio.sleep(0)
+        assert not read.done()
+        monkeypatch.setattr(replica_coordinator.serve, "status", status)
+        await _pass(coord)
+        assert await read == []
+
+    @pytest.mark.asyncio
+    async def test_a_gateway_never_computed_has_nothing_retiring(self, cluster):
+        coord = _coordinator()
+        read = asyncio.create_task(coord.get_retiring("elsewhere"))
+        await asyncio.sleep(0)
+        await _pass(coord)
+        assert await read == []
+
+
 class TestWaitForChange:
     @pytest.mark.asyncio
     async def test_returns_at_once_when_the_generation_differs(self, cluster):

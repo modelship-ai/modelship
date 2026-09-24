@@ -19,6 +19,8 @@ class Routing:
     expected: list[str]
     # this gateway's apps that neither serve a model nor are its target
     unused: set[str]
+    # this gateway's apps that are unused or being deleted
+    retiring: set[str]
 
 
 def can_serve(app: ApplicationStatusOverview) -> bool:
@@ -56,10 +58,10 @@ def compute_routing(
         if others:
             models[max(others, key=lambda name: apps[name].last_deployed_time_s)] = model
 
-    if targets is None:
-        return Routing(models=models, expected=sorted(set(models.values())), unused=set())
     present = {name for name, app in apps.items() if app.status != ApplicationStatus.DELETING}
-    expected = [model for model, target in targets.items() if target in present or model in models.values()]
     mine = {name for names in by_model.values() for name in names}
+    if targets is None:
+        return Routing(models=models, expected=sorted(set(models.values())), unused=set(), retiring=mine - present)
+    expected = [model for model, target in targets.items() if target in present or model in models.values()]
     unused = (mine & present) - set(models) - set(targets.values())
-    return Routing(models=models, expected=expected, unused=unused)
+    return Routing(models=models, expected=expected, unused=unused, retiring=unused | (mine - present))

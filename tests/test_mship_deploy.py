@@ -1,10 +1,13 @@
 """Tests for the start/join/deploy CLI parsing and driver helpers."""
 
+import itertools
 import os
 import signal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ray.exceptions import ActorUnavailableError, GetTimeoutError
 
 from modelship.deploy.actor_options import (
     build_cache_env_vars,
@@ -258,9 +261,9 @@ class TestDriverVerbs:
             driver._deploy(parse_args("deploy", []))
         mock_attach.assert_not_called()
 
-    def _deploy(self, argv, existing_apps, fatally_failed=()):
+    def _deploy(self, argv, existing_apps, fatally_failed=(), wait=None):
         from modelship import driver
-        from modelship.deploy import serve_utils
+        from modelship.deploy import removal, serve_utils
 
         with (
             patch.object(serve_utils, "local_ray_clusters", return_value={"10.0.0.1:6380"}),
@@ -270,23 +273,25 @@ class TestDriverVerbs:
             patch.object(serve_utils, "start_gateway") as mock_gateway,
             patch.object(driver, "_log_cluster"),
             patch.object(driver, "_apply", return_value=list(fatally_failed)) as mock_apply,
+            patch("modelship.infer.replica_coordinator.get_or_create_replica_coordinator"),
+            patch.object(removal, "wait_for_retired_apps", side_effect=wait) as mock_wait,
         ):
             args = parse_args("deploy", argv)
             apply_args_to_env(args)
             driver._deploy(args)
-        return mock_gateway, mock_apply
+        return mock_gateway, mock_apply, mock_wait
 
     def test_deploy_refuses_a_missing_default_gateway(self):
         with pytest.raises(SystemExit, match="no gateway 'modelship'"):
             self._deploy([], existing_apps=set())
 
     def test_deploy_creates_a_named_gateway_that_is_missing(self):
-        mock_gateway, mock_apply = self._deploy(["--gateway-name", "edge"], existing_apps={"modelship"})
+        mock_gateway, mock_apply, _ = self._deploy(["--gateway-name", "edge"], existing_apps={"modelship"})
         assert mock_gateway.call_args.args[0] == "edge"
         mock_apply.assert_called_once()
 
     def test_deploy_reuses_an_existing_gateway(self):
-        mock_gateway, mock_apply = self._deploy([], existing_apps={"modelship"})
+        mock_gateway, mock_apply, _ = self._deploy([], existing_apps={"modelship"})
         mock_gateway.assert_not_called()
         mock_apply.assert_called_once()
 
@@ -294,6 +299,24 @@ class TestDriverVerbs:
         with pytest.raises(SystemExit) as exc:
             self._deploy([], existing_apps={"modelship"}, fatally_failed=[(MagicMock(), "boom")])
         assert exc.value.code == 1
+
+    def test_deploy_waits_for_this_gateways_retired_apps(self):
+        _, _, mock_wait = self._deploy(["--gateway-name", "edge"], existing_apps={"edge"})
+        assert mock_wait.call_args.args[1] == "edge"
+
+    @pytest.mark.parametrize(("fatally_failed", "code"), [((), 0), ([(MagicMock(), "boom")], 1)])
+    def test_a_signal_while_waiting_exits_without_deleting_this_runs_apps(self, fatally_failed, code):
+        from modelship import driver
+        from modelship.deploy import removal
+
+        def interrupted(replica_coordinator, gateway_name):
+            handler = driver.signal.signal.call_args.args[1]
+            handler(signal.SIGTERM, None)
+
+        with patch.object(removal, "delete_apps_quietly") as mock_delete, pytest.raises(SystemExit) as exc:
+            self._deploy([], existing_apps={"modelship"}, fatally_failed=fatally_failed, wait=interrupted)
+        assert exc.value.code == code
+        mock_delete.assert_not_called()
 
 
 class TestStopHead:
@@ -740,6 +763,57 @@ class TestDeleteAppsQuietly:
         with patch("modelship.deploy.removal.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete:
             removal.delete_apps_quietly(["gw.a-1234567890", "gw.b-1234567890"])
         assert mock_delete.call_count == 2
+
+
+class TestWaitForRetiredApps:
+    @staticmethod
+    def _wait(monkeypatch, answers):
+        """Runs the wait on a fake clock; each answer takes one second, as a coordinator pass does."""
+        from modelship.deploy import removal
+
+        clock, asked = [0.0], []
+        answers = iter(answers)
+
+        def get(ref, timeout):
+            clock[0] += 1
+            asked.append(ref)
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        logger = MagicMock()
+        monkeypatch.setattr(removal, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
+        monkeypatch.setattr(removal, "ray", SimpleNamespace(get=get))
+        monkeypatch.setattr(removal, "logger", logger)
+        removal.wait_for_retired_apps(MagicMock(), "gw")
+        return logger, len(asked)
+
+    def test_returns_once_nothing_is_retiring(self, monkeypatch):
+        logger, asked = self._wait(monkeypatch, [["gw.a-1234567890"], []])
+        assert asked == 2
+        logger.warning.assert_not_called()
+
+    def test_retries_a_restarting_coordinator(self, monkeypatch):
+        logger, asked = self._wait(monkeypatch, [ActorUnavailableError("restarting", None), []])
+        assert asked == 2
+        logger.warning.assert_not_called()
+
+    def test_warns_with_the_apps_left_at_the_deadline(self, monkeypatch):
+        logger, _ = self._wait(monkeypatch, itertools.repeat(["gw.a-1234567890"]))
+        assert "gw.a-1234567890" in logger.warning.call_args.args
+
+    def test_warns_when_the_coordinator_never_answers(self, monkeypatch):
+        logger, _ = self._wait(monkeypatch, itertools.repeat(ActorUnavailableError("restarting", None)))
+        assert logger.warning.call_args.args[0].startswith("Could not confirm")
+
+    def test_a_timed_out_call_ends_the_wait(self, monkeypatch):
+        logger, asked = self._wait(monkeypatch, [GetTimeoutError()])
+        assert asked == 1
+        assert logger.warning.call_args.args[0].startswith("Could not confirm")
 
 
 class TestStartGateway:

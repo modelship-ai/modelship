@@ -126,7 +126,7 @@ def _join() -> None:
 
 
 def _deploy(args) -> None:
-    from modelship.deploy.removal import delete_apps_quietly
+    from modelship.deploy.removal import delete_apps_quietly, wait_for_retired_apps
     from modelship.deploy.serve_utils import (
         attach_cluster,
         get_existing_apps,
@@ -134,6 +134,7 @@ def _deploy(args) -> None:
         start_gateway,
         start_serve,
     )
+    from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
     from modelship.state import reject_inline_password
 
     gateway_name, route_prefix, explicit_gateway = _gateway_from_env()
@@ -175,6 +176,10 @@ def _deploy(args) -> None:
         logger.exception("Deploy failed, cleaning up deployments from this run...")
         delete_apps_quietly(reversed(deployed_this_run))
         raise
+
+    # The deploy is done; a signal now only stops the wait.
+    _on_signals(lambda sig, _frame: sys.exit(1 if fatally_failed else 0))
+    wait_for_retired_apps(get_or_create_replica_coordinator(), gateway_name)
 
     if fatally_failed:
         # No resident /readyz to report it, so fail via the exit code.

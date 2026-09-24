@@ -4,8 +4,8 @@
 reads Serve's application statuses and each gateway's effective config, computes every
 gateway's model table (`modelship.deploy.routing`), and deletes the apps nothing has
 used for `_UNUSED_GRACE_SECONDS`. Gateway replicas long-poll `wait_for_change` and copy
-their table from `get_routing`. Nothing is stored: a restarted coordinator recomputes
-everything on its first pass.
+their table from `get_routing`; the driver polls `get_retiring` until those deletes are
+done. Nothing is stored: a restarted coordinator recomputes everything on its first pass.
 """
 
 import asyncio
@@ -53,6 +53,9 @@ class ReplicaCoordinator:
         self._generation: dict[str, int] = {}
         self._change: dict[str, asyncio.Event] = {}
         self._computed = asyncio.Event()
+        # monotonic start of the last completed pass; _pass_done is set and replaced after each pass
+        self._last_pass_start = float("-inf")
+        self._pass_done = asyncio.Event()
         # gateways whose replicas asked for a table; the rest are found through their apps
         self._watched: set[str] = set()
         self._unreadable: set[str] = set()
@@ -76,6 +79,7 @@ class ReplicaCoordinator:
 
     async def _compute(self) -> None:
         """One pass: every gateway's table, then deletes of apps unused past the grace period."""
+        started = time.monotonic()
         apps = dict((await asyncio.to_thread(serve.status)).applications)
         gateways = set(self._watched)
         for name in apps:
@@ -89,7 +93,10 @@ class ReplicaCoordinator:
             self._publish(gateway, routing)
             unused |= routing.unused
         self._delete_unused(unused)
+        self._last_pass_start = started
         self._computed.set()
+        self._pass_done.set()
+        self._pass_done = asyncio.Event()
 
     async def _targets(self, gateway: str) -> dict[str, str] | None:
         """None when the effective config is missing or unreadable, which deletes nothing."""
@@ -146,6 +153,15 @@ class ReplicaCoordinator:
             "expected": list(routing.expected) if routing else [],
             "generation": self._generation.get(gateway_name, self._first_generation),
         }
+
+    async def get_retiring(self, gateway_name: str) -> list[str]:
+        """The gateway's apps that are unused or being deleted, as of a pass started after this call."""
+        self._watched.add(gateway_name)
+        called = time.monotonic()
+        while self._last_pass_start <= called:
+            await self._pass_done.wait()
+        routing = self._routing.get(gateway_name)
+        return sorted(routing.retiring) if routing else []
 
     async def wait_for_change(self, gateway_name: str, since_gen: int, timeout: float = _WATCH_TIMEOUT_S) -> int:
         """Long-poll for a change to the gateway's table: returns its generation once it
