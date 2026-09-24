@@ -151,6 +151,11 @@ class TestPendingIsNotFailure:
         assert r["pending"] == {"a": "no room yet"}
         assert r["failed"] == {}
 
+    def test_the_first_poll_logs_what_is_outstanding(self, loop, caplog):
+        with caplog.at_level("INFO"):
+            loop({"a": [DEPLOYING, RUNNING]})
+        assert "Waiting on 1 model(s): a (no room yet)" in caplog.text
+
     def test_a_model_waiting_to_retry_at_the_deadline_is_failed(self, loop):
         r = loop({"a": [FAILED]}, timeout="5")
         assert r["pending"] == {}

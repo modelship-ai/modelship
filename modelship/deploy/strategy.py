@@ -19,7 +19,7 @@ logger = get_logger("startup")
 _DEPLOY_RETRY_SLEEP_S = 2.0
 _MAX_TRANSIENT_FAILURES = 3
 _POLL_SECONDS = 2.0
-_PENDING_LOG_EVERY_N_POLLS = 30  # with a 2s poll, log what's outstanding once a minute
+_PENDING_LOG_EVERY_N_POLLS = 30  # with a 2s poll, log what's outstanding at first, then once a minute
 _TIMEOUT_ENV = "MSHIP_DEPLOY_TIMEOUT_S"
 _DEFAULT_TIMEOUT_SECONDS = 600.0
 
@@ -117,8 +117,8 @@ class _Pending:
     config: ModelshipModelConfig
     failures: int = 0
     last_error: str = ""
-    # >0 while waiting out the backoff before being submitted again
-    retry_at: float = 0.0
+    # set while waiting out the backoff before being submitted again
+    retry_at: float | None = None
 
 
 def deploy_timeout_seconds() -> float:
@@ -211,15 +211,15 @@ def run_deploy_loop(
             polls += 1
             now = time.monotonic()
             for name, item in list(pending.items()):
-                if item.retry_at and now >= item.retry_at:
-                    item.retry_at = 0.0
+                if item.retry_at is not None and now >= item.retry_at:
+                    item.retry_at = None
                     if (error := _submit(item.config, ctx)) is not None:
                         fail(name, error)
 
             statuses = _app_statuses()
             for name, item in list(pending.items()):
                 app = statuses.get(name)
-                if app is None or item.retry_at:
+                if app is None or item.retry_at is not None:
                     continue
                 if app.status == ApplicationStatus.RUNNING:
                     logger.info("Model ready: %s (deployment: %s)", item.config.name, name)
@@ -227,11 +227,11 @@ def run_deploy_loop(
                 elif app.status in (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.UNHEALTHY):
                     fail(name, app.message)
 
-            if pending and polls % _PENDING_LOG_EVERY_N_POLLS == 0:
+            if pending and (polls == 1 or polls % _PENDING_LOG_EVERY_N_POLLS == 0):
                 _log_pending(pending, statuses)
 
         for name, item in list(pending.items()):
-            if item.retry_at:
+            if item.retry_at is not None:
                 logger.error(
                     "Giving up on model '%s' (deployment=%s): deploy timeout reached before its next attempt",
                     item.config.name,
