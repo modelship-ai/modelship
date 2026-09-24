@@ -1,6 +1,7 @@
 import math
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,7 +10,7 @@ from ray import serve
 from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview, LoggingConfig
 
 from modelship.deploy.actor_options import build_deployment_options
-from modelship.deploy.removal import delete_apps_quietly, remove_apps
+from modelship.deploy.removal import remove_apps
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.infer.model_deployment import ModelDeployment
 from modelship.logging import get_logger
@@ -108,6 +109,7 @@ class DeployContext:
 class _Pending:
     config: ModelshipModelConfig
     failures: int = 0
+    last_error: str = ""
     # >0 while waiting out the backoff before being submitted again
     retry_at: float = 0.0
 
@@ -174,82 +176,89 @@ def run_deploy_loop(
     come up is retried `_MAX_TRANSIENT_FAILURES` times with a doubling backoff
     unless its replica reported a fatal error, which is permanent.
 
-    Returns (still_pending, fatally_failed), pairing each config with a reason.
-    The caller keeps both in the effective config, so a later deploy retries."""
-    pending: dict[str, _Pending] = {}
+    Returns (still_pending, fatally_failed), pairing each config with a reason; a
+    model still waiting to retry at the deadline is failed. The caller keeps both
+    in the effective config, so a later deploy retries."""
+    pending = {config.deployment_name(ctx.gateway_name): _Pending(config) for config in models}
     fatally_failed: list[tuple[ModelshipModelConfig, str]] = []
-    for config in models:
-        pending[config.deployment_name(ctx.gateway_name)] = _Pending(config)
-    for name, item in list(pending.items()):
-        _submit(name, item, ctx, pending, fatally_failed)
-
-    deadline = time.monotonic() + deploy_timeout_seconds()
-    polls = 0
     statuses: dict[str, ApplicationStatusOverview] = {}
-    while pending and time.monotonic() < deadline:
-        time.sleep(_POLL_SECONDS)
-        polls += 1
-        now = time.monotonic()
-        for name, item in list(pending.items()):
-            if item.retry_at and now >= item.retry_at:
-                item.retry_at = 0.0
-                _submit(name, item, ctx, pending, fatally_failed)
 
-        statuses = _app_statuses()
-        for name, item in list(pending.items()):
-            app = statuses.get(name)
-            if app is None or item.retry_at:
-                continue
-            if app.status == ApplicationStatus.RUNNING:
-                logger.info("Model ready: %s (deployment: %s)", item.config.name, name)
-                del pending[name]
-            elif app.status in (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.UNHEALTHY):
-                _record_failure(name, item, ctx, pending, fatally_failed, app.message)
+    # removal blocks until the app is torn down, so it runs beside the polling
+    with ThreadPoolExecutor(thread_name_prefix="deploy-removal") as removals:
 
-        if pending and polls % _PENDING_LOG_EVERY_N_POLLS == 0:
-            _log_pending(pending, statuses)
+        def give_up(name: str, reason: str) -> None:
+            ctx.deployed_this_run.pop(name, None)
+            fatally_failed.append((pending.pop(name).config, reason))
+            removals.submit(remove_apps, [name], ctx.replica_coordinator, ctx.gateway_name)
+
+        def fail(name: str, message: str) -> None:
+            if (reason := _record_failure(name, pending[name], ctx, message)) is not None:
+                give_up(name, reason)
+
+        for name, item in list(pending.items()):
+            if (error := _submit(item.config, ctx)) is not None:
+                fail(name, error)
+
+        deadline = time.monotonic() + deploy_timeout_seconds()
+        polls = 0
+        while pending and time.monotonic() < deadline:
+            time.sleep(_POLL_SECONDS)
+            polls += 1
+            now = time.monotonic()
+            for name, item in list(pending.items()):
+                if item.retry_at and now >= item.retry_at:
+                    item.retry_at = 0.0
+                    if (error := _submit(item.config, ctx)) is not None:
+                        fail(name, error)
+
+            statuses = _app_statuses()
+            for name, item in list(pending.items()):
+                app = statuses.get(name)
+                if app is None or item.retry_at:
+                    continue
+                if app.status == ApplicationStatus.RUNNING:
+                    logger.info("Model ready: %s (deployment: %s)", item.config.name, name)
+                    del pending[name]
+                elif app.status in (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.UNHEALTHY):
+                    fail(name, app.message)
+
+            if pending and polls % _PENDING_LOG_EVERY_N_POLLS == 0:
+                _log_pending(pending, statuses)
+
+        for name, item in list(pending.items()):
+            if item.retry_at:
+                logger.error(
+                    "Giving up on model '%s' (deployment=%s): deploy timeout reached before its next attempt",
+                    item.config.name,
+                    name,
+                )
+                give_up(name, item.last_error)
 
     still_pending = [(item.config, _pending_reason(name, statuses)) for name, item in pending.items()]
     return still_pending, fatally_failed
 
 
-def _submit(
-    name: str,
-    item: _Pending,
-    ctx: DeployContext,
-    pending: dict[str, _Pending],
-    fatally_failed: list[tuple[ModelshipModelConfig, str]],
-) -> None:
+def _submit(config: ModelshipModelConfig, ctx: DeployContext) -> str | None:
     try:
-        submit_deploy(item.config, ctx)
+        submit_deploy(config, ctx)
     except Exception as exc:
-        _record_failure(name, item, ctx, pending, fatally_failed, f"{type(exc).__name__}: {exc}")
+        return f"{type(exc).__name__}: {exc}"
+    return None
 
 
-def _record_failure(
-    name: str,
-    item: _Pending,
-    ctx: DeployContext,
-    pending: dict[str, _Pending],
-    fatally_failed: list[tuple[ModelshipModelConfig, str]],
-    message: str,
-) -> None:
-    """A fatal error from the replica is permanent; anything else gets another
-    attempt until the cap, so a download blip doesn't evict a good model."""
-    ctx.deployed_this_run.pop(name, None)
+def _record_failure(name: str, item: _Pending, ctx: DeployContext, message: str) -> str | None:
+    """None to resubmit after a backoff, else why the model is given up on: a fatal
+    error from its replica, or its attempts running out."""
     try:
         fatal_err = ray.get(ctx.coordinator.pop_fatal_error.remote(name), timeout=2.0)
     except Exception:
         fatal_err = None
-
     if fatal_err is not None:
         logger.error("Skipping model '%s' permanently (deployment=%s): %s", item.config.name, name, fatal_err)
-        remove_apps([name], ctx.replica_coordinator, ctx.gateway_name)
-        fatally_failed.append((item.config, str(fatal_err)))
-        del pending[name]
-        return
+        return str(fatal_err)
 
     item.failures += 1
+    item.last_error = message
     if item.failures >= _MAX_TRANSIENT_FAILURES:
         logger.error(
             "Giving up on model '%s' after %d failed attempt(s) (deployment=%s): %s",
@@ -258,15 +267,12 @@ def _record_failure(
             name,
             message,
         )
-        remove_apps([name], ctx.replica_coordinator, ctx.gateway_name)
-        fatally_failed.append((item.config, message))
-        del pending[name]
-        return
+        return message
 
     logger.warning("Deploy failed for %s (deployment=%s); will retry: %s", item.config.name, name, message)
-    # Serve keeps a failed application; the retry replaces it.
-    delete_apps_quietly([name])
+    # resubmitting over the failed app replaces it
     item.retry_at = time.monotonic() + _DEPLOY_RETRY_SLEEP_S * 2**item.failures
+    return None
 
 
 def _pending_reason(name: str, statuses: dict[str, ApplicationStatusOverview]) -> str:

@@ -2,6 +2,7 @@
 leaving one that is only short of capacity to come up on its own."""
 
 import inspect
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -45,9 +46,7 @@ def loop(monkeypatch):
     clock = _Clock()
     monkeypatch.setattr(strategy.time, "sleep", clock.sleep)
     monkeypatch.setattr(strategy.time, "monotonic", clock.monotonic)
-    deleted: list[str] = []
     removed: list[str] = []
-    monkeypatch.setattr(strategy, "delete_apps_quietly", lambda names: deleted.extend(names))
     monkeypatch.setattr(strategy, "remove_apps", lambda names, replica_coord, gateway: removed.extend(names))
     monkeypatch.setattr(strategy.ray, "get", lambda ref, **kwargs: ref)
 
@@ -87,7 +86,6 @@ def loop(monkeypatch):
             "pending": {c.name: reason for c, reason in pending},
             "failed": {c.name: detail for c, detail in failed},
             "submitted": submitted,
-            "deleted": deleted,
             "removed": removed,
             "deployed_this_run": ctx.deployed_this_run,
         }
@@ -108,12 +106,20 @@ class TestTransientCap:
     def test_a_fatal_report_removes_the_app(self, loop):
         r = loop({"a": [FAILED]}, fatal={_model("a").deployment_name("g"): "bad config"})
         assert r["removed"] == [_model("a").deployment_name("g")]
-        assert r["deleted"] == []
 
-    def test_a_recovering_model_is_not_given_up_on(self, loop):
+    def test_a_retry_resubmits_over_the_failed_app(self, loop):
         r = loop({"a": [FAILED] + [DEPLOYING] * 3 + [RUNNING]})
+        assert r["submitted"] == ["a", "a"]
+        assert r["removed"] == []
         assert r["failed"] == {}
         assert r["pending"] == {}
+
+    def test_removal_runs_off_the_polling_thread(self, loop, monkeypatch):
+        threads = []
+        monkeypatch.setattr(strategy, "remove_apps", lambda *args: threads.append(threading.current_thread()))
+        loop({"a": [FAILED]})
+        assert len(threads) == 1
+        assert threads[0] is not threading.current_thread()
 
     def test_a_fatal_report_wins_immediately(self, loop):
         r = loop({"a": [FAILED]}, fatal={_model("a").deployment_name("g"): "bad config"})
@@ -142,6 +148,12 @@ class TestPendingIsNotFailure:
         r = loop({"a": [DEPLOYING], "b": [RUNNING]}, timeout="10")
         assert r["pending"] == {"a": "no room yet"}
         assert r["failed"] == {}
+
+    def test_a_model_waiting_to_retry_at_the_deadline_is_failed(self, loop):
+        r = loop({"a": [FAILED]}, timeout="5")
+        assert r["pending"] == {}
+        assert r["failed"] == {"a": "engine died"}
+        assert r["removed"] == [_model("a").deployment_name("g")]
 
 
 class TestServeApiCanary:
