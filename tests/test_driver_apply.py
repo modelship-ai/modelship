@@ -1,4 +1,4 @@
-"""_apply: what the driver deploys, routes and removes around the deploy loop."""
+"""_apply: what the driver writes, deploys and deletes around the deploy loop."""
 
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -8,7 +8,7 @@ import pytest
 from ray.serve.schema import ApplicationStatus
 
 from modelship import driver
-from modelship.deploy.effective_config import write_effective
+from modelship.deploy.effective_config import read_effective, write_effective
 from modelship.deploy.strategy import DeployOutcome
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
@@ -30,43 +30,50 @@ def _app(raw: dict) -> str:
 
 @pytest.fixture
 def apply():
-    def run(prev, desired, statuses, routed=None, outcome=None, replace_strategy="blue_green"):
+    def run(prev, desired, statuses, outcome=None, replace_strategy="blue_green", sources_error=None):
         store = _MemoryStore()
         write_effective(store, "g", prev)
-        replica_coord = MagicMock()
-        replica_coord.get_routing.remote.return_value = {"models": routed or {}}
-        run_deploy_loop = MagicMock(return_value=outcome or DeployOutcome([], [], []))
-        remove_apps = MagicMock()
+        events: list = []
+        effective_at_submit: list = []
+
+        def deploy_loop(models, ctx):
+            effective_at_submit.append(read_effective(store, "g"))
+            events.append("deploy")
+            return outcome or DeployOutcome([], [], [])
+
+        run_deploy_loop = MagicMock(side_effect=deploy_loop)
+        delete = MagicMock(side_effect=lambda names: events.append(("delete", list(names))))
         leases = MagicMock()
         changed = MagicMock()
         args = SimpleNamespace(reconcile=True, config="models.yaml", model=None, replace_strategy=replace_strategy)
         with ExitStack() as stack:
             for target, value in {
                 "modelship.deploy.serve_utils.get_app_statuses": MagicMock(return_value=statuses),
-                "modelship.deploy.serve_utils.seed_expected_models": MagicMock(),
                 "modelship.deploy.config.resolve_input_models": MagicMock(return_value=desired),
-                "modelship.deploy.config.resolve_all_model_sources": MagicMock(),
+                "modelship.deploy.config.resolve_all_model_sources": MagicMock(side_effect=sources_error),
                 "modelship.state.get_state_store": MagicMock(return_value=store),
                 "modelship.openai.compaction_crypto.ensure_key_seeded": MagicMock(),
                 "modelship.infer.deploy_coordinator.get_or_create_coordinator": MagicMock(),
-                "modelship.infer.replica_coordinator.get_or_create_replica_coordinator": MagicMock(
-                    return_value=replica_coord
-                ),
+                "modelship.infer.replica_coordinator.get_or_create_replica_coordinator": MagicMock(),
                 "modelship.infer.deploy_leases.get_or_create_leases": leases,
                 "modelship.deploy.strategy.run_deploy_loop": run_deploy_loop,
-                "modelship.deploy.removal.remove_apps": remove_apps,
+                "modelship.deploy.removal.delete_apps_quietly": delete,
                 "modelship.metrics.DEPLOY_DURATION_SECONDS": MagicMock(),
                 "modelship.metrics.DEPLOY_MODELS_CHANGED_TOTAL": changed,
                 "ray.cluster_resources": MagicMock(return_value={}),
-                "ray.get": MagicMock(side_effect=lambda ref, **kwargs: ref),
             }.items():
                 stack.enter_context(patch(target, value))
-            failed = driver._apply(args, "g", MagicMock(), {})
+            try:
+                failed, error = driver._apply(args, "g", MagicMock(), {}), None
+            except RuntimeError as e:
+                failed, error = None, e
         return SimpleNamespace(
             failed=failed,
+            error=error,
             submitted=run_deploy_loop.call_args.args[0] if run_deploy_loop.called else None,
-            removed=[name for call in remove_apps.call_args_list for name in call.args[0]],
-            replica_coord=replica_coord,
+            events=events,
+            effective=read_effective(store, "g"),
+            effective_at_submit=effective_at_submit[0] if effective_at_submit else None,
             leases=leases,
             changed={call.kwargs["tags"]["action"]: call.args[0] for call in changed.inc.call_args_list},
         )
@@ -74,40 +81,36 @@ def apply():
     return run
 
 
-class TestBlueGreen:
-    def test_an_old_app_serving_a_pending_replacement_is_kept(self, apply):
-        old, new = _raw("a", num_cpus=1), _raw("a", num_cpus=2)
-        r = apply(
-            [old],
-            [new],
-            {_app(old): ApplicationStatus.RUNNING},
-            routed={_app(old): "a"},
-            outcome=DeployOutcome([], [(_config(new), "no room yet")], []),
-        )
-        assert r.removed == []
+class TestEffectiveConfig:
+    def test_is_written_before_anything_is_submitted(self, apply):
+        a = _raw("a")
+        r = apply([], [a], {})
+        assert r.effective_at_submit == [a]
 
-    def test_an_old_app_is_removed_once_its_replacement_is_up(self, apply):
-        old, new = _raw("a", num_cpus=1), _raw("a", num_cpus=2)
-        r = apply(
-            [old],
-            [new],
-            {_app(old): ApplicationStatus.RUNNING},
-            routed={_app(old): "a"},
-            outcome=DeployOutcome([_config(new)], [], []),
-        )
-        assert r.removed == [_app(old)]
+    def test_keeps_a_model_that_failed(self, apply):
+        a = _raw("a")
+        r = apply([], [a], {}, outcome=DeployOutcome([], [], [(_config(a), "engine died")]))
+        assert r.effective == [a]
 
-    def test_stop_start_removes_the_old_app_before_deploying(self, apply):
+    def test_is_left_alone_when_a_model_source_fails(self, apply):
+        a, b = _raw("a"), _raw("b")
+        r = apply([a], [a, b], {}, sources_error=RuntimeError("repo not found"))
+        assert r.error is not None
+        assert r.effective == [a]
+        assert r.submitted is None
+
+
+class TestReplacement:
+    def test_blue_green_leaves_the_old_app_to_the_replica_coordinator(self, apply):
         old, new = _raw("a", num_cpus=1), _raw("a", num_cpus=2)
-        r = apply(
-            [old],
-            [new],
-            {_app(old): ApplicationStatus.RUNNING},
-            routed={_app(old): "a"},
-            outcome=DeployOutcome([], [(_config(new), "no room yet")], []),
-            replace_strategy="stop_start",
-        )
-        assert r.removed == [_app(old)]
+        r = apply([old], [new], {_app(old): ApplicationStatus.RUNNING})
+        assert r.events == ["deploy"]
+
+    def test_stop_start_deletes_stale_apps_before_deploying(self, apply):
+        old, new, dropped = _raw("a", num_cpus=1), _raw("a", num_cpus=2), _raw("b")
+        statuses = {_app(old): ApplicationStatus.RUNNING, _app(dropped): ApplicationStatus.RUNNING}
+        r = apply([old, dropped], [new], statuses, replace_strategy="stop_start")
+        assert r.events == [("delete", sorted([_app(old), _app(dropped)])), "deploy"]
 
 
 class TestLiveApps:
@@ -116,11 +119,10 @@ class TestLiveApps:
         r = apply([a], [a], {_app(a): ApplicationStatus.DEPLOY_FAILED})
         assert [c.name for c in r.submitted] == ["a"]
 
-    def test_a_live_unrouted_app_is_routed_without_redeploying(self, apply):
+    def test_a_live_app_is_not_deployed_again(self, apply):
         a = _raw("a")
         r = apply([a], [a], {_app(a): ApplicationStatus.RUNNING})
         assert r.submitted is None
-        r.replica_coord.register_deployment.remote.assert_called_once_with("g", _app(a), "a")
 
 
 class TestLeaseStartupWindow:
@@ -143,6 +145,11 @@ class TestReporting:
         a, b = _raw("a"), _raw("b")
         r = apply([], [a, b], {}, outcome=DeployOutcome([_config(a)], [(_config(b), "no room yet")], []))
         assert r.changed == {"add": 1}
+
+    def test_remove_counts_the_stale_apps(self, apply):
+        a, b = _raw("a"), _raw("b")
+        r = apply([a, b], [a], {_app(a): ApplicationStatus.RUNNING, _app(b): ApplicationStatus.RUNNING})
+        assert r.changed == {"remove": 1}
 
     def test_a_pending_model_without_a_reason_is_logged_by_name_alone(self, apply, caplog):
         a = _raw("a")

@@ -189,24 +189,10 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
 
     from modelship.deploy.actor_options import build_deployment_options, total_gpu_reservation
     from modelship.deploy.config import resolve_all_model_sources, resolve_input_models
-    from modelship.deploy.effective_config import (
-        deployment_names,
-        merge,
-        read_effective,
-        resolve_mode,
-        to_config,
-        write_effective,
-    )
-    from modelship.deploy.removal import remove_apps
-    from modelship.deploy.serve_utils import get_app_statuses, seed_expected_models
-    from modelship.deploy.strategy import (
-        DeployContext,
-        DeployOutcome,
-        compute_deploy_plan,
-        route_live_apps,
-        run_deploy_loop,
-        still_serving,
-    )
+    from modelship.deploy.effective_config import merge, read_effective, resolve_mode, to_config, write_effective
+    from modelship.deploy.removal import delete_apps_quietly
+    from modelship.deploy.serve_utils import get_app_statuses
+    from modelship.deploy.strategy import DeployContext, DeployOutcome, compute_deploy_plan, run_deploy_loop
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
     from modelship.infer.deploy_leases import get_or_create_leases
     from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
@@ -260,42 +246,28 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
             cluster_gpus,
         )
 
-    # Detached actors: deploy bookkeeping and the ownership registry.
+    # Detached actors: deploy bookkeeping and the routing reconciler.
     coordinator = get_or_create_coordinator()
-    replica_coord = get_or_create_replica_coordinator()
+    get_or_create_replica_coordinator()
     # With this gateway the only app, no replica can hold a lease, so a new actor grants at once.
     get_or_create_leases(startup_window=set(app_statuses) != {gateway_name})
-    # Removal is scoped to the prior effective set, so an empty one removes nothing.
-    plan = compute_deploy_plan(yml_conf, app_statuses, deployment_names(effective_raw, gateway_name), gateway_name)
-    apps_to_remove = list(plan.apps_to_remove)
-    removed_count = len(apps_to_remove)
+    plan = compute_deploy_plan(yml_conf, app_statuses, gateway_name)
     deploy_started = time.monotonic()
 
     # Pins sources on the driver so auth/missing-repo errors fail before any replica starts.
     resolve_all_model_sources(yml_conf)
-    seed_expected_models(replica_coord, gateway_name, yml_conf)
-
-    # No live Serve app to delete; drop straight from the registry.
-    if plan.registry_only_drop:
-        try:
-            ray.get(
-                [replica_coord.unregister_deployment.remote(gateway_name, name) for name in plan.registry_only_drop]
-            )
-        except Exception:
-            logger.exception("Failed to drop stale registry entries: %s", plan.registry_only_drop)
-
-    route_live_apps(plan.models_live, app_statuses, replica_coord, gateway_name)
+    # Before any submit: the replica coordinator deletes this gateway's apps the effective config doesn't target.
+    # Includes models that later fail, so the next deploy retries them.
+    write_effective(store, gateway_name, desired_raw)
 
     # stop_start: remove old apps first to free their resources.
     if getattr(args, "replace_strategy", "blue_green") == "stop_start":
-        remove_apps(apps_to_remove, replica_coord, gateway_name)
-        apps_to_remove = []
+        delete_apps_quietly(plan.stale_apps)
 
     outcome = DeployOutcome(ready=[], still_pending=[], fatally_failed=[])
     if plan.models_to_add:
         ctx = DeployContext(
             coordinator=coordinator,
-            replica_coordinator=replica_coord,
             gateway_name=gateway_name,
             serve_logging_config=serve_logging_config,
             deployed_this_run=deployed_this_run,
@@ -314,28 +286,16 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
             "Model '%s' is still coming up and will land on its own%s", config.name, f": {reason}" if reason else ""
         )
 
-    # blue_green: delete the old apps, except those still serving a pending replacement's model.
-    if apps_to_remove:
-        keep = still_serving(apps_to_remove, outcome.still_pending, replica_coord, gateway_name)
-        for app in sorted(keep):
-            logger.info("Keeping %s serving until its replacement is ready.", app)
-        remove_apps([app for app in apps_to_remove if app not in keep], replica_coord, gateway_name)
-
-    # Includes fatally-failed models, so the next deploy retries them.
-    write_effective(store, gateway_name, desired_raw)
-
     DEPLOY_DURATION_SECONDS.observe(time.monotonic() - deploy_started, tags={"gateway": gateway_name})
     for action, count in (
         ("add", len(outcome.ready)),
-        ("remove", removed_count),
+        ("remove", len(plan.stale_apps)),
         ("fail", len(fatally_failed)),
     ):
         if count:
             DEPLOY_MODELS_CHANGED_TOTAL.inc(count, tags={"gateway": gateway_name, "action": action})
 
     if fatally_failed:
-        failed_names = {cfg.name for cfg, _ in fatally_failed}
-        seed_expected_models(replica_coord, gateway_name, yml_conf, exclude=failed_names)
         logger.error(
             "%d model(s) failed to deploy — fix config and redeploy (they remain in the effective config "
             "and will be retried on the next deploy/self-heal):",

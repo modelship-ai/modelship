@@ -34,8 +34,7 @@ def api():
 
 
 def _apply(api, models, *, expected=None, gen=1, handles=None):
-    """Applies a coordinator routing snapshot with Serve mocked. `gen` lower than the
-    replica's current `_gen` simulates a coordinator restart (removals suppressed)."""
+    """Applies a coordinator routing snapshot with Serve mocked."""
     with ExitStack() as stack:
         if handles is not None:
             stack.enter_context(patch("modelship.openai.api.serve.get_app_handle", side_effect=handles))
@@ -141,8 +140,7 @@ class TestApplyRouting:
 
 
 class TestReconcileRemovals:
-    """A snapshot that drops an app removes it when the generation advances; a
-    regressed generation (coordinator restart) never blanks live routing."""
+    """A snapshot that drops an app removes it from the routing table."""
 
     def test_dropped_app_removed_on_forward_snapshot(self, api):
         _apply(api, {"qwen-a3f9k1b2c4": "qwen"}, gen=1)
@@ -158,13 +156,6 @@ class TestReconcileRemovals:
         assert "qwen" in api.models
         assert list(api.models["qwen"].keys()) == ["qwen-bbbbbbbbbb"]
         assert len(api.model_list) == 1
-
-    def test_regressed_generation_does_not_blank_routing(self, api):
-        # Coordinator restarted (generation reset below ours) but the model is still
-        # deployed: additions are adopted, live routing is never removed.
-        _apply(api, {"qwen-a3f9k1b2c4": "qwen"}, gen=5)
-        _apply(api, {}, gen=0)
-        assert "qwen" in api.models
 
     def test_drop_unknown_app_is_noop(self, api):
         assert api._drop_apps(["nonexistent-1234567890"]) == []
@@ -252,19 +243,6 @@ class TestWatchReconcile:
             assert await api._coord_async() is sentinel
             assert await api._coord_async() is sentinel
         goc.assert_called_once()  # second call served from cache, no re-resolve
-
-    def test_sync_keeps_live_models_on_regressed_generation(self, api):
-        # Coordinator restarted: empty snapshot at a lower generation than ours. The
-        # model is still deployed, so routing is preserved, not blanked.
-        _apply(api, {"qwen-aaaaaaaaaa": "qwen"}, gen=4)
-        empty = {"models": {}, "expected": [], "generation": 0}
-        with (
-            patch("modelship.infer.replica_coordinator.get_or_create_replica_coordinator", return_value=MagicMock()),
-            patch("modelship.openai.api.ray.get", return_value=empty),
-        ):
-            api._replica_coord = None
-            assert api._sync_routing_blocking() is True
-        assert "qwen" in api.models
 
 
 class TestGetHandle:

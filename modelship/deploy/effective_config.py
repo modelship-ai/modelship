@@ -35,14 +35,6 @@ def resolve_mode(*, reconcile: bool) -> DeployMode:
     return "reconcile" if reconcile else "additive"
 
 
-def _deployment_name(raw: dict, gateway_name: str) -> str:
-    """Deployment name (name + fingerprint) for a raw model dict — the identity
-    key for additive de-dup and fatal-failure eviction. Validates the dict
-    (running normalization) so two raw dicts that normalize identically map to the
-    same deployment."""
-    return ModelshipModelConfig.model_validate(raw).deployment_name(gateway_name)
-
-
 def _model_name(raw: dict) -> str:
     """Human-facing model name for a raw model dict."""
     return ModelshipModelConfig.model_validate(raw).name
@@ -114,15 +106,6 @@ def _log_replacement(model_name: str, prior: dict, incoming: dict) -> None:
     )
 
 
-def deployment_names(raw_models: list[dict], gateway_name: str) -> set[str]:
-    """The deployment-name set for raw model dicts — the identity set of what's
-    under this gateway's effective management. Passed to the deploy plan so a
-    reconcile only removes deployments that WERE effective-managed (never legacy /
-    un-tracked deployments or another gateway's apps). Relies on the effective
-    config being per-gateway and the gateway prefixing each deployment name."""
-    return {_deployment_name(d, gateway_name) for d in raw_models}
-
-
 def to_config(raw_models: list[dict]) -> ModelshipConfig:
     """Validate raw model dicts into a ModelshipConfig for the deploy path."""
     return validate_models(raw_models)
@@ -139,6 +122,17 @@ def read_effective(store: StateStore, gateway_name: str) -> list[dict]:
         logger.warning("Effective config for gateway %r has non-list 'models'; treating as empty.", gateway_name)
         return []
     return models
+
+
+async def read_targets(store: StateStore, gateway_name: str) -> dict[str, str] | None:
+    """Model name -> the app it should run on, from the persisted effective config;
+    None when *gateway_name* has none."""
+    data = await store.get_async(f"{_NAMESPACE}/{gateway_name}")
+    models = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(models, list):
+        return None
+    configs = [ModelshipModelConfig.model_validate(d) for d in models]
+    return {c.name: c.deployment_name(gateway_name) for c in configs}
 
 
 def write_effective(store: StateStore, gateway_name: str, raw_models: list[dict]) -> None:

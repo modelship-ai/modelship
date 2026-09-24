@@ -64,7 +64,7 @@ def loop(monkeypatch):
     monkeypatch.setattr(strategy.time, "sleep", clock.sleep)
     monkeypatch.setattr(strategy.time, "monotonic", clock.monotonic)
     removed: list[str] = []
-    monkeypatch.setattr(strategy, "remove_apps", lambda names, replica_coord, gateway: removed.extend(names))
+    monkeypatch.setattr(strategy, "delete_apps_quietly", lambda names: removed.extend(names))
     monkeypatch.setattr(strategy.ray, "get", lambda ref, **kwargs: ref)
 
     def run(scripts: dict[str, list[ApplicationStatusOverview]], fatal: dict[str, str] | None = None, timeout="30"):
@@ -93,7 +93,6 @@ def loop(monkeypatch):
         coordinator.pop_fatal_error.remote.side_effect = lambda name: fatal.get(name)
         ctx = strategy.DeployContext(
             coordinator=coordinator,
-            replica_coordinator=MagicMock(),
             gateway_name="g",
             serve_logging_config=LoggingConfig(),
             deployed_this_run={},
@@ -134,7 +133,7 @@ class TestTransientCap:
 
     def test_removal_runs_off_the_polling_thread(self, loop, monkeypatch):
         threads = []
-        monkeypatch.setattr(strategy, "remove_apps", lambda *args: threads.append(threading.current_thread()))
+        monkeypatch.setattr(strategy, "delete_apps_quietly", lambda *args: threads.append(threading.current_thread()))
         loop({"a": [FAILED]})
         assert len(threads) == 1
         assert threads[0] is not threading.current_thread()
@@ -202,23 +201,18 @@ class TestServeApiCanary:
 
 
 class TestSubmit:
-    def test_declares_then_hands_off_without_waiting(self, monkeypatch):
+    def test_hands_off_without_waiting(self, monkeypatch):
         calls = []
-        replica_coordinator = MagicMock()
-        replica_coordinator.declare_deployment.remote.side_effect = lambda *args: calls.append(("declare", *args))
-        monkeypatch.setattr(strategy.ray, "get", lambda ref, **kwargs: ref)
-        monkeypatch.setattr(strategy.serve, "run_many", lambda targets, **kwargs: calls.append(("run_many", kwargs)))
+        monkeypatch.setattr(strategy.serve, "run_many", lambda targets, **kwargs: calls.append(kwargs))
         ctx = strategy.DeployContext(
             coordinator=MagicMock(),
-            replica_coordinator=replica_coordinator,
             gateway_name="g",
             serve_logging_config=LoggingConfig(),
             deployed_this_run={},
         )
         strategy.submit_deploy(_model("a"), ctx)
-        name = _model("a").deployment_name("g")
-        assert calls == [("declare", "g", name, "a"), ("run_many", {"wait_for_applications_running": False})]
-        assert ctx.deployed_this_run == {name: "a"}
+        assert calls == [{"wait_for_applications_running": False}]
+        assert ctx.deployed_this_run == {_model("a").deployment_name("g"): "a"}
 
 
 class TestThisRunsDeployments:

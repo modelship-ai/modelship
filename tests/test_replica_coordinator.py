@@ -1,21 +1,54 @@
-"""Tests for the replica coordinator's routing registry + watch API (the source of
-truth gateway replicas reconcile from). Exercises the undecorated class directly,
-in-process, without a Ray cluster."""
+"""The replica coordinator's passes: each gateway's model table, its generation, the
+long-poll API gateway replicas use, and the deletion of unused apps. Exercises the
+undecorated class in-process, with Serve's status and the state store faked."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+import threading
+from types import SimpleNamespace
 
 import pytest
-from ray.exceptions import ActorUnavailableError
+from ray.serve.schema import (
+    ApplicationStatus,
+    ApplicationStatusOverview,
+    DeploymentStatus,
+    DeploymentStatusOverview,
+    DeploymentStatusTrigger,
+)
 
+from modelship.deploy.effective_config import write_effective
 from modelship.infer import replica_coordinator
-from modelship.infer.replica_coordinator import RegistrationError, ReplicaCoordinator
-from modelship.state import MemoryStoreActor
+from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.infer.replica_coordinator import ReplicaCoordinator
+from modelship.state import MemoryStoreActor, StateStoreUnavailableError
 
 # The plain classes behind @ray.remote — their async methods are ordinary
 # coroutines, so both can be exercised in-process without a Ray cluster.
 _Coord = ReplicaCoordinator.__ray_metadata__.modified_class
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
+
+
+def _raw(name: str, **overrides) -> dict:
+    return {"name": name, "model": f"org/{name}", "usecase": "generate", "loader": "llama_server", **overrides}
+
+
+def _app_name(raw: dict, gateway: str = "gw") -> str:
+    return ModelshipModelConfig.model_validate(raw).deployment_name(gateway)
+
+
+def _app(status=ApplicationStatus.RUNNING, running=1, deployed_at=0.0):
+    deployment = DeploymentStatusOverview(
+        status=DeploymentStatus.HEALTHY,
+        status_trigger=DeploymentStatusTrigger.CONFIG_UPDATE_COMPLETED,
+        replica_states={"RUNNING": running} if running else {"STARTING": 1},
+        message="",
+    )
+    return ApplicationStatusOverview(
+        status=status, message="", last_deployed_time_s=deployed_at, deployments={"d": deployment}
+    )
+
+
+OLD, NEW = _raw("a", num_cpus=1), _raw("a", num_cpus=2)
+LOADING = _app(ApplicationStatus.DEPLOYING, running=0, deployed_at=1)
 
 
 @pytest.fixture(autouse=True)
@@ -24,324 +57,294 @@ def no_logging_setup(monkeypatch):
     monkeypatch.setattr(replica_coordinator, "configure_logging", lambda: None)
 
 
+class _Cluster:
+    """The Serve apps and effective configs a coordinator reads, and the apps it deletes."""
+
+    def __init__(self, monkeypatch):
+        self.apps = {"gw": _app()}
+        self.store = _MemoryStore()
+        self.deleted: list[str] = []
+        monkeypatch.setattr(replica_coordinator, "get_state_store", lambda: self.store)
+        monkeypatch.setattr(replica_coordinator.serve, "status", lambda: SimpleNamespace(applications=dict(self.apps)))
+        monkeypatch.setattr(replica_coordinator, "delete_apps_quietly", lambda names: self.deleted.extend(names))
+
+    def configure(self, *raws: dict, gateway: str = "gw") -> None:
+        write_effective(self.store, gateway, list(raws))
+
+
 @pytest.fixture
-def coord():
-    # get_state_store() returns a Ray-actor-backed client that requires a live
-    # cluster; patch it to the plain in-process dict so these tests stay cluster-free.
-    with patch.object(replica_coordinator, "get_state_store", return_value=_MemoryStore()):
-        yield _Coord()
+def cluster(monkeypatch):
+    return _Cluster(monkeypatch)
 
 
-async def _route(coord, gateway, deployment, model):
-    await coord.declare_deployment(gateway, deployment, model)
-    return await coord.register_deployment(gateway, deployment, model)
+def _coordinator(*watched: str):
+    """A coordinator whose passes are run by hand; call from within a running loop."""
+    coord = _Coord()
+    coord._passes.cancel()
+    coord._watched |= set(watched)
+    return coord
 
 
-class TestRoutingRegistry:
+async def _pass(coord) -> None:
+    await coord._compute()
+    await asyncio.gather(*coord._deletions)
+
+
+class TestTables:
     @pytest.mark.asyncio
-    async def test_register_records_and_bumps_generation(self, coord):
-        assert (await coord.get_routing("gw"))["generation"] == 0
-        await _route(coord, "gw", "qwen-aaaa", "qwen")
+    async def test_each_model_is_routed_to_its_serving_target(self, cluster):
+        cluster.configure(NEW)
+        cluster.apps[_app_name(NEW)] = _app()
+        coord = _coordinator()
+        await _pass(coord)
         routing = await coord.get_routing("gw")
-        assert routing["models"] == {"qwen-aaaa": "qwen"}
-        assert routing["generation"] == 1
+        assert routing["models"] == {_app_name(NEW): "a"}
+        assert routing["expected"] == ["a"]
 
     @pytest.mark.asyncio
-    async def test_unregister_removes_and_bumps(self, coord):
-        await _route(coord, "gw", "qwen-aaaa", "qwen")
-        await coord.unregister_deployment("gw", "qwen-aaaa")
-        routing = await coord.get_routing("gw")
-        assert routing["models"] == {}
-        assert routing["generation"] == 2
+    async def test_an_older_app_serves_until_the_target_can(self, cluster):
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): LOADING}
+        coord = _coordinator()
+        await _pass(coord)
+        assert (await coord.get_routing("gw"))["models"] == {_app_name(OLD): "a"}
 
     @pytest.mark.asyncio
-    async def test_set_expected_records_and_bumps(self, coord):
-        await coord.set_expected("gw", ["qwen", "kokoro"])
-        routing = await coord.get_routing("gw")
-        assert routing["expected"] == ["qwen", "kokoro"]
-        assert routing["generation"] == 1
+    async def test_a_gateway_is_found_through_its_apps(self, cluster):
+        cluster.configure(NEW, gateway="edge")
+        cluster.apps |= {"edge": _app(), _app_name(NEW, "edge"): _app()}
+        coord = _coordinator()
+        await _pass(coord)
+        assert coord._routing["edge"].models == {_app_name(NEW, "edge"): "a"}
 
     @pytest.mark.asyncio
-    async def test_generation_is_per_gateway(self, coord):
-        await _route(coord, "gw-a", "x-1", "x")
-        assert (await coord.get_routing("gw-a"))["generation"] == 1
-        assert (await coord.get_routing("gw-b"))["generation"] == 0
+    async def test_a_gateway_missing_from_serve_keeps_its_last_table(self, cluster):
+        cluster.configure(NEW)
+        cluster.apps[_app_name(NEW)] = _app()
+        coord = _coordinator("gw")
+        await _pass(coord)
+        del cluster.apps["gw"]
+        del cluster.apps[_app_name(NEW)]
+        await _pass(coord)
+        assert (await coord.get_routing("gw"))["models"] == {_app_name(NEW): "a"}
 
     @pytest.mark.asyncio
-    async def test_register_evicts_prior_deployment_for_same_model(self, coord):
-        await _route(coord, "gw", "qwen-OLD", "qwen")
-        await _route(coord, "gw", "qwen-NEW", "qwen")
-        routing = await coord.get_routing("gw")
-        assert routing["models"] == {"qwen-NEW": "qwen"}
-        assert routing["generation"] == 2
+    async def test_a_gateway_never_computed_gets_an_empty_table(self, cluster):
+        coord = _coordinator()
+        await _pass(coord)
+        routing = await coord.get_routing("elsewhere")
+        assert (routing["models"], routing["expected"]) == ({}, [])
 
     @pytest.mark.asyncio
-    async def test_register_does_not_evict_other_models(self, coord):
-        await _route(coord, "gw", "qwen-aaaa", "qwen")
-        await _route(coord, "gw", "kokoro-bbbb", "kokoro")
-        routing = await coord.get_routing("gw")
-        assert routing["models"] == {"qwen-aaaa": "qwen", "kokoro-bbbb": "kokoro"}
+    async def test_a_failed_status_read_keeps_the_last_tables(self, cluster, monkeypatch):
+        cluster.configure(NEW)
+        cluster.apps[_app_name(NEW)] = _app()
+        coord = _coordinator()
+        await _pass(coord)
+
+        def unavailable():
+            raise RuntimeError("controller restarting")
+
+        monkeypatch.setattr(replica_coordinator.serve, "status", unavailable)
+        with pytest.raises(RuntimeError):
+            await coord._compute()
+        assert (await coord.get_routing("gw"))["models"] == {_app_name(NEW): "a"}
 
 
-class TestDeclaredRegistration:
+class TestGeneration:
     @pytest.mark.asyncio
-    async def test_an_undeclared_deployment_is_refused(self, coord):
-        assert not await coord.register_deployment("gw", "qwen-aaaa", "qwen")
-        routing = await coord.get_routing("gw")
-        assert routing["models"] == {}
-        assert routing["generation"] == 0
-
-    @pytest.mark.asyncio
-    async def test_declaring_neither_routes_nor_bumps(self, coord):
-        await coord.declare_deployment("gw", "qwen-aaaa", "qwen")
-        routing = await coord.get_routing("gw")
-        assert routing["models"] == {}
-        assert routing["generation"] == 0
-
-    @pytest.mark.asyncio
-    async def test_every_replica_after_the_first_is_a_no_op(self, coord):
-        await _route(coord, "gw", "qwen-aaaa", "qwen")
-        assert await coord.register_deployment("gw", "qwen-aaaa", "qwen")
-        assert (await coord.get_routing("gw"))["generation"] == 1
+    async def test_an_unchanged_table_keeps_the_generation(self, cluster):
+        coord = _coordinator("gw")
+        await _pass(coord)
+        before = (await coord.get_routing("gw"))["generation"]
+        await _pass(coord)
+        assert (await coord.get_routing("gw"))["generation"] == before
 
     @pytest.mark.asyncio
-    async def test_a_newer_declaration_refuses_the_older_deployment(self, coord):
-        await coord.declare_deployment("gw", "qwen-OLD", "qwen")
-        await coord.declare_deployment("gw", "qwen-NEW", "qwen")
-        assert not await coord.register_deployment("gw", "qwen-OLD", "qwen")
-        assert await coord.register_deployment("gw", "qwen-NEW", "qwen")
+    async def test_a_changed_table_advances_it(self, cluster):
+        cluster.configure(NEW)
+        coord = _coordinator("gw")
+        await _pass(coord)
+        before = (await coord.get_routing("gw"))["generation"]
+        cluster.apps[_app_name(NEW)] = _app()
+        await _pass(coord)
+        assert (await coord.get_routing("gw"))["generation"] == before + 1
 
     @pytest.mark.asyncio
-    async def test_a_replaced_deployment_cannot_take_routing_back(self, coord):
-        await _route(coord, "gw", "qwen-OLD", "qwen")
-        await _route(coord, "gw", "qwen-NEW", "qwen")
-        assert not await coord.register_deployment("gw", "qwen-OLD", "qwen")
-        assert (await coord.get_routing("gw"))["models"] == {"qwen-NEW": "qwen"}
+    async def test_it_is_per_gateway(self, cluster):
+        cluster.apps["edge"] = _app()
+        cluster.configure(NEW, gateway="edge")
+        coord = _coordinator("gw", "edge")
+        await _pass(coord)
+        gw, edge = (await coord.get_routing("gw"))["generation"], (await coord.get_routing("edge"))["generation"]
+        cluster.apps[_app_name(NEW, "edge")] = _app()
+        await _pass(coord)
+        assert (await coord.get_routing("gw"))["generation"] == gw
+        assert (await coord.get_routing("edge"))["generation"] == edge + 1
 
     @pytest.mark.asyncio
-    async def test_registering_a_routed_deployment_clears_its_declaration(self, coord):
-        await _route(coord, "gw", "qwen-aaaa", "qwen")
-        await coord.declare_deployment("gw", "qwen-aaaa", "qwen")
-        assert await coord.register_deployment("gw", "qwen-aaaa", "qwen")
-        assert coord._declared["gw"] == {}
+    async def test_a_new_coordinator_starts_from_the_clock(self, cluster, monkeypatch):
+        monkeypatch.setattr(replica_coordinator.time, "time", lambda: 1000.0)
+        coord = _coordinator()
+        assert coord._first_generation == 1_000_000
+
+
+class TestGetRouting:
+    @pytest.mark.asyncio
+    async def test_waits_for_the_first_pass(self, cluster):
+        coord = _coordinator()
+        read = asyncio.create_task(coord.get_routing("gw"))
+        await asyncio.sleep(0)
+        assert not read.done()
+        await _pass(coord)
+        assert (await read)["models"] == {}
 
     @pytest.mark.asyncio
-    async def test_unregister_withdraws_a_declaration(self, coord):
-        await coord.set_expected("gw", ["qwen"])
-        await coord.declare_deployment("gw", "qwen-aaaa", "qwen")
-        await coord.unregister_deployment("gw", "qwen-aaaa")
-        assert not await coord.register_deployment("gw", "qwen-aaaa", "qwen")
-        assert (await coord.get_routing("gw"))["expected"] == []
-
-
-class TestCutoverDeletesTheReplacedApp:
-    @pytest.fixture
-    def deleted(self, monkeypatch):
-        deleted = []
-        monkeypatch.setattr(replica_coordinator, "_WATCH_TIMEOUT_S", 0)
-        monkeypatch.setattr("modelship.deploy.removal.delete_apps_quietly", lambda apps: deleted.extend(apps))
-        return deleted
-
-    @pytest.mark.asyncio
-    async def test_the_replaced_app_is_deleted(self, coord, deleted):
-        await _route(coord, "gw", "qwen-OLD", "qwen")
-        await _route(coord, "gw", "qwen-NEW", "qwen")
-        await asyncio.gather(*coord._deletions)
-        assert deleted == ["qwen-OLD"]
-
-    @pytest.mark.asyncio
-    async def test_a_first_registration_deletes_nothing(self, coord, deleted):
-        await _route(coord, "gw", "qwen-aaaa", "qwen")
-        assert not coord._deletions
-
-    @pytest.mark.asyncio
-    async def test_an_app_declared_again_before_the_delete_is_kept(self, coord, deleted, monkeypatch):
-        monkeypatch.setattr(replica_coordinator, "_WATCH_TIMEOUT_S", 0.05)
-        await _route(coord, "gw", "qwen-OLD", "qwen")
-        await _route(coord, "gw", "qwen-NEW", "qwen")
-        await coord.declare_deployment("gw", "qwen-OLD", "qwen")
-        await asyncio.gather(*coord._deletions)
-        assert deleted == []
-
-
-class TestRegisterLoadedDeployment:
-    @pytest.fixture(autouse=True)
-    def _fast(self, monkeypatch):
-        monkeypatch.setattr(replica_coordinator, "_REGISTER_RETRY_SECONDS", 0)
-
-    def _lookup(self, monkeypatch, *results):
-        handle = MagicMock()
-        handle.register_deployment.remote = AsyncMock(side_effect=results)
-        get_actor = MagicMock(return_value=handle)
-        monkeypatch.setattr(replica_coordinator.ray, "get_actor", get_actor)
-        return get_actor, handle
-
-    @pytest.mark.asyncio
-    async def test_registers_through_the_named_actor(self, monkeypatch):
-        get_actor, handle = self._lookup(monkeypatch, True)
-        await replica_coordinator.register_loaded_deployment("gw", "qwen-aaaa", "qwen")
-        get_actor.assert_called_with(
-            replica_coordinator.REPLICA_COORDINATOR_ACTOR_NAME, namespace=replica_coordinator.COORDINATOR_NAMESPACE
-        )
-        handle.register_deployment.remote.assert_called_once_with("gw", "qwen-aaaa", "qwen")
-
-    @pytest.mark.asyncio
-    async def test_a_refusal_warns_without_failing_the_replica(self, monkeypatch, caplog):
-        self._lookup(monkeypatch, False)
-        with caplog.at_level("WARNING"):
-            await replica_coordinator.register_loaded_deployment("gw", "qwen-aaaa", "qwen")
-        assert "not routing it" in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_retries_through_a_coordinator_restart(self, monkeypatch):
-        _, handle = self._lookup(monkeypatch, ActorUnavailableError("restarting", None), True)
-        await replica_coordinator.register_loaded_deployment("gw", "qwen-aaaa", "qwen")
-        assert handle.register_deployment.remote.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_gives_up_once_the_attempts_run_out(self, monkeypatch):
-        monkeypatch.setattr(replica_coordinator.ray, "get_actor", MagicMock(side_effect=ValueError("absent")))
-        with pytest.raises(RegistrationError, match="unreachable"):
-            await replica_coordinator.register_loaded_deployment("gw", "qwen-aaaa", "qwen")
-
-
-class TestExpectedFollowsTheRegistry:
-    """`_expected` is what /readyz measures against, so it has to track the registry."""
-
-    @pytest.mark.asyncio
-    async def test_unregister_drops_the_model_from_expected(self, coord):
-        await coord.set_expected("gw", ["qwen", "kokoro"])
-        await _route(coord, "gw", "qwen-aaaa", "qwen")
-        await coord.unregister_deployment("gw", "qwen-aaaa")
-        assert (await coord.get_routing("gw"))["expected"] == ["kokoro"]
-
-    @pytest.mark.asyncio
-    async def test_another_deployment_for_the_model_keeps_it_expected(self, coord):
-        await coord.set_expected("gw", ["qwen"])
-        await _route(coord, "gw", "qwen-aaaa", "qwen")
-        # Bypass register_deployment's same-name eviction to get two live at once.
-        coord._registry["gw"]["qwen-bbbb"] = "qwen"
-        await coord.unregister_deployment("gw", "qwen-aaaa")
-        assert (await coord.get_routing("gw"))["expected"] == ["qwen"]
-
-    @pytest.mark.asyncio
-    async def test_blue_green_cutover_keeps_the_model_expected(self, coord):
-        await coord.set_expected("gw", ["qwen"])
-        await _route(coord, "gw", "qwen-aaaa", "qwen")
-        await _route(coord, "gw", "qwen-bbbb", "qwen")  # evicts qwen-aaaa
-        await coord.unregister_deployment("gw", "qwen-aaaa")  # driver's late delete
-        assert (await coord.get_routing("gw"))["expected"] == ["qwen"]
-        assert (await coord.get_routing("gw"))["models"] == {"qwen-bbbb": "qwen"}
-
-    @pytest.mark.asyncio
-    async def test_unregistering_an_unknown_deployment_touches_nothing(self, coord):
-        await coord.set_expected("gw", ["qwen"])
-        await coord.unregister_deployment("gw", "qwen-aaaa")
-        assert (await coord.get_routing("gw"))["expected"] == ["qwen"]
-
-    @pytest.mark.asyncio
-    async def test_a_never_registered_deployment_drops_by_model_name(self, coord):
-        # Neither registered nor declared, so the model name can only come from the caller.
-        await coord.set_expected("gw", ["qwen", "kokoro"])
-        await coord.unregister_deployment("gw", "qwen-aaaa", "qwen")
-        assert (await coord.get_routing("gw"))["expected"] == ["kokoro"]
-
-    @pytest.mark.asyncio
-    async def test_a_passed_model_name_still_respects_a_live_sibling(self, coord):
-        await coord.set_expected("gw", ["qwen"])
-        await _route(coord, "gw", "qwen-bbbb", "qwen")
-        await coord.unregister_deployment("gw", "qwen-aaaa", "qwen")
-        assert (await coord.get_routing("gw"))["expected"] == ["qwen"]
+    async def test_raises_when_no_pass_completes_in_time(self, cluster, monkeypatch):
+        monkeypatch.setattr(replica_coordinator, "_FIRST_PASS_TIMEOUT_S", 0.01)
+        coord = _coordinator()
+        with pytest.raises(TimeoutError):
+            await coord.get_routing("gw")
 
 
 class TestWaitForChange:
     @pytest.mark.asyncio
-    async def test_returns_immediately_when_already_advanced(self, coord):
-        await _route(coord, "gw", "x-1", "x")  # gen -> 1
-        # A caller still at gen 0 must not block — the set already moved.
-        gen = await asyncio.wait_for(coord.wait_for_change("gw", 0), timeout=1)
-        assert gen == 1
+    async def test_returns_at_once_when_the_generation_differs(self, cluster):
+        coord = _coordinator()
+        await _pass(coord)
+        current = (await coord.get_routing("gw"))["generation"]
+        assert await coord.wait_for_change("gw", 0, timeout=5) == current
 
     @pytest.mark.asyncio
-    async def test_blocks_then_wakes_on_change(self, coord):
-        async def mutate():
-            await asyncio.sleep(0.05)
-            await _route(coord, "gw", "x-1", "x")
-
-        task = asyncio.create_task(mutate())
-        gen = await asyncio.wait_for(coord.wait_for_change("gw", 0), timeout=2)
-        await task
-        assert gen == 1
-
-    @pytest.mark.asyncio
-    async def test_times_out_returning_same_generation(self, coord):
-        gen = await coord.wait_for_change("gw", 0, timeout=0.05)
-        assert gen == 0
+    async def test_blocks_then_wakes_on_a_change(self, cluster):
+        cluster.configure(NEW)
+        coord = _coordinator()
+        await _pass(coord)
+        current = (await coord.get_routing("gw"))["generation"]
+        waiter = asyncio.create_task(coord.wait_for_change("gw", current, timeout=5))
+        await asyncio.sleep(0)
+        assert not waiter.done()
+        cluster.apps[_app_name(NEW)] = _app()
+        await _pass(coord)
+        assert await asyncio.wait_for(waiter, 1) == current + 1
 
     @pytest.mark.asyncio
-    async def test_restart_lower_generation_returns_immediately(self, coord):
-        # Replica last saw gen 5; a restarted coordinator is back at gen 0. Returning
-        # at once (0 != 5) lets the replica re-sync instead of blocking forever.
-        gen = await asyncio.wait_for(coord.wait_for_change("gw", 5), timeout=1)
-        assert gen == 0
+    async def test_times_out_returning_the_same_generation(self, cluster):
+        coord = _coordinator()
+        await _pass(coord)
+        current = (await coord.get_routing("gw"))["generation"]
+        assert await coord.wait_for_change("gw", current, timeout=0.01) == current
 
     @pytest.mark.asyncio
-    async def test_consecutive_cycles_advance(self, coord):
-        await _route(coord, "gw", "x-1", "x")
-        g1 = await asyncio.wait_for(coord.wait_for_change("gw", 0), timeout=1)
-        assert g1 == 1
-        # Subscribe at g1; a second change wakes us with the next generation.
-        waiter = asyncio.create_task(asyncio.wait_for(coord.wait_for_change("gw", g1), timeout=2))
-        await asyncio.sleep(0.05)
-        await coord.set_expected("gw", ["x"])
-        assert await waiter == 2
+    async def test_reports_no_change_before_the_first_pass(self, cluster):
+        coord = _coordinator()
+        assert await coord.wait_for_change("gw", 7, timeout=0.01) == 7
 
 
-class TestDurableState:
-    """Registry + expected are written through a StateStore so a resurrected
-    coordinator (max_restarts) reloads them instead of coming back empty."""
+class TestCleanup:
+    @pytest.fixture(autouse=True)
+    def _no_grace(self, monkeypatch):
+        monkeypatch.setattr(replica_coordinator, "_UNUSED_GRACE_SECONDS", 0)
 
     @pytest.mark.asyncio
-    async def test_reloads_registry_and_expected_from_shared_store(self):
-        store = _MemoryStore()  # stand-in for a redis:// store across restarts
-        with patch.object(replica_coordinator, "get_state_store", return_value=store):
-            first = _Coord()
-            await _route(first, "gw", "qwen-aaaa", "qwen")
-            await first.set_expected("gw", ["qwen", "kokoro"])
-
-            # A brand-new coordinator backed by the same store = a resurrected actor.
-            second = _Coord()
-        routing = await second.get_routing("gw")
-        assert routing["models"] == {"qwen-aaaa": "qwen"}
-        assert routing["expected"] == ["qwen", "kokoro"]
-        # Generation is ephemeral — restart resets it to 0 (the gateway treats that
-        # as "changed" and re-pulls).
-        assert routing["generation"] == 0
+    async def test_the_older_app_is_deleted_once_the_target_serves(self, cluster):
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
+        coord = _coordinator()
+        await _pass(coord)
+        assert cluster.deleted == [_app_name(OLD)]
 
     @pytest.mark.asyncio
-    async def test_a_declaration_survives_a_restart(self):
-        store = _MemoryStore()
-        with patch.object(replica_coordinator, "get_state_store", return_value=store):
-            await _Coord().declare_deployment("gw", "qwen-aaaa", "qwen")
-            second = _Coord()
-        assert await second.register_deployment("gw", "qwen-aaaa", "qwen")
+    async def test_an_older_app_still_serving_is_kept(self, cluster):
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): LOADING}
+        coord = _coordinator()
+        await _pass(coord)
+        assert cluster.deleted == []
 
     @pytest.mark.asyncio
-    async def test_unregister_persists_removal(self):
-        store = _MemoryStore()
-        with patch.object(replica_coordinator, "get_state_store", return_value=store):
-            first = _Coord()
-            await _route(first, "gw", "qwen-aaaa", "qwen")
-            await first.unregister_deployment("gw", "qwen-aaaa")
-            second = _Coord()
-        assert (await second.get_routing("gw"))["models"] == {}
+    async def test_a_dropped_models_app_is_deleted(self, cluster):
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(NEW): _app(), _app_name(_raw("b")): _app()}
+        coord = _coordinator()
+        await _pass(coord)
+        assert cluster.deleted == [_app_name(_raw("b"))]
 
-    def test_get_or_create_sets_max_restarts(self):
-        # Resurrection only helps because the actor auto-restarts; assert the option.
-        with (
-            patch.object(replica_coordinator.ray, "get_actor", side_effect=ValueError("absent")),
-            patch.object(replica_coordinator.ReplicaCoordinator, "options") as options,
-        ):
-            options.return_value.remote.return_value = MagicMock()
-            replica_coordinator.get_or_create_replica_coordinator()
-        assert options.call_args.kwargs["max_restarts"] == -1
+    @pytest.mark.asyncio
+    async def test_nothing_is_deleted_within_the_grace_period(self, cluster, monkeypatch):
+        monkeypatch.setattr(replica_coordinator, "_UNUSED_GRACE_SECONDS", 60)
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
+        coord = _coordinator()
+        await _pass(coord)
+        assert cluster.deleted == []
+
+    @pytest.mark.asyncio
+    async def test_an_app_used_again_starts_its_grace_period_over(self, cluster, monkeypatch):
+        monkeypatch.setattr(replica_coordinator, "_UNUSED_GRACE_SECONDS", 60)
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
+        coord = _coordinator()
+        await _pass(coord)
+        assert _app_name(OLD) in coord._unused_since
+        cluster.apps[_app_name(NEW)] = LOADING
+        await _pass(coord)
+        assert _app_name(OLD) not in coord._unused_since
+
+    @pytest.mark.asyncio
+    async def test_a_delete_in_progress_is_not_repeated(self, cluster, monkeypatch):
+        release, calls = threading.Event(), []
+
+        def slow_delete(names):
+            calls.extend(names)
+            release.wait(5)
+
+        monkeypatch.setattr(replica_coordinator, "delete_apps_quietly", slow_delete)
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(NEW): _app(), _app_name(_raw("b")): _app()}
+        coord = _coordinator()
+        await coord._compute()
+        await coord._compute()
+        release.set()
+        await asyncio.gather(*coord._deletions)
+        assert calls == [_app_name(_raw("b"))]
+
+    @pytest.mark.asyncio
+    async def test_a_missing_effective_config_deletes_nothing(self, cluster):
+        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
+        coord = _coordinator()
+        await _pass(coord)
+        assert cluster.deleted == []
+        assert (await coord.get_routing("gw"))["models"] == {_app_name(NEW): "a"}
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_effective_config_deletes_nothing(self, cluster, monkeypatch, caplog):
+        async def unavailable(key):
+            raise StateStoreUnavailableError("redis down")
+
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(NEW): _app(), _app_name(_raw("b")): _app()}
+        monkeypatch.setattr(cluster.store, "get_async", unavailable)
+        coord = _coordinator()
+        with caplog.at_level("WARNING"):
+            await _pass(coord)
+            await _pass(coord)
+        assert cluster.deleted == []
+        assert caplog.messages.count("Could not read the effective config of gateway gw") == 1
+
+
+def test_get_or_create_sets_max_restarts(monkeypatch):
+    options = {}
+
+    class _Options:
+        def remote(self):
+            return None
+
+    def fake_options(**kwargs):
+        options.update(kwargs)
+        return _Options()
+
+    monkeypatch.setattr(ReplicaCoordinator, "options", fake_options)
+    replica_coordinator.get_or_create_replica_coordinator()
+    assert options["max_restarts"] == -1
+    assert options["lifetime"] == "detached"

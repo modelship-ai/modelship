@@ -346,11 +346,7 @@ class BaseInfer[Prepared](ABC):
             config = self.model_config
             ceiling = config.autoscaling_config.max_replicas if config.autoscaling_config else config.num_replicas
             self._deploy_coordinator().report_replica_death.remote(
-                os.environ.get("MSHIP_GATEWAY_NAME", ""),
-                serve.get_replica_context().app_name,
-                config.name,
-                ceiling,
-                reason,
+                serve.get_replica_context().app_name, ceiling, reason
             )
         except Exception:
             logger.exception("Failed to report backend death for '%s'", self.model_config.name)

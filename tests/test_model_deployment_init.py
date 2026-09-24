@@ -155,7 +155,7 @@ async def test_generic_init_failure_reports_fatal():
 
 
 @pytest.mark.asyncio
-async def test_loads_under_the_lease_then_registers(monkeypatch):
+async def test_loads_under_the_lease():
     inst = _ModelDeployment.__new__(_ModelDeployment)
     config = _make_config()
     config.loader = ModelLoader.llama_server
@@ -175,8 +175,6 @@ async def test_loads_under_the_lease_then_registers(monkeypatch):
     infer.warmup = AsyncMock(side_effect=lambda: events.append("warmup"))
     loader_module = MagicMock()
     loader_module.LlamaServerInfer = MagicMock(side_effect=lambda c: events.append("load") or infer)
-    register = AsyncMock(side_effect=lambda *args: events.append(("register", *args)))
-    monkeypatch.setenv("MSHIP_GATEWAY_NAME", "gw")
 
     with (
         _patch_init_globals(
@@ -188,12 +186,10 @@ async def test_loads_under_the_lease_then_registers(monkeypatch):
             _reject_unsupported_accelerator=MagicMock(),
             BaseInfer=base_infer,
             deploy_lease=lease,
-            register_loaded_deployment=register,
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
-            serve=MagicMock(get_replica_context=MagicMock(return_value=MagicMock(app_name="app"))),
         ),
         patch.dict(sys.modules, {"modelship.infer.llama_server.llama_server_infer": loader_module}),
     ):
         await _ModelDeployment.__init__(inst, config)
 
-    assert events == ["download", "lease", "load", "warmup", "release", ("register", "gw", "app", "test-model")]
+    assert events == ["download", "lease", "load", "warmup", "release"]

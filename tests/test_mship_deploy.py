@@ -2,7 +2,6 @@
 
 import os
 import signal
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -727,134 +726,20 @@ class TestReservationTotals:
         assert total_gpu_reservation(opts) == 4
 
 
-class TestRemoveApps:
-    # remove_apps lives in deploy.removal, not serve_utils.
-    def test_noop_on_empty_list(self):
+class TestDeleteAppsQuietly:
+    def test_deletes_each_app(self):
         from modelship.deploy import removal
 
-        replica_coordinator = MagicMock()
         with patch("modelship.deploy.removal.serve.delete") as mock_delete:
-            removal.remove_apps([], replica_coordinator, "gw")
-        replica_coordinator.unregister_deployment.remote.assert_not_called()
-        mock_delete.assert_not_called()
-
-    def test_unregisters_then_deletes(self):
-        from modelship.deploy import removal
-
-        replica_coordinator = MagicMock()
-        apps = ["qwen-aaaaaaaaaa", "kokoro-bbbbbbbbbb"]
-        with (
-            patch("modelship.deploy.removal.ray.get") as mock_get,
-            patch("modelship.deploy.removal.serve.delete") as mock_delete,
-        ):
-            removal.remove_apps(apps, replica_coordinator, "gw")
-
-        # Each app is dropped from the replica coordinator's registry (bumping the
-        # gateway generation so replicas stop routing) before serve.delete tears it down.
-        replica_coordinator.unregister_deployment.remote.assert_any_call("gw", "qwen-aaaaaaaaaa")
-        replica_coordinator.unregister_deployment.remote.assert_any_call("gw", "kokoro-bbbbbbbbbb")
-        mock_get.assert_called_once()  # batched ray.get over the unregister calls
-        assert mock_delete.call_args_list == [(("qwen-aaaaaaaaaa",),), (("kokoro-bbbbbbbbbb",),)]
+            removal.delete_apps_quietly(["gw.qwen-aaaaaaaaaa", "gw.kokoro-bbbbbbbbbb"])
+        assert mock_delete.call_args_list == [(("gw.qwen-aaaaaaaaaa",),), (("gw.kokoro-bbbbbbbbbb",),)]
 
     def test_continues_on_serve_delete_error(self):
         from modelship.deploy import removal
 
-        replica_coordinator = MagicMock()
-        with (
-            patch("modelship.deploy.removal.ray.get"),
-            patch("modelship.deploy.removal.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete,
-        ):
-            removal.remove_apps(["a-1234567890", "b-1234567890"], replica_coordinator, "gw")
-        # Both deletes attempted even though the first raised.
+        with patch("modelship.deploy.removal.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete:
+            removal.delete_apps_quietly(["gw.a-1234567890", "gw.b-1234567890"])
         assert mock_delete.call_count == 2
-
-
-class TestStillServing:
-    def _routed(self, models):
-        replica_coordinator = MagicMock()
-        replica_coordinator.get_routing.remote.return_value = {"models": models}
-        return replica_coordinator
-
-    def test_keeps_an_app_routing_a_model_still_pending(self):
-        from modelship.deploy.strategy import still_serving
-
-        replica_coordinator = self._routed({"qwen-old": "qwen", "kokoro-old": "kokoro"})
-        with patch("modelship.deploy.strategy.ray.get", side_effect=lambda ref: ref):
-            keep = still_serving(
-                ["qwen-old", "kokoro-old"], [(SimpleNamespace(name="qwen"), "")], replica_coordinator, "gw"
-            )
-        assert keep == {"qwen-old"}
-
-    def test_an_unrouted_app_is_not_kept(self):
-        from modelship.deploy.strategy import still_serving
-
-        with patch("modelship.deploy.strategy.ray.get", side_effect=lambda ref: ref):
-            keep = still_serving(["qwen-old"], [(SimpleNamespace(name="qwen"), "")], self._routed({}), "gw")
-        assert keep == set()
-
-    def test_nothing_pending_needs_no_lookup(self):
-        from modelship.deploy.strategy import still_serving
-
-        replica_coordinator = MagicMock()
-        assert still_serving(["qwen-old"], [], replica_coordinator, "gw") == set()
-        replica_coordinator.get_routing.remote.assert_not_called()
-
-    def test_an_unreadable_registry_keeps_nothing(self):
-        from modelship.deploy.strategy import still_serving
-
-        with patch("modelship.deploy.strategy.ray.get", side_effect=RuntimeError("gone")):
-            keep = still_serving(["qwen-old"], [(SimpleNamespace(name="qwen"), "")], MagicMock(), "gw")
-        assert keep == set()
-
-
-class TestRouteLiveApps:
-    def _config(self, name):
-        return ModelshipModelConfig(
-            name=name, model=f"org/{name}", usecase=ModelUsecase.generate, loader="llama_server"
-        )
-
-    def _route(self, statuses, routed, configs):
-        from modelship.deploy.strategy import route_live_apps
-
-        replica_coordinator = MagicMock()
-        replica_coordinator.get_routing.remote.return_value = {"models": routed}
-        with patch("modelship.deploy.strategy.ray.get", side_effect=lambda ref: ref):
-            route_live_apps(configs, statuses, replica_coordinator, "gw")
-        return replica_coordinator
-
-    def test_an_unrouted_running_app_is_declared_and_registered(self):
-        from ray.serve.schema import ApplicationStatus
-
-        config = self._config("qwen")
-        name = config.deployment_name("gw")
-        coord = self._route({name: ApplicationStatus.RUNNING}, {}, [config])
-        coord.declare_deployment.remote.assert_called_once_with("gw", name, "qwen")
-        coord.register_deployment.remote.assert_called_once_with("gw", name, "qwen")
-
-    def test_an_unrouted_app_still_loading_is_only_declared(self):
-        from ray.serve.schema import ApplicationStatus
-
-        config = self._config("qwen")
-        name = config.deployment_name("gw")
-        coord = self._route({name: ApplicationStatus.DEPLOYING}, {}, [config])
-        coord.declare_deployment.remote.assert_called_once_with("gw", name, "qwen")
-        coord.register_deployment.remote.assert_not_called()
-
-    def test_a_routed_app_is_left_alone(self):
-        from ray.serve.schema import ApplicationStatus
-
-        config = self._config("qwen")
-        name = config.deployment_name("gw")
-        coord = self._route({name: ApplicationStatus.RUNNING}, {name: "qwen"}, [config])
-        coord.declare_deployment.remote.assert_not_called()
-
-    def test_an_unreadable_registry_routes_nothing(self):
-        from modelship.deploy.strategy import route_live_apps
-
-        coord = MagicMock()
-        with patch("modelship.deploy.strategy.ray.get", side_effect=RuntimeError("gone")):
-            route_live_apps([self._config("qwen")], {}, coord, "gw")
-        coord.declare_deployment.remote.assert_not_called()
 
 
 class TestStartGateway:
@@ -1682,36 +1567,3 @@ class TestPruneRaySessions:
         proc = subprocess.Popen(["true"])
         proc.wait()
         assert serve_utils._pid_alive(proc.pid) is False
-
-
-class TestSeedExpectedModels:
-    """The readiness baseline the gateway's /readyz measures against."""
-
-    @staticmethod
-    def _conf():
-        from modelship.infer.infer_config import ModelshipConfig
-
-        return ModelshipConfig.model_validate(
-            {
-                "models": [
-                    {"name": n, "model": f"org/{n}", "usecase": "generate", "loader": "vllm"}
-                    for n in ("qwen", "kokoro")
-                ]
-            }
-        )
-
-    def _seed(self, **kwargs) -> list[str]:
-        from modelship.deploy import serve_utils
-
-        replica_coordinator = MagicMock()
-        with patch("modelship.deploy.serve_utils.ray.get"):
-            serve_utils.seed_expected_models(replica_coordinator, "gw", self._conf(), **kwargs)
-        return replica_coordinator.set_expected.remote.call_args.args[1]
-
-    def test_seeds_every_configured_model(self):
-        assert self._seed() == ["qwen", "kokoro"]
-
-    def test_excluded_models_are_left_out(self):
-        # A model the driver gave up on: still in the effective config for a later
-        # retry, but nothing is pursuing it now, so /readyz must stop waiting.
-        assert self._seed(exclude={"qwen"}) == ["kokoro"]

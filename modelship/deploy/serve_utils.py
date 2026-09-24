@@ -17,7 +17,6 @@ from ray.serve.config import HTTPOptions, ProxyLocation
 from ray.serve.schema import ApplicationStatus, LoggingConfig
 
 from modelship.deploy.capabilities import node_capability_resources
-from modelship.infer.infer_config import ModelshipConfig
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
@@ -443,16 +442,3 @@ def start_gateway(gateway_name: str, serve_logging_config: LoggingConfig, route_
         gateway_replicas,
         gateway_max_ongoing,
     )
-
-
-def seed_expected_models(
-    replica_coordinator, gateway_name: str, yml_conf: ModelshipConfig, exclude: set[str] | None = None
-) -> None:
-    # Record the full desired set on the replica coordinator (the gateway's
-    # readiness baseline) — already-deployed models also count toward "ready".
-    # Bumping the generation makes every replica adopt it via its watch loop.
-    names = [c.name for c in yml_conf.models if c.name not in (exclude or set())]
-    try:
-        ray.get(replica_coordinator.set_expected.remote(gateway_name, names))
-    except Exception:
-        logger.exception("Failed to seed expected model list on coordinator (non-fatal).")

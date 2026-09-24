@@ -14,7 +14,6 @@ from ray import serve
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.deploy_leases import DeployLeaseError, deploy_lease
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, RawRequestProxy
-from modelship.infer.replica_coordinator import RegistrationError, register_loaded_deployment
 from modelship.infer.sources import ModelDownloadError
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
@@ -233,11 +232,7 @@ class ModelDeployment:
 
                 await self.infer.start()
                 await self.infer.warmup()
-
-            await register_loaded_deployment(
-                os.environ.get("MSHIP_GATEWAY_NAME", ""), serve.get_replica_context().app_name, config.name
-            )
-        except (ModelDownloadError, DeployLeaseError, RegistrationError) as e:
+        except (ModelDownloadError, DeployLeaseError) as e:
             # Not reported as fatal, so the driver retries the deployment.
             MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})
             self._graceful_teardown()

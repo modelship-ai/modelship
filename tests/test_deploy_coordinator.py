@@ -1,7 +1,7 @@
-"""Tests for the deploy coordinator; placement options live in test_actor_placement.py, routing-registry
-concerns in test_replica_coordinator.py. Reserve/release/liveness paths are untested."""
+"""Tests for the deploy coordinator; placement options live in test_actor_placement.py.
+Reserve/release/liveness paths are untested."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -19,7 +19,7 @@ class TestReplicaDeathCounting:
         coord = self._coord()
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
             for _ in range(deploy_coordinator._DEATHS_PER_REPLICA - 1):
-                await coord.report_replica_death("gw", "qwen-aaaa", "qwen", 1, "engine died")
+                await coord.report_replica_death("qwen-aaaa", 1, "engine died")
         retire.assert_not_called()
 
     @pytest.mark.asyncio
@@ -27,15 +27,15 @@ class TestReplicaDeathCounting:
         coord = self._coord()
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
             for _ in range(deploy_coordinator._DEATHS_PER_REPLICA):
-                await coord.report_replica_death("gw", "qwen-aaaa", "qwen", 1, "engine died")
-        retire.assert_awaited_once_with("gw", "qwen-aaaa", "qwen")
+                await coord.report_replica_death("qwen-aaaa", 1, "engine died")
+        retire.assert_awaited_once_with("qwen-aaaa")
 
     @pytest.mark.asyncio
     async def test_the_limit_scales_with_the_replica_count(self):
         coord = self._coord()
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
             for _ in range(deploy_coordinator._DEATHS_PER_REPLICA * 4):
-                await coord.report_replica_death("gw", "qwen-aaaa", "qwen", 4, "engine died")
+                await coord.report_replica_death("qwen-aaaa", 4, "engine died")
         assert retire.await_count == 1
 
     @pytest.mark.asyncio
@@ -43,7 +43,7 @@ class TestReplicaDeathCounting:
         coord = self._coord()
         coord._deaths["qwen-aaaa"] = deploy_coordinator._DEATHS_PER_REPLICA - 1
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
-            await coord.report_replica_death("gw", "qwen-aaaa", "qwen", 1, "engine died")
+            await coord.report_replica_death("qwen-aaaa", 1, "engine died")
         retire.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -52,36 +52,12 @@ class TestReplicaDeathCounting:
         with patch.object(coord, "_retire", new=AsyncMock()) as retire:
             for name in ("qwen-aaaa", "kokoro-bbbb"):
                 for _ in range(deploy_coordinator._DEATHS_PER_REPLICA - 1):
-                    await coord.report_replica_death("gw", name, "m", 1, "engine died")
+                    await coord.report_replica_death(name, 1, "engine died")
         retire.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_retire_unregisters_before_deleting(self):
+    async def test_retire_deletes_the_app(self):
         coord = self._coord()
-        calls = []
-        replica_coord = MagicMock()
-        replica_coord.unregister_deployment.remote = AsyncMock(side_effect=lambda *a: calls.append(("unregister", *a)))
-        with (
-            patch(
-                "modelship.infer.replica_coordinator.get_or_create_replica_coordinator",
-                return_value=replica_coord,
-            ),
-            patch("modelship.deploy.removal.serve.delete", side_effect=lambda n: calls.append(("delete", n))),
-        ):
-            await coord._retire("gw", "qwen-aaaa", "qwen")
-        assert calls == [("unregister", "gw", "qwen-aaaa", "qwen"), ("delete", "qwen-aaaa")]
-
-    @pytest.mark.asyncio
-    async def test_a_failed_unregister_still_deletes(self):
-        coord = self._coord()
-        replica_coord = MagicMock()
-        replica_coord.unregister_deployment.remote = AsyncMock(side_effect=RuntimeError("coordinator gone"))
-        with (
-            patch(
-                "modelship.infer.replica_coordinator.get_or_create_replica_coordinator",
-                return_value=replica_coord,
-            ),
-            patch("modelship.deploy.removal.serve.delete") as delete,
-        ):
-            await coord._retire("gw", "qwen-aaaa", "qwen")
+        with patch("modelship.deploy.removal.serve.delete") as delete:
+            await coord._retire("qwen-aaaa")
         delete.assert_called_once_with("qwen-aaaa")

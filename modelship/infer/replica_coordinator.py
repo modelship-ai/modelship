@@ -1,210 +1,168 @@
-"""Cluster-wide routing registry shared by every gateway replica.
+"""Cluster-wide routing for every gateway replica.
 
-`ReplicaCoordinator` is a detached, named Ray actor on the head node holding the
-durable mapping of model deployments each gateway owns. The driver declares each
-deployment it submits and unregisters it on removal; the deployment's own replicas
-register it once their model has loaded, and the app it replaces is then deleted.
-Every gateway replica long-polls `wait_for_change` and reconciles its own routing
-table from `get_routing` — nothing pushes to individual replicas.
-
-The registry is persisted through `get_state_store()` — cluster-scoped even on the
-default `memory://` (backed by its own detached actor, see `modelship.state.memory`)
-so a resurrected coordinator reloads live ownership instead of starting empty;
-`redis://` adds survival across a full cluster loss on top of that. The
-per-gateway generation counter and its wakeup `asyncio.Event` are ephemeral: on
-restart the generation resets to 0, which `wait_for_change` already treats as
-"changed" so replicas re-pull and reconcile from the reloaded registry.
+`ReplicaCoordinator` is a detached, named Ray actor on the head node. Once a second it
+reads Serve's application statuses and each gateway's effective config, computes every
+gateway's model table (`modelship.deploy.routing`), and deletes the apps nothing has
+used for `_UNUSED_GRACE_SECONDS`. Gateway replicas long-poll `wait_for_change` and copy
+their table from `get_routing`. Nothing is stored: a restarted coordinator recomputes
+everything on its first pass.
 """
 
 import asyncio
 import contextlib
+import time
 
 import ray
-from ray.exceptions import ActorDiedError, ActorUnavailableError
+from ray import serve
 
+from modelship.deploy.effective_config import read_targets
+from modelship.deploy.removal import delete_apps_quietly
+from modelship.deploy.routing import Routing, compute_routing
 from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import COORDINATOR_GENERATION
-from modelship.state import MemoryStateStore, get_state_store, state_store_env_var
+from modelship.state import get_state_store, state_store_env_var
 from modelship.utils import head_node_options
+from modelship.utils.config_schema import parse_deployment_name
 from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
 
 logger = get_logger("replica_coordinator")
 
 REPLICA_COORDINATOR_ACTOR_NAME = "modelship-replica-coordinator"
 
-_STATE_KEY = "coordinator/state"
-
-# How long a gateway replica's wait_for_change blocks before returning the
-# current generation unchanged. Bounds how long a missed wake / coordinator
-# restart can leave a replica un-reconciled (it re-pulls on every return).
+_PASS_INTERVAL_S = 1.0
+# Every gateway replica re-pulls its table well within this, so an app unused this long gets no requests.
+_UNUSED_GRACE_SECONDS = 10.0
+# How long a gateway replica's wait_for_change blocks before returning the generation unchanged.
 _WATCH_TIMEOUT_S = 30.0
-
-_REGISTER_ATTEMPTS = 6
-_REGISTER_RETRY_SECONDS = 5.0
-_REGISTER_TIMEOUT_SECONDS = 10.0
-
-
-class RegistrationError(Exception):
-    """The routing registry could not be reached."""
+# How long get_routing waits for the first pass before raising, so the caller retries.
+_FIRST_PASS_TIMEOUT_S = 5.0
 
 
 @ray.remote(num_cpus=0)
 class ReplicaCoordinator:
-    """Durable per-gateway routing registry with long-poll change notification."""
+    """Computes each gateway's model table from Serve and the effective config, and deletes unused apps."""
 
     def __init__(self):
         # Nothing else configures logging here; without it the logger falls back to Python's lastResort handler.
         configure_logging()
-        # Durable ownership registry: gateway_name -> {deployment_name -> model_name}.
-        # Model replicas register into it, the driver unregisters from it, and
-        # gateway replicas reconcile from it (see get_routing / wait_for_change).
-        # _registry, _declared and _expected are durable (loaded below, written through on
-        # every change); _generation/_change are ephemeral wakeup state. On a
-        # resurrected coordinator the generation restarts at 0, which the gateway's
-        # wait_for_change already treats as "changed" so replicas re-pull and
-        # reconcile from the reloaded registry.
         self._store = get_state_store()
-        if isinstance(getattr(self._store, "inner", self._store), MemoryStateStore):
-            # The memory store is cluster-scoped (a detached actor), so it survives
-            # THIS coordinator's own restart — but it dies with the cluster: a
-            # coordinator resurrected on a fresh cluster reloads an empty registry,
-            # and the next deploy (gen advances) re-enables removals against it —
-            # dropping still-healthy models from gateway routing. Fine single-node;
-            # for survival across cluster loss set MSHIP_STATE_STORE to redis://.
-            logger.warning(
-                "Replica coordinator is backed by a cluster-scoped (non-durable) memory state "
-                "store; its routing registry survives coordinator restart but is lost if the "
-                "cluster dies. Set MSHIP_STATE_STORE to redis:// to survive cluster loss."
-            )
-        saved = self._store.get(_STATE_KEY)
-        saved = saved if isinstance(saved, dict) else {}
-        registry = saved.get("registry")
-        self._registry: dict[str, dict[str, str]] = registry if isinstance(registry, dict) else {}
-        # Submitted deployments allowed to register once loaded, same shape as _registry.
-        declared = saved.get("declared")
-        self._declared: dict[str, dict[str, str]] = declared if isinstance(declared, dict) else {}
-        # Per-gateway change notification driving the gateway watch loop: a
-        # monotonic generation bumped on every routing/expected change, plus an
-        # asyncio.Event woken on each bump so a long-polling replica returns at
-        # once. _expected is the desired model set used for gateway readiness.
+        self._routing: dict[str, Routing] = {}
+        # Millisecond clock; at most one change per pass, so a restarted coordinator never repeats a generation.
+        self._first_generation = int(time.time() * 1000)
         self._generation: dict[str, int] = {}
-        expected = saved.get("expected")
-        self._expected: dict[str, list[str]] = expected if isinstance(expected, dict) else {}
         self._change: dict[str, asyncio.Event] = {}
+        self._computed = asyncio.Event()
+        # gateways whose replicas asked for a table; the rest are found through their apps
+        self._watched: set[str] = set()
+        self._unreadable: set[str] = set()
+        self._unused_since: dict[str, float] = {}
+        self._deleting: set[str] = set()
         self._deletions: set[asyncio.Task] = set()
+        self._passes = asyncio.create_task(self._compute_forever())
 
-    # These are async so every registry / generation / Event mutation runs on the
-    # actor's single event loop, serialised with wait_for_change and race-free.
+    async def _compute_forever(self) -> None:
+        failing = False
+        while True:
+            try:
+                await self._compute()
+            except Exception:
+                if not failing:
+                    logger.exception("Could not compute routing; keeping the last tables")
+                failing = True
+            else:
+                failing = False
+            await asyncio.sleep(_PASS_INTERVAL_S)
 
-    def _bump(self, gateway_name: str) -> None:
-        """Advance the gateway's generation and wake any current waiters. The old
-        Event is set (releasing replicas blocked on it) then replaced with a fresh
-        unset Event for the next round."""
-        self._generation[gateway_name] = self._generation.get(gateway_name, 0) + 1
-        COORDINATOR_GENERATION.set(self._generation[gateway_name], tags={"gateway": gateway_name})
-        old = self._change.get(gateway_name)
-        if old is not None:
-            old.set()
-        self._change[gateway_name] = asyncio.Event()
+    async def _compute(self) -> None:
+        """One pass: every gateway's table, then deletes of apps unused past the grace period."""
+        apps = dict((await asyncio.to_thread(serve.status)).applications)
+        gateways = set(self._watched)
+        for name in apps:
+            if (parsed := parse_deployment_name(name)) is not None:
+                gateways.add(parsed[0])
+        unused: set[str] = set()
+        for gateway in gateways:
+            routing = compute_routing(gateway, await self._targets(gateway), apps)
+            if routing is None:
+                continue
+            self._publish(gateway, routing)
+            unused |= routing.unused
+        self._delete_unused(unused)
+        self._computed.set()
 
-    async def _persist(self) -> None:
-        """Write the durable routing state through the StateStore. Async because a
-        memory-backed store is an RPC to another actor — a sync ray.get here would
-        block this actor's own event loop (and thus wait_for_change) on every write."""
-        await self._store.set_async(
-            _STATE_KEY, {"registry": self._registry, "declared": self._declared, "expected": self._expected}
-        )
+    async def _targets(self, gateway: str) -> dict[str, str] | None:
+        """None when the effective config is missing or unreadable, which deletes nothing."""
+        try:
+            targets = await read_targets(self._store, gateway)
+        except Exception:
+            if gateway not in self._unreadable:
+                logger.warning("Could not read the effective config of gateway %s", gateway, exc_info=True)
+            self._unreadable.add(gateway)
+            return None
+        self._unreadable.discard(gateway)
+        return targets
 
-    async def declare_deployment(self, gateway_name: str, deployment_name: str, model_name: str) -> None:
-        """Let deployment_name register once loaded, withdrawing any earlier
-        declaration for model_name."""
-        declared = self._declared.setdefault(gateway_name, {})
-        for name in [name for name, model in declared.items() if model == model_name]:
-            del declared[name]
-        declared[deployment_name] = model_name
-        await self._persist()
+    def _publish(self, gateway: str, routing: Routing) -> None:
+        previous = self._routing.get(gateway)
+        self._routing[gateway] = routing
+        if previous is None or (previous.models, previous.expected) != (routing.models, routing.expected):
+            self._bump(gateway)
 
-    async def register_deployment(self, gateway_name: str, deployment_name: str, model_name: str) -> bool:
-        """Route model_name to a declared deployment_name, evicting any other deployment
-        of that model. False when it was never declared or has since been removed."""
-        declared = self._declared.get(gateway_name, {}).pop(deployment_name, None) is not None
-        if self._registry.get(gateway_name, {}).get(deployment_name) == model_name:
-            if declared:
-                await self._persist()
-            return True
-        if not declared:
-            return False
-        gw = self._registry.setdefault(gateway_name, {})
-        superseded = [name for name, model in gw.items() if model == model_name and name != deployment_name]
-        for name in superseded:
-            del gw[name]
-        if superseded:
-            logger.info("routing for model %s: %s -> %s", model_name, superseded, deployment_name)
-            task = asyncio.create_task(self._delete_after_cutover(gateway_name, superseded))
-            self._deletions.add(task)
-            task.add_done_callback(self._deletions.discard)
-        gw[deployment_name] = model_name
-        await self._persist()
-        self._bump(gateway_name)
-        return True
+    def _bump(self, gateway: str) -> None:
+        """Advance the gateway's generation and wake its waiting replicas."""
+        self._generation[gateway] = self._generation.get(gateway, self._first_generation) + 1
+        COORDINATOR_GENERATION.set(self._generation[gateway], tags={"gateway": gateway})
+        if (event := self._change.pop(gateway, None)) is not None:
+            event.set()
 
-    async def _delete_after_cutover(self, gateway_name: str, apps: list[str]) -> None:
-        """Deletes replaced apps once every gateway replica has had a watch period to
-        re-pull, skipping any routed or declared again meanwhile."""
-        from modelship.deploy.removal import delete_apps_quietly
+    def _delete_unused(self, unused: set[str]) -> None:
+        """Deletes each app unused for `_UNUSED_GRACE_SECONDS`, off the event loop and one delete at a time per app."""
+        now = time.monotonic()
+        self._unused_since = {app: self._unused_since.get(app, now) for app in unused}
+        for app, since in self._unused_since.items():
+            if now - since >= _UNUSED_GRACE_SECONDS and app not in self._deleting:
+                self._deleting.add(app)
+                task = asyncio.create_task(self._delete(app))
+                self._deletions.add(task)
+                task.add_done_callback(self._deletions.discard)
 
-        await asyncio.sleep(_WATCH_TIMEOUT_S)
-        in_use = set(self._registry.get(gateway_name, {})) | set(self._declared.get(gateway_name, {}))
-        # serve.delete blocks until the app is gone
-        await asyncio.to_thread(delete_apps_quietly, [app for app in apps if app not in in_use])
-
-    async def unregister_deployment(
-        self, gateway_name: str, deployment_name: str, model_name: str | None = None
-    ) -> None:
-        """Drop the deployment, and the model's `_expected` entry with it once no
-        other deployment serves that name. `model_name` is only needed when the
-        deployment was neither registered nor declared."""
-        gw = self._registry.get(gateway_name) or {}
-        registered_as = gw.pop(deployment_name, None)
-        declared_as = (self._declared.get(gateway_name) or {}).pop(deployment_name, None)
-        model_name = registered_as or declared_as or model_name
-        if model_name is not None and model_name not in gw.values():
-            expected = self._expected.get(gateway_name)
-            if expected is not None:
-                self._expected[gateway_name] = [m for m in expected if m != model_name]
-        if not gw:
-            self._registry.pop(gateway_name, None)
-        await self._persist()
-        self._bump(gateway_name)
-
-    async def set_expected(self, gateway_name: str, names: list[str]) -> None:
-        """Record the desired model set for readiness; bumps so replicas adopt it."""
-        self._expected[gateway_name] = list(names)
-        await self._persist()
-        self._bump(gateway_name)
+    async def _delete(self, app: str) -> None:
+        try:
+            # serve.delete blocks until the app is gone
+            await asyncio.to_thread(delete_apps_quietly, [app])
+        finally:
+            self._deleting.discard(app)
+            # a failed delete waits out the grace period again
+            self._unused_since.pop(app, None)
 
     async def get_routing(self, gateway_name: str) -> dict:
-        """Snapshot a replica pulls after a change: the app->model map, the
-        expected-model set, and the current generation."""
+        """The gateway's model table (app -> model), expected models and generation."""
+        self._watched.add(gateway_name)
+        await asyncio.wait_for(self._computed.wait(), _FIRST_PASS_TIMEOUT_S)
+        routing = self._routing.get(gateway_name)
         return {
-            "models": dict(self._registry.get(gateway_name, {})),
-            "expected": list(self._expected.get(gateway_name, [])),
-            "generation": self._generation.get(gateway_name, 0),
+            "models": dict(routing.models) if routing else {},
+            "expected": list(routing.expected) if routing else [],
+            "generation": self._generation.get(gateway_name, self._first_generation),
         }
 
     async def wait_for_change(self, gateway_name: str, since_gen: int, timeout: float = _WATCH_TIMEOUT_S) -> int:
-        """Long-poll for a routing change. Returns the current generation at once
-        if it differs from since_gen (covers both a forward bump and a coordinator
-        restart that reset it to 0); otherwise waits for the next bump up to
-        timeout, then returns the current generation regardless."""
-        current = self._generation.get(gateway_name, 0)
+        """Long-poll for a change to the gateway's table: returns its generation once it
+        differs from since_gen, or after timeout regardless. Before the first pass it
+        reports since_gen."""
+        self._watched.add(gateway_name)
+        if not self._computed.is_set():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._computed.wait(), timeout)
+            return since_gen
+        current = self._generation.get(gateway_name, self._first_generation)
         if current != since_gen:
             return current
         event = self._change.setdefault(gateway_name, asyncio.Event())
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(event.wait(), timeout)
-        return self._generation.get(gateway_name, 0)
+        return self._generation.get(gateway_name, self._first_generation)
 
 
 def get_or_create_replica_coordinator():
@@ -219,25 +177,3 @@ def get_or_create_replica_coordinator():
         runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS) | state_store_env_var()},
         **head_node_options(),
     ).remote()
-
-
-async def register_loaded_deployment(gateway_name: str, deployment_name: str, model_name: str) -> None:
-    """Routes a replica's loaded deployment, retrying through a coordinator restart.
-    Looks the coordinator up, never creates it: replicas lack its state-store settings."""
-    for attempt in range(1, _REGISTER_ATTEMPTS + 1):
-        try:
-            coord = ray.get_actor(REPLICA_COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_NAMESPACE)
-            registered = await asyncio.wait_for(
-                coord.register_deployment.remote(gateway_name, deployment_name, model_name),
-                _REGISTER_TIMEOUT_SECONDS,
-            )
-        except (ValueError, TimeoutError, ActorDiedError, ActorUnavailableError) as e:
-            if attempt == _REGISTER_ATTEMPTS:
-                raise RegistrationError(f"routing registry unreachable: {e!r}") from e
-            await asyncio.sleep(_REGISTER_RETRY_SECONDS)
-            continue
-        if not registered:
-            logger.warning(
-                "%s: %s was replaced or removed before it loaded; not routing it", model_name, deployment_name
-            )
-        return

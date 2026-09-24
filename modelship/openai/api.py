@@ -272,10 +272,10 @@ class ModelshipAPI:
                 removed_models.append(model_name)
         return removed_models
 
-    def _apply_routing(self, desired: dict[str, str], *, allow_removals: bool) -> None:
+    def _apply_routing(self, desired: dict[str, str]) -> None:
         """Reconcile the routing table to `desired` ({app_name: model_name}): add
-        handles for newly-present apps and, when `allow_removals`, drop apps no
-        longer present. Sync / await-free → atomic w.r.t. in-flight requests.
+        handles for newly-present apps and drop apps no longer present. Sync /
+        await-free → atomic w.r.t. in-flight requests.
 
         Applies every app that can be registered (and any removals), then raises if
         any could not be. The caller leaves `_gen` unadvanced so the watch loop
@@ -298,26 +298,18 @@ class ModelshipAPI:
                 self._model_load_times[model_name] = round(time.time() - base, 2)
                 self._last_model_at = time.time()
 
-        if allow_removals:
-            stale = [app for app in routed if app not in desired]
-            if stale:
-                self._drop_apps(stale)
+        stale = [app for app in routed if app not in desired]
+        if stale:
+            self._drop_apps(stale)
 
         if failed:
             raise RuntimeError(f"deployments not yet registerable: {failed}")
 
     def _apply_snapshot(self, snapshot: dict) -> None:
-        """Apply a coordinator routing snapshot to this replica (atomic mutation).
-
-        Removals are honored only when the generation advances. A *lower*
-        generation means the coordinator lost state (restart) — we still adopt its
-        additions but never let it blank live routing; a genuine change always
-        advances the generation, so real removals propagate immediately."""
+        """Apply a coordinator routing snapshot to this replica (atomic mutation)."""
         new_gen = snapshot.get("generation", self._gen)
-        self._apply_routing(snapshot.get("models", {}), allow_removals=new_gen >= self._gen)
-        # Prefer the coordinator's explicit expected set; fall back to the live set
-        # so a restarted coordinator (empty expected) doesn't flip us to not-ready.
-        self.expected_models = snapshot.get("expected") or sorted(self.models)
+        self._apply_routing(snapshot.get("models", {}))
+        self.expected_models = list(snapshot.get("expected", []))
         if self.expected_models and self._expected_set_at is None:
             self._expected_set_at = self._last_model_at or time.time()
         if self.expected_models and self._all_ready_at is None and all(m in self.models for m in self.expected_models):
@@ -418,8 +410,7 @@ class ModelshipAPI:
         self._ensure_watching()
         if model_name is None or model_name not in self.models:
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
-        # One model name maps to one deployment (coordinator evicts any prior one
-        # on registration), so the last-inserted entry is always the live one.
+        # The coordinator's table maps each model to one app.
         return next(reversed(self.models[model_name].values()))
 
     async def _await_first(self, response_gen, model: str, endpoint: str):
