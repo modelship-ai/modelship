@@ -115,6 +115,9 @@ class TestRepeatedBackendDeaths:
 
         model_deployer.forget()
         assert _poll(lambda: app not in serve_apps(), deadline_s=120), "the deployment was not retired"
+        # the effective config still lists the model, so the gateway answers 503
+        no_retries = client.with_options(max_retries=0)
         for _ in range(20):
-            with pytest.raises(openai.NotFoundError):
-                client.chat.completions.create(model=self.MODEL, messages=_PING_PROMPT, max_tokens=4)
+            with pytest.raises(openai.InternalServerError) as raised:
+                no_retries.chat.completions.create(model=self.MODEL, messages=_PING_PROMPT, max_tokens=4)
+            assert raised.value.status_code == 503

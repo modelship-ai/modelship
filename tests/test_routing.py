@@ -135,11 +135,14 @@ class TestExpected:
     def test_a_model_served_only_by_an_older_app_is_expected(self):
         assert _route({OLD: _app()}, {"m": NEW}).expected == ["m"]
 
-    def test_a_model_with_no_app_is_not_expected(self):
-        assert _route({}, {"m": NEW}).expected == []
+    def test_a_model_with_no_app_is_expected(self):
+        assert _route({}, {"m": NEW}).expected == ["m"]
 
-    def test_a_model_whose_target_is_being_deleted_is_not_expected(self):
-        assert _route({NEW: _app(ApplicationStatus.DELETING, running=0)}, {"m": NEW}).expected == []
+    def test_a_model_whose_target_is_being_deleted_is_expected(self):
+        assert _route({NEW: _app(ApplicationStatus.DELETING, running=0)}, {"m": NEW}).expected == ["m"]
+
+    def test_a_model_whose_old_app_is_being_deleted_before_its_target_exists_is_expected(self):
+        assert _route({OLD: _app(ApplicationStatus.DELETING)}, {"m": NEW}).expected == ["m"]
 
 
 class TestUnknownTargets:

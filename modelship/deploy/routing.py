@@ -62,6 +62,5 @@ def compute_routing(
     mine = {name for names in by_model.values() for name in names}
     if targets is None:
         return Routing(models=models, expected=sorted(set(models.values())), unused=set(), retiring=mine - present)
-    expected = [model for model, target in targets.items() if target in present or model in models.values()]
     unused = (mine & present) - set(models) - set(targets.values())
-    return Routing(models=models, expected=expected, unused=unused, retiring=unused | (mine - present))
+    return Routing(models=models, expected=list(targets), unused=unused, retiring=unused | (mine - present))
