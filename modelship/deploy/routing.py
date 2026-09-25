@@ -24,9 +24,11 @@ class Routing:
 
 
 def can_serve(app: ApplicationStatusOverview) -> bool:
-    """At least one running replica, and not being deleted."""
+    """RUNNING (which includes an app autoscaled to zero replicas) or with a running replica, and not being deleted."""
     if app.status == ApplicationStatus.DELETING:
         return False
+    if app.status == ApplicationStatus.RUNNING:
+        return True
     return any(
         state == _RUNNING and count > 0
         for deployment in app.deployments.values()
