@@ -768,7 +768,7 @@ class TestDeleteAppsQuietly:
 class TestWaitForRetiredApps:
     @staticmethod
     def _wait(monkeypatch, answers):
-        """Runs the wait on a fake clock; each answer takes one second, as a coordinator pass does."""
+        """Runs the wait on a fake clock; each answer takes one second, as a gateway coordinator pass does."""
         from modelship.deploy import removal
 
         clock, asked = [0.0], []

@@ -5,7 +5,7 @@ reads Serve's application statuses and each gateway's effective config, computes
 gateway's model table (`modelship.deploy.routing`), and deletes the apps nothing has
 used for `_UNUSED_GRACE_SECONDS`. Gateway replicas long-poll `wait_for_change` and copy
 their table from `get_routing`; the driver polls `get_retiring` until those deletes are
-done. Nothing is stored: a restarted coordinator recomputes everything on its first pass.
+done. Nothing is stored: a restarted gateway coordinator recomputes everything on its first pass.
 """
 
 import asyncio
@@ -48,7 +48,7 @@ class GatewayCoordinator:
         configure_logging()
         self._store = get_state_store()
         self._routing: dict[str, Routing] = {}
-        # Millisecond clock; at most one change per pass, so a restarted coordinator never repeats a generation.
+        # Millisecond clock; at most one change per pass, so a restarted gateway coordinator never repeats a generation.
         self._first_generation = int(time.time() * 1000)
         self._generation: dict[str, int] = {}
         self._change: dict[str, asyncio.Event] = {}
@@ -182,7 +182,7 @@ class GatewayCoordinator:
 
 
 def get_or_create_gateway_coordinator():
-    """Return the cluster-wide replica-routing coordinator handle, creating it on the head node if absent."""
+    """Return the cluster-wide gateway coordinator handle, creating it on the head node if absent."""
     return GatewayCoordinator.options(
         name=GATEWAY_COORDINATOR_ACTOR_NAME,
         namespace=COORDINATOR_NAMESPACE,

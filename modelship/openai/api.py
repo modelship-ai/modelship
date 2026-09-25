@@ -304,7 +304,7 @@ class ModelshipAPI:
             raise RuntimeError(f"deployments not yet registerable: {failed}")
 
     def _apply_snapshot(self, snapshot: dict) -> None:
-        """Apply a coordinator routing snapshot to this replica (atomic mutation)."""
+        """Apply a gateway coordinator routing snapshot to this replica (atomic mutation)."""
         new_gen = snapshot.get("generation", self._gen)
         # before the routes, which raise when an app isn't resolvable yet
         self.expected_models = list(snapshot.get("expected", []))
@@ -411,7 +411,7 @@ class ModelshipAPI:
             if model_name in self.expected_models:
                 raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE.value, detail="model not ready")
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
-        # The coordinator's table maps each model to one app.
+        # The gateway coordinator's table maps each model to one app.
         return next(reversed(self.models[model_name].values()))
 
     async def _await_first(self, response_gen, model: str, endpoint: str):

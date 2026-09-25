@@ -214,7 +214,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     if isinstance(getattr(store, "inner", store), MemoryStateStore):
         logger.warning(
             "Effective config is backed by a cluster-scoped (non-durable) memory state store; it "
-            "survives deploys and coordinator restarts but NOT cluster loss. Set MSHIP_STATE_STORE "
+            "survives deploys and deploy/gateway coordinator restarts but NOT cluster loss. Set MSHIP_STATE_STORE "
             "to redis:// for self-heal after cluster loss."
         )
     ensure_key_seeded(store)

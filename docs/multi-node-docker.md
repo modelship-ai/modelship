@@ -139,7 +139,7 @@ auto-detection is wrong or you want to disable a loader on one node.
 ## `MSHIP_STATE_STORE=redis://` is the multi-node recommendation
 
 Without it, the effective config (this gateway's desired model set) lives in a
-cluster-scoped Ray actor — it survives a redeploy or coordinator restart, but not
+cluster-scoped Ray actor — it survives a redeploy or a restart of the deploy or gateway coordinator, but not
 the loss of the head/cluster itself. A `redis://` store survives cluster loss too, so `mship start --reconcile`
 with no `--config` on a fresh cluster restores the real model set instead of
 coming back empty. See [State store

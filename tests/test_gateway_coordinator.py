@@ -58,7 +58,7 @@ def no_logging_setup(monkeypatch):
 
 
 class _Cluster:
-    """The Serve apps and effective configs a coordinator reads, and the apps it deletes."""
+    """The Serve apps and effective configs a gateway coordinator reads, and the apps it deletes."""
 
     def __init__(self, monkeypatch):
         self.apps = {"gw": _app()}
@@ -78,7 +78,7 @@ def cluster(monkeypatch):
 
 
 def _coordinator(*watched: str):
-    """A coordinator whose passes are run by hand; call from within a running loop."""
+    """A gateway coordinator whose passes are run by hand; call from within a running loop."""
     coord = _Coord()
     coord._passes.cancel()
     coord._watched |= set(watched)

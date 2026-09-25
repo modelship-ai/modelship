@@ -34,7 +34,7 @@ def api():
 
 
 def _apply(api, models, *, expected=None, gen=1, handles=None):
-    """Applies a coordinator routing snapshot with Serve mocked."""
+    """Applies a gateway coordinator routing snapshot with Serve mocked."""
     with ExitStack() as stack:
         if handles is not None:
             stack.enter_context(patch("modelship.openai.api.serve.get_app_handle", side_effect=handles))
