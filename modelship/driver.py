@@ -134,7 +134,7 @@ def _deploy(args) -> None:
         start_gateway,
         start_serve,
     )
-    from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
+    from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.state import reject_inline_password
 
     gateway_name, route_prefix, explicit_gateway = _gateway_from_env()
@@ -179,7 +179,7 @@ def _deploy(args) -> None:
 
     # The deploy is done; a signal now only stops the wait.
     _on_signals(lambda sig, _frame: sys.exit(1 if fatally_failed else 0))
-    wait_for_retired_apps(get_or_create_replica_coordinator(), gateway_name)
+    wait_for_retired_apps(get_or_create_gateway_coordinator(), gateway_name)
 
     if fatally_failed:
         # No resident /readyz to report it, so fail via the exit code.
@@ -200,7 +200,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     from modelship.deploy.strategy import DeployContext, DeployOutcome, compute_deploy_plan, run_deploy_loop
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
     from modelship.infer.deploy_leases import get_or_create_leases
-    from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
+    from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
     from modelship.openai.compaction_crypto import ensure_key_seeded
     from modelship.state import MemoryStateStore, get_state_store
@@ -253,7 +253,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
 
     # Detached actors: deploy bookkeeping and the routing reconciler.
     coordinator = get_or_create_coordinator()
-    get_or_create_replica_coordinator()
+    get_or_create_gateway_coordinator()
     # With this gateway the only app, no replica can hold a lease, so a new actor grants at once.
     get_or_create_leases(startup_window=set(app_statuses) != {gateway_name})
     plan = compute_deploy_plan(yml_conf, app_statuses, gateway_name)
@@ -261,7 +261,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
 
     # Pins sources on the driver so auth/missing-repo errors fail before any replica starts.
     resolve_all_model_sources(yml_conf)
-    # Before any submit: the replica coordinator deletes this gateway's apps the effective config doesn't target.
+    # Before any submit: the gateway coordinator deletes this gateway's apps the effective config doesn't target.
     # Includes models that later fail, so the next deploy retries them.
     write_effective(store, gateway_name, desired_raw)
 

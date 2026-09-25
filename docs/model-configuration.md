@@ -13,7 +13,7 @@ exits. Each takes the arguments marked for it (env vars work as fallbacks; CLI w
 |---|---|---|---|---|
 | `--config` | start, deploy | — | `config/models.yaml` | Path to models config file. An explicit path that doesn't exist is a hard error |
 | `--gateway-name` | start, deploy | `MSHIP_GATEWAY_NAME` | `modelship` | Name for the API gateway app. Multiple gateways can coexist on one cluster, each mounted at `/<slugified-name>` (e.g. `modelship` → `/modelship/v1/...`) |
-| `--gateway-replicas` | start, deploy | `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas (routing/ingress HA; replicas copy routing from the replica coordinator) |
+| `--gateway-replicas` | start, deploy | `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas (routing/ingress HA; replicas copy routing from the gateway coordinator) |
 | `--openai-api-port` | start, deploy | `MSHIP_OPENAI_API_PORT` | `8000` | Port for the OpenAI-compatible API |
 | `--cluster` | join | `MSHIP_CLUSTER` | — | The head's GCS address as `host:port` (e.g. `mship-head:6380`) — its `--ray-port`. Reachable only from inside the cluster's private network. See [Multi-node without Kubernetes](multi-node-docker.md) |
 | `--token` | join, deploy | `MSHIP_RAY_AUTH_TOKEN` | — | Auth token of a cluster started with `--ray-auth=token`; read it on the head with `cat ~/.ray/auth_token` |
@@ -595,7 +595,7 @@ Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded 
 
 ### State store (`MSHIP_STATE_STORE`)
 
-One pluggable store holds this gateway's **effective config** (its desired model set, replayed by `--reconcile` with no `--config` to self-heal after cluster loss, and read by the replica coordinator to route and clean up) and **`/v1/responses` conversations** (see [Stateful responses](#stateful-responses)). A single connection URI picks the backend and carries its connection:
+One pluggable store holds this gateway's **effective config** (its desired model set, replayed by `--reconcile` with no `--config` to self-heal after cluster loss, and read by the gateway coordinator to route and clean up) and **`/v1/responses` conversations** (see [Stateful responses](#stateful-responses)). A single connection URI picks the backend and carries its connection:
 
 | URI | Backend | Durability |
 |---|---|---|

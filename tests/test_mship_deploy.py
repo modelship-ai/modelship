@@ -273,7 +273,7 @@ class TestDriverVerbs:
             patch.object(serve_utils, "start_gateway") as mock_gateway,
             patch.object(driver, "_log_cluster"),
             patch.object(driver, "_apply", return_value=list(fatally_failed)) as mock_apply,
-            patch("modelship.infer.replica_coordinator.get_or_create_replica_coordinator"),
+            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator"),
             patch.object(removal, "wait_for_retired_apps", side_effect=wait) as mock_wait,
         ):
             args = parse_args("deploy", argv)
@@ -309,7 +309,7 @@ class TestDriverVerbs:
         from modelship import driver
         from modelship.deploy import removal
 
-        def interrupted(replica_coordinator, gateway_name):
+        def interrupted(gateway_coordinator, gateway_name):
             handler = driver.signal.signal.call_args.args[1]
             handler(signal.SIGTERM, None)
 

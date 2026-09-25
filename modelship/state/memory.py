@@ -25,7 +25,7 @@ from modelship.utils.runtime_env import MEMORY_STORE_ENV_VARS, build_env_vars
 logger = get_logger("startup")
 
 # Detached-actor identity: same namespace as the other cluster-wide coordinators
-# (modelship.infer.deploy_coordinator.COORDINATOR_NAMESPACE / replica_coordinator).
+# (modelship.infer.deploy_coordinator.COORDINATOR_NAMESPACE / gateway_coordinator).
 # Not imported from there — modelship.state is the generic lower layer and infer
 # depends on it, not the reverse.
 _ACTOR_NAME = "modelship-memory-store"
@@ -54,7 +54,7 @@ class MemoryStoreActor(StateStore):
     """Holds the dict. One actor for the whole cluster — memory:// targets
     small-traffic single-node deployments, so a single actor is the design point,
     not a stopgap. A restart returns an empty store: this fails safe for every
-    caller (the replica coordinator's in-RAM registry is untouched and write-through
+    caller (the gateway coordinator's in-RAM registry is untouched and write-through
     repopulates it; an empty effective config makes the deploy driver's reconcile
     remove nothing rather than remove wrongly; a lost /v1/responses conversation
     surfaces as a 404 on the next previous_response_id)."""

@@ -157,7 +157,7 @@ One Redis backs three things at once:
    recovers GCS; workers and model actors **survive**, and Serve's controller
    redeploys anything that died. The restart becomes a sub-minute blip.
 2. **The modelship state store** (`MSHIP_STATE_STORE=redis://…`) — each gateway's
-   effective config lives in Redis, so the replica coordinator, which rebuilds routing
+   effective config lives in Redis, so the gateway coordinator, which rebuilds routing
    from Serve's state on recovery, still knows which deployment each model should run.
 3. **`/v1/responses` conversations** — stored responses survive head restarts and
    full cluster loss, so `previous_response_id` keeps working across them.

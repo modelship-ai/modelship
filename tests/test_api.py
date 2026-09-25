@@ -195,7 +195,7 @@ class TestWatchReconcile:
             "generation": 3,
         }
         with (
-            patch("modelship.infer.replica_coordinator.get_or_create_replica_coordinator", return_value=MagicMock()),
+            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator", return_value=MagicMock()),
             patch("modelship.openai.api.ray.get", return_value=snapshot),
             patch("modelship.openai.api.serve.get_app_handle", return_value=MagicMock()),
         ):
@@ -208,7 +208,7 @@ class TestWatchReconcile:
 
     def test_sync_tolerates_unavailable_coordinator(self, api):
         api._watch_task = None
-        with patch("modelship.infer.replica_coordinator.get_or_create_replica_coordinator", side_effect=RuntimeError):
+        with patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator", side_effect=RuntimeError):
             assert api._sync_routing_blocking() is False
         assert api.models == {}
 
@@ -218,7 +218,7 @@ class TestWatchReconcile:
         api._watch_task = None
         snapshot = {"models": {"qwen-aaaaaaaaaa": "qwen"}, "expected": ["qwen"], "generation": 2}
         with (
-            patch("modelship.infer.replica_coordinator.get_or_create_replica_coordinator", return_value=MagicMock()),
+            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator", return_value=MagicMock()),
             patch("modelship.openai.api.ray.get", return_value=snapshot),
             patch("modelship.openai.api.serve.get_app_handle", side_effect=RuntimeError("controller lag")),
         ):
@@ -231,19 +231,19 @@ class TestWatchReconcile:
         # cleared so the next _coord() re-resolves instead of retrying a corpse.
         stale = MagicMock()
         stale.get_routing.remote.side_effect = RuntimeError("actor dead")
-        api._replica_coord = stale
+        api._gateway_coord = stale
         with patch("modelship.openai.api.ray.get", side_effect=RuntimeError("actor dead")):
             assert api._sync_routing_blocking() is False
-        assert api._replica_coord is None
+        assert api._gateway_coord is None
 
     @pytest.mark.asyncio
     async def test_coord_async_resolves_off_thread_and_caches(self, api):
         # The watch loop resolves the coordinator via asyncio.to_thread (so the sync
         # ray.get_actor never blocks the event loop) and caches the handle.
-        api._replica_coord = None
+        api._gateway_coord = None
         sentinel = MagicMock()
         with patch(
-            "modelship.infer.replica_coordinator.get_or_create_replica_coordinator", return_value=sentinel
+            "modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator", return_value=sentinel
         ) as goc:
             assert await api._coord_async() is sentinel
             assert await api._coord_async() is sentinel

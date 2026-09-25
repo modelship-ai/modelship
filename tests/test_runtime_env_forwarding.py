@@ -6,7 +6,7 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
-from modelship.infer import replica_coordinator
+from modelship.infer import gateway_coordinator
 from modelship.state import (
     REDIS_PASSWORD_ENV,
     reject_inline_password,
@@ -87,12 +87,12 @@ class TestStateStoreForwarding:
 
 
 class TestCoordinatorCreation:
-    def test_the_replica_coordinator_is_created_with_the_store_uri(self):
+    def test_the_gateway_coordinator_is_created_with_the_store_uri(self):
         with (
             patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),
-            patch.object(replica_coordinator.ReplicaCoordinator, "options") as options,
+            patch.object(gateway_coordinator.GatewayCoordinator, "options") as options,
         ):
-            replica_coordinator.get_or_create_replica_coordinator()
+            gateway_coordinator.get_or_create_gateway_coordinator()
         assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
 
 

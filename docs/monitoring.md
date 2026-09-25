@@ -279,7 +279,7 @@ Use `/health` for Kubernetes liveness probes and `/readyz` for readiness probes 
 
 ## Modelship Metrics Reference
 
-Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the replica coordinator, state store, and deploy driver, which are not Serve replicas).
+Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the gateway coordinator, state store, and deploy driver, which are not Serve replicas).
 
 ### The `gateway` dimension
 
@@ -325,7 +325,7 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 
 ### HA Control Plane
 
-These cover the multi-node / HA machinery deployed by the Helm chart (replica coordinator, pluggable state store, gateway watch loop). The first six carry a `gateway` tag; the rest are cluster-scoped.
+These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first six carry a `gateway` tag; the rest are cluster-scoped.
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|

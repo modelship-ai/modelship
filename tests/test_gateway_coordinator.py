@@ -1,4 +1,4 @@
-"""The replica coordinator's passes: each gateway's model table, its generation, the
+"""The gateway coordinator's passes: each gateway's model table, its generation, the
 long-poll API gateway replicas use, and the deletion of unused apps. Exercises the
 undecorated class in-process, with Serve's status and the state store faked."""
 
@@ -16,14 +16,14 @@ from ray.serve.schema import (
 )
 
 from modelship.deploy.effective_config import write_effective
-from modelship.infer import replica_coordinator
+from modelship.infer import gateway_coordinator
+from modelship.infer.gateway_coordinator import GatewayCoordinator
 from modelship.infer.infer_config import ModelshipModelConfig
-from modelship.infer.replica_coordinator import ReplicaCoordinator
 from modelship.state import MemoryStoreActor, StateStoreUnavailableError
 
 # The plain classes behind @ray.remote — their async methods are ordinary
 # coroutines, so both can be exercised in-process without a Ray cluster.
-_Coord = ReplicaCoordinator.__ray_metadata__.modified_class
+_Coord = GatewayCoordinator.__ray_metadata__.modified_class
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
 
 
@@ -54,7 +54,7 @@ LOADING = _app(ApplicationStatus.DEPLOYING, running=0, deployed_at=1)
 @pytest.fixture(autouse=True)
 def no_logging_setup(monkeypatch):
     # the actor configures logging for its whole process, here pytest's
-    monkeypatch.setattr(replica_coordinator, "configure_logging", lambda: None)
+    monkeypatch.setattr(gateway_coordinator, "configure_logging", lambda: None)
 
 
 class _Cluster:
@@ -64,9 +64,9 @@ class _Cluster:
         self.apps = {"gw": _app()}
         self.store = _MemoryStore()
         self.deleted: list[str] = []
-        monkeypatch.setattr(replica_coordinator, "get_state_store", lambda: self.store)
-        monkeypatch.setattr(replica_coordinator.serve, "status", lambda: SimpleNamespace(applications=dict(self.apps)))
-        monkeypatch.setattr(replica_coordinator, "delete_apps_quietly", lambda names: self.deleted.extend(names))
+        monkeypatch.setattr(gateway_coordinator, "get_state_store", lambda: self.store)
+        monkeypatch.setattr(gateway_coordinator.serve, "status", lambda: SimpleNamespace(applications=dict(self.apps)))
+        monkeypatch.setattr(gateway_coordinator, "delete_apps_quietly", lambda names: self.deleted.extend(names))
 
     def configure(self, *raws: dict, gateway: str = "gw") -> None:
         write_effective(self.store, gateway, list(raws))
@@ -145,7 +145,7 @@ class TestTables:
         def unavailable():
             raise RuntimeError("controller restarting")
 
-        monkeypatch.setattr(replica_coordinator.serve, "status", unavailable)
+        monkeypatch.setattr(gateway_coordinator.serve, "status", unavailable)
         with pytest.raises(RuntimeError):
             await coord._compute()
         assert (await coord.get_routing("gw"))["models"] == {_app_name(NEW): "a"}
@@ -184,7 +184,7 @@ class TestGeneration:
 
     @pytest.mark.asyncio
     async def test_a_new_coordinator_starts_from_the_clock(self, cluster, monkeypatch):
-        monkeypatch.setattr(replica_coordinator.time, "time", lambda: 1000.0)
+        monkeypatch.setattr(gateway_coordinator.time, "time", lambda: 1000.0)
         coord = _coordinator()
         assert coord._first_generation == 1_000_000
 
@@ -201,7 +201,7 @@ class TestGetRouting:
 
     @pytest.mark.asyncio
     async def test_raises_when_no_pass_completes_in_time(self, cluster, monkeypatch):
-        monkeypatch.setattr(replica_coordinator, "_FIRST_PASS_TIMEOUT_S", 0.01)
+        monkeypatch.setattr(gateway_coordinator, "_FIRST_PASS_TIMEOUT_S", 0.01)
         coord = _coordinator()
         with pytest.raises(TimeoutError):
             await coord.get_routing("gw")
@@ -234,13 +234,13 @@ class TestGetRetiring:
     @pytest.mark.asyncio
     async def test_a_pass_already_running_does_not_answer(self, cluster, monkeypatch):
         release = threading.Event()
-        status = replica_coordinator.serve.status
+        status = gateway_coordinator.serve.status
 
         def slow_status():
             release.wait(5)
             return status()
 
-        monkeypatch.setattr(replica_coordinator.serve, "status", slow_status)
+        monkeypatch.setattr(gateway_coordinator.serve, "status", slow_status)
         coord = _coordinator()
         running = asyncio.create_task(coord._compute())
         await asyncio.sleep(0)
@@ -262,13 +262,13 @@ class TestGetRetiring:
         def unavailable():
             raise RuntimeError("controller restarting")
 
-        status = replica_coordinator.serve.status
-        monkeypatch.setattr(replica_coordinator.serve, "status", unavailable)
+        status = gateway_coordinator.serve.status
+        monkeypatch.setattr(gateway_coordinator.serve, "status", unavailable)
         with pytest.raises(RuntimeError):
             await coord._compute()
         await asyncio.sleep(0)
         assert not read.done()
-        monkeypatch.setattr(replica_coordinator.serve, "status", status)
+        monkeypatch.setattr(gateway_coordinator.serve, "status", status)
         await _pass(coord)
         assert await read == []
 
@@ -318,7 +318,7 @@ class TestWaitForChange:
 class TestCleanup:
     @pytest.fixture(autouse=True)
     def _no_grace(self, monkeypatch):
-        monkeypatch.setattr(replica_coordinator, "_UNUSED_GRACE_SECONDS", 0)
+        monkeypatch.setattr(gateway_coordinator, "_UNUSED_GRACE_SECONDS", 0)
 
     @pytest.mark.asyncio
     async def test_the_older_app_is_deleted_once_the_target_serves(self, cluster):
@@ -346,7 +346,7 @@ class TestCleanup:
 
     @pytest.mark.asyncio
     async def test_nothing_is_deleted_within_the_grace_period(self, cluster, monkeypatch):
-        monkeypatch.setattr(replica_coordinator, "_UNUSED_GRACE_SECONDS", 60)
+        monkeypatch.setattr(gateway_coordinator, "_UNUSED_GRACE_SECONDS", 60)
         cluster.configure(NEW)
         cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
         coord = _coordinator()
@@ -355,7 +355,7 @@ class TestCleanup:
 
     @pytest.mark.asyncio
     async def test_an_app_used_again_starts_its_grace_period_over(self, cluster, monkeypatch):
-        monkeypatch.setattr(replica_coordinator, "_UNUSED_GRACE_SECONDS", 60)
+        monkeypatch.setattr(gateway_coordinator, "_UNUSED_GRACE_SECONDS", 60)
         cluster.configure(NEW)
         cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
         coord = _coordinator()
@@ -373,7 +373,7 @@ class TestCleanup:
             calls.extend(names)
             release.wait(5)
 
-        monkeypatch.setattr(replica_coordinator, "delete_apps_quietly", slow_delete)
+        monkeypatch.setattr(gateway_coordinator, "delete_apps_quietly", slow_delete)
         cluster.configure(NEW)
         cluster.apps |= {_app_name(NEW): _app(), _app_name(_raw("b")): _app()}
         coord = _coordinator()
@@ -418,7 +418,7 @@ def test_get_or_create_sets_max_restarts(monkeypatch):
         options.update(kwargs)
         return _Options()
 
-    monkeypatch.setattr(ReplicaCoordinator, "options", fake_options)
-    replica_coordinator.get_or_create_replica_coordinator()
+    monkeypatch.setattr(GatewayCoordinator, "options", fake_options)
+    gateway_coordinator.get_or_create_gateway_coordinator()
     assert options["max_restarts"] == -1
     assert options["lifetime"] == "detached"

@@ -298,7 +298,7 @@ def _build_util_metrics():
 
     if not _ENABLED:
         return {
-            # Replica coordinator
+            # Gateway coordinator
             "coordinator_generation": _NoOpGauge(),
             # State store
             "state_store_operations_total": _NoOpCounter(),
@@ -311,7 +311,7 @@ def _build_util_metrics():
     from ray.util.metrics import Counter, Gauge, Histogram
 
     return {
-        # -- Replica coordinator --
+        # -- Gateway coordinator --
         "coordinator_generation": Gauge(
             "modelship_coordinator_generation",
             description="Coordinator's current routing generation per gateway.",
@@ -379,7 +379,7 @@ AUTH_FAILURES_TOTAL = _metrics["auth_failures_total"]
 RESOURCE_CLEANUP_ERRORS_TOTAL = _metrics["resource_cleanup_errors_total"]
 
 # -- HA control plane (ray.util.metrics — non-Serve emitters) --
-# Replica coordinator
+# Gateway coordinator
 COORDINATOR_GENERATION = _util_metrics["coordinator_generation"]
 # State store
 STATE_STORE_OPERATIONS_TOTAL = _util_metrics["state_store_operations_total"]

@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from modelship.infer import deploy_coordinator, deploy_leases, download_leases, replica_coordinator
+from modelship.infer import deploy_coordinator, deploy_leases, download_leases, gateway_coordinator
 from modelship.state import memory
 
 _HEAD_PINNED = {
@@ -19,7 +19,7 @@ _HEAD_PINNED = {
     ("actor_cls", "getter", "max_restarts"),
     [
         (deploy_coordinator.DeployCoordinator, deploy_coordinator.get_or_create_coordinator, -1),
-        (replica_coordinator.ReplicaCoordinator, replica_coordinator.get_or_create_replica_coordinator, -1),
+        (gateway_coordinator.GatewayCoordinator, gateway_coordinator.get_or_create_gateway_coordinator, -1),
         (memory.MemoryStoreActor, memory.get_or_create_memory_store_actor, -1),
         (download_leases.DownloadLeases, download_leases.get_or_create_leases, 0),
         (deploy_leases.DeployLeases, deploy_leases.get_or_create_leases, 0),

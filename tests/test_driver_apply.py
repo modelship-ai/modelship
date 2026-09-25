@@ -54,7 +54,7 @@ def apply():
                 "modelship.state.get_state_store": MagicMock(return_value=store),
                 "modelship.openai.compaction_crypto.ensure_key_seeded": MagicMock(),
                 "modelship.infer.deploy_coordinator.get_or_create_coordinator": MagicMock(),
-                "modelship.infer.replica_coordinator.get_or_create_replica_coordinator": MagicMock(),
+                "modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator": MagicMock(),
                 "modelship.infer.deploy_leases.get_or_create_leases": leases,
                 "modelship.deploy.strategy.run_deploy_loop": run_deploy_loop,
                 "modelship.deploy.removal.delete_apps_quietly": delete,
@@ -101,7 +101,7 @@ class TestEffectiveConfig:
 
 
 class TestReplacement:
-    def test_blue_green_leaves_the_old_app_to_the_replica_coordinator(self, apply):
+    def test_blue_green_leaves_the_old_app_to_the_gateway_coordinator(self, apply):
         old, new = _raw("a", num_cpus=1), _raw("a", num_cpus=2)
         r = apply([old], [new], {_app(old): ApplicationStatus.RUNNING})
         assert r.events == ["deploy"]

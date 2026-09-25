@@ -1,6 +1,6 @@
 """Cluster-wide routing for every gateway replica.
 
-`ReplicaCoordinator` is a detached, named Ray actor on the head node. Once a second it
+`GatewayCoordinator` is a detached, named Ray actor on the head node. Once a second it
 reads Serve's application statuses and each gateway's effective config, computes every
 gateway's model table (`modelship.deploy.routing`), and deletes the apps nothing has
 used for `_UNUSED_GRACE_SECONDS`. Gateway replicas long-poll `wait_for_change` and copy
@@ -26,9 +26,9 @@ from modelship.utils import head_node_options
 from modelship.utils.config_schema import parse_deployment_name
 from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
 
-logger = get_logger("replica_coordinator")
+logger = get_logger("gateway_coordinator")
 
-REPLICA_COORDINATOR_ACTOR_NAME = "modelship-replica-coordinator"
+GATEWAY_COORDINATOR_ACTOR_NAME = "modelship-gateway-coordinator"
 
 _PASS_INTERVAL_S = 1.0
 # Every gateway replica re-pulls its table well within this, so an app unused this long gets no requests.
@@ -40,7 +40,7 @@ _FIRST_PASS_TIMEOUT_S = 5.0
 
 
 @ray.remote(num_cpus=0)
-class ReplicaCoordinator:
+class GatewayCoordinator:
     """Computes each gateway's model table from Serve and the effective config, and deletes unused apps."""
 
     def __init__(self):
@@ -181,10 +181,10 @@ class ReplicaCoordinator:
         return self._generation.get(gateway_name, self._first_generation)
 
 
-def get_or_create_replica_coordinator():
+def get_or_create_gateway_coordinator():
     """Return the cluster-wide replica-routing coordinator handle, creating it on the head node if absent."""
-    return ReplicaCoordinator.options(
-        name=REPLICA_COORDINATOR_ACTOR_NAME,
+    return GatewayCoordinator.options(
+        name=GATEWAY_COORDINATOR_ACTOR_NAME,
         namespace=COORDINATOR_NAMESPACE,
         get_if_exists=True,
         lifetime="detached",

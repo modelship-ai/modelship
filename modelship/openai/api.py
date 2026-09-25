@@ -19,7 +19,7 @@ from ray.serve.handle import DeploymentHandle, DeploymentResponseGenerator
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from modelship.infer import replica_coordinator
+from modelship.infer import gateway_coordinator
 from modelship.infer.infer_config import RequestWatcher, get_disconnect_registry
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
@@ -227,7 +227,7 @@ class ModelshipAPI:
         # every replica — including restarted / autoscaled ones — converges.
         self._gen = 0  # last coordinator generation this replica reconciled to
         self._watch_task: asyncio.Task | None = None
-        self._replica_coord = None  # cached replica-coordinator handle
+        self._gateway_coord = None  # cached gateway-coordinator handle
         # Timing state — the first sync with a non-empty expected set stamps a start;
         # each model's first appearance records the gap since the previous arrival as
         # an approximate load duration.
@@ -319,18 +319,18 @@ class ModelshipAPI:
         GATEWAY_ROUTING_GENERATION.set(new_gen)
 
     def _coord(self):
-        if self._replica_coord is None:
-            self._replica_coord = replica_coordinator.get_or_create_replica_coordinator()
-        return self._replica_coord
+        if self._gateway_coord is None:
+            self._gateway_coord = gateway_coordinator.get_or_create_gateway_coordinator()
+        return self._gateway_coord
 
     async def _coord_async(self):
-        """Resolve (and cache) the replica-coordinator handle without blocking the event
+        """Resolve (and cache) the gateway-coordinator handle without blocking the event
         loop. Cached fast path is a no-op; only after a reset (coordinator restart) does
         this do work, and get_or_create's synchronous GCS lookup can stall on a
         recovering GCS — so hop it to a thread to keep concurrent requests flowing."""
-        if self._replica_coord is None:
-            self._replica_coord = await asyncio.to_thread(replica_coordinator.get_or_create_replica_coordinator)
-        return self._replica_coord
+        if self._gateway_coord is None:
+            self._gateway_coord = await asyncio.to_thread(gateway_coordinator.get_or_create_gateway_coordinator)
+        return self._gateway_coord
 
     def _ensure_watching(self) -> None:
         """First-request hook: do one synchronous sync so this request isn't blocked
@@ -350,7 +350,7 @@ class ModelshipAPI:
         try:
             snapshot = cast(dict, ray.get(self._coord().get_routing.remote(self._gateway_name)))
         except Exception:
-            self._replica_coord = None  # re-resolve next time in case the handle went stale
+            self._gateway_coord = None  # re-resolve next time in case the handle went stale
             logger.debug("gateway: initial routing sync deferred; coordinator unavailable", exc_info=True)
             return False
         try:
@@ -376,7 +376,7 @@ class ModelshipAPI:
             except asyncio.CancelledError:
                 return
             except Exception:
-                self._replica_coord = None
+                self._gateway_coord = None
                 GATEWAY_WATCH_ERRORS_TOTAL.inc()
                 logger.debug("gateway: watch iteration failed; retrying", exc_info=True)
                 await asyncio.sleep(_WATCH_RETRY_S)
