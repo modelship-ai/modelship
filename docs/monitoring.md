@@ -285,7 +285,7 @@ Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Pe
 
 Every per-model and per-gateway metric below carries a `gateway` tag identifying which gateway emitted it, so multiple gateways sharing one Ray cluster stay distinguishable (the Grafana dashboard exposes a **Gateway** dropdown built on it). The tag is stamped automatically from `MSHIP_GATEWAY_NAME` — the deploy driver sets it and forwards it to every replica via `runtime_env`, so no call site passes it explicitly.
 
-Cluster-scoped metrics are **not** per-gateway, because the thing they measure is shared cluster-wide: the deploy lock and reservations (one mutex per cluster), the state store (one shared backend), and all inherited `ray_vllm_*` / `ray_serve_*` / `ray_node_*` metrics (engine/cluster level). The dashboard's Gateway dropdown therefore filters the `ray_modelship_*` per-model panels but leaves the vLLM/GPU/Ray-Serve panels cluster-wide.
+Cluster-scoped metrics are **not** per-gateway, because the thing they measure is shared cluster-wide: the state store (one shared backend), and all inherited `ray_vllm_*` / `ray_serve_*` / `ray_node_*` metrics (engine/cluster level). The dashboard's Gateway dropdown therefore filters the `ray_modelship_*` per-model panels but leaves the vLLM/GPU/Ray-Serve panels cluster-wide.
 
 ### Gateway
 
