@@ -11,9 +11,9 @@ declared in your `models.yaml`. Re-running (`helm upgrade`) re-applies the confi
 additively, or reconciles it when `deploy.reconcile=true`.
 
 Each deploy persists this gateway's **effective config** (its desired model set)
-and routing registry to a **state store** (see [Head-node HA](#head-node-ha-redis)),
-so the gateway self-heals its routing after a head restart and `helm upgrade`
-reconciles the live cluster back to the recorded set.
+to a **state store** (see [Head-node HA](#head-node-ha-redis)). Routing is
+recomputed from Ray Serve's own state, so it comes back by itself after a head
+restart, and `helm upgrade` reconciles the live cluster back to the recorded set.
 
 ## Prerequisites
 
@@ -156,9 +156,9 @@ One Redis backs three things at once:
    minutes of outage for a routine reschedule. Backed by Redis, a restarted head
    recovers GCS; workers and model actors **survive**, and Serve's controller
    redeploys anything that died. The restart becomes a sub-minute blip.
-2. **The modelship state store** (`MSHIP_STATE_STORE=redis://…`) — the deploy
-   coordinator's routing registry and effective config live in Redis, so the gateway
-   self-heals its routing on recovery instead of coming back empty.
+2. **The modelship state store** (`MSHIP_STATE_STORE=redis://…`) — each gateway's
+   effective config lives in Redis, so the replica coordinator, which rebuilds routing
+   from Serve's state on recovery, still knows which deployment each model should run.
 3. **`/v1/responses` conversations** — stored responses survive head restarts and
    full cluster loss, so `previous_response_id` keeps working across them.
 
@@ -167,7 +167,7 @@ One Redis backs three things at once:
 | event | outcome |
 |-------|---------|
 | head pod restart | actors survive, routing self-heals — no redeploy |
-| full cluster loss, Redis kept | Serve + coordinator restore from Redis; conversations intact |
+| full cluster loss, Redis kept | Serve restores from Redis, routing is recomputed; conversations intact |
 | full cluster loss, Redis also gone | `helm upgrade` |
 
 `redis.externalStorageNamespace` (default: the release name) namespaces Ray's keys and
@@ -192,8 +192,8 @@ Uninstall first runs a Job (a pre-delete hook) that:
 1. deletes the deploy RayJob and the RayCluster;
 2. waits up to 3 minutes for the RayCluster to go, while KubeRay deletes Ray's keys
    from Redis;
-3. deletes modelship's keys (`modelship/state/<namespace>/*`: effective config, routing
-   registry, `/v1/responses` conversations).
+3. deletes modelship's keys (`modelship/state/<namespace>/*`: effective config,
+   `/v1/responses` conversations).
 
 Nothing of the release stays in Redis; back it up first to keep conversations. If the
 Job fails, Helm stops the uninstall there, and `kubectl logs job/modelship-uninstall`

@@ -58,8 +58,8 @@ The following environment variables are set in the dev image with sensible defau
 | `MSHIP_RAY_AUTH_TOKEN` | *(unset)* | **Optional:** auth token for `join`/`deploy` against a cluster started with `--ray-auth=token` (`--token` flag). |
 | `MSHIP_CACHE_DIR` | `/.cache` | Model cache directory (`--cache-dir` flag). May be shared storage. |
 | `MSHIP_NODE_CACHE_DIR` | `/opt/mship/node-cache` | Node-local vLLM/Triton/FlashInfer compile caches (`--node-cache-dir` flag). Must not be shared storage. |
-| `MSHIP_STATE_STORE` | `memory://` | State-store URI for the effective config, deploy coordinator + `/v1/responses` conversations: `memory://` or `redis://host:port/db`, with any password in `MSHIP_REDIS_PASSWORD` on every node. See [model-configuration.md](model-configuration.md#state-store-mship_state_store). The chart always sets `redis://` for k8s. |
-| `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas. Raise for routing/ingress HA and to spread request-proxying load under high concurrency; replicas keep routing tables in sync via the deploy coordinator's watch loop. |
+| `MSHIP_STATE_STORE` | `memory://` | State-store URI for the effective config + `/v1/responses` conversations: `memory://` or `redis://host:port/db`, with any password in `MSHIP_REDIS_PASSWORD` on every node. See [model-configuration.md](model-configuration.md#state-store-mship_state_store). The chart always sets `redis://` for k8s. |
+| `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas. Raise for routing/ingress HA and to spread request-proxying load under high concurrency; each replica copies its routing table from the replica coordinator. |
 | `MSHIP_GATEWAY_MAX_ONGOING` | `1024` | Per-replica Ray Serve concurrency cap for the gateway. The gateway holds a slot for the whole lifetime of each streamed response, so a low cap throttles before the engine does. |
 | `MSHIP_LLAMA_SERVER_BIN` | `/opt/mship/bin/llama-server.sh` in the Dev Container (unset otherwise) | Unified `llama` executable used by the `llama_server` loader and its preflight; see [llama-server binary](#llama-server-binary-llama_server-loader). |
 

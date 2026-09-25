@@ -14,7 +14,7 @@ Modelship is a **FastAPI gateway** exposing an OpenAI-compatible API, built on [
 ## Request Lifecycle
 
 1. Client sends a request to the FastAPI gateway (e.g. `POST /v1/chat/completions`)
-2. The gateway identifies the target model from the request body
+2. The gateway identifies the target model from the request body and looks up the deployment serving it — `404` for a model the gateway doesn't have, `503` for a configured model with nothing serving yet
 3. A `RequestWatcher` begins monitoring the client connection for disconnects
 4. The request is forwarded to the model's Ray Serve deployment via a `RawRequestProxy` (serializable headers + cancellation event)
 5. The deployment runs inference and streams the response back as JSON or SSE
@@ -29,6 +29,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 - **One load per node** — a replica loading its model holds its node's lease (`DeployLeases`, pinned to the head node), so loads on the same node run one at a time and their memory spikes don't overlap; different nodes load in parallel. Downloading happens before the lease is taken
 - **Additive by default** — `mship deploy` adds models to a running cluster without disrupting existing deployments. `--reconcile` instead makes the cluster match the config exactly (add/remove/replace); it never tears the cluster down
 - **One deployment per model name** — a model name maps to exactly one deployment; scale it with `num_replicas` (or `autoscaling_config`), which Ray Serve load-balances across replicas natively. Changing a model's config replaces its deployment (`--replace-strategy`, default `blue_green`) rather than adding a second one alongside it
+- **Routing derived from Serve** — a head-node actor (`ReplicaCoordinator`) computes each gateway's model → deployment table once a second from Ray Serve's application statuses and the gateway's effective config. A changed model keeps being served by its old deployment until the new one has a running replica; a deployment nothing uses is deleted 10 s later, and `mship deploy` waits for that. Nothing is stored, so a restarted coordinator recomputes the tables
 - **One download per source** — a replica fetching weights holds a cluster-wide lease (`DownloadLeases`, pinned to the head node) on that HF repo or archive in its cache; replicas needing the same source wait their turn, and an already-cached source skips the lease. A lease that stops being renewed (its replica died mid-download) has that download's unfinished files removed on its node before anyone else gets the source
 - **Multi-gateway support** — independent gateways can share a cluster via `--gateway-name`, each managing its own models and reachable under its own route (`/<slugified-gateway-name>/v1/...`), since every gateway shares the cluster's one HTTP proxy/port
 

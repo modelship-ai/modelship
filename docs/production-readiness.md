@@ -51,7 +51,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 #### Health & Readiness
 
-- [x] **Detailed readiness probe** — `/readyz` returns 200 only when every expected model is registered with the gateway; 503 with loaded/pending lists while loading. `/health` stays as a cheap liveness endpoint. Per-model load times and total time-to-ready are exposed via `/readyz` for observability.
+- [x] **Detailed readiness probe** — `/readyz` returns 200 only when every expected model is routed by the gateway; 503 with loaded/pending lists while loading. `/health` stays as a cheap liveness endpoint. Per-model load times and total time-to-ready are exposed via `/readyz` for observability.
 - [ ] **Model-specific health checks** — per-model liveness status (vLLM engine, Ray actor state)
 - [ ] **GPU memory checks** — detect and report memory pressure before OOM
 
@@ -85,7 +85,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 #### Resilience
 
-- [x] **Head-node HA (GCS fault tolerance)** — the chart backs Ray's GCS with Redis (`gcsFaultToleranceOptions`, `redis.address` required): a restarted head pod recovers cluster state, workers + model actors survive. The same Redis backs the modelship state store (`redis://`), so the deploy coordinator's routing registry survives head/coordinator death and the gateway self-heals routing on recovery (coordinator runs `max_restarts=-1`)
+- [x] **Head-node HA (GCS fault tolerance)** — the chart backs Ray's GCS with Redis (`gcsFaultToleranceOptions`, `redis.address` required): a restarted head pod recovers cluster state, workers + model actors survive. The same Redis backs the modelship state store (`redis://`), so each gateway's effective config survives head death, and the replica coordinator (`max_restarts=-1`) recomputes routing from Serve's state on recovery — no redeploy
 - [ ] **Ray actor restart policies** — auto-restart crashed model actors
 - [ ] **Circuit breaker** — stop routing to a failing model after N consecutive errors
 - [ ] **Backpressure / queue depth limits** — reject requests when queue is saturated instead of unbounded queuing
@@ -96,8 +96,8 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 - [ ] **Rolling update support** — configure Ray Serve's built-in rolling updates for zero-downtime deploys
 - [x] **Per-model autoscaling** — `autoscaling_config` (min/max replicas, target ongoing requests, up/downscale delays; scale-to-zero supported) scales replica count with load instead of a fixed `num_replicas`
-- [x] **Gateway HA** — `MSHIP_GATEWAY_REPLICAS > 1` runs multiple gateway replicas; routing tables stay consistent via the deploy coordinator's watch loop, and a Serve proxy on every node lets the gateway Service survive single-pod loss
-- [x] **Self-heal after cluster loss** — each deploy persists this gateway's effective config + routing registry to the configured state store (`MSHIP_STATE_STORE`: `redis://`, which the chart always sets; the `memory://` default is cluster-scoped but dies with the cluster). With Redis the gateway self-heals automatically on a head restart; after a full cluster loss `mship deploy --reconcile` (no `--config`, run via `helm upgrade`) replays the recorded set
+- [x] **Gateway HA** — `MSHIP_GATEWAY_REPLICAS > 1` runs multiple gateway replicas; every replica copies its routing table from the replica coordinator, long-polling for changes, and a Serve proxy on every node lets the gateway Service survive single-pod loss
+- [x] **Self-heal after cluster loss** — each deploy persists this gateway's effective config to the configured state store (`MSHIP_STATE_STORE`: `redis://`, which the chart always sets; the `memory://` default is cluster-scoped but dies with the cluster). With Redis the gateway self-heals automatically on a head restart; after a full cluster loss `mship deploy --reconcile` (no `--config`, run via `helm upgrade`) replays the recorded set
 - [x] **Model hot-reload** — allow `models.yaml` changes without full server restart (via `mship deploy --reconcile`)
 - [x] **Changelog** — track breaking changes between versions
 - [x] **Migration guide** — document config format changes between versions

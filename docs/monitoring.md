@@ -256,7 +256,7 @@ curl http://localhost:8000/modelship/health
 # {"status": "ok", "uptime_s": 12.3}
 ```
 
-**`/readyz`** — readiness + timing. Returns 200 when every expected model has a registered deployment; 503 with the same JSON body while any model is still pending. Bodies carry full state so a single poll tells you what's loaded, what's outstanding, and how long each model took to come up:
+**`/readyz`** — readiness + timing. Returns 200 when every expected model has a deployment the gateway routes to; 503 with the same JSON body while any model is still pending. Bodies carry full state so a single poll tells you what's loaded, what's outstanding, and how long each model took to come up:
 
 ```bash
 curl http://localhost:8000/modelship/readyz
@@ -273,13 +273,13 @@ curl http://localhost:8000/modelship/readyz
 # }
 ```
 
-Per-model timings are gateway-measured: the gap between one model registering and the one before it. That matches load time only when models load one after another, as they do on a single node; the first model's entry includes any framework-level setup time preceding it.
+Per-model timings are gateway-measured: the gap between one model becoming routable and the one before it. That matches load time only when models load one after another, as they do on a single node; the first model's entry includes any framework-level setup time preceding it.
 
 Use `/health` for Kubernetes liveness probes and `/readyz` for readiness probes — `/readyz` returning 503 prevents a service from flipping traffic onto the pod before models are loaded.
 
 ## Modelship Metrics Reference
 
-Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the deploy coordinator, state store, and deploy driver, which are not Serve replicas).
+Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the replica coordinator, state store, and deploy driver, which are not Serve replicas).
 
 ### The `gateway` dimension
 
@@ -325,7 +325,7 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 
 ### HA Control Plane
 
-These cover the multi-node / HA machinery deployed by the Helm chart (deploy coordinator, pluggable state store, gateway watch loop). The first six carry a `gateway` tag; the rest are cluster-scoped.
+These cover the multi-node / HA machinery deployed by the Helm chart (replica coordinator, pluggable state store, gateway watch loop). The first six carry a `gateway` tag; the rest are cluster-scoped.
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
