@@ -199,7 +199,6 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     from modelship.deploy.serve_utils import get_app_statuses
     from modelship.deploy.strategy import DeployContext, DeployOutcome, compute_deploy_plan, run_deploy_loop
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
-    from modelship.infer.deploy_leases import get_or_create_leases
     from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
     from modelship.openai.compaction_crypto import ensure_key_seeded
@@ -251,11 +250,10 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
             cluster_gpus,
         )
 
-    # Detached actors: deploy bookkeeping and the routing reconciler.
-    coordinator = get_or_create_coordinator()
+    # Detached actors: deploy bookkeeping and leases, and the routing reconciler.
+    # With this gateway the only app, no replica can hold a lease, so a new deploy coordinator grants at once.
+    coordinator = get_or_create_coordinator(startup_window=set(app_statuses) != {gateway_name})
     get_or_create_gateway_coordinator()
-    # With this gateway the only app, no replica can hold a lease, so a new actor grants at once.
-    get_or_create_leases(startup_window=set(app_statuses) != {gateway_name})
     plan = compute_deploy_plan(yml_conf, app_statuses, gateway_name)
     deploy_started = time.monotonic()
 

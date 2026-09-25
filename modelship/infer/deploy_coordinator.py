@@ -1,22 +1,23 @@
 """Cluster-wide bookkeeping for model deploys.
 
 `DeployCoordinator` is a detached, named Ray actor on the head node, created by
-the first operator to deploy and looked up by name afterwards. It holds two
-things no single driver or replica can:
+the first caller and looked up by name afterwards. It holds what no single driver
+or replica can:
 
+- one deploy lease per node, held by a replica for the duration of its load, so
+  loads on one node run one at a time (the holder's side is `deploy_leases.py`);
 - a per-deployment backend-death count, retiring a deployment that keeps dying;
 - fatal init errors, reported by a replica and read back by the driver, which
   is how a permanently-broken model is told apart from a transient failure.
-
-Loads are serialised elsewhere: `DeployLeases` (see `deploy_leases.py`) grants
-one lease per node, held by the replica for the duration of its own load.
 """
 
 import asyncio
+import time
+from typing import NamedTuple
 
 import ray
 
-from modelship.logging import get_logger
+from modelship.logging import configure_logging, get_logger
 from modelship.utils import head_node_options
 from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
 
@@ -25,16 +26,65 @@ logger = get_logger("deploy_coordinator")
 COORDINATOR_ACTOR_NAME = "modelship-deploy-coordinator"
 COORDINATOR_NAMESPACE = "modelship"
 
+LEASE_SECONDS = 30.0
+_REAP_INTERVAL_SECONDS = 1.0
 _DEATHS_PER_REPLICA = 3
+
+
+class _Lease(NamedTuple):
+    holder: str
+    expires_at: float
 
 
 @ray.remote(num_cpus=0)
 class DeployCoordinator:
-    """Cluster-wide deploy bookkeeping: replica-death counts and fatal errors."""
+    """Cluster-wide deploy bookkeeping: per-node deploy leases, replica-death counts and
+    fatal errors. A lease unrenewed for `LEASE_SECONDS` is freed, so a holder that died
+    mid-load doesn't hold its node shut."""
 
-    def __init__(self):
+    def __init__(self, startup_window: bool = True):
+        # nothing else configures logging in this process
+        configure_logging()
         self._fatal_errors: dict[str, str] = {}
         self._deaths: dict[str, int] = {}
+        self._leases: dict[str, _Lease] = {}
+        # holders of a crashed predecessor stop within one lease period
+        self._grants_from = time.monotonic() + (LEASE_SECONDS if startup_window else 0.0)
+        self._reaper = asyncio.create_task(self._reap_forever())
+
+    async def acquire(self, key: str, holder: str) -> str | None:
+        """None when granted, else what holds `key` up."""
+        now = time.monotonic()
+        if now < self._grants_from:
+            return "lease service starting"
+        lease = self._leases.get(key)
+        if lease is not None:
+            return f"held by {lease.holder}"
+        self._leases[key] = _Lease(holder, now + LEASE_SECONDS)
+        return None
+
+    async def renew(self, key: str, holder: str) -> bool:
+        lease = self._leases.get(key)
+        if lease is None or lease.holder != holder:
+            return False
+        self._leases[key] = lease._replace(expires_at=time.monotonic() + LEASE_SECONDS)
+        return True
+
+    async def release(self, key: str, holder: str) -> None:
+        lease = self._leases.get(key)
+        if lease is not None and lease.holder == holder:
+            del self._leases[key]
+
+    async def _reap_forever(self) -> None:
+        while True:
+            await asyncio.sleep(_REAP_INTERVAL_SECONDS)
+            self._reap(time.monotonic())
+
+    def _reap(self, now: float) -> None:
+        for key, lease in list(self._leases.items()):
+            if lease.expires_at <= now:
+                logger.warning("Deploy lease %s expired without release (holder %s)", key, lease.holder)
+                del self._leases[key]
 
     async def report_replica_death(self, deployment_name: str, replica_ceiling: int, reason: str) -> None:
         """Count one backend death against `deployment_name`, retiring it past
@@ -64,15 +114,17 @@ class DeployCoordinator:
         return self._fatal_errors.pop(deployment_name, None)
 
 
-def get_or_create_coordinator():
-    """Return the cluster-wide coordinator handle, creating it on the head node if absent."""
+def get_or_create_coordinator(startup_window: bool = True):
+    """Return the cluster-wide deploy coordinator handle, creating it on the head node if absent.
+    *startup_window* applies only when this call creates it."""
     return DeployCoordinator.options(
         name=COORDINATOR_ACTOR_NAME,
         namespace=COORDINATOR_NAMESPACE,
         get_if_exists=True,
         lifetime="detached",
         num_cpus=0,
-        max_restarts=-1,
+        # a restart would trust an empty lease table; a fresh actor waits out a lease period instead
+        max_restarts=0,
         runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS)},
         **head_node_options(),
-    ).remote()
+    ).remote(startup_window)

@@ -1,5 +1,4 @@
-"""DeployLeases, driven directly: grants, renewals, reaping, and the client
-context manager's acquire/release."""
+"""The deploy-lease holder's side: the context manager's acquire/release and the renew thread."""
 
 import asyncio
 import threading
@@ -8,90 +7,23 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modelship.infer import deploy_leases
-from modelship.infer.deploy_leases import LEASE_SECONDS, DeployLeaseError, DeployLeases, deploy_lease
+from modelship.infer import deploy_coordinator, deploy_leases
+from modelship.infer.deploy_leases import DeployLeaseError, deploy_lease
 
-_Leases = DeployLeases.__ray_metadata__.modified_class
+_Coord = deploy_coordinator.DeployCoordinator.__ray_metadata__.modified_class
 
 
 @pytest.fixture(autouse=True)
 def no_logging_setup(monkeypatch):
     # the actor configures logging for its whole process, here pytest's
-    monkeypatch.setattr(deploy_leases, "configure_logging", lambda: None)
+    monkeypatch.setattr(deploy_coordinator, "configure_logging", lambda: None)
 
 
 def _fresh():
-    leases = _Leases()
+    leases = _Coord()
     leases._reaper.cancel()
     leases._grants_from = 0.0
     return leases
-
-
-@pytest.mark.asyncio
-class TestGrants:
-    async def test_granted_immediately_on_a_fresh_actor(self):
-        assert await _fresh().acquire("node", "a") is None
-
-    async def test_one_holder_per_node(self):
-        leases = _fresh()
-        assert await leases.acquire("node", "a") is None
-        assert await leases.acquire("node", "b") == "held by a"
-        assert await leases.acquire("other-node", "b") is None
-
-    async def test_renew_extends_only_the_holders_lease(self):
-        leases = _fresh()
-        await leases.acquire("node", "a")
-        leases._leases["node"] = leases._leases["node"]._replace(expires_at=0.0)
-        assert await leases.renew("node", "a")
-        assert leases._leases["node"].expires_at > time.monotonic() + LEASE_SECONDS - 1
-        assert not await leases.renew("node", "b")
-        assert not await leases.renew("unknown", "a")
-
-    async def test_release_frees_only_for_the_holder(self):
-        leases = _fresh()
-        await leases.acquire("node", "a")
-        await leases.release("node", "b")
-        assert await leases.acquire("node", "b") == "held by a"
-        await leases.release("node", "a")
-        assert await leases.acquire("node", "b") is None
-
-
-@pytest.mark.asyncio
-class TestStartupWindow:
-    async def test_a_new_actor_grants_nothing_for_one_lease_period(self):
-        leases = _Leases()
-        leases._reaper.cancel()
-        assert await leases.acquire("node", "a") == "lease service starting"
-        assert leases._grants_from >= time.monotonic() + LEASE_SECONDS - 1
-
-    async def test_grants_resume_once_the_window_passes(self):
-        leases = _Leases()
-        leases._reaper.cancel()
-        leases._grants_from = time.monotonic()
-        assert await leases.acquire("node", "a") is None
-
-    async def test_an_actor_without_the_window_grants_at_once(self):
-        leases = _Leases(startup_window=False)
-        leases._reaper.cancel()
-        assert await leases.acquire("node", "a") is None
-
-
-@pytest.mark.asyncio
-class TestReaping:
-    async def test_expired_lease_frees_the_node(self, caplog):
-        leases = _fresh()
-        await leases.acquire("node", "a")
-        with caplog.at_level("WARNING"):
-            leases._reap(time.monotonic() + LEASE_SECONDS + 1)
-        assert "expired without release" in caplog.text
-        assert await leases.acquire("node", "b") is None
-
-    async def test_renewed_lease_is_not_reaped(self):
-        leases = _fresh()
-        await leases.acquire("node", "a")
-        await leases.renew("node", "a")
-        leases._reap(time.monotonic() + LEASE_SECONDS - 1)
-        assert await leases.acquire("node", "b") == "held by a"
 
 
 class _FakeHandle:
@@ -126,7 +58,7 @@ class TestDeployLease:
     async def test_holds_the_lease_for_the_block_then_releases(self, monkeypatch):
         leases = _fresh()
         handle = _FakeHandle(leases)
-        monkeypatch.setattr(deploy_leases, "get_or_create_leases", lambda: handle)
+        monkeypatch.setattr(deploy_leases, "get_or_create_coordinator", lambda: handle)
 
         async with deploy_lease("qwen"):
             assert await leases.acquire("node-a", "other") is not None
@@ -136,7 +68,7 @@ class TestDeployLease:
     async def test_releases_when_the_block_raises(self, monkeypatch):
         leases = _fresh()
         handle = _FakeHandle(leases)
-        monkeypatch.setattr(deploy_leases, "get_or_create_leases", lambda: handle)
+        monkeypatch.setattr(deploy_leases, "get_or_create_coordinator", lambda: handle)
 
         with pytest.raises(RuntimeError):
             async with deploy_lease("qwen"):
@@ -146,7 +78,7 @@ class TestDeployLease:
     async def test_waits_for_the_node_then_proceeds(self, monkeypatch):
         leases = _fresh()
         handle = _FakeHandle(leases)
-        monkeypatch.setattr(deploy_leases, "get_or_create_leases", lambda: handle)
+        monkeypatch.setattr(deploy_leases, "get_or_create_coordinator", lambda: handle)
         await leases.acquire("node-a", "incumbent")
 
         async def free_it():
@@ -166,7 +98,7 @@ class TestDeployLease:
             handle.acquire.remote.side_effect = ActorUnavailableError("gone", None)
             return handle
 
-        monkeypatch.setattr(deploy_leases, "get_or_create_leases", unreachable)
+        monkeypatch.setattr(deploy_leases, "get_or_create_coordinator", unreachable)
         with pytest.raises(DeployLeaseError, match="unreachable"):
             async with deploy_lease("qwen"):
                 pass

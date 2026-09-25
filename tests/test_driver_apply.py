@@ -43,7 +43,7 @@ def apply():
 
         run_deploy_loop = MagicMock(side_effect=deploy_loop)
         delete = MagicMock(side_effect=lambda names: events.append(("delete", list(names))))
-        leases = MagicMock()
+        coordinator = MagicMock()
         changed = MagicMock()
         args = SimpleNamespace(reconcile=True, config="models.yaml", model=None, replace_strategy=replace_strategy)
         with ExitStack() as stack:
@@ -53,9 +53,8 @@ def apply():
                 "modelship.deploy.config.resolve_all_model_sources": MagicMock(side_effect=sources_error),
                 "modelship.state.get_state_store": MagicMock(return_value=store),
                 "modelship.openai.compaction_crypto.ensure_key_seeded": MagicMock(),
-                "modelship.infer.deploy_coordinator.get_or_create_coordinator": MagicMock(),
+                "modelship.infer.deploy_coordinator.get_or_create_coordinator": coordinator,
                 "modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator": MagicMock(),
-                "modelship.infer.deploy_leases.get_or_create_leases": leases,
                 "modelship.deploy.strategy.run_deploy_loop": run_deploy_loop,
                 "modelship.deploy.removal.delete_apps_quietly": delete,
                 "modelship.metrics.DEPLOY_DURATION_SECONDS": MagicMock(),
@@ -74,7 +73,7 @@ def apply():
             events=events,
             effective=read_effective(store, "g"),
             effective_at_submit=effective_at_submit[0] if effective_at_submit else None,
-            leases=leases,
+            coordinator=coordinator,
             changed={call.kwargs["tags"]["action"]: call.args[0] for call in changed.inc.call_args_list},
         )
 
@@ -128,16 +127,16 @@ class TestLiveApps:
 class TestLeaseStartupWindow:
     def test_skipped_when_this_gateway_is_the_only_app(self, apply):
         r = apply([], [_raw("a")], {"g": ApplicationStatus.RUNNING})
-        r.leases.assert_called_once_with(startup_window=False)
+        r.coordinator.assert_called_once_with(startup_window=False)
 
     def test_kept_when_a_model_app_exists(self, apply):
         a = _raw("a")
         r = apply([a], [a], {"g": ApplicationStatus.RUNNING, _app(a): ApplicationStatus.RUNNING})
-        r.leases.assert_called_once_with(startup_window=True)
+        r.coordinator.assert_called_once_with(startup_window=True)
 
     def test_kept_when_serve_status_is_unreadable(self, apply):
         r = apply([], [_raw("a")], {})
-        r.leases.assert_called_once_with(startup_window=True)
+        r.coordinator.assert_called_once_with(startup_window=True)
 
 
 class TestReporting:
