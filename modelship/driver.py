@@ -126,7 +126,7 @@ def _join() -> None:
 
 
 def _deploy(args) -> None:
-    from modelship.deploy.removal import delete_apps_quietly, wait_for_retired_apps
+    from modelship.deploy.removal import wait_for_retired_apps
     from modelship.deploy.serve_utils import (
         attach_cluster,
         get_existing_apps,
@@ -157,25 +157,15 @@ def _deploy(args) -> None:
             f"another gateway, or --gateway-name {gateway_name} to create this one."
         )
 
-    deployed_this_run: dict[str, str] = {}
-
-    def _cleanup(sig, _frame) -> None:
-        logger.info("Shutting down (signal %s), cleaning up deployments from this run...", sig)
-        delete_apps_quietly(reversed(deployed_this_run))
+    def _stop(sig, _frame) -> None:
+        logger.info("Stopping (signal %s); models this deploy submitted keep coming up.", sig)
         sys.exit(0)
 
-    _on_signals(_cleanup)
-
-    try:
-        if create_gateway:
-            start_gateway(gateway_name, serve_logging_config, route_prefix)
-        fatally_failed = _apply(args, gateway_name, serve_logging_config, deployed_this_run)
-    except BaseException as e:
-        if isinstance(e, SystemExit):
-            raise
-        logger.exception("Deploy failed, cleaning up deployments from this run...")
-        delete_apps_quietly(reversed(deployed_this_run))
-        raise
+    # Neither a signal nor a failure deletes what this run submitted.
+    _on_signals(_stop)
+    if create_gateway:
+        start_gateway(gateway_name, serve_logging_config, route_prefix)
+    fatally_failed = _apply(args, gateway_name, serve_logging_config, {})
 
     # The deploy is done; a signal now only stops the wait.
     _on_signals(lambda sig, _frame: sys.exit(1 if fatally_failed else 0))

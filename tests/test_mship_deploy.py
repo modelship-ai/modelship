@@ -261,7 +261,7 @@ class TestDriverVerbs:
             driver._deploy(parse_args("deploy", []))
         mock_attach.assert_not_called()
 
-    def _deploy(self, argv, existing_apps, fatally_failed=(), wait=None):
+    def _deploy(self, argv, existing_apps, fatally_failed=(), wait=None, apply=None):
         from modelship import driver
         from modelship.deploy import removal, serve_utils
 
@@ -272,7 +272,7 @@ class TestDriverVerbs:
             patch.object(serve_utils, "get_existing_apps", return_value=existing_apps),
             patch.object(serve_utils, "start_gateway") as mock_gateway,
             patch.object(driver, "_log_cluster"),
-            patch.object(driver, "_apply", return_value=list(fatally_failed)) as mock_apply,
+            patch.object(driver, "_apply", return_value=list(fatally_failed), side_effect=apply) as mock_apply,
             patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator"),
             patch.object(removal, "wait_for_retired_apps", side_effect=wait) as mock_wait,
         ):
@@ -303,6 +303,26 @@ class TestDriverVerbs:
     def test_deploy_waits_for_this_gateways_retired_apps(self):
         _, _, mock_wait = self._deploy(["--gateway-name", "edge"], existing_apps={"edge"})
         assert mock_wait.call_args.args[1] == "edge"
+
+    def test_a_signal_while_deploying_exits_without_deleting_anything(self):
+        from modelship import driver
+        from modelship.deploy import removal
+
+        def interrupted(*args):
+            handler = driver.signal.signal.call_args.args[1]
+            handler(signal.SIGTERM, None)
+
+        with patch.object(removal, "delete_apps_quietly") as mock_delete, pytest.raises(SystemExit) as exc:
+            self._deploy([], existing_apps={"modelship"}, apply=interrupted)
+        assert exc.value.code == 0
+        mock_delete.assert_not_called()
+
+    def test_a_failed_deploy_deletes_nothing(self):
+        from modelship.deploy import removal
+
+        with patch.object(removal, "delete_apps_quietly") as mock_delete, pytest.raises(RuntimeError, match="boom"):
+            self._deploy([], existing_apps={"modelship"}, apply=RuntimeError("boom"))
+        mock_delete.assert_not_called()
 
     @pytest.mark.parametrize(("fatally_failed", "code"), [((), 0), ([(MagicMock(), "boom")], 1)])
     def test_a_signal_while_waiting_exits_without_deleting_this_runs_apps(self, fatally_failed, code):
