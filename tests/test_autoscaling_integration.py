@@ -5,21 +5,16 @@ import concurrent.futures
 import threading
 import time
 
-import httpx
 import pytest
 
 from openai import OpenAI
-
-SERVE_STATUS_URL = "http://localhost:8265/api/serve/applications/"
+from tests.conftest import serve_apps
 
 
 def _running_replicas(model_name: str) -> int:
-    """Counts RUNNING replicas of the deployment serving `model_name` via the Serve REST
-    status API; app names are `modelship.<model_name>-<fingerprint>`, matched by prefix."""
-    resp = httpx.get(SERVE_STATUS_URL, timeout=10)
-    resp.raise_for_status()
-    apps = resp.json().get("applications", {})
-    for app_name, app in apps.items():
+    """Counts RUNNING replicas of the deployment serving `model_name`; app names are
+    `modelship.<model_name>-<fingerprint>`, matched by prefix."""
+    for app_name, app in serve_apps().items():
         if app_name.startswith(f"modelship.{model_name}-"):
             for dep in app.get("deployments", {}).values():
                 return sum(1 for r in dep.get("replicas", []) if r.get("state") == "RUNNING")
