@@ -206,8 +206,7 @@ class ModelshipAPI:
             logger.info("API key authentication enabled (%d key(s))", len(api_keys))
         else:
             logger.warning("API key authentication disabled (MSHIP_API_KEYS not set)")
-        # model_name -> (app_name -> handle). The inner dict is keyed by app_name
-        # so a specific deployment can be dropped by name in remove_deployments.
+        # model_name -> (app_name -> handle), keyed by app_name so _drop_apps can drop one deployment.
         self.models: dict[str, dict[str, DeploymentHandle]] = {}
         self.model_list: list[OpenAiModelCard] = []
         self.expected_models: list[str] = []
@@ -254,8 +253,8 @@ class ModelshipAPI:
     def _drop_apps(self, app_names: list[str]) -> list[str]:
         """Drop the given deployment app names from the routing tables. The owning
         model is found by reverse lookup. When a model loses its last deployment its
-        model entry, card, expected-models entry, and load-time entry are also
-        dropped. Returns the names of fully-removed models."""
+        model entry, card and load-time entry are also dropped. Returns the names of
+        fully-removed models."""
         removed_models: list[str] = []
         for app_name in app_names:
             model_name = next((m for m, handles in self.models.items() if app_name in handles), None)
@@ -268,7 +267,6 @@ class ModelshipAPI:
                 del self.models[model_name]
                 self.model_list = [c for c in self.model_list if c.id != model_name]
                 self._model_load_times.pop(model_name, None)
-                self.expected_models = [m for m in self.expected_models if m != model_name]
                 removed_models.append(model_name)
         return removed_models
 
@@ -308,8 +306,9 @@ class ModelshipAPI:
     def _apply_snapshot(self, snapshot: dict) -> None:
         """Apply a coordinator routing snapshot to this replica (atomic mutation)."""
         new_gen = snapshot.get("generation", self._gen)
-        self._apply_routing(snapshot.get("models", {}))
+        # before the routes, which raise when an app isn't resolvable yet
         self.expected_models = list(snapshot.get("expected", []))
+        self._apply_routing(snapshot.get("models", {}))
         if self.expected_models and self._expected_set_at is None:
             self._expected_set_at = self._last_model_at or time.time()
         if self.expected_models and self._all_ready_at is None and all(m in self.models for m in self.expected_models):

@@ -35,11 +35,6 @@ def resolve_mode(*, reconcile: bool) -> DeployMode:
     return "reconcile" if reconcile else "additive"
 
 
-def _model_name(raw: dict) -> str:
-    """Human-facing model name for a raw model dict."""
-    return ModelshipModelConfig.model_validate(raw).name
-
-
 def _identity(raw: dict, gateway_name: str) -> tuple[str, str]:
     """(deployment_name, model_name) for a raw model dict from one validation pass."""
     cfg = ModelshipModelConfig.model_validate(raw)

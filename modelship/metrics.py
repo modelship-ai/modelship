@@ -317,7 +317,7 @@ def _build_util_metrics():
             description="Coordinator's current routing generation per gateway.",
             tag_keys=("gateway",),
         ),
-        # -- State store (durable HA state: registry, effective config) --
+        # -- State store (durable HA state: effective config, conversations) --
         "state_store_operations_total": Counter(
             "modelship_state_store_operations_total",
             description="State-store operations by backend, op, and result.",

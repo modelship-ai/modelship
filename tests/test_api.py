@@ -160,6 +160,11 @@ class TestReconcileRemovals:
     def test_drop_unknown_app_is_noop(self, api):
         assert api._drop_apps(["nonexistent-1234567890"]) == []
 
+    def test_expected_models_follow_a_snapshot_whose_routes_fail_to_apply(self, api):
+        with pytest.raises(RuntimeError):
+            _apply(api, {"qwen-a3f9k1b2c4": "qwen"}, expected=["qwen"], handles=[RuntimeError("app not ready")])
+        assert api.expected_models == ["qwen"]
+
     def test_removal_drops_from_expected_when_snapshot_drops_it(self, api):
         _apply(api, {"qwen-a3f9k1b2c4": "qwen"}, expected=["qwen", "kokoro"], gen=1)
         _apply(api, {}, expected=["kokoro"], gen=2)
