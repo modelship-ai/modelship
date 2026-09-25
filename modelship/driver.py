@@ -215,7 +215,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
             "effective model set."
         )
 
-    # Detached actors: deploy bookkeeping and leases, and the routing reconciler.
+    # Detached actors: the deploy coordinator and the gateway coordinator.
     # With this gateway the only app, no replica can hold a lease, so a new deploy coordinator grants at once.
     coordinator = get_or_create_coordinator(startup_window=set(get_app_statuses()) != {gateway_name})
     get_or_create_gateway_coordinator()
