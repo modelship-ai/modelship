@@ -7,6 +7,7 @@ from functools import partial
 import httpx
 import pytest
 
+from modelship.deploy.strategy import _POLL_SECONDS
 from modelship.infer.gateway_coordinator import _UNUSED_GRACE_SECONDS
 from openai import OpenAI
 from tests.conftest import OPENAI_API_BASE, run_on_cluster, serve_apps
@@ -127,6 +128,16 @@ class TestModelsStillComingUp:
         model_deployer.deploy()
         assert not _apps_for("modelship", "pending-model")
         assert _poll(lambda: _answers("pending-model", 404), deadline_s=30)
+
+    def test_a_model_another_deploy_removes_is_no_longer_waited_for(self, model_deployer):
+        deploy = model_deployer.spawn(*_flags("removed-model", num_cpus=1000), log_name="removed-model")
+        assert _poll(lambda: _apps_for("modelship", "removed-model"), deadline_s=120), "the model was never submitted"
+        # the deploy only stops waiting on an app one of its polls has seen
+        time.sleep(2 * _POLL_SECONDS + 1)
+        model_deployer.deploy()
+        log = deploy.wait(timeout=60)
+        assert "Model 'removed-model' was removed before it came up" in log
+        assert "will land on its own" not in log
 
     def test_a_model_still_loading_when_deploy_exits_is_routed_once_up(self, client, model_deployer):
         log = model_deployer.run(*_flags("late-model"), "--deploy-timeout", "0", log_name="late-model")

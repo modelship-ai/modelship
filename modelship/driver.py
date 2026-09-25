@@ -271,10 +271,11 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     fatally_failed = outcome.fatally_failed
 
     logger.info(
-        "Deploy complete: %d model(s) up, %d still coming up, %d failed.",
+        "Deploy complete: %d model(s) up, %d still coming up, %d failed, %d removed before coming up.",
         len(outcome.ready),
         len(outcome.still_pending),
         len(fatally_failed),
+        len(outcome.removed_elsewhere),
     )
     for config, reason in outcome.still_pending:
         logger.warning(

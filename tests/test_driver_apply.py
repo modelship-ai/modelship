@@ -210,6 +210,14 @@ class TestReporting:
             apply([], [a], {}, outcome=DeployOutcome([], [(_config(a), "")], []))
         assert "Model 'a' is still coming up and will land on its own" in caplog.messages
 
+    def test_the_summary_counts_models_removed_elsewhere(self, apply, caplog):
+        a = _raw("a")
+        with caplog.at_level("INFO"):
+            apply([], [a], {}, outcome=DeployOutcome([], [], [], [_config(a)]))
+        assert "Deploy complete: 0 model(s) up, 0 still coming up, 0 failed, 1 removed before coming up." in (
+            caplog.messages
+        )
+
     def test_returns_the_models_that_failed(self, apply):
         a = _raw("a")
         r = apply([], [a], {}, outcome=DeployOutcome([], [], [(_config(a), "engine died")]))

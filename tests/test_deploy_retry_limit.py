@@ -45,6 +45,9 @@ STARTING = _app(ApplicationStatus.DEPLOYING)
 RUNNING = _app(ApplicationStatus.RUNNING)
 FAILED = _app(ApplicationStatus.DEPLOY_FAILED, "engine died")
 UNHEALTHY = _app(ApplicationStatus.UNHEALTHY, "replica failed its health check")
+DELETING = _app(ApplicationStatus.DELETING)
+# in a status script: the poll's serve.status() raises
+UNREADABLE = object()
 
 
 class _Clock:
@@ -61,7 +64,7 @@ class _Clock:
 @pytest.fixture
 def loop(monkeypatch):
     """Drives run_deploy_loop off a per-model script of Serve statuses, one entry
-    consumed per poll; the last entry repeats. Returns what the loop did."""
+    consumed per poll (None: absent); the last entry repeats. Returns what the loop did."""
     clock = _Clock()
     monkeypatch.setattr(strategy.time, "sleep", clock.sleep)
     monkeypatch.setattr(strategy.time, "monotonic", clock.monotonic)
@@ -76,7 +79,7 @@ def loop(monkeypatch):
     monkeypatch.setattr(strategy.ray, "get", lambda ref, **kwargs: ref)
 
     def run(
-        scripts: dict[str, list[ApplicationStatusOverview]],
+        scripts: dict[str, list],
         fatal: dict[str, str] | None = None,
         timeout="30",
         live=lambda name: False,
@@ -110,7 +113,11 @@ def loop(monkeypatch):
             polls["n"] += 1
             apps = {}
             for name, script in scripts.items():
-                apps[names[name]] = script[min(polls["n"], len(script) - 1)]
+                app = script[min(polls["n"], len(script) - 1)]
+                if app is UNREADABLE:
+                    raise RuntimeError("serve controller unreachable")
+                if app is not None:
+                    apps[names[name]] = app
             return MagicMock(applications=apps)
 
         monkeypatch.setattr(strategy.serve, "status", status)
@@ -128,6 +135,7 @@ def loop(monkeypatch):
             "ready": [c.name for c in outcome.ready],
             "pending": {c.name: reason for c, reason in outcome.still_pending},
             "failed": {c.name: detail for c, detail in outcome.fatally_failed},
+            "removed_elsewhere": [c.name for c in outcome.removed_elsewhere],
             "submitted": submitted,
             "events": events,
             "removed": removed,
@@ -219,6 +227,39 @@ class TestPendingIsNotFailure:
         assert r["pending"] == {}
         assert r["failed"] == {"a": "engine died"}
         assert r["removed"] == [_model("a").deployment_name("g")]
+
+
+class TestRemovedElsewhere:
+    @pytest.mark.parametrize("gone", [None, DELETING], ids=["absent", "deleting"])
+    def test_an_app_deleted_after_serve_reported_it_is_no_longer_waited_for(self, loop, gone):
+        r = loop({"a": [DEPLOYING, gone]})
+        assert r["removed_elsewhere"] == ["a"]
+        assert r["pending"] == {}
+        assert r["failed"] == {}
+
+    def test_it_is_dropped_from_this_runs_deployments(self, loop):
+        r = loop({"a": [DEPLOYING, None]})
+        assert r["deployed_this_run"] == {}
+
+    def test_an_app_serve_has_not_reported_yet_is_waited_for(self, loop):
+        r = loop({"a": [None, None, RUNNING]})
+        assert r["ready"] == ["a"]
+        assert r["removed_elsewhere"] == []
+
+    def test_an_app_submitted_over_one_being_deleted_is_waited_for(self, loop):
+        r = loop({"a": [DELETING, RUNNING]})
+        assert r["ready"] == ["a"]
+        assert r["removed_elsewhere"] == []
+
+    def test_an_unreadable_serve_status_removes_nothing(self, loop):
+        r = loop({"a": [DEPLOYING, UNREADABLE, RUNNING]})
+        assert r["ready"] == ["a"]
+        assert r["removed_elsewhere"] == []
+
+    def test_other_models_are_still_waited_for(self, loop):
+        r = loop({"a": [DEPLOYING, None], "b": [DEPLOYING, DEPLOYING, RUNNING]})
+        assert r["removed_elsewhere"] == ["a"]
+        assert r["ready"] == ["b"]
 
 
 class TestServeApiCanary:

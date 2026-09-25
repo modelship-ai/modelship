@@ -1,7 +1,7 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import ray
@@ -85,6 +85,8 @@ class DeployOutcome:
     # each paired with Serve's pending reason (may be empty), or why it failed
     still_pending: list[tuple[ModelshipModelConfig, str]]
     fatally_failed: list[tuple[ModelshipModelConfig, str]]
+    # deleted by something other than this deploy after Serve had reported them
+    removed_elsewhere: list[ModelshipModelConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -94,6 +96,8 @@ class _Pending:
     last_error: str = ""
     # set while waiting out the backoff before being submitted again
     retry_at: float | None = None
+    # set once Serve reports the app, not being deleted
+    seen: bool = False
 
 
 def deploy_timeout_seconds() -> float:
@@ -137,12 +141,13 @@ def submit_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> None:
     )
 
 
-def _app_statuses() -> dict[str, ApplicationStatusOverview]:
+def _app_statuses() -> dict[str, ApplicationStatusOverview] | None:
+    """Serve's application statuses; None when they can't be read."""
     try:
         return dict(serve.status().applications)
     except Exception:
         logger.exception("Could not read Serve status; retrying next poll")
-        return {}
+        return None
 
 
 def run_deploy_loop(
@@ -154,6 +159,7 @@ def run_deploy_loop(
     pending = {config.deployment_name(ctx.gateway_name): _Pending(config) for config in models}
     ready: list[ModelshipModelConfig] = []
     fatally_failed: list[tuple[ModelshipModelConfig, str]] = []
+    removed_elsewhere: list[ModelshipModelConfig] = []
     statuses: dict[str, ApplicationStatusOverview] = {}
 
     # removal blocks until the app is torn down, so it runs beside the polling
@@ -184,11 +190,24 @@ def run_deploy_loop(
                     if (error := _submit(item.config, ctx)) is not None:
                         fail(name, error)
 
-            statuses = _app_statuses()
+            if (read := _app_statuses()) is None:
+                continue
+            statuses = read
             for name, item in list(pending.items()):
                 app = statuses.get(name)
-                if app is None or item.retry_at is not None:
+                if item.retry_at is not None:
                     continue
+                if app is None or app.status == ApplicationStatus.DELETING:
+                    if item.seen:
+                        logger.warning(
+                            "Model '%s' was removed before it came up: deployment %s was deleted",
+                            item.config.name,
+                            name,
+                        )
+                        ctx.deployed_this_run.pop(name, None)
+                        removed_elsewhere.append(pending.pop(name).config)
+                    continue
+                item.seen = True
                 if app.status == ApplicationStatus.RUNNING:
                     logger.info("Model ready: %s (deployment: %s)", item.config.name, name)
                     ready.append(pending.pop(name).config)
@@ -209,7 +228,7 @@ def run_deploy_loop(
                 give_up(name, item.last_error)
 
     still_pending = [(item.config, _pending_reason(name, statuses)) for name, item in pending.items()]
-    return DeployOutcome(ready, still_pending, fatally_failed)
+    return DeployOutcome(ready, still_pending, fatally_failed, removed_elsewhere)
 
 
 def _submit(config: ModelshipModelConfig, ctx: DeployContext) -> str | None:
