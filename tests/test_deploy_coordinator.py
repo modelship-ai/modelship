@@ -1,6 +1,7 @@
 """The deploy coordinator, driven directly: leases, effective-config writes, replica-death counts and retiring.
 Placement options live in test_actor_placement.py."""
 
+import asyncio
 import time
 from unittest.mock import AsyncMock, patch
 
@@ -9,6 +10,7 @@ import pytest
 from modelship.deploy.effective_config import read_effective
 from modelship.infer import deploy_coordinator
 from modelship.infer.deploy_coordinator import LEASE_SECONDS, gateway_lease_key
+from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
 
 # The plain class behind @ray.remote; its methods are ordinary coroutines.
@@ -170,8 +172,32 @@ class TestReplicaDeathCounting:
                     await coord.report_replica_death(name, 1, "engine died")
         retire.assert_not_called()
 
-    async def test_retire_deletes_the_app(self):
+
+_APP = ModelshipModelConfig.model_validate(
+    {"name": "qwen", "model": "org/qwen", "usecase": "generate", "loader": "llama_server"}
+).deployment_name("g")
+
+
+@pytest.mark.asyncio
+class TestRetire:
+    async def test_deletes_the_app_under_its_gateways_lease(self):
         coord = _fresh()
+        held = []
+        with patch(
+            "modelship.deploy.removal.serve.delete", lambda name: held.append(coord._leases.get(gateway_lease_key("g")))
+        ):
+            await coord._retire(_APP)
+        assert held[0].holder == f"deploy coordinator retiring {_APP}"
+        assert gateway_lease_key("g") not in coord._leases
+
+    async def test_waits_while_a_deploy_holds_the_gateways_lease(self, monkeypatch):
+        monkeypatch.setattr(deploy_coordinator, "POLL_SECONDS", 0.01)
+        coord = _fresh()
+        await coord.acquire(gateway_lease_key("g"), "a deploy")
         with patch("modelship.deploy.removal.serve.delete") as delete:
-            await coord._retire("qwen-aaaa")
-        delete.assert_called_once_with("qwen-aaaa")
+            retiring = asyncio.create_task(coord._retire(_APP))
+            await asyncio.sleep(0.05)
+            delete.assert_not_called()
+            await coord.release(gateway_lease_key("g"), "a deploy")
+            await asyncio.wait_for(retiring, 1)
+        delete.assert_called_once_with(_APP)

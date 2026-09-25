@@ -1,6 +1,6 @@
 """Holding a deploy lease from the deploy coordinator: a node's, so replicas sharing a node
-load their models one at a time, and a gateway's, so one driver at a time plans and submits
-that gateway's apps."""
+load their models one at a time, and a gateway's, so one thing at a time plans, submits or
+deletes that gateway's apps."""
 
 import asyncio
 import contextlib
@@ -13,14 +13,18 @@ from collections.abc import Generator
 import ray
 from ray.exceptions import ActorDiedError, ActorUnavailableError
 
-from modelship.infer.deploy_coordinator import LEASE_SECONDS, gateway_lease_key, get_or_create_coordinator
+from modelship.infer.deploy_coordinator import (
+    LEASE_SECONDS,
+    POLL_SECONDS,
+    RENEW_SECONDS,
+    gateway_lease_key,
+    get_or_create_coordinator,
+)
 from modelship.logging import get_logger
 from modelship.utils import random_uuid
 
 logger = get_logger("deploy_leases")
 
-RENEW_SECONDS = 10.0
-POLL_SECONDS = 2.0
 _RPC_TIMEOUT_SECONDS = 5.0
 _WAIT_LOG_SECONDS = 60.0
 # an unreachable actor's name resolves for ~2s after it stops answering

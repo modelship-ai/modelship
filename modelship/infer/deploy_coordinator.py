@@ -6,7 +6,7 @@ or replica can:
 
 - one deploy lease per node, held by a replica for the duration of its load, so
   loads on one node run one at a time (the holder's side is `deploy_leases.py`);
-- one deploy lease per gateway, held by a driver while it plans and submits the
+- one deploy lease per gateway, held by whatever plans, submits or deletes the
   gateway's apps; the gateway's effective config is written only for its holder;
 - a per-deployment backend-death count, retiring a deployment that keeps dying;
 - fatal init errors, reported by a replica and read back by the driver, which
@@ -22,6 +22,7 @@ import ray
 from modelship.logging import configure_logging, get_logger
 from modelship.state import get_state_store, state_store_env_var
 from modelship.utils import head_node_options
+from modelship.utils.config_schema import parse_deployment_name
 from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
 
 logger = get_logger("deploy_coordinator")
@@ -30,6 +31,8 @@ COORDINATOR_ACTOR_NAME = "modelship-deploy-coordinator"
 COORDINATOR_NAMESPACE = "modelship"
 
 LEASE_SECONDS = 30.0
+RENEW_SECONDS = 10.0
+POLL_SECONDS = 2.0
 _REAP_INTERVAL_SECONDS = 1.0
 _DEATHS_PER_REPLICA = 3
 
@@ -120,10 +123,26 @@ class DeployCoordinator:
         await self._retire(deployment_name)
 
     async def _retire(self, deployment_name: str) -> None:
-        """serve.delete blocks on the app's teardown, so it runs off this actor's event loop."""
+        """Deletes the app under its gateway's lease, waiting for the lease. serve.delete blocks on
+        the app's teardown, so it runs off this actor's event loop."""
         from modelship.deploy.removal import delete_apps_quietly
 
-        await asyncio.to_thread(delete_apps_quietly, [deployment_name])
+        parsed = parse_deployment_name(deployment_name)
+        assert parsed is not None  # replicas report their own app, named by deployment_name
+        key, holder = gateway_lease_key(parsed[0]), f"deploy coordinator retiring {deployment_name}"
+        while await self.acquire(key, holder) is not None:
+            await asyncio.sleep(POLL_SECONDS)
+        renewing = asyncio.create_task(self._keep_renewed(key, holder))
+        try:
+            await asyncio.to_thread(delete_apps_quietly, [deployment_name])
+        finally:
+            renewing.cancel()
+            await self.release(key, holder)
+
+    async def _keep_renewed(self, key: str, holder: str) -> None:
+        while True:
+            await asyncio.sleep(RENEW_SECONDS)
+            await self.renew(key, holder)
 
     def report_fatal_error(self, deployment_name: str, reason: str) -> None:
         self._fatal_errors[deployment_name] = reason

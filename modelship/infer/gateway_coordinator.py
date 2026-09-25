@@ -3,9 +3,10 @@
 `GatewayCoordinator` is a detached, named Ray actor on the head node. Once a second it
 reads Serve's application statuses and each gateway's effective config, computes every
 gateway's model table (`modelship.deploy.routing`), and deletes the apps nothing has
-used for `_UNUSED_GRACE_SECONDS`. Gateway replicas long-poll `wait_for_change` and copy
-their table from `get_routing`; the driver polls `get_retiring` until those deletes are
-done. Nothing is stored: a restarted gateway coordinator recomputes everything on its first pass.
+used for `_UNUSED_GRACE_SECONDS`, under the gateway's deploy lease. Gateway replicas
+long-poll `wait_for_change` and copy their table from `get_routing`; the driver polls
+`get_retiring` until those deletes are done. Nothing is stored: a restarted gateway
+coordinator recomputes everything on its first pass.
 """
 
 import asyncio
@@ -18,7 +19,12 @@ from ray import serve
 from modelship.deploy.effective_config import read_targets
 from modelship.deploy.removal import delete_apps_quietly
 from modelship.deploy.routing import Routing, compute_routing
-from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE
+from modelship.infer.deploy_coordinator import (
+    COORDINATOR_NAMESPACE,
+    RENEW_SECONDS,
+    gateway_lease_key,
+    get_or_create_coordinator,
+)
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import COORDINATOR_GENERATION
 from modelship.state import get_state_store, state_store_env_var
@@ -59,6 +65,8 @@ class GatewayCoordinator:
         # gateways whose replicas asked for a table; the rest are found through their apps
         self._watched: set[str] = set()
         self._unreadable: set[str] = set()
+        # gateways whose deploy lease could not be asked for
+        self._lease_unreachable: set[str] = set()
         self._unused_since: dict[str, float] = {}
         self._deleting: set[str] = set()
         self._deletions: set[asyncio.Task] = set()
@@ -85,13 +93,14 @@ class GatewayCoordinator:
         for name in apps:
             if (parsed := parse_deployment_name(name)) is not None:
                 gateways.add(parsed[0])
-        unused: set[str] = set()
+        # unused app -> its gateway
+        unused: dict[str, str] = {}
         for gateway in gateways:
             routing = compute_routing(gateway, await self._targets(gateway), apps)
             if routing is None:
                 continue
             self._publish(gateway, routing)
-            unused |= routing.unused
+            unused |= dict.fromkeys(routing.unused, gateway)
         self._delete_unused(unused)
         self._last_pass_start = started
         self._computed.set()
@@ -123,25 +132,59 @@ class GatewayCoordinator:
         if (event := self._change.pop(gateway, None)) is not None:
             event.set()
 
-    def _delete_unused(self, unused: set[str]) -> None:
+    def _delete_unused(self, unused: dict[str, str]) -> None:
         """Deletes each app unused for `_UNUSED_GRACE_SECONDS`, off the event loop and one delete at a time per app."""
         now = time.monotonic()
         self._unused_since = {app: self._unused_since.get(app, now) for app in unused}
         for app, since in self._unused_since.items():
             if now - since >= _UNUSED_GRACE_SECONDS and app not in self._deleting:
                 self._deleting.add(app)
-                task = asyncio.create_task(self._delete(app))
+                task = asyncio.create_task(self._delete(app, unused[app]))
                 self._deletions.add(task)
                 task.add_done_callback(self._deletions.discard)
 
-    async def _delete(self, app: str) -> None:
+    async def _delete(self, app: str, gateway: str) -> None:
         try:
-            # serve.delete blocks until the app is gone
-            await asyncio.to_thread(delete_apps_quietly, [app])
+            if await self._delete_under_lease(app, gateway):
+                # a failed delete waits out the grace period again
+                self._unused_since.pop(app, None)
         finally:
             self._deleting.discard(app)
-            # a failed delete waits out the grace period again
-            self._unused_since.pop(app, None)
+
+    async def _delete_under_lease(self, app: str, gateway: str) -> bool:
+        """Deletes the app if it is still unused once its gateway's deploy lease is held. False,
+        doing nothing, when the lease is held elsewhere or can't be asked for."""
+        key, holder = gateway_lease_key(gateway), f"gateway coordinator deleting {app}"
+        try:
+            leases = await asyncio.to_thread(get_or_create_coordinator)
+            if await leases.acquire.remote(key, holder) is not None:
+                return False
+        except Exception:
+            if gateway not in self._lease_unreachable:
+                logger.warning("Could not ask for the deploy lease of gateway %s", gateway, exc_info=True)
+            self._lease_unreachable.add(gateway)
+            return False
+        self._lease_unreachable.discard(gateway)
+        renewing = asyncio.create_task(_keep_renewed(leases, key, holder))
+        try:
+            if app in await self._unused_now(gateway):
+                # serve.delete blocks until the app is gone
+                await asyncio.to_thread(delete_apps_quietly, [app])
+        finally:
+            renewing.cancel()
+            with contextlib.suppress(Exception):
+                await leases.release.remote(key, holder)
+        return True
+
+    async def _unused_now(self, gateway: str) -> set[str]:
+        """The gateway's unused apps from a fresh read of Serve and its effective config."""
+        try:
+            apps = dict((await asyncio.to_thread(serve.status)).applications)
+        except Exception:
+            logger.exception("Could not read Serve status; deleting nothing")
+            return set()
+        routing = compute_routing(gateway, await self._targets(gateway), apps)
+        return routing.unused if routing else set()
 
     async def get_routing(self, gateway_name: str) -> dict:
         """The gateway's model table (app -> model), expected models and generation."""
@@ -179,6 +222,13 @@ class GatewayCoordinator:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(event.wait(), timeout)
         return self._generation.get(gateway_name, self._first_generation)
+
+
+async def _keep_renewed(leases, key: str, holder: str) -> None:
+    while True:
+        await asyncio.sleep(RENEW_SECONDS)
+        with contextlib.suppress(Exception):
+            await leases.renew.remote(key, holder)
 
 
 def get_or_create_gateway_coordinator():

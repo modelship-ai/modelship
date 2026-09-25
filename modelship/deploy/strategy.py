@@ -162,7 +162,7 @@ def run_deploy_loop(
         def give_up(name: str, reason: str) -> None:
             ctx.deployed_this_run.pop(name, None)
             fatally_failed.append((pending.pop(name).config, reason))
-            removals.submit(delete_apps_quietly, [name])
+            removals.submit(_remove_given_up, name, ctx.gateway_name)
 
         def fail(name: str, message: str) -> None:
             if (reason := _record_failure(name, pending[name], ctx, message)) is not None:
@@ -217,7 +217,7 @@ def _submit(config: ModelshipModelConfig, ctx: DeployContext) -> str | None:
     name = config.deployment_name(ctx.gateway_name)
     try:
         with gateway_lease(ctx.gateway_name):
-            if not _to_submit(name):
+            if _live(name):
                 logger.info("%s was submitted by another deploy; waiting for it", name)
                 return None
             submit_deploy(config, ctx)
@@ -226,10 +226,20 @@ def _submit(config: ModelshipModelConfig, ctx: DeployContext) -> str | None:
     return None
 
 
-def _to_submit(name: str) -> bool:
-    """Whether Serve reports the app absent, failed or being deleted."""
+def _live(name: str) -> bool:
+    """Whether Serve has the app, neither failed nor being deleted."""
     app = serve.status().applications.get(name)
-    return app is None or app.status in _NOT_LIVE
+    return app is not None and app.status not in _NOT_LIVE
+
+
+def _remove_given_up(name: str, gateway_name: str) -> None:
+    """Deletes a given-up app under the gateway's lease, unless another deploy has made it live again."""
+    try:
+        with gateway_lease(gateway_name):
+            if not _live(name):
+                delete_apps_quietly([name])
+    except Exception:
+        logger.exception("Could not remove deployment %s", name)
 
 
 def _record_failure(name: str, item: _Pending, ctx: DeployContext, message: str) -> str | None:

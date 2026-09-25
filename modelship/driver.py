@@ -221,7 +221,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
     get_or_create_gateway_coordinator()
     deploy_started = time.monotonic()
 
-    # No other deploy of this gateway plans or submits during this block.
+    # Nothing else plans, submits or deletes this gateway's apps during this block.
     with gateway_lease(gateway_name) as lease:
         app_statuses = get_app_statuses()
         if app_statuses:

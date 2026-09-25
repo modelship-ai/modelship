@@ -66,21 +66,26 @@ def loop(monkeypatch):
     monkeypatch.setattr(strategy.time, "sleep", clock.sleep)
     monkeypatch.setattr(strategy.time, "monotonic", clock.monotonic)
     removed: list[str] = []
-    monkeypatch.setattr(strategy, "delete_apps_quietly", lambda names: removed.extend(names))
+    events: list = []
+
+    def delete(names):
+        removed.extend(names)
+        events.append(("delete", list(names)))
+
+    monkeypatch.setattr(strategy, "delete_apps_quietly", delete)
     monkeypatch.setattr(strategy.ray, "get", lambda ref, **kwargs: ref)
 
     def run(
         scripts: dict[str, list[ApplicationStatusOverview]],
         fatal: dict[str, str] | None = None,
         timeout="30",
-        submitted_elsewhere=False,
+        live=lambda name: False,
         lease_error: Exception | None = None,
     ):
         monkeypatch.setenv("MSHIP_DEPLOY_TIMEOUT_S", timeout)
         fatal = fatal or {}
         names = {name: _model(name).deployment_name("g") for name in scripts}
         submitted: list[str] = []
-        events: list = []
         polls = {"n": -1}
 
         @contextlib.contextmanager
@@ -92,7 +97,7 @@ def loop(monkeypatch):
             events.append("release")
 
         monkeypatch.setattr(strategy, "gateway_lease", gateway_lease)
-        monkeypatch.setattr(strategy, "_to_submit", lambda name: not submitted_elsewhere)
+        monkeypatch.setattr(strategy, "_live", live)
 
         def submit(config, ctx):
             submitted.append(config.name)
@@ -243,7 +248,7 @@ class TestSubmitUnderTheGatewayLease:
         assert r["events"] == [("hold", "g"), ("submit", "a"), "release"] * 2
 
     def test_an_app_submitted_elsewhere_is_polled_not_submitted(self, loop):
-        r = loop({"a": [DEPLOYING, RUNNING]}, submitted_elsewhere=True)
+        r = loop({"a": [DEPLOYING, RUNNING]}, live=lambda name: True)
         assert r["submitted"] == []
         assert r["ready"] == ["a"]
         assert r["deployed_this_run"] == {}
@@ -253,21 +258,31 @@ class TestSubmitUnderTheGatewayLease:
         assert r["submitted"] == []
         assert r["failed"] == {"a": "DeployLeaseError: deploy lease service unreachable"}
 
+    def test_a_given_up_app_is_removed_under_the_gateway_lease(self, loop):
+        r = loop({"a": [FAILED]})
+        assert r["events"][-3:] == [("hold", "g"), ("delete", [_model("a").deployment_name("g")]), "release"]
+
+    def test_a_given_up_app_made_live_again_is_kept(self, loop):
+        answers = iter([False] * strategy._MAX_TRANSIENT_FAILURES + [True])
+        r = loop({"a": [FAILED]}, live=lambda name: next(answers))
+        assert r["failed"] == {"a": "engine died"}
+        assert r["removed"] == []
+
     @pytest.mark.parametrize(
         ("app", "expected"),
         [
-            (None, True),
-            (FAILED, True),
-            (_app(ApplicationStatus.DELETING), True),
-            (DEPLOYING, False),
-            (RUNNING, False),
-            (UNHEALTHY, False),
+            (None, False),
+            (FAILED, False),
+            (_app(ApplicationStatus.DELETING), False),
+            (DEPLOYING, True),
+            (RUNNING, True),
+            (UNHEALTHY, True),
         ],
     )
-    def test_an_app_is_submitted_only_when_absent_failed_or_being_deleted(self, monkeypatch, app, expected):
+    def test_an_app_is_live_unless_absent_failed_or_being_deleted(self, monkeypatch, app, expected):
         apps = {} if app is None else {"g.a-1": app}
         monkeypatch.setattr(strategy.serve, "status", lambda: MagicMock(applications=apps))
-        assert strategy._to_submit("g.a-1") is expected
+        assert strategy._live("g.a-1") is expected
 
 
 class TestThisRunsDeployments:

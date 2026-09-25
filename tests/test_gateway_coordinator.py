@@ -1,9 +1,11 @@
 """The gateway coordinator's passes: each gateway's model table, its generation, the
-long-poll API gateway replicas use, and the deletion of unused apps. Exercises the
-undecorated class in-process, with Serve's status and the state store faked."""
+long-poll API gateway replicas use, and the deletion of unused apps under the gateway's
+deploy lease. Exercises the undecorated class in-process, with Serve's status, the state
+store and the deploy coordinator faked."""
 
 import asyncio
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +18,8 @@ from ray.serve.schema import (
 )
 
 from modelship.deploy.effective_config import write_effective
-from modelship.infer import gateway_coordinator
+from modelship.infer import deploy_coordinator, gateway_coordinator
+from modelship.infer.deploy_coordinator import DeployCoordinator, gateway_lease_key
 from modelship.infer.gateway_coordinator import GatewayCoordinator
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor, StateStoreUnavailableError
@@ -25,6 +28,7 @@ from modelship.state import MemoryStoreActor, StateStoreUnavailableError
 # coroutines, so both can be exercised in-process without a Ray cluster.
 _Coord = GatewayCoordinator.__ray_metadata__.modified_class
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
+_DeployCoord = DeployCoordinator.__ray_metadata__.modified_class
 
 
 def _raw(name: str, **overrides) -> dict:
@@ -57,16 +61,38 @@ def no_logging_setup(monkeypatch):
     monkeypatch.setattr(gateway_coordinator, "configure_logging", lambda: None)
 
 
+class _Handle:
+    """`handle.method.remote(...)` over the cluster's deploy coordinator."""
+
+    def __init__(self, cluster):
+        self._cluster = cluster
+
+    def __getattr__(self, name):
+        return SimpleNamespace(remote=lambda *args: getattr(self._cluster.leases, name)(*args))
+
+
 class _Cluster:
-    """The Serve apps and effective configs a gateway coordinator reads, and the apps it deletes."""
+    """The Serve apps and effective configs a gateway coordinator reads, the deploy coordinator
+    granting its gateway leases, and the apps it deletes."""
 
     def __init__(self, monkeypatch):
         self.apps = {"gw": _app()}
         self.store = _MemoryStore()
         self.deleted: list[str] = []
+        self._leases = None
         monkeypatch.setattr(gateway_coordinator, "get_state_store", lambda: self.store)
         monkeypatch.setattr(gateway_coordinator.serve, "status", lambda: SimpleNamespace(applications=dict(self.apps)))
         monkeypatch.setattr(gateway_coordinator, "delete_apps_quietly", lambda names: self.deleted.extend(names))
+        monkeypatch.setattr(deploy_coordinator, "configure_logging", lambda: None)
+        monkeypatch.setattr(gateway_coordinator, "get_or_create_coordinator", lambda: _Handle(self))
+
+    @property
+    def leases(self):
+        """Built on first use, from within the test's event loop."""
+        if self._leases is None:
+            self._leases = _DeployCoord(startup_window=False)
+            self._leases._reaper.cancel()
+        return self._leases
 
     def configure(self, *raws: dict, gateway: str = "gw") -> None:
         write_effective(self.store, gateway, list(raws))
@@ -405,6 +431,79 @@ class TestCleanup:
             await _pass(coord)
         assert cluster.deleted == []
         assert caplog.messages.count("Could not read the effective config of gateway gw") == 1
+
+
+class TestCleanupUnderTheGatewayLease:
+    @pytest.fixture(autouse=True)
+    def _no_grace(self, monkeypatch):
+        monkeypatch.setattr(gateway_coordinator, "_UNUSED_GRACE_SECONDS", 0)
+
+    @pytest.fixture
+    def dropped(self, cluster):
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(NEW): _app(), _app_name(_raw("b")): _app()}
+        return _app_name(_raw("b"))
+
+    @pytest.mark.asyncio
+    async def test_the_delete_holds_the_gateways_lease_then_releases_it(self, cluster, dropped, monkeypatch):
+        held = []
+        monkeypatch.setattr(
+            gateway_coordinator,
+            "delete_apps_quietly",
+            lambda names: held.append(cluster.leases._leases.get(gateway_lease_key("gw"))),
+        )
+        await _pass(_coordinator())
+        assert held[0].holder == f"gateway coordinator deleting {dropped}"
+        assert gateway_lease_key("gw") not in cluster.leases._leases
+
+    @pytest.mark.asyncio
+    async def test_a_delete_waits_while_a_deploy_holds_the_lease(self, cluster, dropped):
+        coord = _coordinator()
+        await cluster.leases.acquire(gateway_lease_key("gw"), "a deploy")
+        await _pass(coord)
+        assert cluster.deleted == []
+        assert dropped in coord._unused_since
+        await cluster.leases.release(gateway_lease_key("gw"), "a deploy")
+        await _pass(coord)
+        assert cluster.deleted == [dropped]
+
+    @pytest.mark.asyncio
+    async def test_an_app_targeted_again_before_its_delete_is_kept(self, cluster):
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
+        coord = _coordinator()
+        await coord._compute()
+        cluster.configure(OLD)
+        await asyncio.gather(*coord._deletions)
+        assert cluster.deleted == []
+
+    @pytest.mark.asyncio
+    async def test_the_lease_is_renewed_during_a_long_delete(self, cluster, dropped, monkeypatch):
+        monkeypatch.setattr(gateway_coordinator, "RENEW_SECONDS", 0.01)
+        monkeypatch.setattr(gateway_coordinator, "delete_apps_quietly", lambda names: time.sleep(0.1))
+        renew, renewals = cluster.leases.renew, []
+
+        async def counting(key, holder):
+            renewals.append(holder)
+            return await renew(key, holder)
+
+        cluster.leases.renew = counting
+        await _pass(_coordinator())
+        assert renewals and set(renewals) == {f"gateway coordinator deleting {dropped}"}
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_deploy_coordinator_deletes_nothing(self, cluster, dropped, monkeypatch, caplog):
+        def unreachable():
+            raise RuntimeError("deploy coordinator gone")
+
+        monkeypatch.setattr(gateway_coordinator, "get_or_create_coordinator", unreachable)
+        coord = _coordinator()
+        with caplog.at_level("WARNING"):
+            await _pass(coord)
+            await _pass(coord)
+        assert cluster.deleted == []
+        assert dropped in coord._unused_since
+        assert caplog.messages.count("Could not ask for the deploy lease of gateway gw") == 1
 
 
 def test_get_or_create_sets_max_restarts(monkeypatch):
