@@ -101,7 +101,7 @@ class BaseInfer[Prepared](ABC):
 
         Downloads hold a cluster-wide lease (see `locked_download`).
         Failures are wrapped in `ModelDownloadError` so they classify
-        as transient (retried next pass), except `ModelSourceError`, which
+        as transient (retried), except `ModelSourceError`, which
         stays fatal. Idempotent once `_resolved_path` is set."""
         if model_config._pinned_source is not None and model_config._resolved_path is None:
             try:
@@ -346,11 +346,7 @@ class BaseInfer[Prepared](ABC):
             config = self.model_config
             ceiling = config.autoscaling_config.max_replicas if config.autoscaling_config else config.num_replicas
             self._deploy_coordinator().report_replica_death.remote(
-                os.environ.get("MSHIP_GATEWAY_NAME", ""),
-                serve.get_replica_context().app_name,
-                config.name,
-                ceiling,
-                reason,
+                serve.get_replica_context().app_name, ceiling, reason
             )
         except Exception:
             logger.exception("Failed to report backend death for '%s'", self.model_config.name)

@@ -13,7 +13,7 @@ exits. Each takes the arguments marked for it (env vars work as fallbacks; CLI w
 |---|---|---|---|---|
 | `--config` | start, deploy | — | `config/models.yaml` | Path to models config file. An explicit path that doesn't exist is a hard error |
 | `--gateway-name` | start, deploy | `MSHIP_GATEWAY_NAME` | `modelship` | Name for the API gateway app. Multiple gateways can coexist on one cluster, each mounted at `/<slugified-name>` (e.g. `modelship` → `/modelship/v1/...`) |
-| `--gateway-replicas` | start, deploy | `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas (routing/ingress HA; replicas sync routing via the deploy coordinator) |
+| `--gateway-replicas` | start, deploy | `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas (routing/ingress HA; replicas copy routing from the gateway coordinator) |
 | `--openai-api-port` | start, deploy | `MSHIP_OPENAI_API_PORT` | `8000` | Port for the OpenAI-compatible API |
 | `--cluster` | join | `MSHIP_CLUSTER` | — | The head's GCS address as `host:port` (e.g. `mship-head:6380`) — its `--ray-port`. Reachable only from inside the cluster's private network. See [Multi-node without Kubernetes](multi-node-docker.md) |
 | `--token` | join, deploy | `MSHIP_RAY_AUTH_TOKEN` | — | Auth token of a cluster started with `--ray-auth=token`; read it on the head with `cat ~/.ray/auth_token` |
@@ -27,9 +27,10 @@ exits. Each takes the arguments marked for it (env vars work as fallbacks; CLI w
 | `--prune-ray-sessions` | start, join | `MSHIP_PRUNE_RAY_SESSIONS` | `true` | At node startup, delete stale `session_*` dirs left under the Ray temp root by previous, no-longer-running nodes. A live node's session is always kept |
 | `--reconcile` | start, deploy | — | `false` | Make the cluster match the config: add new models, remove dropped ones, replace changed ones (vs. the default additive union). With no `--config`, reconciles to this gateway's persisted effective config (self-heal) |
 | `--replace-strategy` | deploy | — | `blue_green` | How to replace a changed model: `blue_green` (deploy new before dropping old, no request loss) or `stop_start` (drop old first, brief unavailability) |
+| `--deploy-timeout` | start, deploy | `MSHIP_DEPLOY_TIMEOUT_S` | `600` | Seconds to wait for models to come up. Models still loading after that are reported as pending and keep deploying; one still waiting to retry a failure is reported failed. `0` returns right after submitting |
 | `--cache-dir` | start, join | `MSHIP_CACHE_DIR` | `/.cache` | Base cache directory for model weights; may be shared storage |
 | `--node-cache-dir` | start, join | `MSHIP_NODE_CACHE_DIR` | `$MSHIP_HOME/node-cache` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer). Must not be shared storage |
-| `--state-store` | start, deploy | `MSHIP_STATE_STORE` | `memory://` | Connection URI for the effective config + deploy coordinator + `/v1/responses` state (see [State store](#state-store-mship_state_store)) |
+| `--state-store` | start, deploy | `MSHIP_STATE_STORE` | `memory://` | Connection URI for the effective config + `/v1/responses` state (see [State store](#state-store-mship_state_store)) |
 | — | all | `MSHIP_LOG_LEVEL` | `INFO` | Log level (env-var-only: must be set before `import ray` so library loggers latch the right level) |
 | `--log-format` | all | `MSHIP_LOG_FORMAT` | `text` | `text` or `json` |
 | `--log-target` | all | `MSHIP_LOG_TARGET` | `console` | `console` or syslog URI (e.g. `syslog://host:514`, `syslog+tcp://host:514`) |
@@ -568,7 +569,7 @@ Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded 
 | `HF_TOKEN` | HuggingFace access token. Read from each node's own environment, never forwarded by the driver | — |
 | `MSHIP_CACHE_DIR` | Model cache directory (HuggingFace, sherpa_onnx, etc.); may be shared storage | `/.cache` |
 | `MSHIP_NODE_CACHE_DIR` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer); must not be shared storage | `$MSHIP_HOME/node-cache` |
-| `MSHIP_STATE_STORE` | State-store connection URI for the effective config, deploy coordinator + `/v1/responses` conversations (see [State store](#state-store-mship_state_store)) | `memory://` |
+| `MSHIP_STATE_STORE` | State-store connection URI for the effective config + `/v1/responses` conversations (see [State store](#state-store-mship_state_store)) | `memory://` |
 | `MSHIP_REDIS_PASSWORD` | Password for a `redis://`/`rediss://` state store. Read from each node's own environment, never forwarded by the driver | — |
 | `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship` |
 | `MSHIP_GATEWAY_REPLICAS` | Number of API gateway replicas | `1` |
@@ -594,7 +595,7 @@ Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded 
 
 ### State store (`MSHIP_STATE_STORE`)
 
-Three pieces of state share one pluggable store: this gateway's **effective config** (its desired model set, replayed by `--reconcile` with no `--config` to self-heal after cluster loss), the **deploy coordinator's** routing registry (which gateway owns which model + the expected set), and **`/v1/responses` conversations** (see [Stateful responses](#stateful-responses)). A single connection URI picks the backend and carries its connection:
+One pluggable store holds this gateway's **effective config** (its desired model set, replayed by `--reconcile` with no `--config` to self-heal after cluster loss, and read by the gateway coordinator to route and clean up) and **`/v1/responses` conversations** (see [Stateful responses](#stateful-responses)). A single connection URI picks the backend and carries its connection:
 
 | URI | Backend | Durability |
 |---|---|---|
@@ -607,7 +608,7 @@ Redis keys live under `modelship/state/`. Add `?namespace=<name>` (letters, digi
 
 A password belongs in `MSHIP_REDIS_PASSWORD` on every node, not in the URI: the driver forwards the URI to gateway replicas in `runtime_env`, which is plain-text cluster metadata, so the URI travels password-free and each node adds its own before connecting (percent-encoded, so `/`, `#`, `%` and friends in a password are safe). A password inside `--state-store`/`MSHIP_STATE_STORE` is rejected at startup.
 
-The Helm chart always sets `redis://…` in Kubernetes (with the password from its Secret as `MSHIP_REDIS_PASSWORD` on every pod); the same Redis also backs Ray GCS fault tolerance (chart's **Head-node HA** section) and is what lets the gateway self-heal routing after a head restart instead of needing a redeploy.
+The Helm chart always sets `redis://…` in Kubernetes (with the password from its Secret as `MSHIP_REDIS_PASSWORD` on every pod); the same Redis also backs Ray GCS fault tolerance (chart's **Head-node HA** section) and keeps each gateway's effective config across a head restart, so routing and cleanup carry on without a redeploy.
 
 > A `file://` backend existed before v0.7.0 and was removed: a poor fit for per-turn conversation snapshots (one JSON file each, no native TTL, last-writer-wins across replicas). Migrate `--state-store file://…`/`MSHIP_STATE_DIR` to `redis://`, or drop to `memory://` if you don't need to survive cluster loss.
 

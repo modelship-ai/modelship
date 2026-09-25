@@ -170,7 +170,7 @@ forwards this URI in runtime_env, and each pod adds MSHIP_REDIS_PASSWORD from it
 but does not deploy Redis, so redis.address is required.
 */}}
 {{- define "modelship.env" -}}
-{{- $addr := required "redis.address is required: modelship on k8s stores its effective config, routing registry and /v1/responses conversations in Redis. Point redis.address at a Redis instance (see the chart README)." .Values.redis.address }}
+{{- $addr := required "redis.address is required: modelship on k8s stores its effective config and /v1/responses conversations in Redis. Point redis.address at a Redis instance (see the chart README)." .Values.redis.address }}
 {{- if or .Values.redis.password .Values.redis.existingSecret }}
 - name: MSHIP_REDIS_PASSWORD
   valueFrom:

@@ -12,6 +12,7 @@ from typing import Any
 from ray import serve
 
 from modelship.infer.base_infer import BaseInfer
+from modelship.infer.deploy_leases import DeployLeaseError, deploy_lease
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, RawRequestProxy
 from modelship.infer.sources import ModelDownloadError
 from modelship.logging import configure_logging, get_logger
@@ -199,40 +200,43 @@ class ModelDeployment:
             # ahead of that, not lazily inside `infer.start()`.
             await BaseInfer.ensure_downloaded(config)
 
-            if config.loader == ModelLoader.vllm:
-                from modelship.infer.vllm.vllm_infer import VllmInfer
+            # Loading holds this node's lease; downloading must not, or a slow
+            # fetch blocks every other replica on the node.
+            async with deploy_lease(config.name):
+                if config.loader == ModelLoader.vllm:
+                    from modelship.infer.vllm.vllm_infer import VllmInfer
 
-                self.infer = VllmInfer(config)
-            elif config.loader == ModelLoader.diffusers:
-                from modelship.infer.diffusers.diffusers_infer import DiffusersInfer
+                    self.infer = VllmInfer(config)
+                elif config.loader == ModelLoader.diffusers:
+                    from modelship.infer.diffusers.diffusers_infer import DiffusersInfer
 
-                self.infer = DiffusersInfer(config)
-            elif config.loader == ModelLoader.llama_server:
-                from modelship.infer.llama_server.llama_server_infer import LlamaServerInfer
+                    self.infer = DiffusersInfer(config)
+                elif config.loader == ModelLoader.llama_server:
+                    from modelship.infer.llama_server.llama_server_infer import LlamaServerInfer
 
-                self.infer = LlamaServerInfer(config)
-            elif config.loader == ModelLoader.stable_diffusion_cpp:
-                from modelship.infer.stable_diffusion_cpp.stable_diffusion_cpp_infer import StableDiffusionCppInfer
+                    self.infer = LlamaServerInfer(config)
+                elif config.loader == ModelLoader.stable_diffusion_cpp:
+                    from modelship.infer.stable_diffusion_cpp.stable_diffusion_cpp_infer import (
+                        StableDiffusionCppInfer,
+                    )
 
-                self.infer = StableDiffusionCppInfer(config)
-            elif config.loader == ModelLoader.whispercpp:
-                from modelship.infer.whispercpp.whispercpp_infer import WhispercppInfer
+                    self.infer = StableDiffusionCppInfer(config)
+                elif config.loader == ModelLoader.whispercpp:
+                    from modelship.infer.whispercpp.whispercpp_infer import WhispercppInfer
 
-                self.infer = WhispercppInfer(config)
-            elif config.loader == ModelLoader.sherpa_onnx:
-                from modelship.infer.sherpa_onnx.sherpa_onnx_infer import SherpaOnnxInfer
+                    self.infer = WhispercppInfer(config)
+                elif config.loader == ModelLoader.sherpa_onnx:
+                    from modelship.infer.sherpa_onnx.sherpa_onnx_infer import SherpaOnnxInfer
 
-                self.infer = SherpaOnnxInfer(config)
+                    self.infer = SherpaOnnxInfer(config)
 
-            await self.infer.start()
-            await self.infer.warmup()
-        except ModelDownloadError as e:
-            # Deliberately NOT reported to the coordinator as fatal (see the
-            # except Exception branch below): a download blip should retry
-            # next pass, not permanently evict an otherwise-good model.
+                await self.infer.start()
+                await self.infer.warmup()
+        except (ModelDownloadError, DeployLeaseError) as e:
+            # Not reported as fatal, so the driver retries the deployment.
             MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})
             self._graceful_teardown()
-            logger.warning("Download failed for '%s', will retry next pass: %s", config.name, e)
+            logger.warning("Load failed for '%s', will be retried: %s", config.name, e)
             raise
         except Exception as e:
             MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})

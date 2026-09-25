@@ -6,7 +6,7 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
-from modelship.infer import deploy_coordinator, replica_coordinator
+from modelship.infer import deploy_coordinator, gateway_coordinator
 from modelship.state import (
     REDIS_PASSWORD_ENV,
     reject_inline_password,
@@ -87,21 +87,20 @@ class TestStateStoreForwarding:
 
 
 class TestCoordinatorCreation:
-    @pytest.mark.parametrize(
-        ("actor_cls", "getter"),
-        [
-            (deploy_coordinator.DeployCoordinator, deploy_coordinator.get_or_create_coordinator),
-            (replica_coordinator.ReplicaCoordinator, replica_coordinator.get_or_create_replica_coordinator),
-        ],
-    )
-    def test_both_coordinators_are_created_with_the_store_uri(self, actor_cls, getter):
-        # The deploy coordinator recreates the replica coordinator in _retire, so it has
-        # to hold the URI itself to pass it on.
+    def test_the_gateway_coordinator_is_created_with_the_store_uri(self):
         with (
             patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),
-            patch.object(actor_cls, "options") as options,
+            patch.object(gateway_coordinator.GatewayCoordinator, "options") as options,
         ):
-            getter()
+            gateway_coordinator.get_or_create_gateway_coordinator()
+        assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
+
+    def test_the_deploy_coordinator_is_created_with_the_store_uri(self):
+        with (
+            patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),
+            patch.object(deploy_coordinator.DeployCoordinator, "options") as options,
+        ):
+            deploy_coordinator.get_or_create_coordinator()
         assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
 
 

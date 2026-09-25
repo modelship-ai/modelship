@@ -1,7 +1,7 @@
-"""ModelDeployment.__init__: a ModelDownloadError must never be
-reported to the coordinator as fatal, so it's retried next pass instead of
-evicted from the effective config."""
+"""ModelDeployment.__init__: which failures are fatal, and the order of a successful load."""
 
+import contextlib
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -152,3 +152,44 @@ async def test_generic_init_failure_reports_fatal():
         await _ModelDeployment.__init__(inst, config)
 
     coordinator.report_fatal_error.remote.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_loads_under_the_lease():
+    inst = _ModelDeployment.__new__(_ModelDeployment)
+    config = _make_config()
+    config.loader = ModelLoader.llama_server
+    events = []
+
+    base_infer = MagicMock()
+    base_infer.ensure_downloaded = AsyncMock(side_effect=lambda c: events.append("download"))
+
+    @contextlib.asynccontextmanager
+    async def lease(model_name):
+        events.append("lease")
+        yield
+        events.append("release")
+
+    infer = MagicMock()
+    infer.start = AsyncMock()
+    infer.warmup = AsyncMock(side_effect=lambda: events.append("warmup"))
+    loader_module = MagicMock()
+    loader_module.LlamaServerInfer = MagicMock(side_effect=lambda c: events.append("load") or infer)
+
+    with (
+        _patch_init_globals(
+            configure_logging=MagicMock(),
+            stamp_gateway=MagicMock(),
+            _spawn_orphan_reaper=MagicMock(return_value=None),
+            reject_unset_cache_roots=MagicMock(),
+            _reject_unsupported_darwin_loader=MagicMock(),
+            _reject_unsupported_accelerator=MagicMock(),
+            BaseInfer=base_infer,
+            deploy_lease=lease,
+            MODEL_LOAD_DURATION_SECONDS=MagicMock(),
+        ),
+        patch.dict(sys.modules, {"modelship.infer.llama_server.llama_server_infer": loader_module}),
+    ):
+        await _ModelDeployment.__init__(inst, config)
+
+    assert events == ["download", "lease", "load", "warmup", "release"]

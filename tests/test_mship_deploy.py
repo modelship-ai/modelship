@@ -1,15 +1,17 @@
 """Tests for the start/join/deploy CLI parsing and driver helpers."""
 
+import itertools
 import os
 import signal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ray.exceptions import ActorUnavailableError, GetTimeoutError
 
 from modelship.deploy.actor_options import (
     build_cache_env_vars,
     build_deployment_options,
-    total_cpu_reservation,
     total_gpu_reservation,
 )
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, VllmEngineConfig
@@ -259,9 +261,9 @@ class TestDriverVerbs:
             driver._deploy(parse_args("deploy", []))
         mock_attach.assert_not_called()
 
-    def _deploy(self, argv, existing_apps, fatally_failed=()):
+    def _deploy(self, argv, existing_apps, fatally_failed=(), wait=None, apply=None):
         from modelship import driver
-        from modelship.deploy import serve_utils
+        from modelship.deploy import removal, serve_utils
 
         with (
             patch.object(serve_utils, "local_ray_clusters", return_value={"10.0.0.1:6380"}),
@@ -270,24 +272,26 @@ class TestDriverVerbs:
             patch.object(serve_utils, "get_existing_apps", return_value=existing_apps),
             patch.object(serve_utils, "start_gateway") as mock_gateway,
             patch.object(driver, "_log_cluster"),
-            patch.object(driver, "_apply", return_value=list(fatally_failed)) as mock_apply,
+            patch.object(driver, "_apply", return_value=list(fatally_failed), side_effect=apply) as mock_apply,
+            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator"),
+            patch.object(removal, "wait_for_retired_apps", side_effect=wait) as mock_wait,
         ):
             args = parse_args("deploy", argv)
             apply_args_to_env(args)
             driver._deploy(args)
-        return mock_gateway, mock_apply
+        return mock_gateway, mock_apply, mock_wait
 
     def test_deploy_refuses_a_missing_default_gateway(self):
         with pytest.raises(SystemExit, match="no gateway 'modelship'"):
             self._deploy([], existing_apps=set())
 
     def test_deploy_creates_a_named_gateway_that_is_missing(self):
-        mock_gateway, mock_apply = self._deploy(["--gateway-name", "edge"], existing_apps={"modelship"})
+        mock_gateway, mock_apply, _ = self._deploy(["--gateway-name", "edge"], existing_apps={"modelship"})
         assert mock_gateway.call_args.args[0] == "edge"
         mock_apply.assert_called_once()
 
     def test_deploy_reuses_an_existing_gateway(self):
-        mock_gateway, mock_apply = self._deploy([], existing_apps={"modelship"})
+        mock_gateway, mock_apply, _ = self._deploy([], existing_apps={"modelship"})
         mock_gateway.assert_not_called()
         mock_apply.assert_called_once()
 
@@ -295,6 +299,44 @@ class TestDriverVerbs:
         with pytest.raises(SystemExit) as exc:
             self._deploy([], existing_apps={"modelship"}, fatally_failed=[(MagicMock(), "boom")])
         assert exc.value.code == 1
+
+    def test_deploy_waits_for_this_gateways_retired_apps(self):
+        _, _, mock_wait = self._deploy(["--gateway-name", "edge"], existing_apps={"edge"})
+        assert mock_wait.call_args.args[1] == "edge"
+
+    def test_a_signal_while_deploying_exits_without_deleting_anything(self):
+        from modelship import driver
+        from modelship.deploy import removal
+
+        def interrupted(*args):
+            handler = driver.signal.signal.call_args.args[1]
+            handler(signal.SIGTERM, None)
+
+        with patch.object(removal, "delete_apps_quietly") as mock_delete, pytest.raises(SystemExit) as exc:
+            self._deploy([], existing_apps={"modelship"}, apply=interrupted)
+        assert exc.value.code == 0
+        mock_delete.assert_not_called()
+
+    def test_a_failed_deploy_deletes_nothing(self):
+        from modelship.deploy import removal
+
+        with patch.object(removal, "delete_apps_quietly") as mock_delete, pytest.raises(RuntimeError, match="boom"):
+            self._deploy([], existing_apps={"modelship"}, apply=RuntimeError("boom"))
+        mock_delete.assert_not_called()
+
+    @pytest.mark.parametrize(("fatally_failed", "code"), [((), 0), ([(MagicMock(), "boom")], 1)])
+    def test_a_signal_while_waiting_exits_without_deleting_this_runs_apps(self, fatally_failed, code):
+        from modelship import driver
+        from modelship.deploy import removal
+
+        def interrupted(gateway_coordinator, gateway_name):
+            handler = driver.signal.signal.call_args.args[1]
+            handler(signal.SIGTERM, None)
+
+        with patch.object(removal, "delete_apps_quietly") as mock_delete, pytest.raises(SystemExit) as exc:
+            self._deploy([], existing_apps={"modelship"}, fatally_failed=fatally_failed, wait=interrupted)
+        assert exc.value.code == code
+        mock_delete.assert_not_called()
 
 
 class TestStopHead:
@@ -713,11 +755,8 @@ class TestReservationTotals:
         )
         opts = build_deployment_options(config)
         assert total_gpu_reservation(opts) == 0.5
-        assert total_cpu_reservation(opts) == 2
 
     def test_multi_slot_sums_pg_bundles(self):
-        # 4 slots, each bundle reserves num_cpus from the cluster; the outer
-        # actor's CPU sits inside bundle 0 and is not additive.
         config = ModelshipModelConfig(
             name="test-model",
             model="some-model",
@@ -728,49 +767,73 @@ class TestReservationTotals:
         )
         opts = build_deployment_options(config)
         assert total_gpu_reservation(opts) == 4
-        assert total_cpu_reservation(opts) == 8
 
 
-class TestRemoveApps:
-    # remove_apps lives in deploy.removal, not serve_utils.
-    def test_noop_on_empty_list(self):
+class TestDeleteAppsQuietly:
+    def test_deletes_each_app(self):
         from modelship.deploy import removal
 
-        replica_coordinator = MagicMock()
         with patch("modelship.deploy.removal.serve.delete") as mock_delete:
-            removal.remove_apps([], replica_coordinator, "gw")
-        replica_coordinator.unregister_deployment.remote.assert_not_called()
-        mock_delete.assert_not_called()
-
-    def test_unregisters_then_deletes(self):
-        from modelship.deploy import removal
-
-        replica_coordinator = MagicMock()
-        apps = ["qwen-aaaaaaaaaa", "kokoro-bbbbbbbbbb"]
-        with (
-            patch("modelship.deploy.removal.ray.get") as mock_get,
-            patch("modelship.deploy.removal.serve.delete") as mock_delete,
-        ):
-            removal.remove_apps(apps, replica_coordinator, "gw")
-
-        # Each app is dropped from the replica coordinator's registry (bumping the
-        # gateway generation so replicas stop routing) before serve.delete tears it down.
-        replica_coordinator.unregister_deployment.remote.assert_any_call("gw", "qwen-aaaaaaaaaa")
-        replica_coordinator.unregister_deployment.remote.assert_any_call("gw", "kokoro-bbbbbbbbbb")
-        mock_get.assert_called_once()  # batched ray.get over the unregister calls
-        assert mock_delete.call_args_list == [(("qwen-aaaaaaaaaa",),), (("kokoro-bbbbbbbbbb",),)]
+            removal.delete_apps_quietly(["gw.qwen-aaaaaaaaaa", "gw.kokoro-bbbbbbbbbb"])
+        assert mock_delete.call_args_list == [(("gw.qwen-aaaaaaaaaa",),), (("gw.kokoro-bbbbbbbbbb",),)]
 
     def test_continues_on_serve_delete_error(self):
         from modelship.deploy import removal
 
-        replica_coordinator = MagicMock()
-        with (
-            patch("modelship.deploy.removal.ray.get"),
-            patch("modelship.deploy.removal.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete,
-        ):
-            removal.remove_apps(["a-1234567890", "b-1234567890"], replica_coordinator, "gw")
-        # Both deletes attempted even though the first raised.
+        with patch("modelship.deploy.removal.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete:
+            removal.delete_apps_quietly(["gw.a-1234567890", "gw.b-1234567890"])
         assert mock_delete.call_count == 2
+
+
+class TestWaitForRetiredApps:
+    @staticmethod
+    def _wait(monkeypatch, answers):
+        """Runs the wait on a fake clock; each answer takes one second, as a gateway coordinator pass does."""
+        from modelship.deploy import removal
+
+        clock, asked = [0.0], []
+        answers = iter(answers)
+
+        def get(ref, timeout):
+            clock[0] += 1
+            asked.append(ref)
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        logger = MagicMock()
+        monkeypatch.setattr(removal, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
+        monkeypatch.setattr(removal, "ray", SimpleNamespace(get=get))
+        monkeypatch.setattr(removal, "logger", logger)
+        removal.wait_for_retired_apps(MagicMock(), "gw")
+        return logger, len(asked)
+
+    def test_returns_once_nothing_is_retiring(self, monkeypatch):
+        logger, asked = self._wait(monkeypatch, [["gw.a-1234567890"], []])
+        assert asked == 2
+        logger.warning.assert_not_called()
+
+    def test_retries_a_restarting_coordinator(self, monkeypatch):
+        logger, asked = self._wait(monkeypatch, [ActorUnavailableError("restarting", None), []])
+        assert asked == 2
+        logger.warning.assert_not_called()
+
+    def test_warns_with_the_apps_left_at_the_deadline(self, monkeypatch):
+        logger, _ = self._wait(monkeypatch, itertools.repeat(["gw.a-1234567890"]))
+        assert "gw.a-1234567890" in logger.warning.call_args.args
+
+    def test_warns_when_the_coordinator_never_answers(self, monkeypatch):
+        logger, _ = self._wait(monkeypatch, itertools.repeat(ActorUnavailableError("restarting", None)))
+        assert logger.warning.call_args.args[0].startswith("Could not confirm")
+
+    def test_a_timed_out_call_ends_the_wait(self, monkeypatch):
+        logger, asked = self._wait(monkeypatch, [GetTimeoutError()])
+        assert asked == 1
+        assert logger.warning.call_args.args[0].startswith("Could not confirm")
 
 
 class TestStartGateway:
@@ -866,6 +929,15 @@ class TestGatewayRoutePrefix:
 
         with pytest.raises(ValueError):
             serve_utils.gateway_route_prefix("!!!")
+
+
+class TestGatewayFromEnv:
+    def test_a_name_with_a_dot_is_rejected(self, monkeypatch):
+        from modelship import driver
+
+        monkeypatch.setenv("MSHIP_GATEWAY_NAME", "edge.eu")
+        with pytest.raises(SystemExit, match=r"must not contain '\.'"):
+            driver._gateway_from_env()
 
 
 class TestValidateNodeGpuReservation:
@@ -1589,36 +1661,3 @@ class TestPruneRaySessions:
         proc = subprocess.Popen(["true"])
         proc.wait()
         assert serve_utils._pid_alive(proc.pid) is False
-
-
-class TestSeedExpectedModels:
-    """The readiness baseline the gateway's /readyz measures against."""
-
-    @staticmethod
-    def _conf():
-        from modelship.infer.infer_config import ModelshipConfig
-
-        return ModelshipConfig.model_validate(
-            {
-                "models": [
-                    {"name": n, "model": f"org/{n}", "usecase": "generate", "loader": "vllm"}
-                    for n in ("qwen", "kokoro")
-                ]
-            }
-        )
-
-    def _seed(self, **kwargs) -> list[str]:
-        from modelship.deploy import serve_utils
-
-        replica_coordinator = MagicMock()
-        with patch("modelship.deploy.serve_utils.ray.get"):
-            serve_utils.seed_expected_models(replica_coordinator, "gw", self._conf(), **kwargs)
-        return replica_coordinator.set_expected.remote.call_args.args[1]
-
-    def test_seeds_every_configured_model(self):
-        assert self._seed() == ["qwen", "kokoro"]
-
-    def test_excluded_models_are_left_out(self):
-        # A model the driver gave up on: still in the effective config for a later
-        # retry, but nothing is pursuing it now, so /readyz must stop waiting.
-        assert self._seed(exclude={"qwen"}) == ["kokoro"]

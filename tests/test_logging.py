@@ -37,6 +37,7 @@ def _reset_logging():
 
     yl._configured = False
     root = logging.getLogger("modelship")
+    saved_root_level, saved_root_propagate = root.level, root.propagate
     root.handlers.clear()
     root.setLevel(logging.WARNING)
     root.propagate = True
@@ -57,6 +58,8 @@ def _reset_logging():
     identity_tier_var.reset(identity_tier_token)
     yl._configured = False
     root.handlers.clear()
+    root.setLevel(saved_root_level)
+    root.propagate = saved_root_propagate
     for name, lvl in saved_lib_levels.items():
         lib_logger = logging.getLogger(name)
         lib_logger.setLevel(lvl)

@@ -19,7 +19,7 @@ from ray.serve.handle import DeploymentHandle, DeploymentResponseGenerator
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from modelship.infer import replica_coordinator
+from modelship.infer import gateway_coordinator
 from modelship.infer.infer_config import RequestWatcher, get_disconnect_registry
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
@@ -206,8 +206,7 @@ class ModelshipAPI:
             logger.info("API key authentication enabled (%d key(s))", len(api_keys))
         else:
             logger.warning("API key authentication disabled (MSHIP_API_KEYS not set)")
-        # model_name -> (app_name -> handle). The inner dict is keyed by app_name
-        # so a specific deployment can be dropped by name in remove_deployments.
+        # model_name -> (app_name -> handle), keyed by app_name so _drop_apps can drop one deployment.
         self.models: dict[str, dict[str, DeploymentHandle]] = {}
         self.model_list: list[OpenAiModelCard] = []
         self.expected_models: list[str] = []
@@ -228,7 +227,7 @@ class ModelshipAPI:
         # every replica — including restarted / autoscaled ones — converges.
         self._gen = 0  # last coordinator generation this replica reconciled to
         self._watch_task: asyncio.Task | None = None
-        self._replica_coord = None  # cached replica-coordinator handle
+        self._gateway_coord = None  # cached gateway-coordinator handle
         # Timing state — the first sync with a non-empty expected set stamps a start;
         # each model's first appearance records the gap since the previous arrival as
         # an approximate load duration.
@@ -254,8 +253,8 @@ class ModelshipAPI:
     def _drop_apps(self, app_names: list[str]) -> list[str]:
         """Drop the given deployment app names from the routing tables. The owning
         model is found by reverse lookup. When a model loses its last deployment its
-        model entry, card, expected-models entry, and load-time entry are also
-        dropped. Returns the names of fully-removed models."""
+        model entry, card and load-time entry are also dropped. Returns the names of
+        fully-removed models."""
         removed_models: list[str] = []
         for app_name in app_names:
             model_name = next((m for m, handles in self.models.items() if app_name in handles), None)
@@ -268,14 +267,13 @@ class ModelshipAPI:
                 del self.models[model_name]
                 self.model_list = [c for c in self.model_list if c.id != model_name]
                 self._model_load_times.pop(model_name, None)
-                self.expected_models = [m for m in self.expected_models if m != model_name]
                 removed_models.append(model_name)
         return removed_models
 
-    def _apply_routing(self, desired: dict[str, str], *, allow_removals: bool) -> None:
+    def _apply_routing(self, desired: dict[str, str]) -> None:
         """Reconcile the routing table to `desired` ({app_name: model_name}): add
-        handles for newly-present apps and, when `allow_removals`, drop apps no
-        longer present. Sync / await-free → atomic w.r.t. in-flight requests.
+        handles for newly-present apps and drop apps no longer present. Sync /
+        await-free → atomic w.r.t. in-flight requests.
 
         Applies every app that can be registered (and any removals), then raises if
         any could not be. The caller leaves `_gen` unadvanced so the watch loop
@@ -298,26 +296,19 @@ class ModelshipAPI:
                 self._model_load_times[model_name] = round(time.time() - base, 2)
                 self._last_model_at = time.time()
 
-        if allow_removals:
-            stale = [app for app in routed if app not in desired]
-            if stale:
-                self._drop_apps(stale)
+        stale = [app for app in routed if app not in desired]
+        if stale:
+            self._drop_apps(stale)
 
         if failed:
             raise RuntimeError(f"deployments not yet registerable: {failed}")
 
     def _apply_snapshot(self, snapshot: dict) -> None:
-        """Apply a coordinator routing snapshot to this replica (atomic mutation).
-
-        Removals are honored only when the generation advances. A *lower*
-        generation means the coordinator lost state (restart) — we still adopt its
-        additions but never let it blank live routing; a genuine change always
-        advances the generation, so real removals propagate immediately."""
+        """Apply a gateway coordinator routing snapshot to this replica (atomic mutation)."""
         new_gen = snapshot.get("generation", self._gen)
-        self._apply_routing(snapshot.get("models", {}), allow_removals=new_gen >= self._gen)
-        # Prefer the coordinator's explicit expected set; fall back to the live set
-        # so a restarted coordinator (empty expected) doesn't flip us to not-ready.
-        self.expected_models = snapshot.get("expected") or sorted(self.models)
+        # before the routes, which raise when an app isn't resolvable yet
+        self.expected_models = list(snapshot.get("expected", []))
+        self._apply_routing(snapshot.get("models", {}))
         if self.expected_models and self._expected_set_at is None:
             self._expected_set_at = self._last_model_at or time.time()
         if self.expected_models and self._all_ready_at is None and all(m in self.models for m in self.expected_models):
@@ -328,18 +319,18 @@ class ModelshipAPI:
         GATEWAY_ROUTING_GENERATION.set(new_gen)
 
     def _coord(self):
-        if self._replica_coord is None:
-            self._replica_coord = replica_coordinator.get_or_create_replica_coordinator()
-        return self._replica_coord
+        if self._gateway_coord is None:
+            self._gateway_coord = gateway_coordinator.get_or_create_gateway_coordinator()
+        return self._gateway_coord
 
     async def _coord_async(self):
-        """Resolve (and cache) the replica-coordinator handle without blocking the event
+        """Resolve (and cache) the gateway-coordinator handle without blocking the event
         loop. Cached fast path is a no-op; only after a reset (coordinator restart) does
         this do work, and get_or_create's synchronous GCS lookup can stall on a
         recovering GCS — so hop it to a thread to keep concurrent requests flowing."""
-        if self._replica_coord is None:
-            self._replica_coord = await asyncio.to_thread(replica_coordinator.get_or_create_replica_coordinator)
-        return self._replica_coord
+        if self._gateway_coord is None:
+            self._gateway_coord = await asyncio.to_thread(gateway_coordinator.get_or_create_gateway_coordinator)
+        return self._gateway_coord
 
     def _ensure_watching(self) -> None:
         """First-request hook: do one synchronous sync so this request isn't blocked
@@ -359,7 +350,7 @@ class ModelshipAPI:
         try:
             snapshot = cast(dict, ray.get(self._coord().get_routing.remote(self._gateway_name)))
         except Exception:
-            self._replica_coord = None  # re-resolve next time in case the handle went stale
+            self._gateway_coord = None  # re-resolve next time in case the handle went stale
             logger.debug("gateway: initial routing sync deferred; coordinator unavailable", exc_info=True)
             return False
         try:
@@ -385,7 +376,7 @@ class ModelshipAPI:
             except asyncio.CancelledError:
                 return
             except Exception:
-                self._replica_coord = None
+                self._gateway_coord = None
                 GATEWAY_WATCH_ERRORS_TOTAL.inc()
                 logger.debug("gateway: watch iteration failed; retrying", exc_info=True)
                 await asyncio.sleep(_WATCH_RETRY_S)
@@ -417,9 +408,10 @@ class ModelshipAPI:
     def _get_handle(self, model_name: str | None) -> DeploymentHandle:
         self._ensure_watching()
         if model_name is None or model_name not in self.models:
+            if model_name in self.expected_models:
+                raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE.value, detail="model not ready")
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
-        # One model name maps to one deployment (coordinator evicts any prior one
-        # on registration), so the last-inserted entry is always the live one.
+        # The gateway coordinator's table maps each model to one app.
         return next(reversed(self.models[model_name].values()))
 
     async def _await_first(self, response_gen, model: str, endpoint: str):
@@ -836,7 +828,9 @@ class ModelshipAPI:
                 exc.err
                 if isinstance(exc, responses_utils.ResponsesApiError)
                 else create_error_response(
-                    str(exc.detail), err_type="invalid_request_error", status_code=exc.status_code
+                    str(exc.detail),
+                    err_type="invalid_request_error" if exc.status_code < 500 else "api_error",
+                    status_code=exc.status_code,
                 )
             )
             await websocket.send_text(error_ws_frame(err))

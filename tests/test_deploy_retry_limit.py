@@ -1,12 +1,24 @@
 """`run_deploy_loop` must give up on a model that keeps failing to deploy, while
-still waiting indefinitely for one that is only short of capacity."""
+leaving one that is only short of capacity to come up on its own."""
 
+import contextlib
+import inspect
+import threading
 from unittest.mock import MagicMock
 
 import pytest
-from ray.serve.schema import LoggingConfig
+from ray import serve
+from ray.serve.schema import (
+    ApplicationStatus,
+    ApplicationStatusOverview,
+    DeploymentStatus,
+    DeploymentStatusOverview,
+    DeploymentStatusTrigger,
+    LoggingConfig,
+)
 
 from modelship.deploy import strategy
+from modelship.infer.deploy_leases import DeployLeaseError
 from modelship.infer.infer_config import ModelshipModelConfig
 
 
@@ -16,98 +28,309 @@ def _model(name: str) -> ModelshipModelConfig:
     )
 
 
-def _ctx() -> strategy.DeployContext:
-    return strategy.DeployContext(
-        coordinator=MagicMock(),
-        replica_coordinator=MagicMock(),
-        probe=MagicMock(),
-        operator_id="op-1",
-        gateway_name="g",
-        serve_logging_config=LoggingConfig(),
-        deployed_this_run={},
+def _app(status: ApplicationStatus, message: str = "", deployment_message: str = "") -> ApplicationStatusOverview:
+    deployment = DeploymentStatusOverview(
+        status=DeploymentStatus.UPDATING,
+        status_trigger=DeploymentStatusTrigger.CONFIG_UPDATE_STARTED,
+        replica_states={},
+        message=deployment_message,
     )
+    return ApplicationStatusOverview(
+        status=status, message=message, last_deployed_time_s=0.0, deployments={"d": deployment}
+    )
+
+
+DEPLOYING = _app(ApplicationStatus.DEPLOYING, deployment_message="no room yet")
+STARTING = _app(ApplicationStatus.DEPLOYING)
+RUNNING = _app(ApplicationStatus.RUNNING)
+FAILED = _app(ApplicationStatus.DEPLOY_FAILED, "engine died")
+UNHEALTHY = _app(ApplicationStatus.UNHEALTHY, "replica failed its health check")
+DELETING = _app(ApplicationStatus.DELETING)
+# in a status script: the poll's serve.status() raises
+UNREADABLE = object()
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+    def monotonic(self) -> float:
+        return self.now
 
 
 @pytest.fixture
 def loop(monkeypatch):
-    """Drives run_deploy_loop off a per-model script of statuses, recording the
-    pass sleeps and any app deletion. The last entry of a script repeats."""
-    sleeps: list[float] = []
-    deleted: list[str] = []
-    monkeypatch.setattr(strategy.time, "sleep", lambda s: sleeps.append(s))
-    monkeypatch.setattr(strategy.serve, "delete", lambda name: deleted.append(name))
+    """Drives run_deploy_loop off a per-model script of Serve statuses, one entry
+    consumed per poll (None: absent); the last entry repeats. Returns what the loop did."""
+    clock = _Clock()
+    monkeypatch.setattr(strategy.time, "sleep", clock.sleep)
+    monkeypatch.setattr(strategy.time, "monotonic", clock.monotonic)
+    removed: list[str] = []
+    events: list = []
 
-    def run(scripts: dict[str, list[tuple[str, str | None]]]):
-        calls: dict[str, int] = {}
+    def delete(names):
+        removed.extend(names)
+        events.append(("delete", list(names)))
 
-        def fake_attempt(config, ctx):
-            script = scripts[config.name]
-            i = calls.get(config.name, 0)
-            calls[config.name] = i + 1
-            return script[min(i, len(script) - 1)]
+    monkeypatch.setattr(strategy, "delete_apps_quietly", delete)
+    monkeypatch.setattr(strategy.ray, "get", lambda ref, **kwargs: ref)
 
-        monkeypatch.setattr(strategy, "try_reserve_and_deploy", fake_attempt)
-        models = [_model(name) for name in scripts]
-        passes, failed = strategy.run_deploy_loop(models, _ctx())
+    def run(
+        scripts: dict[str, list],
+        fatal: dict[str, str] | None = None,
+        timeout="30",
+        live=lambda name: False,
+        lease_error: Exception | None = None,
+    ):
+        monkeypatch.setenv("MSHIP_DEPLOY_TIMEOUT_S", timeout)
+        fatal = fatal or {}
+        names = {name: _model(name).deployment_name("g") for name in scripts}
+        submitted: list[str] = []
+        polls = {"n": -1}
+
+        @contextlib.contextmanager
+        def gateway_lease(gateway_name):
+            if lease_error is not None:
+                raise lease_error
+            events.append(("hold", gateway_name))
+            yield
+            events.append("release")
+
+        monkeypatch.setattr(strategy, "gateway_lease", gateway_lease)
+        monkeypatch.setattr(strategy, "_live", live)
+
+        def submit(config, ctx):
+            submitted.append(config.name)
+            events.append(("submit", config.name))
+            ctx.deployed_this_run[config.deployment_name(ctx.gateway_name)] = config.name
+
+        monkeypatch.setattr(strategy, "submit_deploy", submit)
+
+        def status():
+            polls["n"] += 1
+            apps = {}
+            for name, script in scripts.items():
+                app = script[min(polls["n"], len(script) - 1)]
+                if app is UNREADABLE:
+                    raise RuntimeError("serve controller unreachable")
+                if app is not None:
+                    apps[names[name]] = app
+            return MagicMock(applications=apps)
+
+        monkeypatch.setattr(strategy.serve, "status", status)
+
+        coordinator = MagicMock()
+        coordinator.pop_fatal_error.remote.side_effect = lambda name: fatal.get(name)
+        ctx = strategy.DeployContext(
+            coordinator=coordinator,
+            gateway_name="g",
+            serve_logging_config=LoggingConfig(),
+            deployed_this_run={},
+        )
+        outcome = strategy.run_deploy_loop([_model(name) for name in scripts], ctx)
         return {
-            "passes": passes,
-            "failed": {c.name: detail for c, detail in failed},
-            "attempts": calls,
-            "sleeps": sleeps,
-            "deleted": deleted,
+            "ready": [c.name for c in outcome.ready],
+            "pending": {c.name: reason for c, reason in outcome.still_pending},
+            "failed": {c.name: detail for c, detail in outcome.fatally_failed},
+            "removed_elsewhere": [c.name for c in outcome.removed_elsewhere],
+            "submitted": submitted,
+            "events": events,
+            "removed": removed,
+            "deployed_this_run": ctx.deployed_this_run,
         }
 
     return run
 
 
-TRANSIENT = ("transient", "RuntimeError: engine died")
-SKIPPED = ("skipped", None)
-DEPLOYED = ("deployed", None)
-
-
 class TestTransientCap:
     def test_a_model_that_always_fails_is_given_up_on(self, loop):
-        r = loop({"a": [TRANSIENT]})
-        assert r["attempts"]["a"] == strategy._MAX_TRANSIENT_FAILURES
-        assert r["failed"] == {"a": "RuntimeError: engine died"}
+        r = loop({"a": [FAILED]})
+        assert r["submitted"].count("a") == strategy._MAX_TRANSIENT_FAILURES
+        assert r["failed"] == {"a": "engine died"}
 
-    def test_giving_up_deletes_the_failed_app(self, loop):
-        r = loop({"a": [TRANSIENT]})
-        assert r["deleted"] == [_model("a").deployment_name("g")]
+    def test_giving_up_removes_the_failed_app(self, loop):
+        r = loop({"a": [FAILED]})
+        assert r["removed"] == [_model("a").deployment_name("g")]
 
-    def test_a_recovering_model_is_not_given_up_on(self, loop):
-        r = loop({"a": [TRANSIENT, TRANSIENT, DEPLOYED]})
+    def test_a_fatal_report_removes_the_app(self, loop):
+        r = loop({"a": [FAILED]}, fatal={_model("a").deployment_name("g"): "bad config"})
+        assert r["removed"] == [_model("a").deployment_name("g")]
+
+    def test_a_retry_resubmits_over_the_failed_app(self, loop):
+        r = loop({"a": [FAILED] + [DEPLOYING] * 3 + [RUNNING]})
+        assert r["submitted"] == ["a", "a"]
+        assert r["removed"] == []
         assert r["failed"] == {}
-        assert r["attempts"]["a"] == 3
+        assert r["pending"] == {}
 
-    def test_a_fatal_report_still_wins_immediately(self, loop):
-        r = loop({"a": [("fatal", "bad config")]})
-        assert r["attempts"]["a"] == 1
+    def test_removal_runs_off_the_polling_thread(self, loop, monkeypatch):
+        threads = []
+        monkeypatch.setattr(strategy, "delete_apps_quietly", lambda *args: threads.append(threading.current_thread()))
+        loop({"a": [FAILED]})
+        assert len(threads) == 1
+        assert threads[0] is not threading.current_thread()
+
+    def test_a_fatal_report_wins_immediately(self, loop):
+        r = loop({"a": [FAILED]}, fatal={_model("a").deployment_name("g"): "bad config"})
+        assert r["submitted"] == ["a"]
         assert r["failed"] == {"a": "bad config"}
 
     def test_one_failing_model_does_not_strand_a_healthy_one(self, loop):
-        r = loop({"a": [TRANSIENT], "b": [DEPLOYED]})
-        assert r["failed"] == {"a": "RuntimeError: engine died"}
-        assert r["attempts"]["b"] == 1
+        r = loop({"a": [FAILED], "b": [RUNNING]})
+        assert r["failed"] == {"a": "engine died"}
+        assert r["pending"] == {}
+        assert r["submitted"].count("b") == 1
 
 
-class TestCapacityWaitIsUncapped:
-    def test_skips_never_consume_an_attempt(self, loop):
-        r = loop({"a": [SKIPPED] * 20 + [DEPLOYED]})
+class TestPendingIsNotFailure:
+    def test_a_model_short_of_capacity_is_reported_pending(self, loop):
+        r = loop({"a": [DEPLOYING]}, timeout="10")
         assert r["failed"] == {}
-        assert r["attempts"]["a"] == 21
+        assert r["pending"] == {"a": "no room yet"}
 
-    def test_a_skip_between_failures_does_not_reset_the_count(self, loop):
-        r = loop({"a": [TRANSIENT, SKIPPED, TRANSIENT, SKIPPED, TRANSIENT]})
-        assert r["failed"] == {"a": "RuntimeError: engine died"}
+    def test_waiting_never_consumes_an_attempt(self, loop):
+        r = loop({"a": [DEPLOYING] * 20 + [RUNNING]})
+        assert r["submitted"] == ["a"]
+        assert r["failed"] == {}
+
+    def test_a_pending_model_does_not_hold_up_another(self, loop):
+        r = loop({"a": [DEPLOYING], "b": [RUNNING]}, timeout="10")
+        assert r["ready"] == ["b"]
+        assert r["pending"] == {"a": "no room yet"}
+        assert r["failed"] == {}
+
+    def test_an_unhealthy_app_stays_pending_without_a_resubmit(self, loop):
+        r = loop({"a": [UNHEALTHY]}, timeout="10")
+        assert r["submitted"] == ["a"]
+        assert r["failed"] == {}
+        assert r["pending"] == {"a": "replica failed its health check"}
+
+    def test_the_first_poll_logs_what_is_outstanding(self, loop, caplog):
+        with caplog.at_level("INFO"):
+            loop({"a": [DEPLOYING, RUNNING]})
+        assert "Waiting on 1 model(s): a (no room yet)" in caplog.text
+
+    def test_a_model_serve_gives_no_reason_for_is_pending_with_an_empty_reason(self, loop):
+        r = loop({"a": [STARTING]}, timeout="10")
+        assert r["pending"] == {"a": ""}
+
+    def test_a_model_without_a_reason_is_logged_by_name_alone(self, loop, caplog):
+        with caplog.at_level("INFO"):
+            loop({"a": [STARTING, RUNNING]})
+        assert "Waiting on 1 model(s): a" in caplog.messages
+
+    def test_a_model_waiting_to_retry_at_the_deadline_is_failed(self, loop):
+        r = loop({"a": [FAILED]}, timeout="5")
+        assert r["pending"] == {}
+        assert r["failed"] == {"a": "engine died"}
+        assert r["removed"] == [_model("a").deployment_name("g")]
 
 
-class TestBackoff:
-    def test_the_pass_sleep_doubles_per_failure(self, loop):
-        r = loop({"a": [TRANSIENT]})
-        # No sleep after the pass that gives up — nothing is left to retry.
-        assert r["sleeps"] == [2 * strategy._DEPLOY_RETRY_SLEEP_S, 4 * strategy._DEPLOY_RETRY_SLEEP_S]
+class TestRemovedElsewhere:
+    @pytest.mark.parametrize("gone", [None, DELETING], ids=["absent", "deleting"])
+    def test_an_app_deleted_after_serve_reported_it_is_no_longer_waited_for(self, loop, gone):
+        r = loop({"a": [DEPLOYING, gone]})
+        assert r["removed_elsewhere"] == ["a"]
+        assert r["pending"] == {}
+        assert r["failed"] == {}
 
-    def test_a_pure_capacity_wait_keeps_the_base_cadence(self, loop):
-        r = loop({"a": [SKIPPED, SKIPPED, DEPLOYED]})
-        assert r["sleeps"] == [strategy._DEPLOY_RETRY_SLEEP_S] * 2
+    def test_it_is_dropped_from_this_runs_deployments(self, loop):
+        r = loop({"a": [DEPLOYING, None]})
+        assert r["deployed_this_run"] == {}
+
+    def test_an_app_serve_has_not_reported_yet_is_waited_for(self, loop):
+        r = loop({"a": [None, None, RUNNING]})
+        assert r["ready"] == ["a"]
+        assert r["removed_elsewhere"] == []
+
+    def test_an_app_submitted_over_one_being_deleted_is_waited_for(self, loop):
+        r = loop({"a": [DELETING, RUNNING]})
+        assert r["ready"] == ["a"]
+        assert r["removed_elsewhere"] == []
+
+    def test_an_unreadable_serve_status_removes_nothing(self, loop):
+        r = loop({"a": [DEPLOYING, UNREADABLE, RUNNING]})
+        assert r["ready"] == ["a"]
+        assert r["removed_elsewhere"] == []
+
+    def test_other_models_are_still_waited_for(self, loop):
+        r = loop({"a": [DEPLOYING, None], "b": [DEPLOYING, DEPLOYING, RUNNING]})
+        assert r["removed_elsewhere"] == ["a"]
+        assert r["ready"] == ["b"]
+
+
+class TestServeApiCanary:
+    def test_run_many_still_takes_wait_for_applications_running(self):
+        # @DeveloperAPI: the only public way to deploy without blocking on RUNNING.
+        assert "wait_for_applications_running" in inspect.signature(serve.run_many).parameters
+
+
+class TestSubmit:
+    def test_hands_off_without_waiting(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(strategy.serve, "run_many", lambda targets, **kwargs: calls.append(kwargs))
+        ctx = strategy.DeployContext(
+            coordinator=MagicMock(),
+            gateway_name="g",
+            serve_logging_config=LoggingConfig(),
+            deployed_this_run={},
+        )
+        strategy.submit_deploy(_model("a"), ctx)
+        assert calls == [{"wait_for_applications_running": False}]
+        assert ctx.deployed_this_run == {_model("a").deployment_name("g"): "a"}
+
+
+class TestSubmitUnderTheGatewayLease:
+    def test_each_submit_holds_the_gateway_lease(self, loop):
+        r = loop({"a": [FAILED] + [DEPLOYING] * 3 + [RUNNING]})
+        assert r["events"] == [("hold", "g"), ("submit", "a"), "release"] * 2
+
+    def test_an_app_submitted_elsewhere_is_polled_not_submitted(self, loop):
+        r = loop({"a": [DEPLOYING, RUNNING]}, live=lambda name: True)
+        assert r["submitted"] == []
+        assert r["ready"] == ["a"]
+        assert r["deployed_this_run"] == {}
+
+    def test_a_lease_failure_counts_as_a_failed_attempt(self, loop):
+        r = loop({"a": [DEPLOYING]}, lease_error=DeployLeaseError("deploy lease service unreachable"))
+        assert r["submitted"] == []
+        assert r["failed"] == {"a": "DeployLeaseError: deploy lease service unreachable"}
+
+    def test_a_given_up_app_is_removed_under_the_gateway_lease(self, loop):
+        r = loop({"a": [FAILED]})
+        assert r["events"][-3:] == [("hold", "g"), ("delete", [_model("a").deployment_name("g")]), "release"]
+
+    def test_a_given_up_app_made_live_again_is_kept(self, loop):
+        answers = iter([False] * strategy._MAX_TRANSIENT_FAILURES + [True])
+        r = loop({"a": [FAILED]}, live=lambda name: next(answers))
+        assert r["failed"] == {"a": "engine died"}
+        assert r["removed"] == []
+
+    @pytest.mark.parametrize(
+        ("app", "expected"),
+        [
+            (None, False),
+            (FAILED, False),
+            (_app(ApplicationStatus.DELETING), False),
+            (DEPLOYING, True),
+            (RUNNING, True),
+            (UNHEALTHY, True),
+        ],
+    )
+    def test_an_app_is_live_unless_absent_failed_or_being_deleted(self, monkeypatch, app, expected):
+        apps = {} if app is None else {"g.a-1": app}
+        monkeypatch.setattr(strategy.serve, "status", lambda: MagicMock(applications=apps))
+        assert strategy._live("g.a-1") is expected
+
+
+class TestThisRunsDeployments:
+    def test_a_running_model_stays_recorded(self, loop):
+        r = loop({"a": [DEPLOYING, RUNNING]})
+        assert r["deployed_this_run"] == {_model("a").deployment_name("g"): "a"}
+
+    def test_a_failed_model_is_dropped(self, loop):
+        r = loop({"a": [FAILED]}, fatal={_model("a").deployment_name("g"): "bad config"})
+        assert r["deployed_this_run"] == {}

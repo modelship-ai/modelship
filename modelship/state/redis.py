@@ -1,7 +1,7 @@
 """Redis-backed StateStore — one JSON value per key.
 
 Durable across cluster / head death (the value lives in Redis, not the actor), so
-it's the backend for the coordinator registry and effective config in k8s, where
+it's the backend for the effective config and /v1/responses conversations in k8s, where
 the same Redis also backs Ray's GCS fault tolerance. Selected by the ``redis://``
 (or ``rediss://`` for TLS) URI scheme; the URL carries host/port/db/user/password,
 parsed natively by ``from_url`` — so a password may be inlined (``redis://:pw@host``)

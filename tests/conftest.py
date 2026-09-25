@@ -3,7 +3,10 @@ infrastructure shared by every `@pytest.mark.integration` file."""
 
 import json
 import os
+import signal
 import subprocess
+import sys
+import textwrap
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -38,6 +41,33 @@ def neutralize_request_watcher():
 
 OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 HEALTH_URL = "http://localhost:8000/modelship/health"
+SERVE_STATUS_URL = "http://localhost:8265/api/serve/applications/"
+
+MSHIP = ["uv", "run", "python", "-m", "modelship.launcher"]
+
+
+def serve_apps() -> dict[str, dict]:
+    """Serve's applications by name, from the dashboard's REST status API."""
+    resp = httpx.get(SERVE_STATUS_URL, timeout=10)
+    resp.raise_for_status()
+    return resp.json().get("applications", {})
+
+
+def run_on_cluster(code: str) -> str:
+    """Runs *code* in a Ray driver attached to the session cluster; returns its stdout."""
+    script = "import ray\nray.init(address='auto', log_to_driver=False)\n" + textwrap.dedent(code)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "RAY_ENABLE_UV_RUN_RUNTIME_ENV": "0"},
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"Ray driver script failed (exit {result.returncode}):\n{result.stderr[-4000:]}")
+    return result.stdout
+
 
 # Per-model configs; Deployer.deploy(*names) writes a subset into a one-shot
 # models.yaml and runs `mship deploy --reconcile` to swap the deployed set.
@@ -265,6 +295,35 @@ def _model_flags(config: dict) -> list[str]:
     return flags
 
 
+def _fail_deploy(log_path: Path, code: int, expected: int) -> None:
+    tail = log_path.read_text()[-4000:]
+    pytest.fail(f"mship deploy exited {code}, expected {expected}.\nLog file: {log_path}\nLast 4KB:\n{tail}")
+
+
+class _DeployProcess:
+    """A background `mship deploy` in its own process group, so a timeout kills uv and Python alike."""
+
+    def __init__(self, args: list[str], log_path: Path) -> None:
+        self._log_path = log_path
+        self._log_file = open(log_path, "w")  # noqa: SIM115 — closed in wait()
+        self._proc = subprocess.Popen(
+            [*MSHIP, "deploy", *args], stdout=self._log_file, stderr=subprocess.STDOUT, start_new_session=True
+        )
+
+    def wait(self, expect_code: int = 0, timeout: float = 900) -> str:
+        """The deploy's log once it exits, failing the test on any other exit code."""
+        try:
+            code = self._proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(self._proc.pid, signal.SIGKILL)
+            code = self._proc.wait(timeout=10)
+        finally:
+            self._log_file.close()
+        if code != expect_code:
+            _fail_deploy(self._log_path, code, expect_code)
+        return self._log_path.read_text()
+
+
 class _Deployer:
     """Runs `mship deploy --reconcile` against the running gateway to swap the
     deployed set; re-deploying the same set is a no-op. A lone CLI-expressible model
@@ -273,7 +332,29 @@ class _Deployer:
 
     def __init__(self, tmp_dir: Path) -> None:
         self._tmp = tmp_dir
-        self._current: frozenset[str] = frozenset()
+        # None when the deployed set is unknown
+        self._current: frozenset[str] | None = frozenset()
+
+    def forget(self) -> None:
+        """Marks the deployed set unknown, so the next deploy() runs."""
+        self._current = None
+
+    def run(self, *args: str, log_name: str, expect_code: int = 0) -> str:
+        """Runs `mship deploy` with exactly *args*; returns its log, failing the test on any other exit code."""
+        self._current = None
+        log_path = self._tmp / f"{log_name}.log"
+        with open(log_path, "w") as log_file:
+            result = subprocess.run(
+                [*MSHIP, "deploy", *args], stdout=log_file, stderr=subprocess.STDOUT, check=False, timeout=900
+            )
+        if result.returncode != expect_code:
+            _fail_deploy(log_path, result.returncode, expect_code)
+        return log_path.read_text()
+
+    def spawn(self, *args: str, log_name: str) -> _DeployProcess:
+        """Starts `mship deploy` with exactly *args* in the background."""
+        self._current = None
+        return _DeployProcess(list(args), self._tmp / f"{log_name}.log")
 
     def deploy(self, *model_names: str) -> None:
         wanted = frozenset(model_names)
@@ -292,16 +373,13 @@ class _Deployer:
 
     def deploy_raw(self, models: list[dict], *, replace_strategy: str = "stop_start") -> None:
         """Like deploy(), but takes raw model dicts directly and lets the caller pick
-        --replace-strategy; resets self._current since this bypasses the by-name cache."""
+        --replace-strategy."""
         slug = "raw-" + ("+".join(sorted(m["name"] for m in models)) or "empty")
         config_path = self._write_config(f"models-{slug}-{replace_strategy}.yaml", models)
-        self._current = frozenset()
         self._run(["--config", str(config_path)], slug, replace_strategy)
 
     def deploy_cli(self, *flags: str) -> None:
-        """Deploy straight from `--model` flags. Resets the by-name cache, as
-        deploy_raw does."""
-        self._current = frozenset()
+        """Deploy straight from `--model` flags."""
         self._run(list(flags), "cli", "stop_start")
 
     def _write_config(self, filename: str, models: list[dict]) -> Path:
@@ -311,38 +389,19 @@ class _Deployer:
         return config_path
 
     def _run(self, input_args: list[str], slug: str, replace_strategy: str) -> None:
-        log_path = self._tmp / f"reconcile-{slug}-{replace_strategy}.log"
-        with open(log_path, "w") as log_file:
-            result = subprocess.run(
-                [
-                    "uv",
-                    "run",
-                    "python",
-                    "-m",
-                    "modelship.launcher",
-                    "deploy",
-                    *input_args,
-                    "--reconcile",
-                    "--replace-strategy",
-                    replace_strategy,
-                ],
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                check=False,
-                timeout=900,
-            )
-        if result.returncode != 0:
-            tail = log_path.read_text()[-4000:]
-            pytest.fail(
-                f"mship deploy --reconcile failed for {slug} ({replace_strategy}, exit {result.returncode}).\n"
-                f"Log file: {log_path}\nLast 4KB:\n{tail}"
-            )
+        self.run(
+            *input_args,
+            "--reconcile",
+            "--replace-strategy",
+            replace_strategy,
+            log_name=f"reconcile-{slug}-{replace_strategy}",
+        )
 
 
 @pytest.fixture(scope="session")
 def mship_cluster(tmp_path_factory):
     """Starts a cluster with a long-lived `mship start` process bound to an empty
-    models.yaml; per-test code deploys models additively via `_Deployer.deploy(...)`."""
+    models.yaml; per-test code swaps the deployed set through `_Deployer`."""
     tmp_dir = tmp_path_factory.mktemp("mship_integration")
     empty_config = tmp_dir / "empty-models.yaml"
     log_path = tmp_dir / "mship_start.log"

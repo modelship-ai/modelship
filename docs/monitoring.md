@@ -188,7 +188,7 @@ The dashboard has 9 rows:
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
 | **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*` |
 | **Alerts** | Error rate %, KV cache usage, queue depth, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_node_*` |
-| **Cluster / HA** | Deploy lock, reservation outcomes, operator force-releases, coordinator-vs-replica routing generation, gateway watch errors, state-store latency/errors, deploy duration & model changes | `ray_modelship_*` |
+| **Cluster / HA** | Gateway coordinator vs. gateway replica routing generation, gateway watch errors, state-store latency/errors, deploy duration & model changes | `ray_modelship_*` |
 | **Per-Node Resources** | GPU utilization/memory, CPU, system memory broken out by node (filtered by the Node dropdown) | `ray_node_*` |
 
 > **Deploying via the Helm chart:** set `grafanaDashboard.enabled=true` to ship this dashboard as a ConfigMap the Grafana sidecar auto-imports (and `prometheusRule.enabled=true` for the alert rules below) — no manual import needed. See the chart README.
@@ -231,8 +231,6 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | `ModelshipClientDisconnects` | Disconnect rate > 1/min | 5m | Clients timing out or dropping connections |
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
 | `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
-| `ModelshipDeployLockStuck` | `deploy_lock_held` == 1 for 10m | 0m | A deploy is hung holding the cluster-wide deploy lock |
-| `ModelshipOperatorForceReleased` | Any operator force-release | 0m | A deploy operator died ungracefully; lock reclaimed |
 | `ModelshipGatewayRoutingDivergence` | Replica generation < coordinator for 10m | 10m | A gateway replica is routing from a stale table |
 | `ModelshipRayWorkerNotReady` | Ray worker pod not ready | 5m | Cluster capacity degraded (needs kube-state-metrics) |
 
@@ -258,7 +256,7 @@ curl http://localhost:8000/modelship/health
 # {"status": "ok", "uptime_s": 12.3}
 ```
 
-**`/readyz`** — readiness + timing. Returns 200 when every expected model has a registered deployment; 503 with the same JSON body while any model is still pending. Bodies carry full state so a single poll tells you what's loaded, what's outstanding, and how long each model took to come up:
+**`/readyz`** — readiness + timing. Returns 200 when every expected model has a deployment the gateway routes to; 503 with the same JSON body while any model is still pending. Bodies carry full state so a single poll tells you what's loaded, what's outstanding, and how long each model took to come up:
 
 ```bash
 curl http://localhost:8000/modelship/readyz
@@ -275,19 +273,19 @@ curl http://localhost:8000/modelship/readyz
 # }
 ```
 
-Per-model timings are gateway-measured: the gap between one model registering and the next (models deploy sequentially, ordered by GPU footprint), so the first model's entry includes any framework-level setup time preceding it.
+Per-model timings are gateway-measured: the gap between one model becoming routable and the one before it. That matches load time only when models load one after another, as they do on a single node; the first model's entry includes any framework-level setup time preceding it.
 
 Use `/health` for Kubernetes liveness probes and `/readyz` for readiness probes — `/readyz` returning 503 prevents a service from flipping traffic onto the pod before models are loaded.
 
 ## Modelship Metrics Reference
 
-Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the deploy coordinator, state store, and deploy driver, which are not Serve replicas).
+Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the gateway coordinator, state store, and deploy driver, which are not Serve replicas).
 
 ### The `gateway` dimension
 
 Every per-model and per-gateway metric below carries a `gateway` tag identifying which gateway emitted it, so multiple gateways sharing one Ray cluster stay distinguishable (the Grafana dashboard exposes a **Gateway** dropdown built on it). The tag is stamped automatically from `MSHIP_GATEWAY_NAME` — the deploy driver sets it and forwards it to every replica via `runtime_env`, so no call site passes it explicitly.
 
-Cluster-scoped metrics are **not** per-gateway, because the thing they measure is shared cluster-wide: the deploy lock and reservations (one mutex per cluster), the state store (one shared backend), and all inherited `ray_vllm_*` / `ray_serve_*` / `ray_node_*` metrics (engine/cluster level). The dashboard's Gateway dropdown therefore filters the `ray_modelship_*` per-model panels but leaves the vLLM/GPU/Ray-Serve panels cluster-wide.
+Cluster-scoped metrics are **not** per-gateway, because the thing they measure is shared cluster-wide: the state store (one shared backend), and all inherited `ray_vllm_*` / `ray_serve_*` / `ray_node_*` metrics (engine/cluster level). The dashboard's Gateway dropdown therefore filters the `ray_modelship_*` per-model panels but leaves the vLLM/GPU/Ray-Serve panels cluster-wide.
 
 ### Gateway
 
@@ -327,7 +325,7 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 
 ### HA Control Plane
 
-These cover the multi-node / HA machinery deployed by the Helm chart (deploy coordinator, pluggable state store, gateway watch loop). The first six carry a `gateway` tag; the rest are cluster-scoped.
+These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first six carry a `gateway` tag; the rest are cluster-scoped.
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
@@ -336,10 +334,7 @@ These cover the multi-node / HA machinery deployed by the Helm chart (deploy coo
 | `ray_modelship_gateway_routing_generation` | Gauge | `gateway` | Routing generation a gateway replica has reconciled to |
 | `ray_modelship_coordinator_generation` | Gauge | `gateway` | Coordinator's current routing generation (compare to the replica gauge to spot lag) |
 | `ray_modelship_deploy_duration_seconds` | Histogram | `gateway` | Wall-clock time for a deploy run to settle |
-| `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a deploy (`action`: `add`, `remove`, `evict`) |
-| `ray_modelship_deploy_lock_held` | Gauge | | 1 while the cluster-wide deploy lock is held, else 0 |
-| `ray_modelship_deploy_reservations_total` | Counter | `result` | Deploy-lock reservation attempts (`result`: `granted`, `locked`, `insufficient_gpu`, `insufficient_cpu`) |
-| `ray_modelship_operator_force_release_total` | Counter | `reason` | Locks force-released after ungraceful operator death (`reason`: `probe_gone`, `unresponsive`) |
+| `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a deploy (`action`: `add` — came up before the deploy timeout, `remove`, `fail`) |
 | `ray_modelship_state_store_operations_total` | Counter | `backend`, `op`, `result` | State-store ops (`op`: `get`/`set`/`delete`; `result`: `ok`/`error`) |
 | `ray_modelship_state_store_operation_duration_seconds` | Histogram | `backend`, `op` | State-store operation latency |
 
