@@ -1,6 +1,6 @@
 """_apply: what the driver writes, deploys and deletes around the deploy loop."""
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +10,7 @@ from ray.serve.schema import ApplicationStatus
 from modelship import driver
 from modelship.deploy.effective_config import read_effective, write_effective
 from modelship.deploy.strategy import DeployOutcome
+from modelship.infer.deploy_leases import DeployLeaseError
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
 
@@ -30,11 +31,44 @@ def _app(raw: dict) -> str:
 
 @pytest.fixture
 def apply():
-    def run(prev, desired, statuses, outcome=None, replace_strategy="blue_green", sources_error=None):
+    def run(
+        prev,
+        desired,
+        statuses,
+        outcome=None,
+        replace_strategy="blue_green",
+        sources_error=None,
+        reconcile=True,
+        on_hold=None,
+        statuses_under_lease=None,
+        refuse_write=False,
+    ):
         store = _MemoryStore()
         write_effective(store, "g", prev)
         events: list = []
         effective_at_submit: list = []
+        held = {"now": False}
+
+        def write(raw_models):
+            if refuse_write:
+                raise DeployLeaseError("lost the deploy lease of gateway 'g' before writing its effective config")
+            events.append("write")
+            write_effective(store, "g", raw_models)
+
+        @contextmanager
+        def gateway_lease(gateway_name):
+            events.append("hold")
+            held["now"] = True
+            if on_hold is not None:
+                on_hold(store)
+            try:
+                yield SimpleNamespace(write_effective=write)
+            finally:
+                held["now"] = False
+                events.append("release")
+
+        def app_statuses():
+            return statuses_under_lease if held["now"] and statuses_under_lease is not None else statuses
 
         def deploy_loop(models, ctx):
             effective_at_submit.append(read_effective(store, "g"))
@@ -45,10 +79,11 @@ def apply():
         delete = MagicMock(side_effect=lambda names: events.append(("delete", list(names))))
         coordinator = MagicMock()
         changed = MagicMock()
-        args = SimpleNamespace(reconcile=True, config="models.yaml", model=None, replace_strategy=replace_strategy)
+        args = SimpleNamespace(reconcile=reconcile, config="models.yaml", model=None, replace_strategy=replace_strategy)
         with ExitStack() as stack:
             for target, value in {
-                "modelship.deploy.serve_utils.get_app_statuses": MagicMock(return_value=statuses),
+                "modelship.deploy.serve_utils.get_app_statuses": app_statuses,
+                "modelship.infer.deploy_leases.gateway_lease": gateway_lease,
                 "modelship.deploy.config.resolve_input_models": MagicMock(return_value=desired),
                 "modelship.deploy.config.resolve_all_model_sources": MagicMock(side_effect=sources_error),
                 "modelship.state.get_state_store": MagicMock(return_value=store),
@@ -64,7 +99,7 @@ def apply():
                 stack.enter_context(patch(target, value))
             try:
                 failed, error = driver._apply(args, "g", MagicMock(), {}), None
-            except RuntimeError as e:
+            except Exception as e:
                 failed, error = None, e
         return SimpleNamespace(
             failed=failed,
@@ -99,17 +134,36 @@ class TestEffectiveConfig:
         assert r.submitted is None
 
 
+class TestGatewayLease:
+    def test_a_write_made_before_the_lease_was_held_is_merged_onto(self, apply):
+        a, b, c = _raw("a"), _raw("b"), _raw("c")
+        r = apply([a], [c], {}, reconcile=False, on_hold=lambda store: write_effective(store, "g", [a, b]))
+        assert r.effective == [a, b, c]
+
+    def test_plans_from_the_statuses_read_under_the_lease(self, apply):
+        a = _raw("a")
+        r = apply([], [a], {}, statuses_under_lease={_app(a): ApplicationStatus.RUNNING})
+        assert r.submitted is None
+
+    def test_a_lost_lease_writes_and_submits_nothing(self, apply):
+        a, b = _raw("a"), _raw("b")
+        r = apply([a], [a, b], {}, refuse_write=True)
+        assert isinstance(r.error, DeployLeaseError)
+        assert r.effective == [a]
+        assert r.submitted is None
+
+
 class TestReplacement:
     def test_blue_green_leaves_the_old_app_to_the_gateway_coordinator(self, apply):
         old, new = _raw("a", num_cpus=1), _raw("a", num_cpus=2)
         r = apply([old], [new], {_app(old): ApplicationStatus.RUNNING})
-        assert r.events == ["deploy"]
+        assert r.events == ["hold", "write", "release", "deploy"]
 
     def test_stop_start_deletes_stale_apps_before_deploying(self, apply):
         old, new, dropped = _raw("a", num_cpus=1), _raw("a", num_cpus=2), _raw("b")
         statuses = {_app(old): ApplicationStatus.RUNNING, _app(dropped): ApplicationStatus.RUNNING}
         r = apply([old, dropped], [new], statuses, replace_strategy="stop_start")
-        assert r.events == [("delete", sorted([_app(old), _app(dropped)])), "deploy"]
+        assert r.events == ["hold", "write", ("delete", sorted([_app(old), _app(dropped)])), "release", "deploy"]
 
 
 class TestLiveApps:

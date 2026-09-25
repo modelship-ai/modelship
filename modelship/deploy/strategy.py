@@ -10,6 +10,7 @@ from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview, Loggi
 
 from modelship.deploy.actor_options import build_deployment_options
 from modelship.deploy.removal import delete_apps_quietly
+from modelship.infer.deploy_leases import gateway_lease
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.infer.model_deployment import ModelDeployment
 from modelship.logging import get_logger
@@ -212,11 +213,23 @@ def run_deploy_loop(
 
 
 def _submit(config: ModelshipModelConfig, ctx: DeployContext) -> str | None:
+    """Submits the app under the gateway's lease unless it is live by then; the error text if that fails."""
+    name = config.deployment_name(ctx.gateway_name)
     try:
-        submit_deploy(config, ctx)
+        with gateway_lease(ctx.gateway_name):
+            if not _to_submit(name):
+                logger.info("%s was submitted by another deploy; waiting for it", name)
+                return None
+            submit_deploy(config, ctx)
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
     return None
+
+
+def _to_submit(name: str) -> bool:
+    """Whether Serve reports the app absent, failed or being deleted."""
+    app = serve.status().applications.get(name)
+    return app is None or app.status in _NOT_LIVE
 
 
 def _record_failure(name: str, item: _Pending, ctx: DeployContext, message: str) -> str | None:

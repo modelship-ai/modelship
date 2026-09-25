@@ -1,4 +1,4 @@
-"""The deploy-lease holder's side: the context manager's acquire/release and the renew thread."""
+"""The deploy-lease holder's side: the node and gateway context managers' acquire/release and the renew thread."""
 
 import asyncio
 import threading
@@ -8,7 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from modelship.infer import deploy_coordinator, deploy_leases
-from modelship.infer.deploy_leases import DeployLeaseError, deploy_lease
+from modelship.infer.deploy_coordinator import gateway_lease_key
+from modelship.infer.deploy_leases import DeployLeaseError, deploy_lease, gateway_lease
 
 _Coord = deploy_coordinator.DeployCoordinator.__ray_metadata__.modified_class
 
@@ -103,6 +104,77 @@ class TestDeployLease:
             async with deploy_lease("qwen"):
                 pass
 
+    async def test_a_lost_lease_is_reported_as_loading_anyway(self, monkeypatch):
+        handle = _FakeHandle(_fresh())
+        monkeypatch.setattr(deploy_leases, "get_or_create_coordinator", lambda: handle)
+        renewing = []
+        monkeypatch.setattr(deploy_leases, "_renew_in_thread", lambda *args: renewing.append(args) or threading.Event())
+        async with deploy_lease("qwen"):
+            pass
+        assert renewing[0][3] == "qwen: lost the deploy lease on this node; loading anyway"
+
+
+class _Ref:
+    """Stands in for an ObjectRef: awaitable, and what the patched ray.get resolves."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def __await__(self):
+        yield from ()
+        return self.value
+
+
+class TestGatewayLease:
+    @pytest.fixture
+    def handle(self, monkeypatch):
+        handle = MagicMock()
+        handle.acquire.remote.return_value = _Ref(None)
+        handle.write_effective.remote.return_value = _Ref(True)
+        monkeypatch.setattr(deploy_leases, "get_or_create_coordinator", lambda: handle)
+        monkeypatch.setattr(deploy_leases.ray, "get", lambda ref, **kwargs: ref.value)
+        monkeypatch.setattr(deploy_leases, "_renew_in_thread", lambda *args: threading.Event())
+        monkeypatch.setattr(deploy_leases, "POLL_SECONDS", 0.01)
+        return handle
+
+    def test_holds_the_gateways_lease_for_the_block_then_releases(self, handle):
+        with gateway_lease("g"):
+            handle.release.remote.assert_not_called()
+        key, holder = handle.acquire.remote.call_args.args
+        assert key == gateway_lease_key("g")
+        handle.release.remote.assert_called_once_with(key, holder)
+
+    def test_releases_when_the_block_raises(self, handle):
+        with pytest.raises(RuntimeError), gateway_lease("g"):
+            raise RuntimeError("merge failed")
+        handle.release.remote.assert_called_once()
+
+    def test_waits_while_something_else_holds_it(self, handle, caplog):
+        handle.acquire.remote.side_effect = [_Ref("held by another deploy"), _Ref(None)]
+        with caplog.at_level("INFO"), gateway_lease("g"):
+            pass
+        assert handle.acquire.remote.call_count == 2
+        assert "Waiting to deploy to gateway 'g' (held by another deploy)" in caplog.text
+
+    def test_each_hold_has_its_own_holder(self, handle):
+        with gateway_lease("g"):
+            pass
+        with gateway_lease("g"):
+            pass
+        first, second = (call.args[1] for call in handle.acquire.remote.call_args_list)
+        assert first != second
+
+    def test_writes_the_effective_config_as_the_holder(self, handle):
+        with gateway_lease("g") as lease:
+            lease.write_effective([{"name": "m"}])
+        holder = handle.acquire.remote.call_args.args[1]
+        handle.write_effective.remote.assert_called_once_with("g", holder, [{"name": "m"}])
+
+    def test_a_refused_write_raises(self, handle):
+        handle.write_effective.remote.return_value = _Ref(False)
+        with pytest.raises(DeployLeaseError, match="lost the deploy lease of gateway 'g'"), gateway_lease("g") as lease:
+            lease.write_effective([{"name": "m"}])
+
 
 class TestRenewThread:
     @pytest.fixture(autouse=True)
@@ -113,14 +185,14 @@ class TestRenewThread:
     def _renew(self, monkeypatch, stop, **mock_kwargs):
         get = MagicMock(**mock_kwargs)
         monkeypatch.setattr(deploy_leases.ray, "get", get)
-        deploy_leases._renew_until(MagicMock(), "node-a", "holder", "qwen", stop)
+        deploy_leases._renew_until(MagicMock(), "node-a", "holder", "lost the lease", stop)
         return get
 
     def test_a_refused_renewal_stops_renewing_and_warns(self, monkeypatch, caplog):
         with caplog.at_level("WARNING"):
             get = self._renew(monkeypatch, threading.Event(), return_value=False)
         assert get.call_count == 1
-        assert "loading anyway" in caplog.text
+        assert "lost the lease (renewal refused)" in caplog.text
 
     def test_failures_are_retried_until_the_lease_would_have_expired(self, monkeypatch, caplog):
         with caplog.at_level("WARNING"):
@@ -159,7 +231,7 @@ class TestRenewThread:
         monkeypatch.setattr(deploy_leases.ray, "get", MagicMock(return_value=True))
         stop = threading.Event()
         thread = threading.Thread(
-            target=deploy_leases._renew_until, args=(MagicMock(), "node-a", "holder", "qwen", stop)
+            target=deploy_leases._renew_until, args=(MagicMock(), "node-a", "holder", "lost the lease", stop)
         )
         thread.start()
         time.sleep(0.05)

@@ -1,6 +1,7 @@
 """`run_deploy_loop` must give up on a model that keeps failing to deploy, while
 leaving one that is only short of capacity to come up on its own."""
 
+import contextlib
 import inspect
 import threading
 from unittest.mock import MagicMock
@@ -17,6 +18,7 @@ from ray.serve.schema import (
 )
 
 from modelship.deploy import strategy
+from modelship.infer.deploy_leases import DeployLeaseError
 from modelship.infer.infer_config import ModelshipModelConfig
 
 
@@ -67,15 +69,34 @@ def loop(monkeypatch):
     monkeypatch.setattr(strategy, "delete_apps_quietly", lambda names: removed.extend(names))
     monkeypatch.setattr(strategy.ray, "get", lambda ref, **kwargs: ref)
 
-    def run(scripts: dict[str, list[ApplicationStatusOverview]], fatal: dict[str, str] | None = None, timeout="30"):
+    def run(
+        scripts: dict[str, list[ApplicationStatusOverview]],
+        fatal: dict[str, str] | None = None,
+        timeout="30",
+        submitted_elsewhere=False,
+        lease_error: Exception | None = None,
+    ):
         monkeypatch.setenv("MSHIP_DEPLOY_TIMEOUT_S", timeout)
         fatal = fatal or {}
         names = {name: _model(name).deployment_name("g") for name in scripts}
         submitted: list[str] = []
+        events: list = []
         polls = {"n": -1}
+
+        @contextlib.contextmanager
+        def gateway_lease(gateway_name):
+            if lease_error is not None:
+                raise lease_error
+            events.append(("hold", gateway_name))
+            yield
+            events.append("release")
+
+        monkeypatch.setattr(strategy, "gateway_lease", gateway_lease)
+        monkeypatch.setattr(strategy, "_to_submit", lambda name: not submitted_elsewhere)
 
         def submit(config, ctx):
             submitted.append(config.name)
+            events.append(("submit", config.name))
             ctx.deployed_this_run[config.deployment_name(ctx.gateway_name)] = config.name
 
         monkeypatch.setattr(strategy, "submit_deploy", submit)
@@ -103,6 +124,7 @@ def loop(monkeypatch):
             "pending": {c.name: reason for c, reason in outcome.still_pending},
             "failed": {c.name: detail for c, detail in outcome.fatally_failed},
             "submitted": submitted,
+            "events": events,
             "removed": removed,
             "deployed_this_run": ctx.deployed_this_run,
         }
@@ -213,6 +235,39 @@ class TestSubmit:
         strategy.submit_deploy(_model("a"), ctx)
         assert calls == [{"wait_for_applications_running": False}]
         assert ctx.deployed_this_run == {_model("a").deployment_name("g"): "a"}
+
+
+class TestSubmitUnderTheGatewayLease:
+    def test_each_submit_holds_the_gateway_lease(self, loop):
+        r = loop({"a": [FAILED] + [DEPLOYING] * 3 + [RUNNING]})
+        assert r["events"] == [("hold", "g"), ("submit", "a"), "release"] * 2
+
+    def test_an_app_submitted_elsewhere_is_polled_not_submitted(self, loop):
+        r = loop({"a": [DEPLOYING, RUNNING]}, submitted_elsewhere=True)
+        assert r["submitted"] == []
+        assert r["ready"] == ["a"]
+        assert r["deployed_this_run"] == {}
+
+    def test_a_lease_failure_counts_as_a_failed_attempt(self, loop):
+        r = loop({"a": [DEPLOYING]}, lease_error=DeployLeaseError("deploy lease service unreachable"))
+        assert r["submitted"] == []
+        assert r["failed"] == {"a": "DeployLeaseError: deploy lease service unreachable"}
+
+    @pytest.mark.parametrize(
+        ("app", "expected"),
+        [
+            (None, True),
+            (FAILED, True),
+            (_app(ApplicationStatus.DELETING), True),
+            (DEPLOYING, False),
+            (RUNNING, False),
+            (UNHEALTHY, False),
+        ],
+    )
+    def test_an_app_is_submitted_only_when_absent_failed_or_being_deleted(self, monkeypatch, app, expected):
+        apps = {} if app is None else {"g.a-1": app}
+        monkeypatch.setattr(strategy.serve, "status", lambda: MagicMock(applications=apps))
+        assert strategy._to_submit("g.a-1") is expected
 
 
 class TestThisRunsDeployments:

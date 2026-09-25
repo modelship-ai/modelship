@@ -194,19 +194,16 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
 
     from modelship.deploy.actor_options import build_deployment_options, total_gpu_reservation
     from modelship.deploy.config import resolve_all_model_sources, resolve_input_models
-    from modelship.deploy.effective_config import merge, read_effective, resolve_mode, to_config, write_effective
+    from modelship.deploy.effective_config import merge, read_effective, resolve_mode, to_config
     from modelship.deploy.removal import delete_apps_quietly
     from modelship.deploy.serve_utils import get_app_statuses
     from modelship.deploy.strategy import DeployContext, DeployOutcome, compute_deploy_plan, run_deploy_loop
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
+    from modelship.infer.deploy_leases import gateway_lease
     from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
     from modelship.openai.compaction_crypto import ensure_key_seeded
     from modelship.state import MemoryStateStore, get_state_store
-
-    app_statuses = get_app_statuses()
-    if app_statuses:
-        logger.info("Found existing deployments: %s", ", ".join(sorted(app_statuses)))
 
     # mode only picks the merge (additive=union, reconcile=replace); the deploy always reconciles.
     mode = resolve_mode(reconcile=args.reconcile)
@@ -218,54 +215,59 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
             "to redis:// for self-heal after cluster loss."
         )
     ensure_key_seeded(store)
-    effective_raw = read_effective(store, gateway_name)
 
     if args.config is None and args.model is None and mode == "reconcile":
-        desired_raw = effective_raw
+        input_raw = None
         logger.info("Self-heal: reconciling to persisted effective config (no --config/--model given).")
     elif (input_raw := resolve_input_models(args)) is None:
-        desired_raw = effective_raw
         logger.info(
             "No --config/--model given and no default config/models.yaml found — keeping this gateway's "
             "effective model set."
         )
-    else:
-        desired_raw = merge(effective_raw, input_raw, gateway_name, mode)
-    yml_conf = to_config(desired_raw)
-    logger.debug("Deploying effective config (%s mode, %d model(s)): %s", mode, len(desired_raw), yml_conf)
-
-    # Log-only and optimistic: fractions can sum under the GPU total yet not pack.
-    # Reservations come from build_deployment_options, as Ray Serve's do.
-    gpu_demand = sum(
-        (m.autoscaling_config.max_replicas if m.autoscaling_config else m.num_replicas)
-        * total_gpu_reservation(build_deployment_options(m))
-        for m in yml_conf.models
-    )
-    cluster_gpus = ray.cluster_resources().get("GPU", 0)
-    if gpu_demand > cluster_gpus:
-        logger.warning(
-            "Configured models need at least %.2f GPU(s) at full scale; cluster has %.2f total. "
-            "Deploys exceeding available capacity will pend until more nodes join.",
-            gpu_demand,
-            cluster_gpus,
-        )
 
     # Detached actors: deploy bookkeeping and leases, and the routing reconciler.
     # With this gateway the only app, no replica can hold a lease, so a new deploy coordinator grants at once.
-    coordinator = get_or_create_coordinator(startup_window=set(app_statuses) != {gateway_name})
+    coordinator = get_or_create_coordinator(startup_window=set(get_app_statuses()) != {gateway_name})
     get_or_create_gateway_coordinator()
-    plan = compute_deploy_plan(yml_conf, app_statuses, gateway_name)
     deploy_started = time.monotonic()
 
-    # Pins sources on the driver so auth/missing-repo errors fail before any replica starts.
-    resolve_all_model_sources(yml_conf)
-    # Before any submit: the gateway coordinator deletes this gateway's apps the effective config doesn't target.
-    # Includes models that later fail, so the next deploy retries them.
-    write_effective(store, gateway_name, desired_raw)
+    # No other deploy of this gateway plans or submits during this block.
+    with gateway_lease(gateway_name) as lease:
+        app_statuses = get_app_statuses()
+        if app_statuses:
+            logger.info("Found existing deployments: %s", ", ".join(sorted(app_statuses)))
+        effective_raw = read_effective(store, gateway_name)
+        desired_raw = effective_raw if input_raw is None else merge(effective_raw, input_raw, gateway_name, mode)
+        yml_conf = to_config(desired_raw)
+        logger.debug("Deploying effective config (%s mode, %d model(s)): %s", mode, len(desired_raw), yml_conf)
 
-    # stop_start: remove old apps first to free their resources.
-    if getattr(args, "replace_strategy", "blue_green") == "stop_start":
-        delete_apps_quietly(plan.stale_apps)
+        # Log-only and optimistic: fractions can sum under the GPU total yet not pack.
+        # Reservations come from build_deployment_options, as Ray Serve's do.
+        gpu_demand = sum(
+            (m.autoscaling_config.max_replicas if m.autoscaling_config else m.num_replicas)
+            * total_gpu_reservation(build_deployment_options(m))
+            for m in yml_conf.models
+        )
+        cluster_gpus = ray.cluster_resources().get("GPU", 0)
+        if gpu_demand > cluster_gpus:
+            logger.warning(
+                "Configured models need at least %.2f GPU(s) at full scale; cluster has %.2f total. "
+                "Deploys exceeding available capacity will pend until more nodes join.",
+                gpu_demand,
+                cluster_gpus,
+            )
+
+        plan = compute_deploy_plan(yml_conf, app_statuses, gateway_name)
+        # Pins sources on the driver so auth/missing-repo errors fail before any replica starts.
+        resolve_all_model_sources(yml_conf)
+        # Before any submit: the gateway coordinator deletes this gateway's apps the effective config doesn't target.
+        # Includes models that later fail, so the next deploy retries them.
+        lease.write_effective(desired_raw)
+        logger.info("Effective config for gateway %r now has %d model(s).", gateway_name, len(desired_raw))
+
+        # stop_start: remove old apps first to free their resources.
+        if getattr(args, "replace_strategy", "blue_green") == "stop_start":
+            delete_apps_quietly(plan.stale_apps)
 
     outcome = DeployOutcome(ready=[], still_pending=[], fatally_failed=[])
     if plan.models_to_add:

@@ -133,4 +133,3 @@ async def read_targets(store: StateStore, gateway_name: str) -> dict[str, str] |
 def write_effective(store: StateStore, gateway_name: str, raw_models: list[dict]) -> None:
     """Persist the effective raw model set for *gateway_name*."""
     store.set(f"{_NAMESPACE}/{gateway_name}", {"models": raw_models})
-    logger.info("Effective config for gateway %r now has %d model(s).", gateway_name, len(raw_models))
