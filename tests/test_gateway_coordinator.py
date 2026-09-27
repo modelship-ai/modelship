@@ -17,7 +17,7 @@ from ray.serve.schema import (
     DeploymentStatusTrigger,
 )
 
-from modelship.deploy.effective_config import write_effective
+from modelship.deploy.ledger import write_effective
 from modelship.infer import deploy_coordinator, gateway_coordinator
 from modelship.infer.deploy_coordinator import DeployCoordinator, gateway_lease_key
 from modelship.infer.gateway_coordinator import GatewayCoordinator

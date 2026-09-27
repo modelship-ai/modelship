@@ -1,8 +1,8 @@
 """Generic durable state store.
 
 A pluggable key→value store shared across the codebase. It stays generic: each
-caller owns a domain layer over it that holds the key layout and shape — the deploy
-driver's per-gateway *effective config* (``deploy.effective_config``) and the
+caller owns a domain layer over it that holds the key layout and shape — each
+gateway's deploy versions (``deploy.ledger``) and the
 gateway's ``/v1/responses`` conversations (``openai.state.responses``). Keys are
 ``/``-separated namespace paths; values are JSON/YAML-serializable (``dict`` or
 ``list``).

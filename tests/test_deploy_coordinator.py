@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from modelship.deploy.effective_config import read_effective
+from modelship.deploy.ledger import read_effective
 from modelship.infer import deploy_coordinator
 from modelship.infer.deploy_coordinator import LEASE_SECONDS, gateway_lease_key
 from modelship.infer.infer_config import ModelshipModelConfig

@@ -113,7 +113,7 @@ This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu
 | `modelship/driver.py` | `start` / `join` / `deploy`: bring up or attach to Ray, then the deploy loop — additive by default, `--reconcile` to converge exactly |
 | `modelship/openai/api.py` | FastAPI gateway with OpenAI endpoints |
 | `modelship/openai/protocol/responses/` | `/v1/responses` schemas, chat adapter (`adapter.py`), streaming translator (`streaming.py`) |
-| `modelship/state/` | Generic pluggable KV store (`memory://` via a detached Ray actor, `redis://`). Domain layers: `openai/state/responses.py`, `deploy/effective_config.py` |
+| `modelship/state/` | Generic pluggable KV store (`memory://` via a detached Ray actor, `redis://`). Domain layers: `openai/state/responses.py`, `deploy/ledger.py` |
 | `modelship/infer/model_deployment.py` | Ray Serve deployment actor |
 | `modelship/infer/infer_config.py` | Pydantic config models and protocols |
 | `modelship/infer/downloads.py`, `download_leases.py` | Replica-side weight download under the cluster-wide lease; the lease actor and leftover cleanup |

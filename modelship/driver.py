@@ -184,7 +184,7 @@ def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dic
 
     from modelship.deploy.actor_options import build_deployment_options, total_gpu_reservation
     from modelship.deploy.config import resolve_all_model_sources, resolve_input_models
-    from modelship.deploy.effective_config import merge, read_effective, resolve_mode, to_config
+    from modelship.deploy.ledger import merge, read_effective, resolve_mode, to_config
     from modelship.deploy.removal import delete_apps_quietly
     from modelship.deploy.serve_utils import get_app_statuses
     from modelship.deploy.strategy import DeployContext, DeployOutcome, compute_deploy_plan, run_deploy_loop

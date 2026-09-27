@@ -8,7 +8,7 @@ import pytest
 from ray.serve.schema import ApplicationStatus
 
 from modelship import driver
-from modelship.deploy.effective_config import read_effective, write_effective
+from modelship.deploy.ledger import read_effective, write_effective
 from modelship.deploy.strategy import DeployOutcome
 from modelship.infer.deploy_leases import DeployLeaseError
 from modelship.infer.infer_config import ModelshipModelConfig

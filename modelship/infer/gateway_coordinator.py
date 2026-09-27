@@ -16,7 +16,7 @@ import time
 import ray
 from ray import serve
 
-from modelship.deploy.effective_config import read_targets
+from modelship.deploy.ledger import read_targets
 from modelship.deploy.removal import delete_apps_quietly
 from modelship.deploy.routing import Routing, compute_routing
 from modelship.infer.deploy_coordinator import (

@@ -89,7 +89,7 @@ class DeployCoordinator:
     async def write_effective(self, gateway_name: str, holder: str, raw_models: list[dict]) -> bool:
         """Writes the gateway's effective config if `holder` holds the gateway's lease, renewing
         it first so it can't expire mid-write; False, writing nothing, otherwise."""
-        from modelship.deploy.effective_config import write_effective
+        from modelship.deploy.ledger import write_effective
 
         if not await self.renew(gateway_lease_key(gateway_name), holder):
             return False

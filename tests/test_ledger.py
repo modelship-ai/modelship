@@ -1,13 +1,16 @@
-"""Tests for the deploy effective-config layer."""
+"""The deploy ledger's store layer: versions, merging, raw round trips and config loading."""
 
 import pytest
 from ray.serve.schema import ApplicationStatus
 
 from modelship.deploy.config import default_config_path, load_raw_models, resolve_config_path
-from modelship.deploy.effective_config import (
+from modelship.deploy.ledger import (
+    Version,
+    commit_version,
     merge,
     read_effective,
     read_targets,
+    read_versions,
     resolve_mode,
     to_config,
     write_effective,
@@ -93,6 +96,37 @@ class TestReadWriteEffective:
         assert read_effective(_MemoryStore(), "never-deployed") == []
 
 
+class TestVersions:
+    def test_a_gateway_never_committed_has_no_versions(self):
+        assert read_versions(_MemoryStore(), "g") == (None, None)
+
+    def test_the_first_commit_is_version_1_with_no_previous(self):
+        store = _MemoryStore()
+        assert commit_version(store, "g", [_model("a")]) == Version(1, [_model("a")])
+        assert read_versions(store, "g") == (Version(1, [_model("a")]), None)
+
+    def test_a_commit_keeps_only_the_version_before_it(self):
+        store = _MemoryStore()
+        for name in ("a", "b", "c"):
+            commit_version(store, "g", [_model(name)])
+        assert read_versions(store, "g") == (Version(3, [_model("c")]), Version(2, [_model("b")]))
+        assert "previous" not in store.get("effective/g")["previous"]
+
+    def test_versions_are_per_gateway(self):
+        store = _MemoryStore()
+        commit_version(store, "g", [_model("a")])
+        assert read_versions(store, "other") == (None, None)
+
+    def test_an_emptied_gateway_has_a_committed_empty_version(self):
+        store = _MemoryStore()
+        commit_version(store, "g", [_model("a")])
+        commit_version(store, "g", [])
+        assert read_versions(store, "g")[0] == Version(2, [])
+
+    def test_apps_maps_each_model_to_its_app(self):
+        assert Version(1, [_model("a")]).apps("g") == {"a": _dep("a")}
+
+
 class TestRawRoundTrip:
     """Store holds raw dicts because a normalized vLLM config does NOT round-trip
     (num_gpus=2 -> num_gpus=1.0/tp=2, which fails re-validation); raw dicts reload identically."""
@@ -100,10 +134,11 @@ class TestRawRoundTrip:
     def test_multi_gpu_vllm_survives_store_roundtrip(self):
         raw = {"name": "x", "model": "org/x", "usecase": "generate", "loader": "vllm", "num_gpus": 2}
         store = _MemoryStore()
-        write_effective(store, "g", [raw])
+        commit_version(store, "g", [raw])
 
-        back = read_effective(store, "g")
-        cfg = to_config(back)  # must not raise on the normalized-but-reloaded config
+        committed, _ = read_versions(store, "g")
+        assert committed is not None
+        cfg = to_config(committed.models)  # must not raise on the normalized-but-reloaded config
         m = cfg.models[0]
         assert m.num_gpus == 1.0
         assert m.vllm_engine_kwargs.tensor_parallel_size == 2
@@ -114,7 +149,7 @@ class TestRawRoundTrip:
         # The persisted value keeps the user's num_gpus=2, not the normalized 1.0.
         raw = {"name": "x", "model": "org/x", "usecase": "generate", "loader": "vllm", "num_gpus": 2}
         store = _MemoryStore()
-        write_effective(store, "g", [raw])
+        commit_version(store, "g", [raw])
         assert store.get("effective/g")["models"][0]["num_gpus"] == 2
 
 

@@ -1,20 +1,10 @@
-"""Per-gateway *effective config* — the durable desired-state for deploys.
+"""Each gateway's deploy versions: the committed model set and the one before it, in the state store.
 
-Every deploy (``mship start`` / ``mship deploy``), whatever its mode, folds the user's input into
-the gateway's effective set (additive = union; reconcile = replace), then
-the deploy ALWAYS reconciles the live cluster to that effective set. Self-heal is
-then just "re-run the deploy": it reads the persisted effective set and reconciles
-onto an empty cluster, restoring the TRUE live set after the cluster dies — not
-just whatever the last user input happened to contain.
-
-The store holds **raw, user-equivalent model dicts**, NOT serialized validated
-configs: ``ModelshipModelConfig``'s ``num_gpus``/``tensor_parallel_size``
-normalization is not idempotent, so a dumped validated config fails (or silently
-mutates its fingerprint) on reload. Raw input dicts reload exactly as written.
-
-This is the deploy-domain layer over the generic ``modelship.state`` store.
+The store holds raw, user-equivalent model dicts, not dumped validated configs: validation normalizes
+``num_gpus``/``tensor_parallel_size`` non-idempotently, so a dumped config would reload with another fingerprint.
 """
 
+from dataclasses import dataclass
 from typing import Literal
 
 from modelship.deploy.config import validate_models
@@ -28,6 +18,42 @@ DeployMode = Literal["additive", "reconcile"]
 
 # State-store namespace; one key per gateway: "effective/<gateway-name>".
 _NAMESPACE = "effective"
+
+
+@dataclass(frozen=True)
+class Version:
+    number: int
+    models: list[dict]
+
+    def apps(self, gateway_name: str) -> dict[str, str]:
+        """Model name -> the app it runs on."""
+        configs = [ModelshipModelConfig.model_validate(raw) for raw in self.models]
+        return {c.name: c.deployment_name(gateway_name) for c in configs}
+
+
+def _version(data) -> Version | None:
+    if not isinstance(data, dict) or not isinstance(data.get("models"), list):
+        return None
+    return Version(int(data.get("version", 0)), data["models"])
+
+
+def read_versions(store: StateStore, gateway_name: str) -> tuple[Version | None, Version | None]:
+    """The gateway's committed version and the one before it; None where there is none."""
+    data = store.get(f"{_NAMESPACE}/{gateway_name}")
+    committed = _version(data)
+    previous = _version(data.get("previous")) if committed is not None and isinstance(data, dict) else None
+    return committed, previous
+
+
+def commit_version(store: StateStore, gateway_name: str, models: list[dict]) -> Version:
+    """Writes *models* as the gateway's next version, keeping the committed one as its previous."""
+    committed, _ = read_versions(store, gateway_name)
+    version = Version(committed.number + 1 if committed else 1, models)
+    value: dict = {"version": version.number, "models": models}
+    if committed is not None:
+        value["previous"] = {"version": committed.number, "models": committed.models}
+    store.set(f"{_NAMESPACE}/{gateway_name}", value)
+    return version
 
 
 def resolve_mode(*, reconcile: bool) -> DeployMode:
