@@ -16,7 +16,7 @@ by guessing or replaying one. A read for the wrong identity simply builds a
 different key and misses, so isolation needs no comparison logic.
 
 This is the OpenAI-domain layer over the generic ``modelship.state`` store: it takes
-a store and never builds one, exactly as ``deploy.effective_config`` is the deploy
+a store and never builds one, exactly as ``deploy.ledger`` is the deploy
 domain's layer over the same store. The store stays generic and knows nothing about
 Responses.
 """

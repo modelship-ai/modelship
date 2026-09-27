@@ -18,6 +18,7 @@ from modelship.infer.infer_config import (
     VllmEngineConfig,
     resolve_gpu_memory_utilization,
 )
+from modelship.utils.config_schema import parse_deployment_name
 
 
 class TestLlamaServerConfig:
@@ -527,19 +528,30 @@ class TestFingerprint:
             != self._cfg(loader=ModelLoader.llama_server, num_gpus=0).fingerprint()
         )
 
-    def test_deployment_name_combines_name_and_fingerprint(self):
+    def test_deployment_name_is_gateway_then_name_and_fingerprint(self):
         cfg = self._cfg()
-        assert cfg.deployment_name("gw") == f"{cfg.name}-{cfg.fingerprint('gw')}"
+        assert cfg.deployment_name("gw") == f"gw.{cfg.name}-{cfg.fingerprint()}"
         assert len(cfg.fingerprint()) == 10
 
-    def test_fingerprint_distinct_per_gateway(self):
-        # Same config under different gateways must yield different app names so
-        # they don't collide in Serve's flat global namespace.
+    def test_deployment_name_distinct_per_gateway(self):
         cfg = self._cfg()
-        assert cfg.fingerprint("gw-a") != cfg.fingerprint("gw-b")
         assert cfg.deployment_name("gw-a") != cfg.deployment_name("gw-b")
-        # No gateway == the gateway-independent config hash.
-        assert cfg.fingerprint() == cfg.fingerprint("")
+
+
+class TestParseDeploymentName:
+    def _name(self, model: str, gateway: str = "gw") -> str:
+        cfg = ModelshipModelConfig(name=model, model="org/m", usecase="generate", loader="llama_server")
+        return cfg.deployment_name(gateway)
+
+    @pytest.mark.parametrize("model", ["qwen", "qwen2.5-7b", "a-0123456789", "org/model"])
+    def test_round_trips_a_deployment_name(self, model):
+        assert parse_deployment_name(self._name(model, "edge-1")) == ("edge-1", model)
+
+    @pytest.mark.parametrize(
+        "app", ["modelship", "qwen-0123456789", "gw.qwen", "gw.qwen-012345678", "gw.qwen-0123456789a", ".q-0123456789"]
+    )
+    def test_rejects_other_app_names(self, app):
+        assert parse_deployment_name(app) is None
 
 
 class TestNumReplicas:

@@ -298,15 +298,12 @@ def _build_util_metrics():
 
     if not _ENABLED:
         return {
-            # Deploy coordinator
-            "deploy_reservations_total": _NoOpCounter(),
-            "deploy_lock_held": _NoOpGauge(),
-            "operator_force_release_total": _NoOpCounter(),
+            # Gateway coordinator
             "coordinator_generation": _NoOpGauge(),
             # State store
             "state_store_operations_total": _NoOpCounter(),
             "state_store_operation_duration_seconds": _NoOpHistogram(),
-            # Deploy driver
+            # Deploy worker
             "deploy_duration_seconds": _NoOpHistogram(),
             "deploy_models_changed_total": _NoOpCounter(),
         }
@@ -314,27 +311,13 @@ def _build_util_metrics():
     from ray.util.metrics import Counter, Gauge, Histogram
 
     return {
-        # -- Deploy coordinator (cluster-wide mutex + admission gate) --
-        "deploy_reservations_total": Counter(
-            "modelship_deploy_reservations_total",
-            description="Deploy-lock reservation attempts by outcome.",
-            tag_keys=("result",),  # granted | locked | insufficient_gpu | insufficient_cpu
-        ),
-        "deploy_lock_held": Gauge(
-            "modelship_deploy_lock_held",
-            description="1 while the deploy lock is held, 0 when free.",
-        ),
-        "operator_force_release_total": Counter(
-            "modelship_operator_force_release_total",
-            description="Deploy locks force-released after ungraceful operator death.",
-            tag_keys=("reason",),  # probe_gone | unresponsive
-        ),
+        # -- Gateway coordinator --
         "coordinator_generation": Gauge(
             "modelship_coordinator_generation",
             description="Coordinator's current routing generation per gateway.",
             tag_keys=("gateway",),
         ),
-        # -- State store (durable HA state: registry, effective config) --
+        # -- State store (durable HA state: deploy versions, conversations) --
         "state_store_operations_total": Counter(
             "modelship_state_store_operations_total",
             description="State-store operations by backend, op, and result.",
@@ -346,17 +329,17 @@ def _build_util_metrics():
             boundaries=_STATE_STORE_BOUNDARIES,
             tag_keys=("backend", "op"),
         ),
-        # -- Deploy driver (mship start / mship deploy) --
+        # -- Deploy worker (one per deploy request) --
         "deploy_duration_seconds": Histogram(
             "modelship_deploy_duration_seconds",
-            description="Wall-clock time for a deploy run to settle, in seconds.",
+            description="Wall-clock time for a deploy request to succeed, in seconds.",
             boundaries=_MODEL_LOAD_BOUNDARIES,
             tag_keys=("gateway",),
         ),
         "deploy_models_changed_total": Counter(
             "modelship_deploy_models_changed_total",
-            description="Models changed by a deploy run, by action.",
-            tag_keys=("gateway", "action"),  # action: add | remove | evict
+            description="Models changed by a deploy request, by action.",
+            tag_keys=("gateway", "action"),  # action: add | remove | fail
         ),
     }
 
@@ -396,14 +379,11 @@ AUTH_FAILURES_TOTAL = _metrics["auth_failures_total"]
 RESOURCE_CLEANUP_ERRORS_TOTAL = _metrics["resource_cleanup_errors_total"]
 
 # -- HA control plane (ray.util.metrics — non-Serve emitters) --
-# Deploy coordinator
-DEPLOY_RESERVATIONS_TOTAL = _util_metrics["deploy_reservations_total"]
-DEPLOY_LOCK_HELD = _util_metrics["deploy_lock_held"]
-OPERATOR_FORCE_RELEASE_TOTAL = _util_metrics["operator_force_release_total"]
+# Gateway coordinator
 COORDINATOR_GENERATION = _util_metrics["coordinator_generation"]
 # State store
 STATE_STORE_OPERATIONS_TOTAL = _util_metrics["state_store_operations_total"]
 STATE_STORE_OPERATION_DURATION_SECONDS = _util_metrics["state_store_operation_duration_seconds"]
-# Deploy driver
+# Deploy worker
 DEPLOY_DURATION_SECONDS = _util_metrics["deploy_duration_seconds"]
 DEPLOY_MODELS_CHANGED_TOTAL = _util_metrics["deploy_models_changed_total"]

@@ -1,4 +1,4 @@
-"""CLI argument parsing for the engine's start, join and deploy commands."""
+"""CLI argument parsing for the engine's start, join, deploy and stop commands."""
 
 from __future__ import annotations
 
@@ -66,11 +66,13 @@ _USAGE = {
     "start": f"mship start {_MODEL_USAGE}",
     "join": "mship join --cluster HOST:PORT [options]",
     "deploy": f"mship deploy {_MODEL_USAGE}",
+    "stop": "mship stop --deploy-id ID [options]",
 }
 _DESCRIPTION = {
     "start": "Start a cluster on this machine: its head node, the API gateway and any models given. Stays running.",
     "join": "Add this machine to a running cluster as a worker node. Stays running.",
-    "deploy": "Change the models of the cluster running on this machine, then exit.",
+    "deploy": "Change the models of the cluster running on this machine; waits for the change to succeed or fail.",
+    "stop": "Cancel a deploy on the cluster running on this machine, rolling back what it has done so far.",
 }
 
 
@@ -87,6 +89,10 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
     if command in ("start", "deploy"):
         _add_auth_arg(parser)
         _add_cluster_args(parser)
+    if command == "stop":
+        _add_auth_arg(parser)
+        _add_token_arg(parser)
+        parser.add_argument("--deploy-id", required=True, help="The deploy to cancel, as `mship deploy` printed it")
     if command == "deploy":
         _add_token_arg(parser)
         parser.add_argument(
@@ -247,8 +253,8 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--state-store",
         help=(
-            "State-store connection URI for the effective config, deploy coordinator and "
-            "/v1/responses conversations (env: MSHIP_STATE_STORE, default: memory://). Schemes: "
+            "State-store connection URI for the gateways' deploy versions and /v1/responses "
+            "conversations (env: MSHIP_STATE_STORE, default: memory://). Schemes: "
             "memory:// | redis://host:port/db (rediss:// for TLS). No password in the URI — set "
             "MSHIP_REDIS_PASSWORD on every node instead. memory:// is cluster-scoped but dies with "
             "the cluster; redis:// survives it."
@@ -330,8 +336,8 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Diff models.yaml against the cluster: add new models, remove dropped ones, "
             "replace those whose config changed (matched by name + fingerprint). "
-            "With no --config, reconciles the live cluster to this gateway's persisted "
-            "effective config only (self-heal after cluster loss)."
+            "With no --config, redeploys this gateway's committed models that are missing "
+            "(self-heal after cluster loss)."
         ),
     )
     _add_single_model_args(parser)

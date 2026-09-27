@@ -1,7 +1,6 @@
 import os
 import signal
 import sys
-import time
 
 # Module scope stays Ray/HF-free: run() sets env vars those latch at import.
 from modelship.logging import configure_logging, get_lib_log_config, get_logger, propagate_lib_log_env
@@ -13,6 +12,7 @@ propagate_lib_log_env()
 
 logger = get_logger("startup")
 _DEFAULT_GATEWAY_NAME = "modelship"
+_STOP_DELETE_TIMEOUT_S = 30.0
 
 
 def run(command: str, argv: list[str] | None = None) -> None:
@@ -36,6 +36,8 @@ def run(command: str, argv: list[str] | None = None) -> None:
         _start(args)
     elif command == "join":
         _join()
+    elif command == "stop":
+        _cancel(args)
     else:
         _deploy(args)
 
@@ -53,12 +55,9 @@ def _start(args) -> None:
         )
     lib_level, serve_logging_config = _serve_logging()
 
-    # deployment_name -> model_name created by this run; read by _cleanup.
-    deployed_this_run: dict[str, str] = {}
-
     def _cleanup(sig, _frame) -> None:
         logger.info("Shutting down (signal %s)...", sig)
-        _stop_head(deployed_this_run)
+        _stop_head()
         sys.exit(0)
 
     # Before start_head, which spawns processes a signal must still clean up.
@@ -74,30 +73,30 @@ def _start(args) -> None:
         start_serve(serve_logging_config)
         # First, so /health and /readyz answer while models load.
         start_gateway(gateway_name, serve_logging_config, route_prefix)
-        _apply(args, gateway_name, serve_logging_config, deployed_this_run)
+        _send(args, gateway_name, serve_logging_config)
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
         logger.exception("Startup failed, shutting down...")
-        _stop_head(deployed_this_run)
+        _stop_head()
         raise
 
-    # Resident even on fatal failures; a signal stops the head via _cleanup.
+    # Resident; a signal stops the head via _cleanup.
     signal.pause()
 
 
-def _stop_head(deployed_this_run: dict[str, str]) -> None:
-    """Delete this run's deployments, then stop Serve and Ray. With a Redis-backed GCS
+def _stop_head() -> None:
+    """Delete every model app, then stop Serve and Ray. With a Redis-backed GCS
     every app stays, for the next head to restore."""
-    from modelship.deploy.removal import delete_apps_quietly
+    from modelship.deploy.removal import delete_model_apps
     from modelship.deploy.serve_utils import shutdown_ray
 
     if os.environ.get("RAY_REDIS_ADDRESS"):
         logger.info("GCS is stored in Redis; leaving the Serve apps for the next head.")
         shutdown_ray(keep_serve=True)
         return
-    logger.info("Cleaning up deployments from this run...")
-    delete_apps_quietly(reversed(deployed_this_run))
+    logger.info("Deleting the model deployments...")
+    delete_model_apps(_STOP_DELETE_TIMEOUT_S)
     shutdown_ray()
 
 
@@ -126,7 +125,9 @@ def _join() -> None:
 
 
 def _deploy(args) -> None:
-    from modelship.deploy.removal import delete_apps_quietly
+    import ray
+    from ray.exceptions import ObjectLostError, RayActorError
+
     from modelship.deploy.serve_utils import (
         attach_cluster,
         get_existing_apps,
@@ -155,181 +156,102 @@ def _deploy(args) -> None:
             f"error: no gateway {gateway_name!r} on this cluster. Pass --gateway-name NAME to deploy to "
             f"another gateway, or --gateway-name {gateway_name} to create this one."
         )
+    if create_gateway:
+        start_gateway(gateway_name, serve_logging_config, route_prefix)
+    receipt = _send(args, gateway_name, serve_logging_config)
+    request_id = receipt["id"]
 
-    deployed_this_run: dict[str, str] = {}
+    def _stop_waiting(sig, _frame) -> None:
+        logger.info(
+            "Stopped waiting (signal %s); deploy %s keeps running. Cancel it with `mship stop --deploy-id %s`.",
+            sig,
+            request_id,
+            request_id,
+        )
+        sys.exit(130)
 
-    def _cleanup(sig, _frame) -> None:
-        logger.info("Shutting down (signal %s), cleaning up deployments from this run...", sig)
-        delete_apps_quietly(reversed(deployed_this_run))
-        sys.exit(0)
-
-    _on_signals(_cleanup)
-
+    _on_signals(_stop_waiting)
     try:
-        if create_gateway:
-            start_gateway(gateway_name, serve_logging_config, route_prefix)
-        fatally_failed = _apply(args, gateway_name, serve_logging_config, deployed_this_run)
-    except BaseException as e:
-        if isinstance(e, SystemExit):
-            raise
-        logger.exception("Deploy failed, cleaning up deployments from this run...")
-        delete_apps_quietly(reversed(deployed_this_run))
-        raise
-
-    if fatally_failed:
-        # No resident /readyz to report it, so fail via the exit code.
-        logger.error("Exiting non-zero: %d model(s) fatally failed to deploy.", len(fatally_failed))
+        outcome: dict = ray.get(receipt["outcome"])
+    except (RayActorError, ObjectLostError):
+        logger.error("Deploy %s was lost: the deploy coordinator restarted. Run the deploy again.", request_id)
+        sys.exit(1)
+    _log_outcome(outcome)
+    if outcome["state"] != "succeeded":
         sys.exit(1)
 
 
-def _apply(args, gateway_name: str, serve_logging_config, deployed_this_run: dict[str, str]) -> list:
-    """Reconcile this gateway's models to the desired set, recording each deployment
-    created in *deployed_this_run*. Returns the (config, reason) pairs that fatally failed."""
+def _send(args, gateway_name: str, serve_logging_config) -> dict:
+    """Queues this invocation's models on the gateway; returns the deploy coordinator's receipt."""
     import ray
 
-    from modelship.deploy.actor_options import build_deployment_options, total_gpu_reservation
-    from modelship.deploy.config import resolve_all_model_sources, resolve_input_models
-    from modelship.deploy.effective_config import (
-        deployment_names,
-        merge,
-        read_effective,
-        resolve_mode,
-        to_config,
-        write_effective,
-    )
-    from modelship.deploy.removal import remove_apps
-    from modelship.deploy.serve_utils import get_existing_apps, make_operator_id, seed_expected_models
-    from modelship.deploy.strategy import DeployContext, compute_deploy_plan, run_deploy_loop
-    from modelship.infer.deploy_coordinator import create_operator_probe, get_or_create_coordinator
-    from modelship.infer.replica_coordinator import get_or_create_replica_coordinator
-    from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
+    from modelship.deploy.actor_options import deploy_env_vars
+    from modelship.deploy.config import resolve_input_models
+    from modelship.deploy.ledger import DeployRequest
+    from modelship.deploy.serve_utils import get_app_statuses
+    from modelship.infer.deploy_coordinator import get_or_create_coordinator
+    from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.openai.compaction_crypto import ensure_key_seeded
     from modelship.state import MemoryStateStore, get_state_store
 
-    existing_apps = get_existing_apps()
-    if existing_apps:
-        logger.info("Found existing deployments: %s", ", ".join(sorted(existing_apps)))
-
-    # mode only picks the merge (additive=union, reconcile=replace); the deploy always reconciles.
-    mode = resolve_mode(reconcile=args.reconcile)
     store = get_state_store()
     if isinstance(getattr(store, "inner", store), MemoryStateStore):
         logger.warning(
-            "Effective config is backed by a cluster-scoped (non-durable) memory state store; it "
-            "survives deploys and coordinator restarts but NOT cluster loss. Set MSHIP_STATE_STORE "
+            "Deploy versions are kept in a cluster-scoped (non-durable) memory state store; they survive "
+            "deploys and deploy/gateway coordinator restarts but NOT cluster loss. Set MSHIP_STATE_STORE "
             "to redis:// for self-heal after cluster loss."
         )
     ensure_key_seeded(store)
-    effective_raw = read_effective(store, gateway_name)
 
-    if args.config is None and args.model is None and mode == "reconcile":
-        desired_raw = effective_raw
-        logger.info("Self-heal: reconciling to persisted effective config (no --config/--model given).")
-    elif (input_raw := resolve_input_models(args)) is None:
-        desired_raw = effective_raw
-        logger.info(
-            "No --config/--model given and no default config/models.yaml found — keeping this gateway's "
-            "effective model set."
-        )
+    models = None if args.config is None and args.model is None and args.reconcile else resolve_input_models(args)
+    if models is None:
+        logger.info("No models given: redeploying gateway %r's committed models that are missing.", gateway_name)
+    mode = "bare" if models is None else ("reconcile" if args.reconcile else "additive")
+    request = DeployRequest(
+        gateway=gateway_name,
+        mode=mode,
+        strategy=getattr(args, "replace_strategy", "blue_green"),
+        models=models,
+        serve_logging_config=serve_logging_config,
+        env=deploy_env_vars(),
+    )
+
+    # Detached actors: the deploy coordinator and the gateway coordinator.
+    # With this gateway the only app, no replica can hold a lease, so a new deploy coordinator grants at once.
+    coordinator = get_or_create_coordinator(startup_window=set(get_app_statuses()) != {gateway_name})
+    get_or_create_gateway_coordinator()
+    receipt: dict = ray.get(coordinator.submit.remote(request))
+    behind = f", queued behind deploy {receipt['behind']}" if receipt["behind"] else ""
+    logger.info("Deploy %s sent to gateway %r (%s%s).", receipt["id"], gateway_name, mode, behind)
+    return receipt
+
+
+def _log_outcome(outcome: dict) -> None:
+    for model, result in sorted(outcome["models"].items()):
+        logger.info("  %s: %s", model, result)
+    if outcome["state"] == "succeeded":
+        version = f"; the gateway is on version {outcome['version']}" if outcome["version"] else ""
+        logger.info("Deploy %s succeeded%s.", outcome["id"], version)
     else:
-        desired_raw = merge(effective_raw, input_raw, gateway_name, mode)
-    yml_conf = to_config(desired_raw)
-    logger.debug("Deploying effective config (%s mode, %d model(s)): %s", mode, len(desired_raw), yml_conf)
+        logger.error("Deploy %s %s: %s", outcome["id"], outcome["state"], outcome["reason"])
 
-    # Log-only and optimistic: fractions can sum under the GPU total yet not pack.
-    # Reservations come from build_deployment_options, as Ray Serve's do.
-    gpu_demand = sum(
-        (m.autoscaling_config.max_replicas if m.autoscaling_config else m.num_replicas)
-        * total_gpu_reservation(build_deployment_options(m))
-        for m in yml_conf.models
-    )
-    cluster_gpus = ray.cluster_resources().get("GPU", 0)
-    if gpu_demand > cluster_gpus:
-        logger.warning(
-            "Configured models need at least %.2f GPU(s) at full scale; cluster has %.2f total. "
-            "Deploys exceeding available capacity will pend until more nodes join.",
-            gpu_demand,
-            cluster_gpus,
-        )
 
-    # Detached actors: the cross-operator deploy lock and the ownership registry.
-    coordinator = get_or_create_coordinator()
-    replica_coord = get_or_create_replica_coordinator()
-    # Removal is scoped to the prior effective set, so an empty one removes nothing.
-    plan = compute_deploy_plan(yml_conf, existing_apps, deployment_names(effective_raw, gateway_name), gateway_name)
-    apps_to_remove = list(plan.apps_to_remove)
-    removed_count = len(apps_to_remove)
-    deploy_started = time.monotonic()
+def _cancel(args) -> None:
+    import ray
 
-    # Pins sources on the driver so auth/missing-repo errors fail before any replica starts.
-    resolve_all_model_sources(yml_conf)
-    seed_expected_models(replica_coord, gateway_name, yml_conf)
+    from modelship.deploy.serve_utils import attach_cluster, local_ray_clusters
+    from modelship.infer.deploy_coordinator import find_coordinator
 
-    # No live Serve app to delete; drop straight from the registry.
-    if plan.registry_only_drop:
-        try:
-            ray.get(
-                [replica_coord.unregister_deployment.remote(gateway_name, name) for name in plan.registry_only_drop]
-            )
-        except Exception:
-            logger.exception("Failed to drop stale registry entries: %s", plan.registry_only_drop)
-
-    # stop_start: remove old apps first to free their resources.
-    if getattr(args, "replace_strategy", "blue_green") == "stop_start":
-        remove_apps(apps_to_remove, replica_coord, gateway_name)
-        apps_to_remove = []
-
-    pass_count, fatally_failed = 0, []
-    if plan.models_to_add:
-        # Driver-owned: Ray releases the coordinator lock if this process dies.
-        operator_id = make_operator_id()
-        probe = create_operator_probe()
-        logger.info("Operator id=%s; coordinator acquired.", operator_id)
-
-        ctx = DeployContext(
-            coordinator=coordinator,
-            replica_coordinator=replica_coord,
-            probe=probe,
-            operator_id=operator_id,
-            gateway_name=gateway_name,
-            serve_logging_config=serve_logging_config,
-            deployed_this_run=deployed_this_run,
-        )
-        pass_count, fatally_failed = run_deploy_loop(plan.models_to_add, ctx)
-
-    logger.info(
-        "Deploy complete. %d new deployment(s) from this run (over %d pass(es)).",
-        len(deployed_this_run),
-        pass_count,
-    )
-
-    # blue_green: routing cut over at registration; delete the drained old app.
-    if apps_to_remove:
-        remove_apps(apps_to_remove, replica_coord, gateway_name)
-
-    # Includes fatally-failed models, so the next deploy retries them.
-    write_effective(store, gateway_name, desired_raw)
-
-    DEPLOY_DURATION_SECONDS.observe(time.monotonic() - deploy_started, tags={"gateway": gateway_name})
-    for action, count in (
-        ("add", len(deployed_this_run)),
-        ("remove", removed_count),
-        ("fail", len(fatally_failed)),
-    ):
-        if count:
-            DEPLOY_MODELS_CHANGED_TOTAL.inc(count, tags={"gateway": gateway_name, "action": action})
-
-    if fatally_failed:
-        failed_names = {cfg.name for cfg, _ in fatally_failed}
-        seed_expected_models(replica_coord, gateway_name, yml_conf, exclude=failed_names)
-        logger.error(
-            "%d model(s) failed to deploy — fix config and redeploy (they remain in the effective config "
-            "and will be retried on the next deploy/self-heal):",
-            len(fatally_failed),
-        )
-        for cfg, reason in fatally_failed:
-            logger.error("  - %s: %s", cfg.name, reason)
-    return fatally_failed
+    if not local_ray_clusters():
+        sys.exit("error: no Ray cluster is running on this machine.")
+    lib_level, _ = _serve_logging()
+    attach_cluster(lib_level)
+    if (coordinator := find_coordinator()) is None:
+        sys.exit(f"error: no deploy {args.deploy_id} on this cluster.")
+    result: dict = ray.get(coordinator.cancel.remote(args.deploy_id))
+    if not result["cancelled"]:
+        sys.exit(f"error: {result['message']}.")
+    logger.info("%s.", result["message"].capitalize())
 
 
 def _on_signals(handler) -> None:
@@ -344,6 +266,8 @@ def _gateway_from_env() -> tuple[str, str, bool]:
 
     explicit = "MSHIP_GATEWAY_NAME" in os.environ
     name = os.environ.get("MSHIP_GATEWAY_NAME", _DEFAULT_GATEWAY_NAME)
+    if "." in name:
+        sys.exit(f"error: --gateway-name {name!r} must not contain '.'")
     os.environ["MSHIP_GATEWAY_NAME"] = name
     return name, gateway_route_prefix(name), explicit
 

@@ -10,14 +10,15 @@ from . import __version__, engine, gates, llama_cpp, paths, uv_binary, variants
 from .variants import VariantError, split_variant_flag
 from .variants import resolve as resolve_variant
 
-_COMMANDS = ("bootstrap", "start", "join", "deploy", "info")
+_COMMANDS = ("bootstrap", "start", "join", "deploy", "stop", "info")
 
-_USAGE = """usage: mship {bootstrap,start,join,deploy,info} [--cuda|--cpu|--metal|--thin] [args]
+_USAGE = """usage: mship {bootstrap,start,join,deploy,stop,info} [--cuda|--cpu|--metal|--thin] [args]
 
   bootstrap   install the engine environment for a variant (run once)
   start       start a cluster on this machine and serve models; stays running
   join        add this machine to a running cluster as a worker; stays running
-  deploy      change the models of the cluster running on this machine, then exit
+  deploy      change the models of the cluster running on this machine; waits for the outcome
+  stop        cancel a deploy (--deploy-id ID)
   info        report bootstrapper state, or the engine's own report with a variant
 """
 

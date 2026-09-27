@@ -14,7 +14,7 @@ Modelship is a **FastAPI gateway** exposing an OpenAI-compatible API, built on [
 ## Request Lifecycle
 
 1. Client sends a request to the FastAPI gateway (e.g. `POST /v1/chat/completions`)
-2. The gateway identifies the target model from the request body
+2. The gateway identifies the target model from the request body and looks up the deployment serving it — `404` for a model the gateway doesn't have, `503` for a configured model with nothing serving yet
 3. A `RequestWatcher` begins monitoring the client connection for disconnects
 4. The request is forwarded to the model's Ray Serve deployment via a `RawRequestProxy` (serializable headers + cancellation event)
 5. The deployment runs inference and streams the response back as JSON or SSE
@@ -26,9 +26,12 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 
 - **Independent lifecycle** — one model crashing doesn't affect others
 - **Per-model GPU budgeting** — `num_gpus` controls VRAM allocation (e.g. `0.7` for 70%)
-- **Ordered startup** — a cluster-wide mutex (`DeployCoordinator`, pinned to the head node) admits one deploy at a time; models are ordered by GPU footprint descending (multi-GPU/TP jobs first, whole-GPU before fractional) to avoid memory spikes
+- **One load per node** — a replica loading its model holds its node's lease from the deploy coordinator (`DeployCoordinator`, pinned to the head node), so loads on the same node run one at a time and their memory spikes don't overlap; different nodes load in parallel. Downloading happens before the lease is taken
 - **Additive by default** — `mship deploy` adds models to a running cluster without disrupting existing deployments. `--reconcile` instead makes the cluster match the config exactly (add/remove/replace); it never tears the cluster down
 - **One deployment per model name** — a model name maps to exactly one deployment; scale it with `num_replicas` (or `autoscaling_config`), which Ray Serve load-balances across replicas natively. Changing a model's config replaces its deployment (`--replace-strategy`, default `blue_green`) rather than adding a second one alongside it
+- **Deploys are requests** — `mship deploy` sends a request to `DeployCoordinator`, which queues it on its gateway and runs the gateway's requests one at a time, each in its own worker actor; different gateways deploy in parallel. `mship deploy` waits for the outcome; stopping it only stops the wait, and `mship stop --deploy-id` cancels a request
+- **All or nothing** — a request succeeds only once its new deployments are running **and** every gateway replica has switched to them (within `MSHIP_DEPLOY_SWITCH_TIMEOUT_S`, 60 s by default). Only then is the gateway's version committed to the state store (which keeps it and the one before it) and the replaced deployments deleted. A failure, a cancel or a dead worker rolls the request back: the gateway routes by its committed version again and every deployment of it that version doesn't name is deleted. A model waiting for capacity has no timeout; it holds its gateway's queue until the nodes arrive or the request is cancelled
+- **Routing derived from Serve** — a head-node actor (`GatewayCoordinator`) computes each gateway's model → deployment table once a second from Ray Serve's application statuses and the routing version `DeployCoordinator` gives it: the committed version, or a request's new one while it switches. A model is routed while its deployment has a running replica or is running autoscaled to zero, and answers 503 otherwise. It deletes nothing. Nothing is stored, so a restarted gateway coordinator recomputes the tables
 - **One download per source** — a replica fetching weights holds a cluster-wide lease (`DownloadLeases`, pinned to the head node) on that HF repo or archive in its cache; replicas needing the same source wait their turn, and an already-cached source skips the lease. A lease that stops being renewed (its replica died mid-download) has that download's unfinished files removed on its node before anyone else gets the source
 - **Multi-gateway support** — independent gateways can share a cluster via `--gateway-name`, each managing its own models and reachable under its own route (`/<slugified-gateway-name>/v1/...`), since every gateway shares the cluster's one HTTP proxy/port
 
@@ -107,11 +110,15 @@ This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu
 
 | File | Purpose |
 |------|---------|
-| `modelship/launcher.py` | Entry point behind `mship start` / `join` / `deploy` (`python -m modelship.launcher <command>`) — resolves cache root, checks Python version, detects accelerator, hands off to `driver.py` |
-| `modelship/driver.py` | `start` / `join` / `deploy`: bring up or attach to Ray, then the deploy loop — additive by default, `--reconcile` to converge exactly |
+| `modelship/launcher.py` | Entry point behind `mship start` / `join` / `deploy` / `stop` (`python -m modelship.launcher <command>`) — resolves cache root, checks Python version, detects accelerator, hands off to `driver.py` |
+| `modelship/driver.py` | `start` / `join` / `deploy` / `stop`: bring up or attach to Ray, then send a deploy request (additive by default, `--reconcile` to converge exactly) or cancel one |
+| `modelship/infer/deploy_coordinator.py` | Per-gateway deploy queues, routing versions, node load leases, replica-death counts and fatal errors |
+| `modelship/deploy/worker.py`, `strategy.py` | One deploy request's Serve work: plan, submit, wait, switch, commit or roll back |
+| `modelship/deploy/ledger.py` | Each gateway's committed and previous version in the state store, and the additive/reconcile merge |
+| `modelship/infer/gateway_coordinator.py` | Each gateway's model → deployment table, and which version each gateway replica holds |
 | `modelship/openai/api.py` | FastAPI gateway with OpenAI endpoints |
 | `modelship/openai/protocol/responses/` | `/v1/responses` schemas, chat adapter (`adapter.py`), streaming translator (`streaming.py`) |
-| `modelship/state/` | Generic pluggable KV store (`memory://` via a detached Ray actor, `redis://`). Domain layers: `openai/state/responses.py`, `deploy/effective_config.py` |
+| `modelship/state/` | Generic pluggable KV store (`memory://` via a detached Ray actor, `redis://`). Domain layers: `openai/state/responses.py`, `deploy/ledger.py` |
 | `modelship/infer/model_deployment.py` | Ray Serve deployment actor |
 | `modelship/infer/infer_config.py` | Pydantic config models and protocols |
 | `modelship/infer/downloads.py`, `download_leases.py` | Replica-side weight download under the cluster-wide lease; the lease actor and leftover cleanup |

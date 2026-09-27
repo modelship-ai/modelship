@@ -1,12 +1,18 @@
 """End-to-end multi-replica gateway routing consistency: a deployed/removed
 model must converge on every gateway replica, not just the one a direct push
-would have hit."""
+would have hit, and routing must survive a gateway coordinator restart."""
 
+import concurrent.futures
+import json
+import threading
 import time
 
 import pytest
 
+from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE
+from modelship.infer.gateway_coordinator import GATEWAY_COORDINATOR_ACTOR_NAME
 from openai import OpenAI
+from tests.conftest import run_on_cluster
 
 
 def _model_in_all_samples(client: OpenAI, model: str, samples: int = 20) -> bool:
@@ -64,3 +70,64 @@ class TestGatewayReplicaConsistency:
                 client.chat.completions.create(
                     model="chat-llama-server-plain", messages=[{"role": "user", "content": "hi"}], max_tokens=5
                 )
+
+
+_RESTART_GATEWAY_COORDINATOR = f"""
+    import json, time
+    coordinator = ray.get_actor({GATEWAY_COORDINATOR_ACTOR_NAME!r}, namespace={COORDINATOR_NAMESPACE!r})
+    before = ray.get(coordinator.get_routing.remote("modelship"))
+    ray.kill(coordinator, no_restart=False)
+    # the kill is asynchronous; the old actor may answer a call or two first
+    after = before
+    deadline = time.monotonic() + 60
+    while after["generation"] == before["generation"] and time.monotonic() < deadline:
+        time.sleep(0.5)
+        try:
+            after = ray.get(coordinator.get_routing.remote("modelship"), timeout=10)
+        except Exception:
+            pass
+    print(json.dumps({{"before": before, "after": after}}))
+"""
+
+
+def _hammer(client: OpenAI, model: str, stop: threading.Event, errors: list) -> None:
+    while not stop.is_set():
+        try:
+            client.chat.completions.create(model=model, messages=[{"role": "user", "content": "hi"}], max_tokens=5)
+        except Exception as exc:
+            errors.append(exc)
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+@pytest.mark.gateway_ha
+class TestGatewayCoordinatorRestart:
+    MODEL = "chat-llama-server-plain"
+
+    def test_routing_survives_a_restart_and_later_changes_still_propagate(self, client, model_deployer):
+        model_deployer.deploy(self.MODEL)
+        assert _poll(lambda: _model_in_all_samples(client, self.MODEL), deadline_s=60)
+
+        stop = threading.Event()
+        errors: list[Exception] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(_hammer, client, self.MODEL, stop, errors) for _ in range(2)]
+            try:
+                routing = json.loads(run_on_cluster(_RESTART_GATEWAY_COORDINATOR))
+                # gateway replicas re-resolve the restarted actor and resync within this
+                time.sleep(10)
+            finally:
+                stop.set()
+                concurrent.futures.wait(futures)
+
+        assert routing["after"]["generation"] > routing["before"]["generation"], (
+            "the gateway coordinator never restarted"
+        )
+        assert routing["after"]["models"] == routing["before"]["models"], "the restarted table differs"
+        assert not errors, f"requests failed across the gateway coordinator restart: {errors[:3]}"
+        assert _model_in_all_samples(client, self.MODEL)
+
+        model_deployer.deploy()
+        assert _poll(lambda: _model_in_no_samples(client, self.MODEL), deadline_s=60), (
+            "a removal after the restart did not reach every gateway replica"
+        )

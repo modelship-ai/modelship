@@ -5,7 +5,6 @@ import os
 import re
 import shutil
 import signal
-import socket
 import sys
 import time
 from pathlib import Path
@@ -15,15 +14,14 @@ import ray
 from ray import serve
 from ray._common.utils import get_ray_temp_dir
 from ray.serve.config import HTTPOptions, ProxyLocation
-from ray.serve.schema import LoggingConfig
+from ray.serve.schema import ApplicationStatus, LoggingConfig
 
 from modelship.deploy.capabilities import node_capability_resources
-from modelship.infer.infer_config import ModelshipConfig
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
 from modelship.state import state_store_env_var
-from modelship.utils import parse_memory_bytes, rand_suffix
+from modelship.utils import parse_memory_bytes
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars
 
@@ -65,16 +63,17 @@ def join_node() -> Node | None:
 _RAY_SESSION_DIR_RE = re.compile(r"^session_.*_(\d+)$")
 
 
-def make_operator_id() -> str:
-    return f"{socket.gethostname()}-{os.getpid()}-{rand_suffix(4)}"
+def get_app_statuses() -> dict[str, ApplicationStatus]:
+    """Each Serve app's status; empty when Serve can't be read."""
+    try:
+        return {name: app.status for name, app in serve.status().applications.items()}
+    except Exception:
+        return {}
 
 
 def get_existing_apps() -> set[str]:
     """Return the set of currently deployed Serve app names."""
-    try:
-        return set(serve.status().applications.keys())
-    except Exception:
-        return set()
+    return set(get_app_statuses())
 
 
 def shutdown_ray(keep_serve: bool = False) -> None:
@@ -443,16 +442,3 @@ def start_gateway(gateway_name: str, serve_logging_config: LoggingConfig, route_
         gateway_replicas,
         gateway_max_ongoing,
     )
-
-
-def seed_expected_models(
-    replica_coordinator, gateway_name: str, yml_conf: ModelshipConfig, exclude: set[str] | None = None
-) -> None:
-    # Record the full desired set on the replica coordinator (the gateway's
-    # readiness baseline) — already-deployed models also count toward "ready".
-    # Bumping the generation makes every replica adopt it via its watch loop.
-    names = [c.name for c in yml_conf.models if c.name not in (exclude or set())]
-    try:
-        ray.get(replica_coordinator.set_expected.remote(gateway_name, names))
-    except Exception:
-        logger.exception("Failed to seed expected model list on coordinator (non-fatal).")

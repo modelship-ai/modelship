@@ -1,9 +1,13 @@
 """End-to-end deployment crash recovery: kill a backend engine subprocess
-directly and verify Ray Serve respawns a working replica."""
+directly and verify Ray Serve respawns a working replica, until repeated deaths
+retire the deployment."""
 
 import time
 
 import pytest
+
+from modelship.infer.deploy_coordinator import _DEATHS_PER_REPLICA
+from tests.conftest import serve_apps
 
 _PING_PROMPT = [{"role": "user", "content": "hi"}]
 
@@ -65,3 +69,48 @@ class TestVllmCrashRecovery:
         assert recovered, (
             "expected the deployment to recover (replica respawn) after its engine core crashed; requests kept failing"
         )
+
+
+def _kill_llama_server(gguf: str, spared: set[int], deadline_s: float = 30) -> int:
+    """SIGKILL the `llama serve` subprocess serving `gguf`, skipping pids in `spared`; returns its pid."""
+    import psutil
+
+    end = time.time() + deadline_s
+    while time.time() < end:
+        for proc in psutil.process_iter():
+            try:
+                cmdline = proc.cmdline()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            if cmdline[1:2] == ["serve"] and gguf in " ".join(cmdline) and proc.pid not in spared:
+                proc.kill()
+                return proc.pid
+        time.sleep(1)
+    pytest.fail(f"Could not find a new llama serve subprocess for {gguf} within the deadline")
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+class TestRepeatedBackendDeaths:
+    MODEL = "chat-llama-server-plain"
+    GGUF = "Qwen2.5-0.5B-Instruct"
+
+    def test_a_committed_deployment_whose_backend_keeps_dying_is_kept(self, client, model_deployer):
+        model_deployer.deploy(self.MODEL)
+        (app,) = (name for name in serve_apps() if name.startswith(f"modelship.{self.MODEL}-"))
+
+        def request_succeeds() -> bool:
+            try:
+                client.chat.completions.create(model=self.MODEL, messages=_PING_PROMPT, max_tokens=4, timeout=15)
+                return True
+            except Exception:
+                return False
+
+        killed: set[int] = set()
+        # num_replicas is 1, so this is one death past the limit the deploy coordinator counts
+        for death in range(1, _DEATHS_PER_REPLICA + 2):
+            assert _poll(request_succeeds, deadline_s=120), f"no working replica before death {death}"
+            killed.add(_kill_llama_server(self.GGUF, killed))
+
+        assert _poll(request_succeeds, deadline_s=120), "Serve did not restart the replica"
+        assert app in serve_apps(), "the deployment was deleted"

@@ -46,23 +46,22 @@ def total_gpu_reservation(deploy_opts: dict) -> float:
     return _total_reservation(deploy_opts, "GPU", "num_gpus")
 
 
-def total_cpu_reservation(deploy_opts: dict) -> float:
-    """CPUs this deployment consumes; the outer actor draws from bundle 0, so the bundles cover it."""
-    return _total_reservation(deploy_opts, "CPU", "num_cpus")
-
-
 def _total_reservation(deploy_opts: dict, bundle_key: str, actor_key: str) -> float:
     if "placement_group_bundles" in deploy_opts:
         return float(sum(b.get(bundle_key, 0) for b in deploy_opts["placement_group_bundles"]))
     return float(deploy_opts.get("ray_actor_options", {}).get(actor_key, 0) or 0)
 
 
-def build_deployment_options(config: ModelshipModelConfig) -> dict:
-    """kwargs for `Deployment.options(**...)`."""
+def deploy_env_vars() -> dict[str, str]:
+    """This process's per-deploy settings that replicas read from their runtime_env."""
+    # MSHIP_STATE_STORE is unread by replicas: relayed on when one recreates the deploy coordinator.
+    return build_env_vars(MODEL_ENV_VARS) | state_store_env_var()
+
+
+def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] | None = None) -> dict:
+    """kwargs for `Deployment.options(**...)`. *env* replaces this process's per-deploy settings."""
     env_vars = build_cache_env_vars()
-    env_vars.update(build_env_vars(MODEL_ENV_VARS))
-    # Unread here: relayed on when a replica is the one to recreate the coordinator.
-    env_vars.update(state_store_env_var())
+    env_vars.update(deploy_env_vars() if env is None else env)
 
     runtime_env: dict = {"env_vars": env_vars}
 

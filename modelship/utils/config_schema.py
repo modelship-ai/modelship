@@ -3,6 +3,7 @@ RAY_AUTH_MODE at import, before resolve_ray_auth_env() runs.
 """
 
 import hashlib
+import re
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -20,7 +21,10 @@ _logger = get_logger("config")
 # Hex chars of the per-deployment fingerprint suffix; 10 = 40 bits.
 FINGERPRINT_LEN = 10
 
-# Excluded from the fingerprint: `name` is the deployment prefix, and Ray Serve
+# `{gateway}.{model}-{fingerprint}`; gateway names never contain '.'.
+_DEPLOYMENT_NAME_RE = re.compile(rf"([^.]+)\.(.+)-[0-9a-f]{{{FINGERPRINT_LEN}}}")
+
+# Excluded from the fingerprint: `name` is already in the deployment name, and Ray Serve
 # updates the replica-count fields in place when serve.run() re-binds an app.
 _FINGERPRINT_EXCLUDED_FIELDS = {"name", "num_replicas", "autoscaling_config"}
 
@@ -360,19 +364,20 @@ class ModelshipModelConfig(_StrictModel):
         self.num_gpus = 1.0
         return self
 
-    def fingerprint(self, gateway_name: str = "") -> str:
+    def fingerprint(self) -> str:
         """Stable hash of the fields that drive placement/runtime, used as the
-        deployment-name suffix so reconcile detects drift by name. `gateway_name`
-        is mixed in so identical configs on different gateways stay distinct."""
+        deployment-name suffix so reconcile detects drift by name."""
         payload = self.model_dump_json(exclude=_FINGERPRINT_EXCLUDED_FIELDS)
-        if gateway_name:
-            payload = f"{gateway_name}\x00{payload}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:FINGERPRINT_LEN]
 
     def deployment_name(self, gateway_name: str) -> str:
-        # Gateway folded into the fingerprint, not a visible prefix: ownership is
-        # tracked in the coordinator registry.
-        return f"{self.name}-{self.fingerprint(gateway_name)}"
+        return f"{gateway_name}.{self.name}-{self.fingerprint()}"
+
+
+def parse_deployment_name(app_name: str) -> tuple[str, str] | None:
+    """(gateway, model name) of an app named by `deployment_name`, else None."""
+    match = _DEPLOYMENT_NAME_RE.fullmatch(app_name)
+    return (match[1], match[2]) if match else None
 
 
 def resolve_gpu_memory_utilization(config: ModelshipModelConfig, recommended: float | None = None) -> float:

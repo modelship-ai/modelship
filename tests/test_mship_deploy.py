@@ -1,15 +1,18 @@
-"""Tests for the start/join/deploy CLI parsing and driver helpers."""
+"""Tests for the start/join/deploy/stop CLI parsing and driver helpers."""
 
+import logging
 import os
 import signal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ray.exceptions import RayActorError
+from ray.serve.schema import LoggingConfig
 
 from modelship.deploy.actor_options import (
     build_cache_env_vars,
     build_deployment_options,
-    total_cpu_reservation,
     total_gpu_reservation,
 )
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, VllmEngineConfig
@@ -95,6 +98,8 @@ class TestParseArgs:
             ("join", ["--cluster", "h:1", "--api-keys", "k1"], "api_keys", "k1"),
             ("deploy", ["--responses-ttl-s", "60"], "responses_ttl_s", 60.0),
             ("start", ["--state-sweep-interval-s", "30"], "state_sweep_interval_s", 30.0),
+            ("stop", ["--deploy-id", "abc123"], "deploy_id", "abc123"),
+            ("stop", ["--deploy-id", "abc123", "--token", "secret"], "token", "secret"),
         ],
     )
     def test_flag_parses(self, command, argv, attr, expected):
@@ -117,6 +122,9 @@ class TestParseArgs:
             ("join", ["--cluster", "h:1", "--ray-dashboard-host", "0.0.0.0"]),
             ("deploy", ["--metrics-port", "9090"]),
             ("join", ["--cluster", "h:1", "--state-store", "redis://h:6379/0"]),
+            ("stop", ["--deploy-id", "a", "--config", "models.yaml"]),
+            ("stop", ["--deploy-id", "a", "--gateway-name", "gw"]),
+            ("deploy", ["--deploy-id", "a"]),
         ],
     )
     def test_flag_owned_by_another_command_is_rejected(self, command, argv):
@@ -124,10 +132,14 @@ class TestParseArgs:
             parse_args(command, argv)
 
     @pytest.mark.parametrize("command", ["start", "join", "deploy"])
-    @pytest.mark.parametrize("flag", ["--use-existing-ray-cluster", "--address=h:1"])
+    @pytest.mark.parametrize("flag", ["--use-existing-ray-cluster", "--address=h:1", "--deploy-timeout=5"])
     def test_removed_flags_are_rejected(self, command, flag):
         with pytest.raises(SystemExit):
             parse_args(command, [flag])
+
+    def test_stop_requires_a_deploy_id(self):
+        with pytest.raises(SystemExit):
+            parse_args("stop", [])
 
     def test_join_requires_a_cluster(self, monkeypatch):
         monkeypatch.delenv("MSHIP_CLUSTER", raising=False)
@@ -259,10 +271,12 @@ class TestDriverVerbs:
             driver._deploy(parse_args("deploy", []))
         mock_attach.assert_not_called()
 
-    def _deploy(self, argv, existing_apps, fatally_failed=()):
+    def _deploy(self, argv, existing_apps, outcome=None, waiting=None):
         from modelship import driver
         from modelship.deploy import serve_utils
 
+        outcome = outcome or {"id": "r1", "state": "succeeded", "reason": "", "models": {"a": "up"}, "version": 1}
+        receipt = {"id": "r1", "behind": None, "outcome": "outcome-ref"}
         with (
             patch.object(serve_utils, "local_ray_clusters", return_value={"10.0.0.1:6380"}),
             patch.object(serve_utils, "attach_cluster"),
@@ -270,31 +284,155 @@ class TestDriverVerbs:
             patch.object(serve_utils, "get_existing_apps", return_value=existing_apps),
             patch.object(serve_utils, "start_gateway") as mock_gateway,
             patch.object(driver, "_log_cluster"),
-            patch.object(driver, "_apply", return_value=list(fatally_failed)) as mock_apply,
+            patch.object(driver, "_send", return_value=receipt) as mock_send,
+            patch("ray.get", side_effect=waiting or (lambda ref: outcome)) as mock_get,
         ):
             args = parse_args("deploy", argv)
             apply_args_to_env(args)
             driver._deploy(args)
-        return mock_gateway, mock_apply
+        return mock_gateway, mock_send, mock_get
 
     def test_deploy_refuses_a_missing_default_gateway(self):
         with pytest.raises(SystemExit, match="no gateway 'modelship'"):
             self._deploy([], existing_apps=set())
 
     def test_deploy_creates_a_named_gateway_that_is_missing(self):
-        mock_gateway, mock_apply = self._deploy(["--gateway-name", "edge"], existing_apps={"modelship"})
+        mock_gateway, mock_send, _ = self._deploy(["--gateway-name", "edge"], existing_apps={"modelship"})
         assert mock_gateway.call_args.args[0] == "edge"
-        mock_apply.assert_called_once()
+        assert mock_send.call_args.args[1] == "edge"
 
     def test_deploy_reuses_an_existing_gateway(self):
-        mock_gateway, mock_apply = self._deploy([], existing_apps={"modelship"})
+        mock_gateway, mock_send, _ = self._deploy([], existing_apps={"modelship"})
         mock_gateway.assert_not_called()
-        mock_apply.assert_called_once()
+        mock_send.assert_called_once()
 
-    def test_deploy_exits_nonzero_on_fatal_failures(self):
+    def test_deploy_waits_for_the_outcome(self, caplog):
+        caplog.set_level(logging.INFO, logger="modelship")
+        _, _, mock_get = self._deploy([], existing_apps={"modelship"})
+        mock_get.assert_called_once_with("outcome-ref")
+        assert "Deploy r1 succeeded; the gateway is on version 1." in caplog.messages
+
+    @pytest.mark.parametrize("state", ["failed", "cancelled"])
+    def test_deploy_exits_nonzero_when_the_request_does_not_succeed(self, state, caplog):
+        outcome = {"id": "r1", "state": state, "reason": "boom", "models": {}, "version": None}
         with pytest.raises(SystemExit) as exc:
-            self._deploy([], existing_apps={"modelship"}, fatally_failed=[(MagicMock(), "boom")])
+            self._deploy([], existing_apps={"modelship"}, outcome=outcome)
         assert exc.value.code == 1
+        assert f"Deploy r1 {state}: boom" in caplog.messages
+
+    def test_a_lost_deploy_coordinator_exits_nonzero(self, caplog):
+        def lost(ref):
+            raise RayActorError()
+
+        with pytest.raises(SystemExit) as exc:
+            self._deploy([], existing_apps={"modelship"}, waiting=lost)
+        assert exc.value.code == 1
+        assert "Deploy r1 was lost: the deploy coordinator restarted. Run the deploy again." in caplog.messages
+
+    def test_a_signal_while_waiting_only_stops_waiting(self, caplog):
+        from modelship import driver
+
+        caplog.set_level(logging.INFO, logger="modelship")
+
+        def interrupted(ref):
+            handler = driver.signal.signal.call_args.args[1]
+            handler(signal.SIGINT, None)
+
+        with patch("modelship.infer.deploy_coordinator.DeployCoordinator") as ledger, pytest.raises(SystemExit) as exc:
+            self._deploy([], existing_apps={"modelship"}, waiting=interrupted)
+        assert exc.value.code == 130
+        ledger.assert_not_called()
+        assert any("deploy r1 keeps running" in message for message in caplog.messages)
+
+
+class TestSend:
+    @pytest.fixture
+    def send(self, monkeypatch, tmp_path):
+        from modelship import driver
+        from modelship.state import MemoryStoreActor
+
+        monkeypatch.delenv("MSHIP_GATEWAY_NAME", raising=False)
+        monkeypatch.chdir(tmp_path)
+        coordinator = MagicMock()
+        coordinator.submit.remote.side_effect = lambda request: {"id": "r1", "behind": "r0", "outcome": "ref"}
+        submitted = []
+
+        def run(argv):
+            args = parse_args("deploy", argv)
+            with (
+                patch("modelship.infer.deploy_coordinator.get_or_create_coordinator", return_value=coordinator),
+                patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator"),
+                patch("modelship.deploy.serve_utils.get_app_statuses", return_value={"gw": "RUNNING"}),
+                patch(
+                    "modelship.state.get_state_store", return_value=MemoryStoreActor.__ray_metadata__.modified_class()
+                ),
+                patch("modelship.openai.compaction_crypto.ensure_key_seeded"),
+                patch("ray.get", side_effect=lambda value: value),
+            ):
+                receipt = driver._send(args, "gw", LoggingConfig())
+            submitted.append(coordinator.submit.remote.call_args.args[0])
+            return receipt
+
+        return SimpleNamespace(run=run, submitted=submitted)
+
+    def test_models_given_are_sent_additively(self, send):
+        receipt = send.run(["--model", "org/qwen-gguf:qwen.gguf", "--loader", "llama_server", "--usecase", "generate"])
+        (request,) = send.submitted
+        assert (request.gateway, request.mode, request.strategy) == ("gw", "additive", "blue_green")
+        assert request.models[0]["model"] == "org/qwen-gguf:qwen.gguf"
+        assert receipt["id"] == "r1"
+
+    def test_reconcile_and_the_replace_strategy_are_carried(self, send, tmp_path):
+        config = tmp_path / "models.yaml"
+        config.write_text("models: []\n")
+        send.run(["--config", str(config), "--reconcile", "--replace-strategy", "stop_start"])
+        (request,) = send.submitted
+        assert (request.mode, request.strategy, request.models) == ("reconcile", "stop_start", [])
+
+    def test_no_models_sends_a_bare_request(self, send):
+        send.run(["--reconcile"])
+        assert send.submitted[0].mode == "bare"
+        assert send.submitted[0].models is None
+
+    def test_the_per_deploy_settings_ride_the_request(self, send, monkeypatch):
+        monkeypatch.setenv("MSHIP_PREFLIGHT", "false")
+        send.run(["--reconcile"])
+        assert send.submitted[0].env["MSHIP_PREFLIGHT"] == "false"
+
+
+class TestCancelCommand:
+    def _cancel(self, result, *, clusters=frozenset({"10.0.0.1:6380"}), actor=True):
+        from modelship import driver
+        from modelship.deploy import serve_utils
+
+        coordinator = MagicMock()
+        coordinator.cancel.remote.return_value = result
+        with (
+            patch.object(serve_utils, "local_ray_clusters", return_value=set(clusters)),
+            patch.object(serve_utils, "attach_cluster"),
+            patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator if actor else None),
+            patch("ray.get", side_effect=lambda value: value),
+        ):
+            driver._cancel(parse_args("stop", ["--deploy-id", "r1"]))
+        return coordinator
+
+    def test_cancels_the_deploy(self, caplog):
+        caplog.set_level(logging.INFO, logger="modelship")
+        coordinator = self._cancel({"cancelled": True, "message": "deploy r1 cancelled"})
+        coordinator.cancel.remote.assert_called_once_with("r1")
+        assert "Deploy r1 cancelled." in caplog.messages
+
+    def test_exits_nonzero_when_nothing_was_cancelled(self):
+        with pytest.raises(SystemExit, match="no queued or running deploy r1"):
+            self._cancel({"cancelled": False, "message": "no queued or running deploy r1"})
+
+    def test_refuses_without_a_local_cluster(self):
+        with pytest.raises(SystemExit, match="no Ray cluster"):
+            self._cancel({}, clusters=frozenset())
+
+    def test_a_cluster_without_a_deploy_coordinator_has_no_deploy(self):
+        with pytest.raises(SystemExit, match="no deploy r1"):
+            self._cancel({}, actor=False)
 
 
 class TestStopHead:
@@ -304,17 +442,17 @@ class TestStopHead:
 
         with (
             patch.dict(os.environ, env, clear=False),
-            patch.object(removal, "delete_apps_quietly") as mock_delete,
+            patch.object(removal, "delete_model_apps") as mock_delete,
             patch.object(serve_utils, "shutdown_ray") as mock_shutdown,
         ):
             for key in pop:
                 os.environ.pop(key, None)
-            driver._stop_head({"a-1": "a", "b-2": "b"})
+            driver._stop_head()
         return mock_delete, mock_shutdown
 
-    def test_deletes_this_runs_apps_then_stops_serve_and_ray(self):
+    def test_deletes_every_model_app_then_stops_serve_and_ray(self):
         mock_delete, mock_shutdown = self._stop({}, pop=("RAY_REDIS_ADDRESS",))
-        assert list(mock_delete.call_args.args[0]) == ["b-2", "a-1"]
+        mock_delete.assert_called_once_with(30.0)
         mock_shutdown.assert_called_once_with()
 
     def test_redis_backed_gcs_keeps_the_apps(self):
@@ -376,7 +514,7 @@ class TestSignalHandlersOutliveRay:
             patch.object(driver, "_log_cluster"),
             patch.object(driver, "_log_join_hint"),
             patch.object(driver, "_log_gpus"),
-            patch.object(driver, "_apply", return_value=[]),
+            patch.object(driver, "_send"),
             patch.object(driver.signal, "pause"),
         ):
             driver._start(parse_args("start", []))
@@ -713,11 +851,8 @@ class TestReservationTotals:
         )
         opts = build_deployment_options(config)
         assert total_gpu_reservation(opts) == 0.5
-        assert total_cpu_reservation(opts) == 2
 
     def test_multi_slot_sums_pg_bundles(self):
-        # 4 slots, each bundle reserves num_cpus from the cluster; the outer
-        # actor's CPU sits inside bundle 0 and is not additive.
         config = ModelshipModelConfig(
             name="test-model",
             model="some-model",
@@ -728,49 +863,33 @@ class TestReservationTotals:
         )
         opts = build_deployment_options(config)
         assert total_gpu_reservation(opts) == 4
-        assert total_cpu_reservation(opts) == 8
 
 
-class TestRemoveApps:
-    # remove_apps lives in deploy.removal, not serve_utils.
-    def test_noop_on_empty_list(self):
+class TestDeleteModelApps:
+    @pytest.fixture
+    def serve(self, monkeypatch):
         from modelship.deploy import removal
 
-        replica_coordinator = MagicMock()
-        with patch("modelship.deploy.removal.serve.delete") as mock_delete:
-            removal.remove_apps([], replica_coordinator, "gw")
-        replica_coordinator.unregister_deployment.remote.assert_not_called()
-        mock_delete.assert_not_called()
+        apps = {"gw": None, "gw.a-1234567890": None, "gw.b-1234567890": None}
+        deleted: list[str] = []
+        monkeypatch.setattr(removal.serve, "status", lambda: SimpleNamespace(applications=dict(apps)))
+        monkeypatch.setattr(removal.serve, "delete", lambda name, _blocking=True: deleted.append(name))
+        monkeypatch.setattr(removal.time, "sleep", lambda seconds: [apps.pop(name, None) for name in deleted])
+        return SimpleNamespace(apps=apps, deleted=deleted)
 
-    def test_unregisters_then_deletes(self):
+    def test_deletes_every_model_app_but_not_the_gateway(self, serve):
         from modelship.deploy import removal
 
-        replica_coordinator = MagicMock()
-        apps = ["qwen-aaaaaaaaaa", "kokoro-bbbbbbbbbb"]
-        with (
-            patch("modelship.deploy.removal.ray.get") as mock_get,
-            patch("modelship.deploy.removal.serve.delete") as mock_delete,
-        ):
-            removal.remove_apps(apps, replica_coordinator, "gw")
+        removal.delete_model_apps(30.0)
+        assert serve.deleted == ["gw.a-1234567890", "gw.b-1234567890"]
+        assert set(serve.apps) == {"gw"}
 
-        # Each app is dropped from the replica coordinator's registry (bumping the
-        # gateway generation so replicas stop routing) before serve.delete tears it down.
-        replica_coordinator.unregister_deployment.remote.assert_any_call("gw", "qwen-aaaaaaaaaa")
-        replica_coordinator.unregister_deployment.remote.assert_any_call("gw", "kokoro-bbbbbbbbbb")
-        mock_get.assert_called_once()  # batched ray.get over the unregister calls
-        assert mock_delete.call_args_list == [(("qwen-aaaaaaaaaa",),), (("kokoro-bbbbbbbbbb",),)]
-
-    def test_continues_on_serve_delete_error(self):
+    def test_gives_up_waiting_after_the_timeout(self, serve, monkeypatch, caplog):
         from modelship.deploy import removal
 
-        replica_coordinator = MagicMock()
-        with (
-            patch("modelship.deploy.removal.ray.get"),
-            patch("modelship.deploy.removal.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete,
-        ):
-            removal.remove_apps(["a-1234567890", "b-1234567890"], replica_coordinator, "gw")
-        # Both deletes attempted even though the first raised.
-        assert mock_delete.call_count == 2
+        monkeypatch.setattr(removal.time, "sleep", lambda seconds: None)
+        removal.delete_model_apps(0.0)
+        assert "2 deployment(s) still being removed after 0 s" in caplog.text
 
 
 class TestStartGateway:
@@ -866,6 +985,15 @@ class TestGatewayRoutePrefix:
 
         with pytest.raises(ValueError):
             serve_utils.gateway_route_prefix("!!!")
+
+
+class TestGatewayFromEnv:
+    def test_a_name_with_a_dot_is_rejected(self, monkeypatch):
+        from modelship import driver
+
+        monkeypatch.setenv("MSHIP_GATEWAY_NAME", "edge.eu")
+        with pytest.raises(SystemExit, match=r"must not contain '\.'"):
+            driver._gateway_from_env()
 
 
 class TestValidateNodeGpuReservation:
@@ -1589,36 +1717,3 @@ class TestPruneRaySessions:
         proc = subprocess.Popen(["true"])
         proc.wait()
         assert serve_utils._pid_alive(proc.pid) is False
-
-
-class TestSeedExpectedModels:
-    """The readiness baseline the gateway's /readyz measures against."""
-
-    @staticmethod
-    def _conf():
-        from modelship.infer.infer_config import ModelshipConfig
-
-        return ModelshipConfig.model_validate(
-            {
-                "models": [
-                    {"name": n, "model": f"org/{n}", "usecase": "generate", "loader": "vllm"}
-                    for n in ("qwen", "kokoro")
-                ]
-            }
-        )
-
-    def _seed(self, **kwargs) -> list[str]:
-        from modelship.deploy import serve_utils
-
-        replica_coordinator = MagicMock()
-        with patch("modelship.deploy.serve_utils.ray.get"):
-            serve_utils.seed_expected_models(replica_coordinator, "gw", self._conf(), **kwargs)
-        return replica_coordinator.set_expected.remote.call_args.args[1]
-
-    def test_seeds_every_configured_model(self):
-        assert self._seed() == ["qwen", "kokoro"]
-
-    def test_excluded_models_are_left_out(self):
-        # A model the driver gave up on: still in the effective config for a later
-        # retry, but nothing is pursuing it now, so /readyz must stop waiting.
-        assert self._seed(exclude={"qwen"}) == ["kokoro"]

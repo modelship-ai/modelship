@@ -218,6 +218,7 @@ markers = [
     "autoscaling: integration test that exercises Ray Serve autoscaling (scale out/in under load)",
     "gateway_ha: integration test that exercises multi-replica gateway routing consistency",
     "blue_green: integration test that exercises the blue_green replace-strategy cutover",
+    "deploy: integration tests that exercise mship deploy end to end (additive, still coming up, two gateways)",
     "cluster_join: integration test that exercises the --address/--token multi-node cluster join",
     "fractional_gpu_sharing: integration test that exercises two loaders sharing one physical GPU via fractional num_gpus",
 ]

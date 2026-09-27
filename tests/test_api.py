@@ -1,5 +1,6 @@
 """Tests for ModelshipAPI model discovery and routing."""
 
+import asyncio
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -34,8 +35,7 @@ def api():
 
 
 def _apply(api, models, *, expected=None, gen=1, handles=None):
-    """Applies a coordinator routing snapshot with Serve mocked. `gen` lower than the
-    replica's current `_gen` simulates a coordinator restart (removals suppressed)."""
+    """Applies a gateway coordinator routing snapshot with Serve mocked."""
     with ExitStack() as stack:
         if handles is not None:
             stack.enter_context(patch("modelship.openai.api.serve.get_app_handle", side_effect=handles))
@@ -141,8 +141,7 @@ class TestApplyRouting:
 
 
 class TestReconcileRemovals:
-    """A snapshot that drops an app removes it when the generation advances; a
-    regressed generation (coordinator restart) never blanks live routing."""
+    """A snapshot that drops an app removes it from the routing table."""
 
     def test_dropped_app_removed_on_forward_snapshot(self, api):
         _apply(api, {"qwen-a3f9k1b2c4": "qwen"}, gen=1)
@@ -159,15 +158,13 @@ class TestReconcileRemovals:
         assert list(api.models["qwen"].keys()) == ["qwen-bbbbbbbbbb"]
         assert len(api.model_list) == 1
 
-    def test_regressed_generation_does_not_blank_routing(self, api):
-        # Coordinator restarted (generation reset below ours) but the model is still
-        # deployed: additions are adopted, live routing is never removed.
-        _apply(api, {"qwen-a3f9k1b2c4": "qwen"}, gen=5)
-        _apply(api, {}, gen=0)
-        assert "qwen" in api.models
-
     def test_drop_unknown_app_is_noop(self, api):
         assert api._drop_apps(["nonexistent-1234567890"]) == []
+
+    def test_expected_models_follow_a_snapshot_whose_routes_fail_to_apply(self, api):
+        with pytest.raises(RuntimeError):
+            _apply(api, {"qwen-a3f9k1b2c4": "qwen"}, expected=["qwen"], handles=[RuntimeError("app not ready")])
+        assert api.expected_models == ["qwen"]
 
     def test_removal_drops_from_expected_when_snapshot_drops_it(self, api):
         _apply(api, {"qwen-a3f9k1b2c4": "qwen"}, expected=["qwen", "kokoro"], gen=1)
@@ -199,7 +196,7 @@ class TestWatchReconcile:
             "generation": 3,
         }
         with (
-            patch("modelship.infer.replica_coordinator.get_or_create_replica_coordinator", return_value=MagicMock()),
+            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator", return_value=MagicMock()),
             patch("modelship.openai.api.ray.get", return_value=snapshot),
             patch("modelship.openai.api.serve.get_app_handle", return_value=MagicMock()),
         ):
@@ -212,7 +209,7 @@ class TestWatchReconcile:
 
     def test_sync_tolerates_unavailable_coordinator(self, api):
         api._watch_task = None
-        with patch("modelship.infer.replica_coordinator.get_or_create_replica_coordinator", side_effect=RuntimeError):
+        with patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator", side_effect=RuntimeError):
             assert api._sync_routing_blocking() is False
         assert api.models == {}
 
@@ -222,7 +219,7 @@ class TestWatchReconcile:
         api._watch_task = None
         snapshot = {"models": {"qwen-aaaaaaaaaa": "qwen"}, "expected": ["qwen"], "generation": 2}
         with (
-            patch("modelship.infer.replica_coordinator.get_or_create_replica_coordinator", return_value=MagicMock()),
+            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator", return_value=MagicMock()),
             patch("modelship.openai.api.ray.get", return_value=snapshot),
             patch("modelship.openai.api.serve.get_app_handle", side_effect=RuntimeError("controller lag")),
         ):
@@ -235,36 +232,62 @@ class TestWatchReconcile:
         # cleared so the next _coord() re-resolves instead of retrying a corpse.
         stale = MagicMock()
         stale.get_routing.remote.side_effect = RuntimeError("actor dead")
-        api._replica_coord = stale
+        api._gateway_coord = stale
         with patch("modelship.openai.api.ray.get", side_effect=RuntimeError("actor dead")):
             assert api._sync_routing_blocking() is False
-        assert api._replica_coord is None
+        assert api._gateway_coord is None
 
     @pytest.mark.asyncio
     async def test_coord_async_resolves_off_thread_and_caches(self, api):
         # The watch loop resolves the coordinator via asyncio.to_thread (so the sync
         # ray.get_actor never blocks the event loop) and caches the handle.
-        api._replica_coord = None
+        api._gateway_coord = None
         sentinel = MagicMock()
         with patch(
-            "modelship.infer.replica_coordinator.get_or_create_replica_coordinator", return_value=sentinel
+            "modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator", return_value=sentinel
         ) as goc:
             assert await api._coord_async() is sentinel
             assert await api._coord_async() is sentinel
         goc.assert_called_once()  # second call served from cache, no re-resolve
 
-    def test_sync_keeps_live_models_on_regressed_generation(self, api):
-        # Coordinator restarted: empty snapshot at a lower generation than ours. The
-        # model is still deployed, so routing is preserved, not blanked.
-        _apply(api, {"qwen-aaaaaaaaaa": "qwen"}, gen=4)
-        empty = {"models": {}, "expected": [], "generation": 0}
+    def test_a_snapshot_sets_the_routing_seq(self, api):
+        with patch("modelship.openai.api.serve.get_app_handle", return_value=MagicMock()):
+            api._apply_snapshot({"models": {"qwen-a3f9k": "qwen"}, "expected": ["qwen"], "generation": 2, "routing": 7})
+        assert api._routing_seq == 7
+
+    def test_a_snapshot_that_cannot_be_applied_keeps_the_routing_seq(self, api):
+        api._routing_seq = 3
         with (
-            patch("modelship.infer.replica_coordinator.get_or_create_replica_coordinator", return_value=MagicMock()),
-            patch("modelship.openai.api.ray.get", return_value=empty),
+            patch("modelship.openai.api.serve.get_app_handle", side_effect=RuntimeError("controller lag")),
+            pytest.raises(RuntimeError),
         ):
-            api._replica_coord = None
-            assert api._sync_routing_blocking() is True
-        assert "qwen" in api.models
+            api._apply_snapshot({"models": {"qwen-a3f9k": "qwen"}, "expected": [], "generation": 2, "routing": 7})
+        assert api._routing_seq == 3
+
+    @pytest.mark.asyncio
+    async def test_each_poll_reports_the_replica_and_its_routing_seq(self, api):
+        api._gen, api._routing_seq = 5, 7
+        calls = []
+
+        async def wait_for_change(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise asyncio.CancelledError
+
+        coordinator = MagicMock()
+        coordinator.wait_for_change.remote = wait_for_change
+        api._gateway_coord = coordinator
+        await api._watch_loop()
+        assert calls == [(("test-gateway", 5), {"replica_id": api._replica_id, "routing": 7})]
+
+    @pytest.mark.asyncio
+    async def test_the_health_check_starts_watching(self, api):
+        api._watch_task = None
+        with (
+            patch.object(type(api), "_sync_routing_blocking", return_value=True),
+            patch.object(type(api), "_watch_loop", new=AsyncMock()),
+        ):
+            await api.check_health()
+        assert api._watch_task is not None
 
 
 class TestGetHandle:
@@ -280,17 +303,28 @@ class TestGetHandle:
         _apply(api, {"qwen-a3f9k": "qwen", "qwen-b7x2p": "qwen"}, handles=[ha, hb])
         assert api._get_handle("qwen") is hb
 
-    def test_unknown_model_raises(self, api):
+    def test_unknown_model_is_404(self, api):
         from fastapi import HTTPException
 
-        with pytest.raises(HTTPException):
+        _apply(api, {}, expected=["qwen"])
+        with pytest.raises(HTTPException) as exc_info:
             api._get_handle("nonexistent")
+        assert exc_info.value.status_code == 404
 
-    def test_none_model_raises(self, api):
+    def test_none_model_is_404(self, api):
         from fastapi import HTTPException
 
-        with pytest.raises(HTTPException):
+        with pytest.raises(HTTPException) as exc_info:
             api._get_handle(None)
+        assert exc_info.value.status_code == 404
+
+    def test_an_expected_model_with_nothing_routed_is_503(self, api):
+        from fastapi import HTTPException
+
+        _apply(api, {}, expected=["qwen"])
+        with pytest.raises(HTTPException) as exc_info:
+            api._get_handle("qwen")
+        assert exc_info.value.status_code == 503
 
 
 class TestImageEditRoutes:

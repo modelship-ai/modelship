@@ -1,32 +1,35 @@
 """Deployment teardown, kept free of serve_utils' gateway and probe imports."""
 
-import ray
+import contextlib
+import time
+
 from ray import serve
 
 from modelship.logging import get_logger
+from modelship.utils.config_schema import parse_deployment_name
 
 logger = get_logger("startup")
 
+_POLL_S = 1.0
 
-def delete_apps_quietly(app_names) -> None:
-    """Best-effort serve.delete for cleanup paths — never raises."""
-    for name in app_names:
+
+def delete_model_apps(timeout_s: float) -> None:
+    """Deletes every model app without blocking on Serve, then waits up to *timeout_s* for them to go."""
+    try:
+        left = [name for name in serve.status().applications if parse_deployment_name(name) is not None]
+    except Exception:
+        logger.exception("Could not list the model deployments to delete")
+        return
+    for name in left:
         try:
-            logger.info("Deleting deployment: %s", name)
-            serve.delete(name)
+            serve.delete(name, _blocking=False)
         except Exception:
             logger.exception("Failed to delete deployment: %s", name)
-
-
-def remove_apps(app_names: list[str], replica_coordinator, gateway_name: str) -> None:
-    """Drop the given deployment apps from the replica coordinator's ownership registry
-    (which bumps the gateway generation so every replica's watch loop stops routing
-    to them), then delete them from Ray Serve (`serve.delete` drains in-flight
-    requests first)."""
-    if not app_names:
-        return
-    try:
-        ray.get([replica_coordinator.unregister_deployment.remote(gateway_name, a) for a in app_names])
-    except Exception:
-        logger.exception("Failed to drop deployments from registry: %s", app_names)
-    delete_apps_quietly(app_names)
+    deadline = time.monotonic() + timeout_s
+    while left and time.monotonic() < deadline:
+        time.sleep(_POLL_S)
+        with contextlib.suppress(Exception):
+            present = serve.status().applications
+            left = [name for name in left if name in present]
+    if left:
+        logger.warning("%d deployment(s) still being removed after %.0f s: %s", len(left), timeout_s, ", ".join(left))

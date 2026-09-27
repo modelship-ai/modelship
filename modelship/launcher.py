@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 _REQUIRED_PYTHON = (3, 12, 10)
 
 
-_COMMANDS = ("start", "join", "deploy", "info")
+_COMMANDS = ("start", "join", "deploy", "stop", "info")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -50,7 +50,7 @@ def _cmd_run(command: str, argv: list[str]) -> None:
     apply_args_to_env(args)
     _guard_python_version()
 
-    if command != "join":
+    if command in ("start", "deploy"):
         config = _validate_config(args)
         # Only a start with capacity of its own runs models in this environment.
         if config is not None and command == "start" and not _advertises_no_capacity():

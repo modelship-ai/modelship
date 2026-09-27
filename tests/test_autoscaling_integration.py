@@ -5,22 +5,17 @@ import concurrent.futures
 import threading
 import time
 
-import httpx
 import pytest
 
 from openai import OpenAI
-
-SERVE_STATUS_URL = "http://localhost:8265/api/serve/applications/"
+from tests.conftest import serve_apps
 
 
 def _running_replicas(model_name: str) -> int:
-    """Counts RUNNING replicas of the deployment serving `model_name` via the Serve REST
-    status API; app names are `<model_name>-<fingerprint>`, matched by prefix."""
-    resp = httpx.get(SERVE_STATUS_URL, timeout=10)
-    resp.raise_for_status()
-    apps = resp.json().get("applications", {})
-    for app_name, app in apps.items():
-        if app_name == model_name or app_name.startswith(f"{model_name}-"):
+    """Counts RUNNING replicas of the deployment serving `model_name`; app names are
+    `modelship.<model_name>-<fingerprint>`, matched by prefix."""
+    for app_name, app in serve_apps().items():
+        if app_name.startswith(f"modelship.{model_name}-"):
             for dep in app.get("deployments", {}).values():
                 return sum(1 for r in dep.get("replicas", []) if r.get("state") == "RUNNING")
     return 0
@@ -100,3 +95,68 @@ class TestAutoscaling:
         # Load stopped: scale back in to min_replicas within the downscale window + slack.
         settled = _wait_for_replicas(self.MODEL, lambda n: n == 1, deadline_s=180)
         assert settled == 1, f"expected scale-in to min_replicas=1 after load, saw {settled}"
+
+
+_SCALE_TO_ZERO_MODEL = "scale-to-zero"
+_PING_PROMPT = [{"role": "user", "content": "hi"}]
+
+
+def _scale_to_zero_config(n_ctx: int) -> dict:
+    # min_replicas 0 with no initial_replicas deploys at zero replicas; n_ctx changes the fingerprint.
+    return {
+        "name": _SCALE_TO_ZERO_MODEL,
+        "model": "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf",
+        "usecase": "generate",
+        "loader": "llama_server",
+        "num_cpus": 1,
+        "llama_server_config": {"n_ctx": n_ctx},
+        "autoscaling_config": {"min_replicas": 0, "max_replicas": 1, "downscale_delay_s": 5},
+    }
+
+
+def _scale_to_zero_apps() -> set[str]:
+    return {name for name in serve_apps() if name.startswith(f"modelship.{_SCALE_TO_ZERO_MODEL}-")}
+
+
+def _listed(client: OpenAI, model: str) -> bool:
+    return model in {m.id for m in client.models.list().data}
+
+
+def _poll(predicate, deadline_s: float) -> bool:
+    end = time.time() + deadline_s
+    while time.time() < end:
+        if predicate():
+            return True
+        time.sleep(1)
+    return False
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+@pytest.mark.autoscaling
+class TestScaleToZero:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy_raw([_scale_to_zero_config(n_ctx=2048)])
+
+    def _ping(self, client: OpenAI) -> None:
+        client.chat.completions.create(model=_SCALE_TO_ZERO_MODEL, messages=_PING_PROMPT, max_tokens=4)
+
+    def test_a_model_deployed_at_zero_replicas_answers(self, client):
+        assert _running_replicas(_SCALE_TO_ZERO_MODEL) == 0
+        assert _poll(lambda: _listed(client, _SCALE_TO_ZERO_MODEL), deadline_s=30), (
+            "the gateway does not list a model at zero replicas"
+        )
+        self._ping(client)
+
+    def test_a_model_scaled_back_to_zero_answers_again(self, client):
+        settled = _wait_for_replicas(_SCALE_TO_ZERO_MODEL, lambda n: n == 0, deadline_s=120)
+        assert settled == 0, f"expected scale-in to zero replicas, saw {settled}"
+        self._ping(client)
+
+    def test_a_changed_model_at_zero_replicas_retires_the_old_app(self, client, model_deployer):
+        self._ping(client)
+        old = _scale_to_zero_apps()
+        model_deployer.deploy_raw([_scale_to_zero_config(n_ctx=4096)], replace_strategy="blue_green")
+        assert _poll(lambda: not (old & _scale_to_zero_apps()), deadline_s=60), "the old app was not retired"
+        self._ping(client)
