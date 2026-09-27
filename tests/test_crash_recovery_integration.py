@@ -6,7 +6,6 @@ import time
 
 import pytest
 
-import openai
 from modelship.infer.deploy_coordinator import _DEATHS_PER_REPLICA
 from tests.conftest import serve_apps
 
@@ -96,7 +95,7 @@ class TestRepeatedBackendDeaths:
     MODEL = "chat-llama-server-plain"
     GGUF = "Qwen2.5-0.5B-Instruct"
 
-    def test_a_deployment_whose_backend_keeps_dying_is_retired(self, client, model_deployer):
+    def test_a_committed_deployment_whose_backend_keeps_dying_is_kept(self, client, model_deployer):
         model_deployer.deploy(self.MODEL)
         (app,) = (name for name in serve_apps() if name.startswith(f"modelship.{self.MODEL}-"))
 
@@ -108,16 +107,10 @@ class TestRepeatedBackendDeaths:
                 return False
 
         killed: set[int] = set()
-        # num_replicas is 1, so the deploy coordinator retires the app at this many deaths
-        for death in range(1, _DEATHS_PER_REPLICA + 1):
+        # num_replicas is 1, so this is one death past the limit the deploy coordinator counts
+        for death in range(1, _DEATHS_PER_REPLICA + 2):
             assert _poll(request_succeeds, deadline_s=120), f"no working replica before death {death}"
             killed.add(_kill_llama_server(self.GGUF, killed))
 
-        model_deployer.forget()
-        assert _poll(lambda: app not in serve_apps(), deadline_s=120), "the deployment was not retired"
-        # the effective config still lists the model, so the gateway answers 503
-        no_retries = client.with_options(max_retries=0)
-        for _ in range(20):
-            with pytest.raises(openai.InternalServerError) as raised:
-                no_retries.chat.completions.create(model=self.MODEL, messages=_PING_PROMPT, max_tokens=4)
-            assert raised.value.status_code == 503
+        assert _poll(request_succeeds, deadline_s=120), "Serve did not restart the replica"
+        assert app in serve_apps(), "the deployment was deleted"
