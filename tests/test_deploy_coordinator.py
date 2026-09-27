@@ -1,13 +1,16 @@
-"""The deploy coordinator, driven directly: leases, effective-config writes, replica-death counts and retiring.
-Placement options live in test_actor_placement.py."""
+"""The deploy coordinator, driven directly: leases, effective-config writes, replica-death counts, and the
+per-gateway deploy queue with fake workers. Placement options live in test_actor_placement.py."""
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 import pytest
+from ray.exceptions import RayActorError
+from ray.serve.schema import LoggingConfig
 
-from modelship.deploy.ledger import read_effective
+from modelship.deploy import worker as worker_module
+from modelship.deploy.ledger import DeployRequest, Version, commit_version, read_effective, read_versions
 from modelship.infer import deploy_coordinator
 from modelship.infer.deploy_coordinator import LEASE_SECONDS, gateway_lease_key
 from modelship.infer.infer_config import ModelshipModelConfig
@@ -80,6 +83,12 @@ class TestStartupWindow:
         coord._reaper.cancel()
         assert await coord.acquire("node", "a") is None
 
+    async def test_a_restarted_actor_waits_out_the_window_anyway(self, monkeypatch):
+        monkeypatch.setattr(deploy_coordinator, "_reconstructed", lambda: True)
+        coord = _Coord(startup_window=False)
+        coord._reaper.cancel()
+        assert await coord.acquire("node", "a") == "lease service starting"
+
 
 @pytest.mark.asyncio
 class TestReaping:
@@ -136,68 +145,334 @@ class TestWriteEffective:
 
 @pytest.mark.asyncio
 class TestReplicaDeathCounting:
-    async def test_deaths_below_the_limit_do_not_retire(self):
+    async def test_deaths_below_the_limit_are_not_crash_looping(self):
         coord = _fresh()
-        with patch.object(coord, "_retire", new=AsyncMock()) as retire:
-            for _ in range(deploy_coordinator._DEATHS_PER_REPLICA - 1):
-                await coord.report_replica_death("qwen-aaaa", 1, "engine died")
-        retire.assert_not_called()
+        for _ in range(deploy_coordinator._DEATHS_PER_REPLICA - 1):
+            await coord.report_replica_death("qwen-aaaa", 1, "engine died")
+        assert await coord.crash_looping(["qwen-aaaa"]) == {}
 
-    async def test_the_limiting_death_retires(self):
+    async def test_the_limiting_death_is_crash_looping_with_its_reason(self):
         coord = _fresh()
-        with patch.object(coord, "_retire", new=AsyncMock()) as retire:
-            for _ in range(deploy_coordinator._DEATHS_PER_REPLICA):
-                await coord.report_replica_death("qwen-aaaa", 1, "engine died")
-        retire.assert_awaited_once_with("qwen-aaaa")
+        for _ in range(deploy_coordinator._DEATHS_PER_REPLICA):
+            await coord.report_replica_death("qwen-aaaa", 1, "engine died")
+        assert await coord.crash_looping(["qwen-aaaa", "other"]) == {"qwen-aaaa": "engine died"}
 
     async def test_the_limit_scales_with_the_replica_count(self):
         coord = _fresh()
-        with patch.object(coord, "_retire", new=AsyncMock()) as retire:
-            for _ in range(deploy_coordinator._DEATHS_PER_REPLICA * 4):
-                await coord.report_replica_death("qwen-aaaa", 4, "engine died")
-        assert retire.await_count == 1
-
-    async def test_the_count_is_not_time_windowed(self):
-        coord = _fresh()
-        coord._deaths["qwen-aaaa"] = deploy_coordinator._DEATHS_PER_REPLICA - 1
-        with patch.object(coord, "_retire", new=AsyncMock()) as retire:
-            await coord.report_replica_death("qwen-aaaa", 1, "engine died")
-        retire.assert_awaited_once()
+        for _ in range(deploy_coordinator._DEATHS_PER_REPLICA * 4 - 1):
+            await coord.report_replica_death("qwen-aaaa", 4, "engine died")
+        assert await coord.crash_looping(["qwen-aaaa"]) == {}
+        await coord.report_replica_death("qwen-aaaa", 4, "engine died")
+        assert "qwen-aaaa" in await coord.crash_looping(["qwen-aaaa"])
 
     async def test_deployments_are_counted_separately(self):
         coord = _fresh()
-        with patch.object(coord, "_retire", new=AsyncMock()) as retire:
-            for name in ("qwen-aaaa", "kokoro-bbbb"):
-                for _ in range(deploy_coordinator._DEATHS_PER_REPLICA - 1):
-                    await coord.report_replica_death(name, 1, "engine died")
-        retire.assert_not_called()
+        for name in ("qwen-aaaa", "kokoro-bbbb"):
+            for _ in range(deploy_coordinator._DEATHS_PER_REPLICA - 1):
+                await coord.report_replica_death(name, 1, "engine died")
+        assert await coord.crash_looping(["qwen-aaaa", "kokoro-bbbb"]) == {}
+
+    async def test_forgetting_resets_the_count(self):
+        coord = _fresh()
+        for _ in range(deploy_coordinator._DEATHS_PER_REPLICA):
+            await coord.report_replica_death("qwen-aaaa", 1, "engine died")
+        await coord.forget_deaths(["qwen-aaaa"])
+        assert await coord.crash_looping(["qwen-aaaa"]) == {}
+
+    async def test_a_death_past_the_limit_deletes_nothing(self, monkeypatch):
+        monkeypatch.setattr(deploy_coordinator.serve, "delete", lambda *a, **k: pytest.fail("deleted an app"))
+        coord = _fresh()
+        for _ in range(deploy_coordinator._DEATHS_PER_REPLICA + 2):
+            await coord.report_replica_death("qwen-aaaa", 1, "engine died")
 
 
-_APP = ModelshipModelConfig.model_validate(
-    {"name": "qwen", "model": "org/qwen", "usecase": "generate", "loader": "llama_server"}
-).deployment_name("g")
+def _raw(name: str, **overrides) -> dict:
+    return {"name": name, "model": f"org/{name}", "usecase": "generate", "loader": "llama_server", **overrides}
+
+
+def _app_name(raw: dict, gateway: str = "g") -> str:
+    return ModelshipModelConfig.model_validate(raw).deployment_name(gateway)
+
+
+def _request(gateway: str = "g", models=None, mode="additive") -> DeployRequest:
+    return DeployRequest(
+        gateway, mode, "blue_green", models if models is not None else [_raw("a")], LoggingConfig(), {}
+    )
+
+
+class _Worker:
+    """A deploy worker whose run the test finishes; a kill ends it with RayActorError."""
+
+    def __init__(self, workers: "_Workers"):
+        self.run_future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self.runs: list[tuple] = []
+        self.killed = False
+        self.run = SimpleNamespace(remote=self._run)
+        self.roll_back = SimpleNamespace(remote=lambda *args: workers.record_rollback(args))
+
+    def _run(self, request, committed, switch_timeout):
+        self.runs.append((request, committed))
+        return self.run_future
+
+    def finish(self, state: str = "succeeded") -> None:
+        request = self.runs[0][0]
+        self.run_future.set_result({"id": request.id, "state": state, "reason": "", "models": {}, "version": None})
+
+
+class _Workers:
+    def __init__(self):
+        self.created: list[_Worker] = []
+        self.rollbacks: list[tuple] = []
+
+    def create(self, coordinator):
+        worker = _Worker(self)
+        self.created.append(worker)
+        return worker
+
+    def record_rollback(self, args):
+        self.rollbacks.append(args)
+        done = asyncio.get_running_loop().create_future()
+        done.set_result([])
+        return done
+
+    def kill(self, handle):
+        handle.killed = True
+        if isinstance(handle, _Worker) and not handle.run_future.done():
+            handle.run_future.set_exception(RayActorError())
+            # retrieved here too: a kill from a cancelled task has no awaiter
+            handle.run_future.add_done_callback(lambda future: future.exception())
+
+
+@pytest.fixture
+def workers(monkeypatch):
+    fakes = _Workers()
+    monkeypatch.setattr(worker_module, "create_worker", fakes.create)
+    monkeypatch.setattr(deploy_coordinator.ray, "kill", fakes.kill)
+    return fakes
+
+
+def _ledger():
+    """A fresh deploy coordinator whose calls to its own handle run in-process."""
+    coord = _fresh()
+    coord._self = lambda: SimpleNamespace(
+        wait=SimpleNamespace(remote=lambda rid: asyncio.ensure_future(coord.wait(rid)))
+    )
+    return coord
+
+
+@pytest.fixture(autouse=True)
+def serve_apps(monkeypatch):
+    """Serve's app list as the recovery reads it."""
+    apps: list[str] = []
+    monkeypatch.setattr(deploy_coordinator.serve, "status", lambda: SimpleNamespace(applications=dict.fromkeys(apps)))
+    return apps
+
+
+async def _until(predicate, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition not met in time"
+        await asyncio.sleep(0.005)
+
+
+async def _settle() -> None:
+    """Lets queued work, store reads included, run."""
+    await asyncio.sleep(0.05)
 
 
 @pytest.mark.asyncio
-class TestRetire:
-    async def test_deletes_the_app_under_its_gateways_lease(self):
-        coord = _fresh()
-        held = []
-        with patch(
-            "modelship.deploy.removal.serve.delete", lambda name: held.append(coord._leases.get(gateway_lease_key("g")))
-        ):
-            await coord._retire(_APP)
-        assert held[0].holder == f"deploy coordinator retiring {_APP}"
-        assert gateway_lease_key("g") not in coord._leases
+class TestQueue:
+    async def test_a_request_runs_in_a_worker_and_its_outcome_is_returned(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        assert receipt["behind"] is None
+        await _settle()
+        (worker,) = workers.created
+        assert worker.runs[0][1] is None
+        worker.finish()
+        outcome = await receipt["outcome"]
+        assert outcome["id"] == receipt["id"]
+        assert outcome["state"] == "succeeded"
+        assert worker.killed
 
-    async def test_waits_while_a_deploy_holds_the_gateways_lease(self, monkeypatch):
-        monkeypatch.setattr(deploy_coordinator, "POLL_SECONDS", 0.01)
-        coord = _fresh()
-        await coord.acquire(gateway_lease_key("g"), "a deploy")
-        with patch("modelship.deploy.removal.serve.delete") as delete:
-            retiring = asyncio.create_task(coord._retire(_APP))
-            await asyncio.sleep(0.05)
-            delete.assert_not_called()
-            await coord.release(gateway_lease_key("g"), "a deploy")
-            await asyncio.wait_for(retiring, 1)
-        delete.assert_called_once_with(_APP)
+    async def test_requests_on_one_gateway_run_one_after_another(self, workers):
+        coord = _ledger()
+        first = await coord.submit(_request())
+        second = await coord.submit(_request())
+        assert second["behind"] == first["id"]
+        await _settle()
+        assert len(workers.created) == 1
+        workers.created[0].finish()
+        await first["outcome"]
+        await _settle()
+        assert len(workers.created) == 2
+        workers.created[1].finish()
+        await second["outcome"]
+
+    async def test_requests_on_different_gateways_run_side_by_side(self, workers):
+        coord = _ledger()
+        await coord.submit(_request("g"))
+        await coord.submit(_request("edge"))
+        await _settle()
+        assert len(workers.created) == 2
+
+    async def test_a_request_starts_from_the_committed_version(self, workers):
+        coord = _ledger()
+        commit_version(coord._store, "g", [_raw("a")])
+        await coord.submit(_request())
+        await _settle()
+        assert workers.created[0].runs[0][1] == [_raw("a")]
+
+    async def test_the_outcome_is_forgotten_once_collected(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        workers.created[0].finish()
+        await receipt["outcome"]
+        assert coord._requests == {}
+
+    async def test_recovery_runs_before_the_first_request(self, workers, serve_apps):
+        serve_apps.extend(["g", _app_name(_raw("a"))])
+        coord = _ledger()
+        await coord.submit(_request())
+        await _settle()
+        assert workers.rollbacks == [("g", None, True, 60.0)]
+        assert len(workers.created) == 2
+
+
+@pytest.mark.asyncio
+class TestCancel:
+    async def test_a_queued_request_is_dropped(self, workers):
+        coord = _ledger()
+        await coord.submit(_request())
+        queued = await coord.submit(_request())
+        assert await coord.cancel(queued["id"]) == f"deploy {queued['id']} cancelled"
+        assert (await queued["outcome"])["state"] == "cancelled"
+        await _until(lambda: workers.created)
+        workers.created[0].finish()
+        await _settle()
+        assert len(workers.created) == 1
+
+    async def test_a_running_request_is_flagged_for_its_worker(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.cancel(receipt["id"])
+        assert await coord.is_cancelled(receipt["id"])
+        assert coord._requests[receipt["id"]].cancel_seen
+
+    async def test_a_worker_that_does_not_stop_within_the_grace_is_killed_and_rolled_back(self, workers):
+        coord = _ledger()
+        coord._cancel_grace = 0.01
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.cancel(receipt["id"])
+        outcome = await asyncio.wait_for(receipt["outcome"], 1)
+        assert outcome["state"] == "cancelled"
+        assert workers.rollbacks == [("g", None, False, 60.0)]
+
+    async def test_a_worker_that_saw_the_cancel_is_left_to_roll_back(self, workers):
+        coord = _ledger()
+        coord._cancel_grace = 0.01
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.cancel(receipt["id"])
+        await coord.is_cancelled(receipt["id"])
+        await asyncio.sleep(0.05)
+        assert not workers.created[0].killed
+        workers.created[0].finish("cancelled")
+        await receipt["outcome"]
+
+    async def test_a_committed_request_cannot_be_cancelled(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.switch(receipt["id"], "g", [_raw("a")])
+        await coord.commit(receipt["id"], "g", [_raw("a")])
+        assert "already committed" in await coord.cancel(receipt["id"])
+
+    async def test_an_unknown_request(self, workers):
+        assert await _ledger().cancel("nope") == "no queued or running deploy nope"
+
+
+@pytest.mark.asyncio
+class TestWorkerDeath:
+    async def test_a_worker_that_dies_fails_the_request_and_rolls_it_back(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.switch(receipt["id"], "g", [_raw("a")])
+        workers.kill(workers.created[0])
+        outcome = await receipt["outcome"]
+        assert outcome["state"] == "failed"
+        assert outcome["reason"].startswith("the deploy worker died")
+        assert workers.rollbacks == [("g", None, True, 60.0)]
+
+    async def test_a_worker_that_dies_after_the_commit_still_succeeds(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.switch(receipt["id"], "g", [_raw("a")])
+        await coord.commit(receipt["id"], "g", [_raw("a")])
+        workers.kill(workers.created[0])
+        assert (await receipt["outcome"])["state"] == "succeeded"
+        assert workers.rollbacks == [("g", [_raw("a")], False, 60.0)]
+
+
+@pytest.mark.asyncio
+class TestRouting:
+    async def test_a_gateway_routes_by_its_committed_version(self, workers):
+        coord = _ledger()
+        commit_version(coord._store, "g", [_raw("a")])
+        versions = await coord.routing_versions(["g"])
+        assert versions["g"]["apps"] == {"a": _app_name(_raw("a"))}
+
+    async def test_a_gateway_without_a_version_has_no_table(self, workers):
+        assert (await _ledger().routing_versions(["g"]))["g"]["apps"] is None
+
+    async def test_a_switch_routes_by_the_proposed_models_under_a_new_seq(self, workers):
+        coord = _ledger()
+        before = (await coord.routing_versions(["g"]))["g"]["seq"]
+        receipt = await coord.submit(_request())
+        await _settle()
+        seq = await coord.switch(receipt["id"], "g", [_raw("b")])
+        assert seq > before
+        assert await coord.routing_versions(["g"]) == {"g": {"seq": seq, "apps": {"b": _app_name(_raw("b"))}}}
+        assert coord._running["g"].state == "switching"
+
+    async def test_a_reset_routes_back_under_another_seq(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        seq = await coord.switch(receipt["id"], "g", [_raw("b")])
+        assert await coord.reset_routing("g") > seq
+        assert (await coord.routing_versions(["g"]))["g"]["apps"] is None
+
+    async def test_a_reset_on_the_committed_version_keeps_the_seq(self, workers):
+        coord = _ledger()
+        seq = (await coord.routing_versions(["g"]))["g"]["seq"]
+        assert await coord.reset_routing("g") == seq
+
+    async def test_only_the_running_request_can_switch(self, workers):
+        coord = _ledger()
+        with pytest.raises(ValueError, match="not running"):
+            await coord.switch("nope", "g", [])
+
+
+@pytest.mark.asyncio
+class TestCommit:
+    async def test_writes_the_next_version(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        assert await coord.commit(receipt["id"], "g", [_raw("a")]) == 1
+        assert read_versions(coord._store, "g")[0] == Version(1, [_raw("a")])
+        assert coord._running["g"].state == "retiring"
+
+    async def test_a_cancelled_request_commits_nothing(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.cancel(receipt["id"])
+        assert await coord.commit(receipt["id"], "g", [_raw("a")]) is None
+        assert read_versions(coord._store, "g") == (None, None)
