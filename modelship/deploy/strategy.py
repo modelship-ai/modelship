@@ -110,10 +110,20 @@ def deploy_timeout_seconds() -> float:
 
 
 def submit_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> None:
+    ctx.deployed_this_run[config.deployment_name(ctx.gateway_name)] = config.name
+    submit_app(config, ctx.gateway_name, ctx.serve_logging_config)
+
+
+def submit_app(
+    config: ModelshipModelConfig,
+    gateway_name: str,
+    serve_logging_config: LoggingConfig,
+    env: dict[str, str] | None = None,
+) -> None:
     """Hand one model to Serve and return; its replicas come up afterwards, and
     pend rather than fail when the cluster has no room for them yet."""
-    deployment_name = config.deployment_name(ctx.gateway_name)
-    deploy_opts = build_deployment_options(config)
+    deployment_name = config.deployment_name(gateway_name)
+    deploy_opts = build_deployment_options(config, env)
 
     # Mutually exclusive, enforced at config validation — pass Serve exactly one.
     if config.autoscaling_config is not None:
@@ -122,14 +132,13 @@ def submit_deploy(config: ModelshipModelConfig, ctx: DeployContext) -> None:
         scaling_opts = {"num_replicas": config.num_replicas}
 
     logger.info("Deploying model: %s (deployment: %s)", config.name, deployment_name)
-    ctx.deployed_this_run[deployment_name] = config.name
     serve.run_many(
         [
             serve.RunTarget(
                 target=ModelDeployment.options(
                     name=deployment_name,
                     max_constructor_retry_count=1,
-                    logging_config=ctx.serve_logging_config,
+                    logging_config=serve_logging_config,
                     **scaling_opts,
                     **deploy_opts,
                 ).bind(config),

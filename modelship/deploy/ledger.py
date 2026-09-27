@@ -7,6 +7,8 @@ The store holds raw, user-equivalent model dicts, not dumped validated configs: 
 from dataclasses import dataclass
 from typing import Literal
 
+from ray.serve.schema import LoggingConfig
+
 from modelship.deploy.config import validate_models
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.logging import get_logger
@@ -15,9 +17,26 @@ from modelship.state import StateStore
 logger = get_logger("startup")
 
 DeployMode = Literal["additive", "reconcile"]
+# bare: redeploy the committed version's missing apps
+RequestMode = Literal["additive", "reconcile", "bare"]
+ReplaceStrategy = Literal["blue_green", "stop_start"]
 
 # State-store namespace; one key per gateway: "effective/<gateway-name>".
 _NAMESPACE = "effective"
+
+
+@dataclass
+class DeployRequest:
+    gateway: str
+    mode: RequestMode
+    strategy: ReplaceStrategy
+    # raw model dicts as sent; None for a bare request
+    models: list[dict] | None
+    serve_logging_config: LoggingConfig
+    # per-deploy settings replicas read from their runtime_env
+    env: dict[str, str]
+    # set by the deploy coordinator
+    id: str = ""
 
 
 @dataclass(frozen=True)
