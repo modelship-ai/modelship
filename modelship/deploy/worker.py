@@ -78,7 +78,8 @@ class DeployLedger:
         self._handle = handle
 
     def _call(self, method: str, *args) -> Any:
-        return ray.get(getattr(self._handle, method).remote(*args), timeout=_RPC_TIMEOUT_S)
+        # no timeout: a call can outlast a store write, and the deploy coordinator's death fails it
+        return ray.get(getattr(self._handle, method).remote(*args))
 
     def cancelled(self, request_id: str) -> bool:
         return self._call("is_cancelled", request_id)
@@ -95,7 +96,7 @@ class DeployLedger:
     def switch(self, request_id: str, gateway_name: str, models: list[dict]) -> int:
         return self._call("switch", request_id, gateway_name, models)
 
-    def reset_routing(self, gateway_name: str) -> int:
+    def reset_routing(self, gateway_name: str) -> tuple[int, list[dict] | None]:
         return self._call("reset_routing", gateway_name)
 
     def commit(self, request_id: str, gateway_name: str, models: list[dict]) -> int | None:
@@ -125,12 +126,11 @@ def roll_back(
     ledger: DeployLedger,
     replicas: GatewayReplicas,
     gateway_name: str,
-    committed: list[dict] | None,
     switching: bool,
     switch_timeout: float,
 ) -> list[str]:
     """Routes the gateway back to its committed version, then deletes each of its apps that version doesn't name."""
-    routing = ledger.reset_routing(gateway_name)
+    routing, committed = ledger.reset_routing(gateway_name)
     if switching and not replicas.wait_switched(gateway_name, routing, switch_timeout):
         logger.warning(
             "Gateway %s did not switch back within %.0f s; deleting its new apps", gateway_name, switch_timeout
@@ -368,7 +368,7 @@ class Run:
 
     def _rolled_back(self, state: str, reason: str) -> dict:
         request = self._request
-        roll_back(self._ledger, self._replicas, request.gateway, self._committed, self._switching, self._switch_timeout)
+        roll_back(self._ledger, self._replicas, request.gateway, self._switching, self._switch_timeout)
         for model, result in self._results.items():
             if result in ("up", "coming up"):
                 self._results[model] = "rolled back"
@@ -406,10 +406,8 @@ class DeployWorker:
     def run(self, request: DeployRequest, committed: list[dict] | None, switch_timeout: float) -> dict:
         return Run(request, committed, self._ledger, self._replicas, switch_timeout).execute()
 
-    def roll_back(
-        self, gateway_name: str, committed: list[dict] | None, switching: bool, switch_timeout: float
-    ) -> list[str]:
-        return roll_back(self._ledger, self._replicas, gateway_name, committed, switching, switch_timeout)
+    def roll_back(self, gateway_name: str, switching: bool, switch_timeout: float) -> list[str]:
+        return roll_back(self._ledger, self._replicas, gateway_name, switching, switch_timeout)
 
 
 def create_worker(coordinator):

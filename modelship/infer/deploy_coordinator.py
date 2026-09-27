@@ -23,7 +23,7 @@ import contextlib
 import os
 import time
 import warnings
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
@@ -145,6 +145,8 @@ class DeployCoordinator:
         self._running: dict[str, _Entry] = {}
         self._drainers: dict[str, asyncio.Task] = {}
         self._routing: dict[str, _Routing] = {}
+        # per gateway: held while a commit writes the store, so a rollback reads the version it lands
+        self._version_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         # nanosecond clock, so a restarted deploy coordinator never repeats a routing seq
         self._seq = time.time_ns()
         self._recovery: asyncio.Task | None = None
@@ -243,13 +245,14 @@ class DeployCoordinator:
         logger.info("Deploy %s: switching gateway %s to its new models", request_id, gateway_name)
         return self._routing[gateway_name].seq
 
-    async def reset_routing(self, gateway_name: str) -> int:
-        """Routes the gateway by its committed version again; returns the routing seq."""
-        committed = await self._committed(gateway_name)
+    async def reset_routing(self, gateway_name: str) -> tuple[int, list[dict] | None]:
+        """Routes the gateway by its committed version again; returns the routing seq and that version's models."""
+        async with self._version_locks[gateway_name]:
+            committed = await self._committed(gateway_name)
         current = self._routing.get(gateway_name)
         if current is None or current.models != committed:
             self._routing[gateway_name] = _routing(self._next_seq(), committed, gateway_name)
-        return self._routing[gateway_name].seq
+        return self._routing[gateway_name].seq, committed
 
     async def commit(self, request_id: str, gateway_name: str, models: list[dict]) -> int | None:
         """Writes *models* as the gateway's next version; None, writing nothing, for a cancelled request."""
@@ -257,7 +260,8 @@ class DeployCoordinator:
         if entry.cancelled:
             return None
         entry.state = "committing"
-        version = await asyncio.to_thread(commit_version, self._store, gateway_name, models)
+        async with self._version_locks[gateway_name]:
+            version = await asyncio.to_thread(commit_version, self._store, gateway_name, models)
         entry.state = "retiring"
         logger.info("Deploy %s committed version %d of gateway %s", request_id, version.number, gateway_name)
         return version.number
@@ -327,17 +331,16 @@ class DeployCoordinator:
         try:
             return await entry.worker.run.remote(entry.request, committed, self._switch_timeout)
         except RayActorError as e:
-            if entry.state == "retiring":
-                state, reason = "succeeded", ""
-            elif entry.cancelled:
-                state, reason = "cancelled", "cancelled"
-            else:
-                state, reason = "failed", f"the deploy worker died: {e}"
             logger.warning(
                 "Deploy %s's worker stopped while %s; rolling back gateway %s", entry.request.id, entry.state, gateway
             )
             await self._roll_back(gateway, switching=entry.state in ("switching", "committing"))
-            return _outcome(entry, state, reason)
+            # after the rollback, which waits out a commit in flight
+            if entry.state == "retiring":
+                return _outcome(entry, "succeeded", "")
+            if entry.cancelled:
+                return _outcome(entry, "cancelled", "cancelled")
+            return _outcome(entry, "failed", f"the deploy worker died: {e}")
         finally:
             _kill(entry.worker)
 
@@ -347,8 +350,7 @@ class DeployCoordinator:
 
         worker = create_worker(self._self())
         try:
-            committed = await self._committed(gateway_name)
-            await worker.roll_back.remote(gateway_name, committed, switching, self._switch_timeout)
+            await worker.roll_back.remote(gateway_name, switching, self._switch_timeout)
         except Exception:
             logger.exception("Could not roll back gateway %s; the next deploy to it deletes what's left", gateway_name)
         finally:

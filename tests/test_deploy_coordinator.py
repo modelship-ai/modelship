@@ -2,6 +2,7 @@
 queue with fake workers. Placement options live in test_actor_placement.py."""
 
 import asyncio
+import threading
 import time
 from types import SimpleNamespace
 
@@ -188,6 +189,8 @@ class _Workers:
     def __init__(self):
         self.created: list[_Worker] = []
         self.rollbacks: list[tuple] = []
+        # when set, a rollback routes back through it as the real worker does
+        self.ledger = None
 
     def create(self, coordinator):
         worker = _Worker(self)
@@ -196,9 +199,12 @@ class _Workers:
 
     def record_rollback(self, args):
         self.rollbacks.append(args)
-        done = asyncio.get_running_loop().create_future()
-        done.set_result([])
-        return done
+        return asyncio.ensure_future(self._roll_back(args[0]))
+
+    async def _roll_back(self, gateway_name):
+        if self.ledger is not None:
+            await self.ledger.reset_routing(gateway_name)
+        return []
 
     def kill(self, handle):
         handle.killed = True
@@ -238,6 +244,18 @@ async def _until(predicate, timeout: float = 2.0) -> None:
     while not predicate():
         assert time.monotonic() < deadline, "condition not met in time"
         await asyncio.sleep(0.005)
+
+
+def _hold_commits(monkeypatch) -> threading.Event:
+    """Store writes by commit wait until the returned event is set."""
+    release = threading.Event()
+
+    def held(store, gateway_name, models):
+        release.wait(2)
+        return commit_version(store, gateway_name, models)
+
+    monkeypatch.setattr(deploy_coordinator, "commit_version", held)
+    return release
 
 
 async def _settle() -> None:
@@ -301,7 +319,7 @@ class TestQueue:
         coord = _ledger()
         await coord.submit(_request())
         await _settle()
-        assert workers.rollbacks == [("g", None, True, 60.0)]
+        assert workers.rollbacks == [("g", True, 60.0)]
         assert len(workers.created) == 2
 
 
@@ -334,7 +352,7 @@ class TestCancel:
         await coord.cancel(receipt["id"])
         outcome = await asyncio.wait_for(receipt["outcome"], 1)
         assert outcome["state"] == "cancelled"
-        assert workers.rollbacks == [("g", None, False, 60.0)]
+        assert workers.rollbacks == [("g", False, 60.0)]
 
     async def test_a_worker_that_saw_the_cancel_is_left_to_roll_back(self, workers):
         coord = _ledger()
@@ -373,7 +391,36 @@ class TestWorkerDeath:
         outcome = await receipt["outcome"]
         assert outcome["state"] == "failed"
         assert outcome["reason"].startswith("the deploy worker died")
-        assert workers.rollbacks == [("g", None, True, 60.0)]
+        assert workers.rollbacks == [("g", True, 60.0)]
+
+    async def test_a_worker_that_dies_during_a_slow_commit_succeeds_once_the_write_lands(self, workers, monkeypatch):
+        coord = _ledger()
+        workers.ledger = coord
+        release = _hold_commits(monkeypatch)
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.switch(receipt["id"], "g", [_raw("a")])
+        commit = asyncio.ensure_future(coord.commit(receipt["id"], "g", [_raw("a")]))
+        await _until(lambda: coord._requests[receipt["id"]].state == "committing")
+        workers.kill(workers.created[0])
+        await _settle()
+        release.set()
+        assert (await receipt["outcome"])["state"] == "succeeded"
+        assert await commit == 1
+
+    async def test_a_reset_during_a_commit_returns_the_version_it_writes(self, workers, monkeypatch):
+        coord = _ledger()
+        release = _hold_commits(monkeypatch)
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.switch(receipt["id"], "g", [_raw("a")])
+        commit = asyncio.ensure_future(coord.commit(receipt["id"], "g", [_raw("a")]))
+        await _until(lambda: coord._requests[receipt["id"]].state == "committing")
+        reset = asyncio.ensure_future(coord.reset_routing("g"))
+        await _settle()
+        release.set()
+        assert (await reset)[1] == [_raw("a")]
+        await commit
 
     async def test_a_worker_that_dies_after_the_commit_still_succeeds(self, workers):
         coord = _ledger()
@@ -383,7 +430,7 @@ class TestWorkerDeath:
         await coord.commit(receipt["id"], "g", [_raw("a")])
         workers.kill(workers.created[0])
         assert (await receipt["outcome"])["state"] == "succeeded"
-        assert workers.rollbacks == [("g", [_raw("a")], False, 60.0)]
+        assert workers.rollbacks == [("g", False, 60.0)]
 
 
 @pytest.mark.asyncio
@@ -412,13 +459,13 @@ class TestRouting:
         receipt = await coord.submit(_request())
         await _settle()
         seq = await coord.switch(receipt["id"], "g", [_raw("b")])
-        assert await coord.reset_routing("g") > seq
+        assert (await coord.reset_routing("g"))[0] > seq
         assert (await coord.routing_versions(["g"]))["g"]["apps"] == {}
 
     async def test_a_reset_on_the_committed_version_keeps_the_seq(self, workers):
         coord = _ledger()
         seq = (await coord.routing_versions(["g"]))["g"]["seq"]
-        assert await coord.reset_routing("g") == seq
+        assert await coord.reset_routing("g") == (seq, None)
 
     async def test_only_the_running_request_can_switch(self, workers):
         coord = _ledger()
