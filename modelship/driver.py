@@ -240,15 +240,13 @@ def _cancel(args) -> None:
     import ray
 
     from modelship.deploy.serve_utils import attach_cluster, local_ray_clusters
-    from modelship.infer.deploy_coordinator import COORDINATOR_ACTOR_NAME, COORDINATOR_NAMESPACE
+    from modelship.infer.deploy_coordinator import find_coordinator
 
     if not local_ray_clusters():
         sys.exit("error: no Ray cluster is running on this machine.")
     lib_level, _ = _serve_logging()
     attach_cluster(lib_level)
-    try:
-        coordinator = ray.get_actor(COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_NAMESPACE)
-    except ValueError:
+    if (coordinator := find_coordinator()) is None:
         sys.exit(f"error: no deploy {args.deploy_id} on this cluster.")
     result: dict = ray.get(coordinator.cancel.remote(args.deploy_id))
     if not result["cancelled"]:

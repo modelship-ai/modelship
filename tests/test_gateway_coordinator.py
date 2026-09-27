@@ -63,7 +63,8 @@ class _Cluster:
         self.unreachable = False
         self._seq = 0
         monkeypatch.setattr(gateway_coordinator.serve, "status", lambda: SimpleNamespace(applications=dict(self.apps)))
-        monkeypatch.setattr(gateway_coordinator, "get_or_create_coordinator", lambda: self)
+        self.exists = True
+        monkeypatch.setattr(gateway_coordinator, "find_coordinator", lambda: self if self.exists else None)
 
     @property
     def routing_versions(self):
@@ -165,6 +166,16 @@ class TestTables:
         with pytest.raises(RuntimeError):
             await coord._compute()
         assert (await coord.get_routing("gw"))["models"] == {_app_name(NEW): "a"}
+
+    @pytest.mark.asyncio
+    async def test_without_a_deploy_coordinator_each_models_newest_app_is_routed(self, cluster, caplog):
+        cluster.exists = False
+        cluster.configure(NEW)
+        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
+        coord = _coordinator()
+        await _pass(coord)
+        assert (await coord.get_routing("gw"))["models"] == {_app_name(NEW): "a"}
+        assert caplog.messages == []
 
     @pytest.mark.asyncio
     async def test_an_unreachable_deploy_coordinator_keeps_the_last_routing_versions(self, cluster, caplog):

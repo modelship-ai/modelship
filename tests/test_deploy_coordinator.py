@@ -478,3 +478,16 @@ class TestCommit:
         await coord.cancel(receipt["id"])
         assert await coord.commit(receipt["id"], "g", [_raw("a")]) is None
         assert read_versions(coord._store, "g") == (None, None)
+
+
+class TestFindCoordinator:
+    def test_none_when_nothing_created_it(self, monkeypatch):
+        def missing(name, namespace):
+            raise ValueError(f"Failed to look up actor {name}")
+
+        monkeypatch.setattr(deploy_coordinator.ray, "get_actor", missing)
+        assert deploy_coordinator.find_coordinator() is None
+
+    def test_the_named_actor(self, monkeypatch):
+        monkeypatch.setattr(deploy_coordinator.ray, "get_actor", lambda name, namespace: (name, namespace))
+        assert deploy_coordinator.find_coordinator() == ("modelship-deploy-coordinator", "modelship")

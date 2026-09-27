@@ -411,7 +411,7 @@ class TestCancelCommand:
         with (
             patch.object(serve_utils, "local_ray_clusters", return_value=set(clusters)),
             patch.object(serve_utils, "attach_cluster"),
-            patch("ray.get_actor", return_value=coordinator, side_effect=None if actor else ValueError),
+            patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator if actor else None),
             patch("ray.get", side_effect=lambda value: value),
         ):
             driver._cancel(parse_args("stop", ["--deploy-id", "r1"]))

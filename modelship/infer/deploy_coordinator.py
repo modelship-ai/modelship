@@ -418,6 +418,14 @@ class DeployCoordinator:
         return self._fatal_errors.pop(deployment_name, None)
 
 
+def find_coordinator():
+    """The deploy coordinator's handle, or None when nothing has created it yet."""
+    try:
+        return ray.get_actor(COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_NAMESPACE)
+    except ValueError:
+        return None
+
+
 def get_or_create_coordinator(startup_window: bool = True):
     """Return the cluster-wide deploy coordinator handle, creating it on the head node if absent.
     *startup_window* applies only when this call creates it; a restarted one always waits it out."""

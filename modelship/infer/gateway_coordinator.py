@@ -18,7 +18,7 @@ import ray
 from ray import serve
 
 from modelship.deploy.routing import Routing, compute_routing, running_replicas
-from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, get_or_create_coordinator
+from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import COORDINATOR_GENERATION
 from modelship.state import state_store_env_var
@@ -99,11 +99,14 @@ class GatewayCoordinator:
         self._computed.set()
 
     async def _fetch_versions(self, gateways: list[str]) -> None:
-        """The gateways' routing versions; on failure the last ones stay."""
+        """The gateways' routing versions; on failure the last ones stay. Never creates the deploy
+        coordinator, whose creator decides its lease startup window."""
         if not gateways:
             return
         try:
-            coordinator: Any = await asyncio.to_thread(get_or_create_coordinator)
+            coordinator: Any = await asyncio.to_thread(find_coordinator)
+            if coordinator is None:
+                return
             versions = await asyncio.wait_for(coordinator.routing_versions.remote(gateways), _RPC_TIMEOUT_S)
         except Exception:
             if not self._versions_unreachable:
