@@ -53,11 +53,9 @@ def _sweep_interval_s() -> float:
 class MemoryStoreActor(StateStore):
     """Holds the dict. One actor for the whole cluster — memory:// targets
     small-traffic single-node deployments, so a single actor is the design point,
-    not a stopgap. A restart returns an empty store: the gateway coordinator routes each
-    model of a gateway with no effective config to its newest app and deletes nothing,
-    until the next deploy writes one; it then deletes the apps that config doesn't
-    target. A lost /v1/responses conversation surfaces as a 404 on the next
-    previous_response_id."""
+    not a stopgap. A restart returns an empty store: the gateways lose their committed
+    versions, so the next deploy to a gateway starts by deleting all of its model apps.
+    A lost /v1/responses conversation surfaces as a 404 on the next previous_response_id."""
 
     def __init__(self) -> None:
         # key -> (value, expires_at epoch | None). Expiry is enforced lazily on read

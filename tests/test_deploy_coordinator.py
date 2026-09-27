@@ -1,5 +1,5 @@
-"""The deploy coordinator, driven directly: leases, effective-config writes, replica-death counts, and the
-per-gateway deploy queue with fake workers. Placement options live in test_actor_placement.py."""
+"""The deploy coordinator, driven directly: node leases, replica-death counts, and the per-gateway deploy
+queue with fake workers. Placement options live in test_actor_placement.py."""
 
 import asyncio
 import time
@@ -10,9 +10,9 @@ from ray.exceptions import RayActorError
 from ray.serve.schema import LoggingConfig
 
 from modelship.deploy import worker as worker_module
-from modelship.deploy.ledger import DeployRequest, Version, commit_version, read_effective, read_versions
+from modelship.deploy.ledger import DeployRequest, Version, commit_version, read_versions
 from modelship.infer import deploy_coordinator
-from modelship.infer.deploy_coordinator import LEASE_SECONDS, gateway_lease_key
+from modelship.infer.deploy_coordinator import LEASE_SECONDS
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
 
@@ -106,41 +106,6 @@ class TestReaping:
         await coord.renew("node", "a")
         coord._reap(time.monotonic() + LEASE_SECONDS - 1)
         assert await coord.acquire("node", "b") == "held by a"
-
-
-@pytest.mark.asyncio
-class TestWriteEffective:
-    async def test_writes_for_the_gateways_holder(self):
-        coord = _fresh()
-        await coord.acquire(gateway_lease_key("g"), "a")
-        assert await coord.write_effective("g", "a", [{"name": "m"}])
-        assert read_effective(coord._store, "g") == [{"name": "m"}]
-
-    async def test_refuses_anyone_else(self):
-        coord = _fresh()
-        await coord.acquire(gateway_lease_key("g"), "a")
-        assert not await coord.write_effective("g", "b", [{"name": "m"}])
-        assert read_effective(coord._store, "g") == []
-
-    async def test_refuses_once_the_lease_has_expired(self):
-        coord = _fresh()
-        await coord.acquire(gateway_lease_key("g"), "a")
-        coord._reap(time.monotonic() + LEASE_SECONDS + 1)
-        assert not await coord.write_effective("g", "a", [{"name": "m"}])
-        assert read_effective(coord._store, "g") == []
-
-    async def test_another_gateways_lease_does_not_count(self):
-        coord = _fresh()
-        await coord.acquire(gateway_lease_key("other"), "a")
-        assert not await coord.write_effective("g", "a", [{"name": "m"}])
-
-    async def test_renews_the_lease(self):
-        coord = _fresh()
-        key = gateway_lease_key("g")
-        await coord.acquire(key, "a")
-        coord._leases[key] = coord._leases[key]._replace(expires_at=0.0)
-        await coord.write_effective("g", "a", [{"name": "m"}])
-        assert coord._leases[key].expires_at > time.monotonic() + LEASE_SECONDS - 1
 
 
 @pytest.mark.asyncio

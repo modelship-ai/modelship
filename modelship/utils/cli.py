@@ -253,8 +253,8 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--state-store",
         help=(
-            "State-store connection URI for the effective config, deploy coordinator and "
-            "/v1/responses conversations (env: MSHIP_STATE_STORE, default: memory://). Schemes: "
+            "State-store connection URI for the gateways' deploy versions and /v1/responses "
+            "conversations (env: MSHIP_STATE_STORE, default: memory://). Schemes: "
             "memory:// | redis://host:port/db (rediss:// for TLS). No password in the URI — set "
             "MSHIP_REDIS_PASSWORD on every node instead. memory:// is cluster-scoped but dies with "
             "the cluster; redis:// survives it."
@@ -336,8 +336,8 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Diff models.yaml against the cluster: add new models, remove dropped ones, "
             "replace those whose config changed (matched by name + fingerprint). "
-            "With no --config, reconciles the live cluster to this gateway's persisted "
-            "effective config only (self-heal after cluster loss)."
+            "With no --config, redeploys this gateway's committed models that are missing "
+            "(self-heal after cluster loss)."
         ),
     )
     _add_single_model_args(parser)

@@ -1,14 +1,11 @@
-"""Holding a deploy lease from the deploy coordinator: a node's, so replicas sharing a node
-load their models one at a time, and a gateway's, so one thing at a time plans, submits or
-deletes that gateway's apps."""
+"""Holding a node's deploy lease from the deploy coordinator, so replicas sharing a node load
+their models one at a time."""
 
 import asyncio
 import contextlib
 import os
-import socket
 import threading
 import time
-from collections.abc import Generator
 
 import ray
 from ray.exceptions import ActorDiedError, ActorUnavailableError
@@ -17,7 +14,6 @@ from modelship.infer.deploy_coordinator import (
     LEASE_SECONDS,
     POLL_SECONDS,
     RENEW_SECONDS,
-    gateway_lease_key,
     get_or_create_coordinator,
 )
 from modelship.logging import get_logger
@@ -32,7 +28,7 @@ _MAX_LOOKUPS = 3
 
 
 class DeployLeaseError(Exception):
-    """The lease service could not be reached, or a gateway lease was lost."""
+    """The lease service could not be reached."""
 
 
 @contextlib.asynccontextmanager
@@ -50,40 +46,6 @@ async def deploy_lease(model_name: str):
         # an unreleased lease expires on its own
         with contextlib.suppress(Exception):
             await asyncio.wait_for(leases.release.remote(key, holder), _RPC_TIMEOUT_SECONDS)
-
-
-class GatewayLease:
-    """A held gateway deploy lease, as `gateway_lease` yields it."""
-
-    def __init__(self, coordinator, gateway_name: str, holder: str):
-        self._coordinator = coordinator
-        self._gateway_name = gateway_name
-        self._holder = holder
-
-    def write_effective(self, raw_models: list[dict]) -> None:
-        """Writes the gateway's effective config through the deploy coordinator, which refuses
-        once this lease is lost."""
-        written = self._coordinator.write_effective.remote(self._gateway_name, self._holder, raw_models)
-        if not ray.get(written, timeout=_RPC_TIMEOUT_SECONDS):
-            raise DeployLeaseError(
-                f"lost the deploy lease of gateway {self._gateway_name!r} before writing its effective config"
-            )
-
-
-@contextlib.contextmanager
-def gateway_lease(gateway_name: str) -> Generator[GatewayLease, None, None]:
-    """Holds the gateway's deploy lease for the block, waiting while anything else holds it."""
-    key = gateway_lease_key(gateway_name)
-    holder = f"deploy {socket.gethostname()}/{os.getpid()}/{random_uuid()[:8]}"
-    coordinator = asyncio.run(_acquire(key, holder, f"Waiting to deploy to gateway {gateway_name!r}"))
-    stop = _renew_in_thread(coordinator, key, holder, f"Lost the deploy lease of gateway {gateway_name!r}")
-    try:
-        yield GatewayLease(coordinator, gateway_name, holder)
-    finally:
-        stop.set()
-        # an unreleased lease expires on its own
-        with contextlib.suppress(Exception):
-            ray.get(coordinator.release.remote(key, holder), timeout=_RPC_TIMEOUT_SECONDS)
 
 
 async def _acquire(key: str, holder: str, waiting: str):

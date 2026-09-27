@@ -1,8 +1,12 @@
-"""The deploy worker's request run and rollback, against a fake Serve, deploy coordinator and gateway replicas."""
+"""The deploy worker's request run and rollback, against a fake Serve, deploy coordinator and gateway replicas,
+and the planning and submit it uses."""
 
+import inspect
+import logging
 from types import SimpleNamespace
 
 import pytest
+from ray import serve
 from ray.serve.schema import (
     ApplicationStatus,
     ApplicationStatusOverview,
@@ -12,9 +16,10 @@ from ray.serve.schema import (
     LoggingConfig,
 )
 
-from modelship.deploy import worker
+from modelship.deploy import strategy, worker
 from modelship.deploy.ledger import DeployRequest, to_config
-from modelship.deploy.worker import Run, plan_request, proposed_models, roll_back, unnamed_apps
+from modelship.deploy.strategy import plan_request, proposed_models, submit_app, unnamed_apps
+from modelship.deploy.worker import Run, roll_back
 from modelship.infer.infer_config import ModelshipModelConfig
 
 
@@ -285,6 +290,30 @@ class TestSucceeds:
         cluster.serve.scripts["a"] = [UNHEALTHY, UNHEALTHY, RUNNING]
         assert _run(cluster, [A])["state"] == "succeeded"
 
+    def test_waiting_for_capacity_never_uses_an_attempt(self, cluster):
+        cluster.serve.scripts["a"] = [DEPLOYING] * 50 + [RUNNING]
+        assert _run(cluster, [A])["state"] == "succeeded"
+        assert cluster.serve.events.count(("submit", _app_name(A))) == 1
+
+    def test_a_submit_that_raises_is_retried(self, cluster, monkeypatch):
+        attempts = []
+
+        def flaky(config, gateway_name, serve_logging_config, env):
+            attempts.append(config.name)
+            if len(attempts) == 1:
+                raise RuntimeError("controller busy")
+            cluster.serve.submit(config, gateway_name, serve_logging_config, env)
+
+        monkeypatch.setattr(worker, "submit_app", flaky)
+        assert _run(cluster, [A])["state"] == "succeeded"
+        assert attempts == ["a", "a"]
+
+    def test_the_first_poll_logs_what_is_outstanding(self, cluster, caplog):
+        caplog.set_level(logging.INFO, logger="modelship")
+        cluster.serve.scripts["a"] = [DEPLOYING, RUNNING]
+        _run(cluster, [A])
+        assert "Waiting on 1 model(s): a" in caplog.messages
+
 
 class TestRollsBack:
     def test_a_fatal_failure_deletes_the_new_app_and_commits_nothing(self, cluster):
@@ -375,3 +404,15 @@ class TestRollBack:
             [_app_name(A), _app_name(B)]
         )
         assert "gw" in cluster.serve.apps
+
+
+class TestSubmitApp:
+    def test_hands_off_without_waiting(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(strategy.serve, "run_many", lambda targets, **kwargs: calls.append(kwargs))
+        submit_app(_configs(A)[0], "gw", LoggingConfig(), {"MSHIP_PREFLIGHT": "false"})
+        assert calls == [{"wait_for_applications_running": False}]
+
+    def test_run_many_still_takes_wait_for_applications_running(self):
+        # @DeveloperAPI: the only public way to deploy without blocking on RUNNING.
+        assert "wait_for_applications_running" in inspect.signature(serve.run_many).parameters

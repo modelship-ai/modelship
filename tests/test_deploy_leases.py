@@ -8,8 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from modelship.infer import deploy_coordinator, deploy_leases
-from modelship.infer.deploy_coordinator import gateway_lease_key
-from modelship.infer.deploy_leases import DeployLeaseError, deploy_lease, gateway_lease
+from modelship.infer.deploy_leases import DeployLeaseError, deploy_lease
 
 _Coord = deploy_coordinator.DeployCoordinator.__ray_metadata__.modified_class
 
@@ -123,57 +122,6 @@ class _Ref:
     def __await__(self):
         yield from ()
         return self.value
-
-
-class TestGatewayLease:
-    @pytest.fixture
-    def handle(self, monkeypatch):
-        handle = MagicMock()
-        handle.acquire.remote.return_value = _Ref(None)
-        handle.write_effective.remote.return_value = _Ref(True)
-        monkeypatch.setattr(deploy_leases, "get_or_create_coordinator", lambda: handle)
-        monkeypatch.setattr(deploy_leases.ray, "get", lambda ref, **kwargs: ref.value)
-        monkeypatch.setattr(deploy_leases, "_renew_in_thread", lambda *args: threading.Event())
-        monkeypatch.setattr(deploy_leases, "POLL_SECONDS", 0.01)
-        return handle
-
-    def test_holds_the_gateways_lease_for_the_block_then_releases(self, handle):
-        with gateway_lease("g"):
-            handle.release.remote.assert_not_called()
-        key, holder = handle.acquire.remote.call_args.args
-        assert key == gateway_lease_key("g")
-        handle.release.remote.assert_called_once_with(key, holder)
-
-    def test_releases_when_the_block_raises(self, handle):
-        with pytest.raises(RuntimeError), gateway_lease("g"):
-            raise RuntimeError("merge failed")
-        handle.release.remote.assert_called_once()
-
-    def test_waits_while_something_else_holds_it(self, handle, caplog):
-        handle.acquire.remote.side_effect = [_Ref("held by another deploy"), _Ref(None)]
-        with caplog.at_level("INFO"), gateway_lease("g"):
-            pass
-        assert handle.acquire.remote.call_count == 2
-        assert "Waiting to deploy to gateway 'g' (held by another deploy)" in caplog.text
-
-    def test_each_hold_has_its_own_holder(self, handle):
-        with gateway_lease("g"):
-            pass
-        with gateway_lease("g"):
-            pass
-        first, second = (call.args[1] for call in handle.acquire.remote.call_args_list)
-        assert first != second
-
-    def test_writes_the_effective_config_as_the_holder(self, handle):
-        with gateway_lease("g") as lease:
-            lease.write_effective([{"name": "m"}])
-        holder = handle.acquire.remote.call_args.args[1]
-        handle.write_effective.remote.assert_called_once_with("g", holder, [{"name": "m"}])
-
-    def test_a_refused_write_raises(self, handle):
-        handle.write_effective.remote.return_value = _Ref(False)
-        with pytest.raises(DeployLeaseError, match="lost the deploy lease of gateway 'g'"), gateway_lease("g") as lease:
-            lease.write_effective([{"name": "m"}])
 
 
 class TestRenewThread:

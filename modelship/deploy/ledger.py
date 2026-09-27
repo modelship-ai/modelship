@@ -75,11 +75,6 @@ def commit_version(store: StateStore, gateway_name: str, models: list[dict]) -> 
     return version
 
 
-def resolve_mode(*, reconcile: bool) -> DeployMode:
-    """Map the CLI flags to the effective-config merge verb."""
-    return "reconcile" if reconcile else "additive"
-
-
 def _identity(raw: dict, gateway_name: str) -> tuple[str, str]:
     """(deployment_name, model_name) for a raw model dict from one validation pass."""
     cfg = ModelshipModelConfig.model_validate(raw)
@@ -92,17 +87,15 @@ def merge(
     gateway_name: str,
     mode: DeployMode,
 ) -> list[dict]:
-    """Fold the user's input into the effective raw model set under *mode*.
+    """Fold the user's input into the committed raw model set under *mode*.
 
     - additive: replace-by-name — identical config (same deployment_name) is an
       idempotent skip; a different config sharing a model name replaces the
       existing entry for that name rather than joining it.
-    - reconcile: input replaces the effective set entirely.
+    - reconcile: input replaces the committed set entirely.
 
-    Validates *input_raw* alone (not the merged result) via ModelshipConfig, so a
-    model name reused with a different config in this file is rejected before it
-    ever reaches the persisted effective set; pre-existing effective state from
-    before this rule existed is left alone.
+    Validates *input_raw* alone (not the merged result), so a model name reused with a
+    different config in the input is rejected before it reaches a committed version.
     """
     to_config(input_raw)
     if mode == "reconcile":
@@ -132,7 +125,7 @@ def merge(
 
 
 def _log_replacement(model_name: str, prior: dict, incoming: dict) -> None:
-    """A name already in the effective set is replaced, not joined. Pointing it at
+    """A name already in the committed set is replaced, not joined. Pointing it at
     different weights is worth a warning; any other config change is routine."""
     if prior.get("model") == incoming.get("model"):
         logger.info("Model %r config changed; replacing the existing deployment.", model_name)
@@ -149,32 +142,3 @@ def _log_replacement(model_name: str, prior: dict, incoming: dict) -> None:
 def to_config(raw_models: list[dict]) -> ModelshipConfig:
     """Validate raw model dicts into a ModelshipConfig for the deploy path."""
     return validate_models(raw_models)
-
-
-def read_effective(store: StateStore, gateway_name: str) -> list[dict]:
-    """Return the persisted effective raw model set for *gateway_name* (empty if
-    none yet)."""
-    data = store.get(f"{_NAMESPACE}/{gateway_name}")
-    if not isinstance(data, dict):
-        return []
-    models = data.get("models", [])
-    if not isinstance(models, list):
-        logger.warning("Effective config for gateway %r has non-list 'models'; treating as empty.", gateway_name)
-        return []
-    return models
-
-
-async def read_targets(store: StateStore, gateway_name: str) -> dict[str, str] | None:
-    """Model name -> the app it should run on, from the persisted effective config;
-    None when *gateway_name* has none."""
-    data = await store.get_async(f"{_NAMESPACE}/{gateway_name}")
-    models = data.get("models") if isinstance(data, dict) else None
-    if not isinstance(models, list):
-        return None
-    configs = [ModelshipModelConfig.model_validate(d) for d in models]
-    return {c.name: c.deployment_name(gateway_name) for c in configs}
-
-
-def write_effective(store: StateStore, gateway_name: str, raw_models: list[dict]) -> None:
-    """Persist the effective raw model set for *gateway_name*."""
-    store.set(f"{_NAMESPACE}/{gateway_name}", {"models": raw_models})

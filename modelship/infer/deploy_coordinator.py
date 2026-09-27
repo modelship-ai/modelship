@@ -10,8 +10,6 @@ or replica can:
 - each gateway's routing version, which the gateway coordinator routes by;
 - one deploy lease per node, held by a replica for the duration of its load, so
   loads on one node run one at a time (the holder's side is `deploy_leases.py`);
-- one deploy lease per gateway, held by whatever plans, submits or deletes the
-  gateway's apps; the gateway's effective config is written only for its holder;
 - a per-deployment backend-death count, which fails a deploy whose model keeps dying;
 - fatal init errors, reported by a replica and read back by the worker, which
   is how a permanently-broken model is told apart from a transient failure.
@@ -81,10 +79,6 @@ class _Entry:
     worker: Any = None
 
 
-def gateway_lease_key(gateway_name: str) -> str:
-    return f"gateway/{gateway_name}"
-
-
 def _seconds_env(name: str, default: float) -> float:
     raw = os.environ.get(name)
     try:
@@ -121,8 +115,8 @@ def _reconstructed() -> bool:
 @ray.remote(num_cpus=0)
 class DeployCoordinator:
     """Cluster-wide deploy bookkeeping: per-gateway deploy queues and routing versions, per-node
-    and per-gateway deploy leases, replica-death counts and fatal errors. A lease unrenewed for
-    `LEASE_SECONDS` is freed, so a holder that died doesn't hold its node or gateway shut."""
+    deploy leases, replica-death counts and fatal errors. A lease unrenewed for `LEASE_SECONDS`
+    is freed, so a holder that died doesn't hold its node shut."""
 
     def __init__(self, startup_window: bool = True):
         # nothing else configures logging in this process
@@ -172,16 +166,6 @@ class DeployCoordinator:
         lease = self._leases.get(key)
         if lease is not None and lease.holder == holder:
             del self._leases[key]
-
-    async def write_effective(self, gateway_name: str, holder: str, raw_models: list[dict]) -> bool:
-        """Writes the gateway's effective config if `holder` holds the gateway's lease, renewing
-        it first so it can't expire mid-write; False, writing nothing, otherwise."""
-        from modelship.deploy.ledger import write_effective
-
-        if not await self.renew(gateway_lease_key(gateway_name), holder):
-            return False
-        await asyncio.to_thread(write_effective, self._store, gateway_name, raw_models)
-        return True
 
     async def _reap_forever(self) -> None:
         while True:

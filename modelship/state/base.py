@@ -9,8 +9,8 @@ gateway's ``/v1/responses`` conversations (``openai.state.responses``). Keys are
 
 Backends differ in durability, so each caller picks the one its use needs: the
 default ``memory://`` backend is cluster-scoped (shared by every process) but dies
-with the cluster, while ``redis://`` survives it — required to self-heal the
-effective config after cluster loss.
+with the cluster, while ``redis://`` survives it — required to restore a gateway's
+models after cluster loss.
 
 Sync ``get``/``set``/``delete``/``list`` are the primitive each backend must
 implement; the ``*_async`` variants default to running the sync method in a thread

@@ -1,6 +1,5 @@
 """Tests for the start/join/deploy/stop CLI parsing and driver helpers."""
 
-import itertools
 import logging
 import os
 import signal
@@ -8,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ray.exceptions import ActorUnavailableError, GetTimeoutError, RayActorError
+from ray.exceptions import RayActorError
 from ray.serve.schema import LoggingConfig
 
 from modelship.deploy.actor_options import (
@@ -866,71 +865,31 @@ class TestReservationTotals:
         assert total_gpu_reservation(opts) == 4
 
 
-class TestDeleteAppsQuietly:
-    def test_deletes_each_app(self):
+class TestDeleteModelApps:
+    @pytest.fixture
+    def serve(self, monkeypatch):
         from modelship.deploy import removal
 
-        with patch("modelship.deploy.removal.serve.delete") as mock_delete:
-            removal.delete_apps_quietly(["gw.qwen-aaaaaaaaaa", "gw.kokoro-bbbbbbbbbb"])
-        assert mock_delete.call_args_list == [(("gw.qwen-aaaaaaaaaa",),), (("gw.kokoro-bbbbbbbbbb",),)]
+        apps = {"gw": None, "gw.a-1234567890": None, "gw.b-1234567890": None}
+        deleted: list[str] = []
+        monkeypatch.setattr(removal.serve, "status", lambda: SimpleNamespace(applications=dict(apps)))
+        monkeypatch.setattr(removal.serve, "delete", lambda name, _blocking=True: deleted.append(name))
+        monkeypatch.setattr(removal.time, "sleep", lambda seconds: [apps.pop(name, None) for name in deleted])
+        return SimpleNamespace(apps=apps, deleted=deleted)
 
-    def test_continues_on_serve_delete_error(self):
+    def test_deletes_every_model_app_but_not_the_gateway(self, serve):
         from modelship.deploy import removal
 
-        with patch("modelship.deploy.removal.serve.delete", side_effect=[Exception("gone"), None]) as mock_delete:
-            removal.delete_apps_quietly(["gw.a-1234567890", "gw.b-1234567890"])
-        assert mock_delete.call_count == 2
+        removal.delete_model_apps(30.0)
+        assert serve.deleted == ["gw.a-1234567890", "gw.b-1234567890"]
+        assert set(serve.apps) == {"gw"}
 
-
-class TestWaitForRetiredApps:
-    @staticmethod
-    def _wait(monkeypatch, answers):
-        """Runs the wait on a fake clock; each answer takes one second, as a gateway coordinator pass does."""
+    def test_gives_up_waiting_after_the_timeout(self, serve, monkeypatch, caplog):
         from modelship.deploy import removal
 
-        clock, asked = [0.0], []
-        answers = iter(answers)
-
-        def get(ref, timeout):
-            clock[0] += 1
-            asked.append(ref)
-            answer = next(answers)
-            if isinstance(answer, Exception):
-                raise answer
-            return answer
-
-        def sleep(seconds):
-            clock[0] += seconds
-
-        logger = MagicMock()
-        monkeypatch.setattr(removal, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
-        monkeypatch.setattr(removal, "ray", SimpleNamespace(get=get))
-        monkeypatch.setattr(removal, "logger", logger)
-        removal.wait_for_retired_apps(MagicMock(), "gw")
-        return logger, len(asked)
-
-    def test_returns_once_nothing_is_retiring(self, monkeypatch):
-        logger, asked = self._wait(monkeypatch, [["gw.a-1234567890"], []])
-        assert asked == 2
-        logger.warning.assert_not_called()
-
-    def test_retries_a_restarting_coordinator(self, monkeypatch):
-        logger, asked = self._wait(monkeypatch, [ActorUnavailableError("restarting", None), []])
-        assert asked == 2
-        logger.warning.assert_not_called()
-
-    def test_warns_with_the_apps_left_at_the_deadline(self, monkeypatch):
-        logger, _ = self._wait(monkeypatch, itertools.repeat(["gw.a-1234567890"]))
-        assert "gw.a-1234567890" in logger.warning.call_args.args
-
-    def test_warns_when_the_coordinator_never_answers(self, monkeypatch):
-        logger, _ = self._wait(monkeypatch, itertools.repeat(ActorUnavailableError("restarting", None)))
-        assert logger.warning.call_args.args[0].startswith("Could not confirm")
-
-    def test_a_timed_out_call_ends_the_wait(self, monkeypatch):
-        logger, asked = self._wait(monkeypatch, [GetTimeoutError()])
-        assert asked == 1
-        assert logger.warning.call_args.args[0].startswith("Could not confirm")
+        monkeypatch.setattr(removal.time, "sleep", lambda seconds: None)
+        removal.delete_model_apps(0.0)
+        assert "2 deployment(s) still being removed after 0 s" in caplog.text
 
 
 class TestStartGateway:

@@ -7,7 +7,7 @@ from functools import partial
 import httpx
 import pytest
 
-from modelship.deploy.strategy import _POLL_SECONDS
+from modelship.deploy.worker import POLL_SECONDS as _POLL_SECONDS
 from openai import OpenAI
 from tests.conftest import OPENAI_API_BASE, run_on_cluster, serve_apps
 

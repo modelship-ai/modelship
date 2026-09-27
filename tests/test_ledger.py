@@ -4,17 +4,7 @@ import pytest
 from ray.serve.schema import ApplicationStatus
 
 from modelship.deploy.config import default_config_path, load_raw_models, resolve_config_path
-from modelship.deploy.ledger import (
-    Version,
-    commit_version,
-    merge,
-    read_effective,
-    read_targets,
-    read_versions,
-    resolve_mode,
-    to_config,
-    write_effective,
-)
+from modelship.deploy.ledger import Version, commit_version, merge, read_versions, to_config
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
 
@@ -28,14 +18,6 @@ def _model(name: str, **overrides) -> dict:
     base = {"name": name, "model": f"org/{name}", "usecase": "generate", "loader": "llama_server"}
     base.update(overrides)
     return base
-
-
-class TestResolveMode:
-    def test_default_is_additive(self):
-        assert resolve_mode(reconcile=False) == "additive"
-
-    def test_reconcile(self):
-        assert resolve_mode(reconcile=True) == "reconcile"
 
 
 class TestMerge:
@@ -83,17 +65,6 @@ class TestMerge:
         a2 = _model("a", num_cpus=2)
         with pytest.raises(ValueError, match="duplicate model name"):
             merge([], [a1, a2], "g", "reconcile")
-
-
-class TestReadWriteEffective:
-    def test_write_then_read(self):
-        store = _MemoryStore()
-        models = [_model("a"), _model("b")]
-        write_effective(store, "modelship api", models)
-        assert read_effective(store, "modelship api") == models
-
-    def test_read_absent_gateway_is_empty(self):
-        assert read_effective(_MemoryStore(), "never-deployed") == []
 
 
 class TestVersions:
@@ -159,77 +130,6 @@ def _dep(name: str, gw: str = "g", **overrides) -> str:
 
 def _running(*apps: str) -> dict[str, ApplicationStatus]:
     return dict.fromkeys(apps, ApplicationStatus.RUNNING)
-
-
-class TestComputeDeployPlan:
-    def test_a_model_with_no_app_is_added(self):
-        from modelship.deploy.strategy import compute_deploy_plan
-
-        plan = compute_deploy_plan(to_config([_model("a")]), _running("g"), "g")
-        assert [c.name for c in plan.models_to_add] == ["a"]
-
-    def test_idempotent_when_all_live(self):
-        from modelship.deploy.strategy import compute_deploy_plan
-
-        plan = compute_deploy_plan(to_config([_model("a")]), _running(_dep("a"), "g"), "g")
-        assert plan.models_to_add == []
-        assert plan.stale_apps == []
-
-    def test_replaced_and_dropped_apps_are_stale(self):
-        from modelship.deploy.strategy import compute_deploy_plan
-
-        existing = _running(_dep("a", num_cpus=1), _dep("b"), "g")
-        plan = compute_deploy_plan(to_config([_model("a", num_cpus=2)]), existing, "g")
-        assert plan.stale_apps == sorted([_dep("a", num_cpus=1), _dep("b")])
-
-    def test_other_gateways_and_unprefixed_apps_are_never_stale(self):
-        from modelship.deploy.strategy import compute_deploy_plan
-
-        existing = _running(_dep("b", gw="edge"), "b-0123456789", "g", "edge")
-        plan = compute_deploy_plan(to_config([_model("a")]), existing, "g")
-        assert plan.stale_apps == []
-
-
-class TestComputeDeployPlanAppStatus:
-    @pytest.mark.parametrize(
-        ("status", "redeployed"),
-        [
-            (ApplicationStatus.DEPLOY_FAILED, True),
-            (ApplicationStatus.DELETING, True),
-            (ApplicationStatus.RUNNING, False),
-            (ApplicationStatus.DEPLOYING, False),
-            (ApplicationStatus.UNHEALTHY, False),
-        ],
-    )
-    def test_only_a_failed_or_deleting_app_is_deployed_again(self, status, redeployed):
-        from modelship.deploy.strategy import compute_deploy_plan
-
-        plan = compute_deploy_plan(to_config([_model("a")]), {_dep("a"): status}, "g")
-        assert [c.name for c in plan.models_to_add] == (["a"] if redeployed else [])
-
-    def test_a_failed_target_is_not_stale(self):
-        from modelship.deploy.strategy import compute_deploy_plan
-
-        plan = compute_deploy_plan(to_config([_model("a")]), {_dep("a"): ApplicationStatus.DEPLOY_FAILED}, "g")
-        assert plan.stale_apps == []
-
-
-class TestReadTargets:
-    @pytest.mark.asyncio
-    async def test_maps_each_model_to_its_app(self):
-        store = _MemoryStore()
-        write_effective(store, "g", [_model("a"), _model("b")])
-        assert await read_targets(store, "g") == {"a": _dep("a"), "b": _dep("b")}
-
-    @pytest.mark.asyncio
-    async def test_an_empty_config_targets_nothing(self):
-        store = _MemoryStore()
-        write_effective(store, "g", [])
-        assert await read_targets(store, "g") == {}
-
-    @pytest.mark.asyncio
-    async def test_none_without_a_config(self):
-        assert await read_targets(_MemoryStore(), "g") is None
 
 
 class TestCase2AdditiveAccumulation:
