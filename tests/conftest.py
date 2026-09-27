@@ -3,6 +3,7 @@ infrastructure shared by every `@pytest.mark.integration` file."""
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -310,6 +311,24 @@ class _DeployProcess:
             [*MSHIP, "deploy", *args], stdout=self._log_file, stderr=subprocess.STDOUT, start_new_session=True
         )
 
+    def log(self) -> str:
+        return self._log_path.read_text()
+
+    def request_id(self, timeout: float = 120) -> str:
+        """The deploy request's id, once the deploy has printed it."""
+        end = time.time() + timeout
+        while time.time() < end:
+            if match := re.search(r"Deploy (\w+) sent to gateway", self.log()):
+                return match.group(1)
+            time.sleep(0.5)
+        pytest.fail(f"mship deploy printed no request id within {timeout:.0f}s.\nLog file: {self._log_path}")
+
+    def kill(self) -> None:
+        """Kills the deploy's process group; its request carries on."""
+        os.killpg(self._proc.pid, signal.SIGKILL)
+        self._proc.wait(timeout=10)
+        self._log_file.close()
+
     def wait(self, expect_code: int = 0, timeout: float = 900) -> str:
         """The deploy's log once it exits, failing the test on any other exit code."""
         try:
@@ -349,6 +368,23 @@ class _Deployer:
             )
         if result.returncode != expect_code:
             _fail_deploy(log_path, result.returncode, expect_code)
+        return log_path.read_text()
+
+    def stop(self, request_id: str, *, log_name: str, expect_code: int = 0) -> str:
+        """Runs `mship stop --deploy-id`; returns its log."""
+        log_path = self._tmp / f"{log_name}.log"
+        with open(log_path, "w") as log_file:
+            result = subprocess.run(
+                [*MSHIP, "stop", "--deploy-id", request_id],
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                check=False,
+                timeout=120,
+            )
+        if result.returncode != expect_code:
+            pytest.fail(
+                f"mship stop exited {result.returncode}, expected {expect_code}.\n{log_path.read_text()[-4000:]}"
+            )
         return log_path.read_text()
 
     def spawn(self, *args: str, log_name: str) -> _DeployProcess:

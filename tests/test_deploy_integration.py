@@ -1,5 +1,5 @@
-"""End-to-end `mship deploy` on the session cluster: additive deploys, models still coming up
-when deploy exits, and two gateways side by side."""
+"""End-to-end `mship deploy` on the session cluster: deploy requests queued per gateway, all-or-nothing
+outcomes, cancel, rollback, and a deploy coordinator restart."""
 
 import time
 from functools import partial
@@ -7,23 +7,24 @@ from functools import partial
 import httpx
 import pytest
 
-from modelship.deploy.worker import POLL_SECONDS as _POLL_SECONDS
 from openai import OpenAI
 from tests.conftest import OPENAI_API_BASE, run_on_cluster, serve_apps
 
 _SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf"
+# passes the source check, then fails to load in its replica
+_BROKEN_SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:README.md"
 # long enough for anything that deletes apps in the background to have acted
 _PAST_GRACE_S = 15
 _PING = [{"role": "user", "content": "hi"}]
-_READYZ_URL = "http://localhost:8000/modelship/readyz"
+_OTHER_GATEWAY = "other-gateway"
 
 
-def _flags(name: str, *, num_cpus: int = 1) -> list[str]:
+def _flags(name: str, *, num_cpus: int = 1, source: str = _SOURCE) -> list[str]:
     return [
         "--name",
         name,
         "--model",
-        _SOURCE,
+        source,
         "--usecase",
         "generate",
         "--loader",
@@ -51,32 +52,40 @@ def _listed_everywhere(client: OpenAI, model: str, samples: int = 20) -> bool:
     return all(model in {m.id for m in client.models.list().data} for _ in range(samples))
 
 
-def _listed_nowhere(client: OpenAI, model: str, samples: int = 20) -> bool:
-    return all(model not in {m.id for m in client.models.list().data} for _ in range(samples))
+def _status(model: str) -> int:
+    return httpx.post(
+        f"{OPENAI_API_BASE}/chat/completions", json={"model": model, "messages": _PING, "max_tokens": 1}, timeout=30
+    ).status_code
 
 
 def _answers(model: str, status: int, samples: int = 20) -> bool:
     """True iff every sampled chat completion for `model` gets `status`."""
-    return all(
-        httpx.post(
-            f"{OPENAI_API_BASE}/chat/completions", json={"model": model, "messages": _PING, "max_tokens": 1}, timeout=30
-        ).status_code
-        == status
-        for _ in range(samples)
-    )
-
-
-def _pending_everywhere(model: str, samples: int = 20) -> bool:
-    """True iff every sampled /readyz is 503 with `model` pending."""
-    for _ in range(samples):
-        resp = httpx.get(_READYZ_URL, timeout=10)
-        if resp.status_code != 503 or model not in resp.json()["models_pending"]:
-            return False
-    return True
+    return all(_status(model) == status for _ in range(samples))
 
 
 def _chat(client: OpenAI, model: str) -> str | None:
     return client.chat.completions.create(model=model, messages=_PING, max_tokens=5).choices[0].message.content
+
+
+def _kill_replicas(app: str) -> int:
+    """Kills every replica actor of *app* without letting Ray restart it; Serve starts replacements."""
+    out = run_on_cluster(f"""
+        killed = 0
+        for actor in ray.util.list_named_actors(all_namespaces=True):
+            if actor["name"].startswith("SERVE_REPLICA::{app}#"):
+                ray.kill(ray.get_actor(actor["name"], namespace=actor["namespace"]), no_restart=True)
+                killed += 1
+        print(killed)
+    """)
+    return int(out.strip().splitlines()[-1])
+
+
+def _delete_other_gateway() -> None:
+    run_on_cluster(f"""
+        from ray import serve
+        for name in [n for n in serve.status().applications if n.split(".")[0] == {_OTHER_GATEWAY!r}]:
+            serve.delete(name)
+    """)
 
 
 @pytest.fixture(autouse=True)
@@ -89,65 +98,121 @@ def _empty_gateway(model_deployer):
 @pytest.mark.integration
 @pytest.mark.llama_server
 @pytest.mark.deploy
-class TestAdditiveDeploys:
+class TestQueue:
     def test_two_concurrent_deploys_both_land_and_stay(self, client, model_deployer):
         names = ("additive-a", "additive-b")
         deploys = [model_deployer.spawn(*_flags(name), log_name=name) for name in names]
-        for deploy in deploys:
-            deploy.wait()
+        logs = [deploy.wait() for deploy in deploys]
+        assert any("queued behind deploy" in log for log in logs)
 
         for name in names:
             assert _poll(partial(_listed_everywhere, client, name), deadline_s=60), (
                 f"{name} did not become routable on every gateway replica"
             )
-        # a model missing from the effective config would lose its app to the gateway coordinator by now
         time.sleep(_PAST_GRACE_S)
         for name in names:
             assert _apps_for("modelship", name), f"{name}'s app was deleted after its deploy succeeded"
-            assert _listed_everywhere(client, name)
             assert _chat(client, name) is not None
+
+    def test_a_deploy_waits_behind_a_pending_one_on_its_gateway_but_not_on_another(self, model_deployer):
+        pending = model_deployer.spawn(*_flags("blocker", num_cpus=1000), log_name="blocker")
+        blocker_id = pending.request_id()
+        assert _poll(lambda: _apps_for("modelship", "blocker"), deadline_s=120), "the blocker was never submitted"
+        try:
+            queued = model_deployer.spawn(*_flags("behind"), log_name="behind")
+            queued.request_id()
+            assert f"queued behind deploy {blocker_id}" in queued.log()
+            model_deployer.run("--gateway-name", _OTHER_GATEWAY, *_flags("elsewhere"), log_name="elsewhere")
+            assert not _apps_for("modelship", "behind"), "a deploy ran while another held its gateway's queue"
+
+            model_deployer.stop(blocker_id, log_name="stop-blocker")
+            pending.wait(expect_code=1)
+            queued.wait()
+            assert _apps_for("modelship", "behind")
+        finally:
+            _delete_other_gateway()
 
 
 @pytest.mark.integration
 @pytest.mark.llama_server
 @pytest.mark.deploy
-class TestModelsStillComingUp:
-    def test_an_unplaceable_model_is_left_pending_and_answers_503(self, model_deployer):
-        log = model_deployer.run(
-            *_flags("pending-model", num_cpus=1000), "--deploy-timeout", "0", log_name="pending-model"
+class TestCancel:
+    def test_a_cancelled_deploy_is_rolled_back_including_models_already_up(self, model_deployer, tmp_path):
+        config = tmp_path / "half-placeable.yaml"
+        config.write_text(
+            "models:\n"
+            f"  - {{name: up-model, model: {_SOURCE!r}, usecase: generate, loader: llama_server, num_cpus: 1}}\n"
+            f"  - {{name: never-model, model: {_SOURCE!r}, usecase: generate, loader: llama_server, num_cpus: 1000}}\n"
         )
-        assert "Model 'pending-model' is still coming up" in log
-        (app,) = _apps_for("modelship", "pending-model")
-        assert serve_apps()[app]["status"] == "DEPLOYING"
-        assert _poll(lambda: _answers("pending-model", 503), deadline_s=30), (
-            "a configured model with nothing serving did not answer 503 on every gateway replica"
+        deploy = model_deployer.spawn("--config", str(config), log_name="half-placeable")
+        request_id = deploy.request_id()
+        assert _poll(
+            lambda: any(serve_apps()[app]["status"] == "RUNNING" for app in _apps_for("modelship", "up-model")),
+            deadline_s=180,
+        ), "the placeable model never came up"
+        assert _answers("up-model", 404), "a model was routed before its deploy committed"
+
+        log = model_deployer.stop(request_id, log_name="stop-half-placeable")
+        assert f"Deploy {request_id} is being cancelled and rolled back." in log
+        assert f"Deploy {request_id} cancelled: cancelled" in deploy.wait(expect_code=1)
+        assert _poll(
+            lambda: not _apps_for("modelship", "up-model") and not _apps_for("modelship", "never-model"),
+            deadline_s=60,
         )
-        assert _poll(lambda: _pending_everywhere("pending-model"), deadline_s=30)
 
-        model_deployer.deploy()
-        assert not _apps_for("modelship", "pending-model")
-        assert _poll(lambda: _answers("pending-model", 404), deadline_s=30)
+    def test_an_unknown_deploy_cannot_be_cancelled(self, model_deployer):
+        log = model_deployer.stop("nosuchdeploy", log_name="stop-unknown", expect_code=1)
+        assert "no queued or running deploy nosuchdeploy" in log
 
-    def test_a_model_another_deploy_removes_is_no_longer_waited_for(self, model_deployer):
-        deploy = model_deployer.spawn(*_flags("removed-model", num_cpus=1000), log_name="removed-model")
-        assert _poll(lambda: _apps_for("modelship", "removed-model"), deadline_s=120), "the model was never submitted"
-        # the deploy only stops waiting on an app one of its polls has seen
-        time.sleep(2 * _POLL_SECONDS + 1)
-        model_deployer.deploy()
-        log = deploy.wait(timeout=60)
-        assert "Model 'removed-model' was removed before it came up" in log
-        assert "will land on its own" not in log
 
-    def test_a_model_still_loading_when_deploy_exits_is_routed_once_up(self, client, model_deployer):
-        log = model_deployer.run(*_flags("late-model"), "--deploy-timeout", "0", log_name="late-model")
-        assert "Model 'late-model' is still coming up" in log
-        assert _poll(lambda: _listed_everywhere(client, "late-model"), deadline_s=120), (
-            "a model that came up after its deploy exited was never routed"
+@pytest.mark.integration
+@pytest.mark.llama_server
+@pytest.mark.deploy
+class TestClientGone:
+    def test_a_killed_client_does_not_stop_its_deploy(self, client, model_deployer):
+        deploy = model_deployer.spawn(*_flags("orphan-model"), log_name="orphan-model")
+        deploy.request_id()
+        deploy.kill()
+        assert _poll(partial(_listed_everywhere, client, "orphan-model"), deadline_s=180), (
+            "the deploy stopped with its client"
         )
-        assert _chat(client, "late-model") is not None
+        assert _chat(client, "orphan-model") is not None
 
 
-_OTHER_GATEWAY = "other-gateway"
+@pytest.mark.integration
+@pytest.mark.llama_server
+@pytest.mark.deploy
+class TestFailedChange:
+    def test_a_failed_change_keeps_the_old_app_through_a_replica_restart(self, model_deployer):
+        model_deployer.run(*_flags("survivor"), log_name="survivor")
+        (old,) = _apps_for("modelship", "survivor")
+
+        log = model_deployer.run(*_flags("survivor", source=_BROKEN_SOURCE), log_name="survivor-broken", expect_code=1)
+        assert "failed" in log
+        assert _apps_for("modelship", "survivor") == {old}, "the failed change was not rolled back"
+
+        assert _kill_replicas(old) >= 1
+        time.sleep(_PAST_GRACE_S)
+        assert _apps_for("modelship", "survivor") == {old}, "the old app was deleted while its replica restarted"
+        assert _poll(lambda: _status("survivor") == 200, deadline_s=180), "the old app never answered again"
+
+    def test_a_failed_stop_start_leaves_a_gap_that_a_bare_deploy_fills(self, model_deployer):
+        model_deployer.run(*_flags("gap-model"), log_name="gap-model")
+        (old,) = _apps_for("modelship", "gap-model")
+
+        model_deployer.run(
+            *_flags("gap-model", source=_BROKEN_SOURCE),
+            "--replace-strategy",
+            "stop_start",
+            log_name="gap-model-broken",
+            expect_code=1,
+        )
+        assert not _apps_for("modelship", "gap-model")
+        assert _poll(lambda: _answers("gap-model", 503), deadline_s=30), "a committed model with no app is not 503"
+
+        model_deployer.run("--reconcile", log_name="gap-model-bare")
+        assert _apps_for("modelship", "gap-model") == {old}
+        assert _poll(lambda: _status("gap-model") == 200, deadline_s=60)
 
 
 @pytest.mark.integration
@@ -167,7 +232,7 @@ class TestTwoGateways:
             assert len(_apps_for("modelship", "shared-name")) == 1
 
             model_deployer.deploy()
-            assert _poll(lambda: _listed_nowhere(client, "shared-name"), deadline_s=60)
+            assert not _apps_for("modelship", "shared-name")
             time.sleep(_PAST_GRACE_S)
             assert _apps_for(_OTHER_GATEWAY, "shared-name") == {theirs}, (
                 "removing a model from one gateway touched another's"
@@ -186,8 +251,23 @@ class TestTwoGateways:
             )
             assert not _apps_for(_OTHER_GATEWAY, "shared-name")
         finally:
-            run_on_cluster(f"""
-                from ray import serve
-                for name in [n for n in serve.status().applications if n.split(".")[0] == {_OTHER_GATEWAY!r}]:
-                    serve.delete(name)
-            """)
+            _delete_other_gateway()
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+@pytest.mark.deploy
+class TestDeployCoordinatorRestart:
+    def test_a_restart_rolls_back_a_deploy_that_had_not_committed(self, model_deployer):
+        deploy = model_deployer.spawn(*_flags("uncommitted", num_cpus=1000), log_name="uncommitted")
+        request_id = deploy.request_id()
+        assert _poll(lambda: _apps_for("modelship", "uncommitted"), deadline_s=120), "the model was never submitted"
+
+        run_on_cluster("""
+            ray.kill(ray.get_actor("modelship-deploy-coordinator", namespace="modelship"), no_restart=False)
+        """)
+        log = deploy.wait(expect_code=1)
+        assert f"Deploy {request_id} was lost: the deploy coordinator restarted." in log
+        assert _poll(lambda: not _apps_for("modelship", "uncommitted"), deadline_s=120), (
+            "the restarted deploy coordinator did not roll the deploy back"
+        )
