@@ -8,12 +8,15 @@ worker groups run `mship join` — the same commands as a Docker or native insta
 and a **RayJob** that runs `mship deploy` **on** the cluster (KubeRay's
 supported way to run a driver against a RayCluster) and deploy the models
 declared in your `models.yaml`. Re-running (`helm upgrade`) re-applies the config
-additively, or reconciles it when `deploy.reconcile=true`.
+additively, or reconciles it when `deploy.reconcile=true`. The RayJob succeeds only
+when the deploy does: a failed deploy is rolled back, and a model waiting for
+capacity keeps the RayJob running until the nodes arrive (cancel it with
+`mship stop --deploy-id ID` on the head).
 
-Each deploy persists this gateway's **effective config** (its desired model set)
+Each successful deploy commits this gateway's model set, keeping the one before it,
 to a **state store** (see [Head-node HA](#head-node-ha-redis)). Routing is
-recomputed from Ray Serve's own state, so it comes back by itself after a head
-restart, and `helm upgrade` reconciles the live cluster back to the recorded set.
+recomputed from Ray Serve's own state and that committed set, so it comes back by
+itself after a head restart.
 
 ## Prerequisites
 
@@ -157,7 +160,7 @@ One Redis backs three things at once:
    recovers GCS; workers and model actors **survive**, and Serve's controller
    redeploys anything that died. The restart becomes a sub-minute blip.
 2. **The modelship state store** (`MSHIP_STATE_STORE=redis://…`) — each gateway's
-   effective config lives in Redis, so the gateway coordinator, which rebuilds routing
+   committed version lives in Redis, so the gateway coordinator, which rebuilds routing
    from Serve's state on recovery, still knows which deployment each model should run.
 3. **`/v1/responses` conversations** — stored responses survive head restarts and
    full cluster loss, so `previous_response_id` keeps working across them.
@@ -192,7 +195,7 @@ Uninstall first runs a Job (a pre-delete hook) that:
 1. deletes the deploy RayJob and the RayCluster;
 2. waits up to 3 minutes for the RayCluster to go, while KubeRay deletes Ray's keys
    from Redis;
-3. deletes modelship's keys (`modelship/state/<namespace>/*`: effective config,
+3. deletes modelship's keys (`modelship/state/<namespace>/*`: deploy versions,
    `/v1/responses` conversations).
 
 Nothing of the release stays in Redis; back it up first to keep conversations. If the

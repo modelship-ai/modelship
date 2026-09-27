@@ -303,7 +303,7 @@ def _build_util_metrics():
             # State store
             "state_store_operations_total": _NoOpCounter(),
             "state_store_operation_duration_seconds": _NoOpHistogram(),
-            # Deploy driver
+            # Deploy worker
             "deploy_duration_seconds": _NoOpHistogram(),
             "deploy_models_changed_total": _NoOpCounter(),
         }
@@ -329,16 +329,16 @@ def _build_util_metrics():
             boundaries=_STATE_STORE_BOUNDARIES,
             tag_keys=("backend", "op"),
         ),
-        # -- Deploy driver (mship start / mship deploy) --
+        # -- Deploy worker (one per deploy request) --
         "deploy_duration_seconds": Histogram(
             "modelship_deploy_duration_seconds",
-            description="Wall-clock time for a deploy run to settle, in seconds.",
+            description="Wall-clock time for a deploy request to succeed, in seconds.",
             boundaries=_MODEL_LOAD_BOUNDARIES,
             tag_keys=("gateway",),
         ),
         "deploy_models_changed_total": Counter(
             "modelship_deploy_models_changed_total",
-            description="Models changed by a deploy run, by action.",
+            description="Models changed by a deploy request, by action.",
             tag_keys=("gateway", "action"),  # action: add | remove | fail
         ),
     }
@@ -384,6 +384,6 @@ COORDINATOR_GENERATION = _util_metrics["coordinator_generation"]
 # State store
 STATE_STORE_OPERATIONS_TOTAL = _util_metrics["state_store_operations_total"]
 STATE_STORE_OPERATION_DURATION_SECONDS = _util_metrics["state_store_operation_duration_seconds"]
-# Deploy driver
+# Deploy worker
 DEPLOY_DURATION_SECONDS = _util_metrics["deploy_duration_seconds"]
 DEPLOY_MODELS_CHANGED_TOTAL = _util_metrics["deploy_models_changed_total"]

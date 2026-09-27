@@ -80,7 +80,8 @@ replica reads it from its own node's environment — the driver never forwards i
 
 A joiner only adds capacity: replicas waiting for room schedule onto it on
 their own. To change the model set, run `mship deploy` on any node of the
-cluster; a model the last deploy gave up on is retried by `mship deploy --reconcile`.
+cluster. A failed deploy is rolled back and leaves the last committed model set in
+place; fix the config and deploy again.
 
 **`--token` only means anything if the head runs `--ray-auth=token`.** Joining
 with a token against a head that has auth disabled doesn't fail — the joiner's
@@ -138,11 +139,11 @@ auto-detection is wrong or you want to disable a loader on one node.
 
 ## `MSHIP_STATE_STORE=redis://` is the multi-node recommendation
 
-Without it, the effective config (this gateway's desired model set) lives in a
-cluster-scoped Ray actor — it survives a redeploy or a restart of the deploy or gateway coordinator, but not
-the loss of the head/cluster itself. A `redis://` store survives cluster loss too, so `mship start --reconcile`
-with no `--config` on a fresh cluster restores the real model set instead of
-coming back empty. See [State store
+Without it, each gateway's committed version (the model set its last successful
+deploy recorded) lives in a cluster-scoped Ray actor — it survives a redeploy or a restart
+of the deploy or gateway coordinator, but not the loss of the head/cluster itself. A
+`redis://` store survives cluster loss too, so `mship start` with no `--config` on a fresh
+cluster redeploys the real model set instead of coming back empty. See [State store
 (`MSHIP_STATE_STORE`)](model-configuration.md#state-store-mship_state_store) for
 the full connection-URI reference — the head is otherwise a single point of
 failure for this state, same as it is for Ray's GCS itself.

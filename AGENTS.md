@@ -52,15 +52,16 @@ When in doubt, check OpenAI's reference for the exact route. Existing deviations
 
 ## Running the server
 
-`mship start`, `mship join` and `mship deploy` are the engine commands (console script, installed via `pip`/`uv tool install "mship[metal]"`; `python -m modelship.launcher <command>` from source). `modelship/launcher.py` resolves the cache root, checks the Python version, detects the accelerator (`cuda`/`rocm`/`xpu`/`metal`/`cpu`, keyed on the installed torch build — see `modelship/utils/accelerator.py`), and on macOS auto-provisions `llama-server` before handing off to `modelship/driver.py:run`. The commands split by lifetime:
+`mship start`, `mship join`, `mship deploy` and `mship stop` are the engine commands (console script, installed via `pip`/`uv tool install "mship[metal]"`; `python -m modelship.launcher <command>` from source). `modelship/launcher.py` resolves the cache root, checks the Python version, detects the accelerator (`cuda`/`rocm`/`xpu`/`metal`/`cpu`, keyed on the installed torch build — see `modelship/utils/accelerator.py`), and on macOS auto-provisions `llama-server` before handing off to `modelship/driver.py:run`. The commands split by lifetime:
 
-- `mship start` creates this machine's Ray head (sized from `MSHIP_NODE_NUM_CPUS`/`MSHIP_NODE_NUM_GPUS`, auto-detected if unset; metrics on `--metrics-port`, default 8079), brings up Serve and the gateway, deploys any `--config`/`--model`, stays running and tears the cluster down on exit. It refuses when any Ray node already runs on the machine.
+- `mship start` creates this machine's Ray head (sized from `MSHIP_NODE_NUM_CPUS`/`MSHIP_NODE_NUM_GPUS`, auto-detected if unset; metrics on `--metrics-port`, default 8079), brings up Serve and the gateway, sends any `--config`/`--model` as a deploy request without waiting for it, stays running and tears the cluster down on exit. It refuses when any Ray node already runs on the machine.
 - `mship join --cluster HOST:PORT` starts this machine's Ray node as a worker, stays running and leaves on exit. Node only — no driver, no model changes.
-- `mship deploy` attaches to the cluster of a node on this machine, changes its models and exits; it must run **on** a cluster node (Docker co-located / k8s RayJob / bare-metal node) and cannot attach from off-cluster.
+- `mship deploy` attaches to the cluster of a node on this machine, sends a deploy request to the deploy coordinator, waits for it to succeed or fail and exits with the outcome; it must run **on** a cluster node (Docker co-located / k8s RayJob / bare-metal node) and cannot attach from off-cluster. A failed request is rolled back; a signal only stops the wait.
+- `mship stop --deploy-id ID` cancels a queued or running deploy request and rolls back what it submitted.
 
 `start` and `deploy` share the model handling:
 
-1. Reads `config/models.yaml` (gitignored — copy one from `config/examples/`). An explicit `--config <path>` that doesn't exist is a hard error; absent both, it keeps the gateway's effective model set (an empty coordinator on a fresh `start`).
+1. Reads `config/models.yaml` (gitignored — copy one from `config/examples/`). An explicit `--config <path>` that doesn't exist is a hard error; absent both, it redeploys the gateway's committed models that are missing (nothing on a fresh `start`).
 2. Deploys models **additively** by default (each app is named `<gateway>.<model>-<config fingerprint>`, e.g. `modelship.qwen-3f9a0c12de`). Pass `--reconcile` to instead make the cluster match the config exactly (add/remove/replace) — it never tears the cluster down.
 3. The gateway is a FastAPI Ray Serve app named `modelship` (override with `--gateway-name`), listening on port `8000`, mounted at `/<slugified-gateway-name>` (e.g. `/modelship/v1/...`) since every gateway on a cluster shares one HTTP proxy/port. `deploy` creates one only for an explicit `--gateway-name` that doesn't exist yet.
 

@@ -140,7 +140,7 @@ groups:
           summary: "State store errors ({{ $labels.backend }})"
           description: >-
             The {{ $labels.backend }} state store is failing operations — durable
-            HA state (effective config, conversations) is at risk, breaking deploys,
+            HA state (deploy versions, conversations) is at risk, breaking deploys,
             cleanup of replaced deployments, and self-heal.
 
       - alert: ModelshipGatewayRoutingDivergence
