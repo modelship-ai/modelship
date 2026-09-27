@@ -1,5 +1,6 @@
 """Tests for ModelshipAPI model discovery and routing."""
 
+import asyncio
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -248,6 +249,45 @@ class TestWatchReconcile:
             assert await api._coord_async() is sentinel
             assert await api._coord_async() is sentinel
         goc.assert_called_once()  # second call served from cache, no re-resolve
+
+    def test_a_snapshot_sets_the_routing_seq(self, api):
+        with patch("modelship.openai.api.serve.get_app_handle", return_value=MagicMock()):
+            api._apply_snapshot({"models": {"qwen-a3f9k": "qwen"}, "expected": ["qwen"], "generation": 2, "routing": 7})
+        assert api._routing_seq == 7
+
+    def test_a_snapshot_that_cannot_be_applied_keeps_the_routing_seq(self, api):
+        api._routing_seq = 3
+        with (
+            patch("modelship.openai.api.serve.get_app_handle", side_effect=RuntimeError("controller lag")),
+            pytest.raises(RuntimeError),
+        ):
+            api._apply_snapshot({"models": {"qwen-a3f9k": "qwen"}, "expected": [], "generation": 2, "routing": 7})
+        assert api._routing_seq == 3
+
+    @pytest.mark.asyncio
+    async def test_each_poll_reports_the_replica_and_its_routing_seq(self, api):
+        api._gen, api._routing_seq = 5, 7
+        calls = []
+
+        async def wait_for_change(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise asyncio.CancelledError
+
+        coordinator = MagicMock()
+        coordinator.wait_for_change.remote = wait_for_change
+        api._gateway_coord = coordinator
+        await api._watch_loop()
+        assert calls == [(("test-gateway", 5), {"replica_id": api._replica_id, "routing": 7})]
+
+    @pytest.mark.asyncio
+    async def test_the_health_check_starts_watching(self, api):
+        api._watch_task = None
+        with (
+            patch.object(type(api), "_sync_routing_blocking", return_value=True),
+            patch.object(type(api), "_watch_loop", new=AsyncMock()),
+        ):
+            await api.check_health()
+        assert api._watch_task is not None
 
 
 class TestGetHandle:

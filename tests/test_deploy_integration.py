@@ -8,13 +8,12 @@ import httpx
 import pytest
 
 from modelship.deploy.strategy import _POLL_SECONDS
-from modelship.infer.gateway_coordinator import _UNUSED_GRACE_SECONDS
 from openai import OpenAI
 from tests.conftest import OPENAI_API_BASE, run_on_cluster, serve_apps
 
 _SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf"
-# the gateway coordinator deletes an app the effective config doesn't target once it has been unused this long
-_PAST_GRACE_S = _UNUSED_GRACE_SECONDS + 5
+# long enough for anything that deletes apps in the background to have acted
+_PAST_GRACE_S = 15
 _PING = [{"role": "user", "content": "hi"}]
 _READYZ_URL = "http://localhost:8000/modelship/readyz"
 

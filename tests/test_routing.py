@@ -1,4 +1,4 @@
-"""compute_routing: which app serves each model, what the gateway waits for, and what is unused."""
+"""compute_routing: which app serves each model and what the gateway waits for."""
 
 import pytest
 from ray.serve._private.common import ReplicaState
@@ -10,7 +10,7 @@ from ray.serve.schema import (
     DeploymentStatusTrigger,
 )
 
-from modelship.deploy.routing import can_serve, compute_routing
+from modelship.deploy.routing import can_serve, compute_routing, running_replicas
 
 OLD, NEW, NEWER = "gw.m-aaaaaaaaaa", "gw.m-bbbbbbbbbb", "gw.m-cccccccccc"
 OTHER = "gw.x-dddddddddd"
@@ -62,108 +62,55 @@ class TestModelTable:
     def test_a_target_scaled_to_zero_is_routed(self):
         assert _route({NEW: _app(running=0)}, {"m": NEW}).models == {NEW: "m"}
 
-    def test_a_target_running_at_zero_replicas_takes_over_from_the_older_app(self):
-        apps = {OLD: _app(), NEW: _app(running=0, deployed_at=1)}
-        assert _route(apps, {"m": NEW}).models == {NEW: "m"}
-
-    def test_a_loading_target_leaves_the_older_app_serving(self):
-        apps = {OLD: _app(), NEW: _app(ApplicationStatus.DEPLOYING, running=0, starting=1, deployed_at=1)}
-        assert _route(apps, {"m": NEW}).models == {OLD: "m"}
-
-    def test_the_target_takes_over_at_its_first_running_replica(self):
+    def test_a_target_takes_over_at_its_first_running_replica(self):
         apps = {OLD: _app(), NEW: _app(ApplicationStatus.DEPLOYING, running=1, starting=1, deployed_at=1)}
         assert _route(apps, {"m": NEW}).models == {NEW: "m"}
 
-    def test_a_target_with_no_running_replica_falls_back_to_an_older_app(self):
+    def test_a_target_that_cannot_serve_leaves_the_model_out_even_with_another_app(self):
         apps = {OLD: _app(), NEW: _app(ApplicationStatus.UNHEALTHY, running=0, starting=1, deployed_at=1)}
-        assert _route(apps, {"m": NEW}).models == {OLD: "m"}
-
-    def test_the_newest_older_app_that_can_serve_wins(self):
-        apps = {
-            OLD: _app(deployed_at=1),
-            NEWER: _app(deployed_at=2),
-            NEW: _app(ApplicationStatus.DEPLOYING, running=0, deployed_at=3),
-        }
-        assert _route(apps, {"m": NEW}).models == {NEWER: "m"}
-
-    def test_a_model_with_nothing_serving_is_left_out(self):
-        apps = {NEW: _app(ApplicationStatus.DEPLOY_FAILED, running=0)}
         assert _route(apps, {"m": NEW}).models == {}
 
+    def test_a_missing_target_leaves_the_model_out(self):
+        assert _route({OLD: _app()}, {"m": NEW}).models == {}
+
     def test_an_app_being_deleted_is_not_routed(self):
-        assert _route({OLD: _app(ApplicationStatus.DELETING)}, {"m": NEW}).models == {}
+        assert _route({NEW: _app(ApplicationStatus.DELETING)}, {"m": NEW}).models == {}
 
     def test_other_gateways_and_non_modelship_apps_are_ignored(self):
         apps = {"edge.m-aaaaaaaaaa": _app(), "dashboard": _app(), "m-aaaaaaaaaa": _app()}
-        r = _route(apps, {"m": NEW})
-        assert r.models == {}
-        assert r.unused == set()
+        assert _route(apps, {"m": NEW}).models == {}
 
     def test_nothing_is_computed_without_the_gateways_own_app(self):
         assert compute_routing("gw", {"m": NEW}, {NEW: _app()}) is None
 
 
-class TestUnused:
-    def test_the_older_app_is_unused_once_the_target_serves(self):
-        assert _route({OLD: _app(), NEW: _app(deployed_at=1)}, {"m": NEW}).unused == {OLD}
-
-    def test_an_older_app_still_serving_is_kept(self):
-        apps = {OLD: _app(), NEW: _app(ApplicationStatus.DEPLOYING, running=0)}
-        assert _route(apps, {"m": NEW}).unused == set()
-
-    def test_a_target_is_never_unused(self):
-        assert _route({NEW: _app(ApplicationStatus.DEPLOY_FAILED, running=0)}, {"m": NEW}).unused == set()
-
-    def test_a_dropped_models_app_is_unused(self):
-        assert _route({NEW: _app(), OTHER: _app()}, {"m": NEW}).unused == {OTHER}
-
-    def test_an_app_already_being_deleted_is_not_unused(self):
-        assert _route({OTHER: _app(ApplicationStatus.DELETING)}, {"m": NEW}).unused == set()
-
-
-class TestRetiring:
-    def test_an_unused_app_is_retiring(self):
-        assert _route({OLD: _app(), NEW: _app(deployed_at=1)}, {"m": NEW}).retiring == {OLD}
-
-    def test_an_app_being_deleted_is_retiring(self):
-        assert _route({NEW: _app(), OTHER: _app(ApplicationStatus.DELETING)}, {"m": NEW}).retiring == {OTHER}
-
-    def test_an_older_app_still_serving_is_not_retiring(self):
-        apps = {OLD: _app(), NEW: _app(ApplicationStatus.DEPLOYING, running=0)}
-        assert _route(apps, {"m": NEW}).retiring == set()
-
-    def test_another_gateways_app_being_deleted_is_not_retiring(self):
-        assert _route({"edge.m-aaaaaaaaaa": _app(ApplicationStatus.DELETING)}, {}).retiring == set()
-
-
 class TestExpected:
-    def test_a_model_whose_target_exists_is_expected(self):
-        apps = {NEW: _app(ApplicationStatus.DEPLOYING, running=0)}
-        assert _route(apps, {"m": NEW}).expected == ["m"]
+    def test_every_targeted_model_is_expected(self):
+        assert _route({}, {"m": NEW, "x": OTHER}).expected == ["m", "x"]
 
-    def test_a_model_served_only_by_an_older_app_is_expected(self):
-        assert _route({OLD: _app()}, {"m": NEW}).expected == ["m"]
-
-    def test_a_model_with_no_app_is_expected(self):
-        assert _route({}, {"m": NEW}).expected == ["m"]
-
-    def test_a_model_whose_target_is_being_deleted_is_expected(self):
-        assert _route({NEW: _app(ApplicationStatus.DELETING, running=0)}, {"m": NEW}).expected == ["m"]
-
-    def test_a_model_whose_old_app_is_being_deleted_before_its_target_exists_is_expected(self):
-        assert _route({OLD: _app(ApplicationStatus.DELETING)}, {"m": NEW}).expected == ["m"]
+    def test_a_model_whose_target_cannot_serve_is_expected(self):
+        assert _route({NEW: _app(ApplicationStatus.DEPLOYING, running=0)}, {"m": NEW}).expected == ["m"]
 
 
 class TestUnknownTargets:
-    def test_each_model_is_served_by_its_newest_app(self):
-        apps = {OLD: _app(deployed_at=1), NEW: _app(deployed_at=2), OTHER: _app()}
+    def test_each_model_is_served_by_its_newest_app_that_can_serve(self):
+        apps = {
+            OLD: _app(deployed_at=1),
+            NEW: _app(deployed_at=2),
+            NEWER: _app(ApplicationStatus.DEPLOYING, running=0, deployed_at=3),
+            OTHER: _app(),
+        }
         r = _route(apps, None)
         assert r.models == {NEW: "m", OTHER: "x"}
         assert r.expected == ["m", "x"]
 
-    def test_nothing_is_unused(self):
-        assert _route({OLD: _app(deployed_at=1), NEW: _app(deployed_at=2)}, None).unused == set()
+    def test_a_model_with_nothing_serving_is_not_expected(self):
+        assert _route({NEW: _app(ApplicationStatus.DEPLOY_FAILED, running=0)}, None).expected == []
 
-    def test_only_apps_being_deleted_are_retiring(self):
-        apps = {OLD: _app(ApplicationStatus.DELETING), NEW: _app(deployed_at=2)}
-        assert _route(apps, None).retiring == {OLD}
+
+class TestRunningReplicas:
+    def test_counts_running_replicas_across_deployments(self):
+        assert running_replicas(_app(running=2, starting=1)) == 2
+
+    def test_none_running(self):
+        assert running_replicas(_app(running=0, starting=1)) == 0

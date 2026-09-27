@@ -226,6 +226,9 @@ class ModelshipAPI:
         # snapshot whenever the coordinator's per-gateway generation advances, so
         # every replica — including restarted / autoscaled ones — converges.
         self._gen = 0  # last coordinator generation this replica reconciled to
+        # the routing seq that snapshot came from, reported back with this replica's id on every poll
+        self._routing_seq: int | None = None
+        self._replica_id = random_uuid()
         self._watch_task: asyncio.Task | None = None
         self._gateway_coord = None  # cached gateway-coordinator handle
         # Timing state — the first sync with a non-empty expected set stamps a start;
@@ -314,6 +317,7 @@ class ModelshipAPI:
         if self.expected_models and self._all_ready_at is None and all(m in self.models for m in self.expected_models):
             self._all_ready_at = time.time()
         self._gen = new_gen
+        self._routing_seq = snapshot.get("routing")
         MODELS_LOADED.set(len(self.models))
         GATEWAY_RECONCILES_TOTAL.inc()
         GATEWAY_ROUTING_GENERATION.set(new_gen)
@@ -369,7 +373,9 @@ class ModelshipAPI:
         while True:
             try:
                 coord = await self._coord_async()
-                gen = await coord.wait_for_change.remote(self._gateway_name, self._gen)
+                gen = await coord.wait_for_change.remote(
+                    self._gateway_name, self._gen, replica_id=self._replica_id, routing=self._routing_seq
+                )
                 if gen != self._gen:
                     snapshot = await coord.get_routing.remote(self._gateway_name)
                     self._apply_snapshot(snapshot)
@@ -536,6 +542,10 @@ class ModelshipAPI:
                 REQUEST_DURATION_SECONDS.observe(duration, tags={"model": model, "endpoint": endpoint})
                 REQUEST_IN_PROGRESS.set(0, tags={"model": model, "endpoint": endpoint})
                 watcher.stop()
+
+    async def check_health(self) -> None:
+        # Serve calls this periodically, so an idle replica still polls and reports its routing seq.
+        self._ensure_watching()
 
     @app.get("/health")
     async def health(self):
