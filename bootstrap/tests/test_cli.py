@@ -53,7 +53,7 @@ class TestVariantRequired:
 
 
 class TestExec:
-    @pytest.mark.parametrize("command", ["start", "join", "deploy"])
+    @pytest.mark.parametrize("command", ["start", "join", "deploy", "stop"])
     def test_execs_the_engine_via_module(self, provisioned, command):
         cli.main([command, "--cpu", "--log-format", "json"])
         python, args, _env = provisioned.call_args[0]

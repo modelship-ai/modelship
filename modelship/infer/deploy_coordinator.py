@@ -218,23 +218,24 @@ class DeployCoordinator:
         finally:
             self._requests.pop(request_id, None)
 
-    async def cancel(self, request_id: str) -> str:
-        """Drops a queued request, or rolls back a running one that hasn't committed."""
+    async def cancel(self, request_id: str) -> dict:
+        """Drops a queued request, or rolls back a running one that hasn't committed. Returns whether it did,
+        and a message saying what happened."""
         entry = self._requests.get(request_id)
         if entry is None or entry.done.done():
-            return f"no queued or running deploy {request_id}"
+            return {"cancelled": False, "message": f"no queued or running deploy {request_id}"}
         if entry.state == "queued":
             self._queues[entry.request.gateway].remove(entry)
             entry.done.set_result(_outcome(entry, "cancelled", "cancelled before it started"))
             logger.info("Deploy %s cancelled before it started", request_id)
-            return f"deploy {request_id} cancelled"
+            return {"cancelled": True, "message": f"deploy {request_id} cancelled"}
         if entry.state in ("committing", "retiring"):
-            return f"deploy {request_id} is already committed and can no longer be cancelled"
+            return {"cancelled": False, "message": f"deploy {request_id} is already committed and can't be cancelled"}
         if not entry.cancelled:
             entry.cancelled = True
             logger.info("Cancelling deploy %s", request_id)
             self._spawn(self._kill_unless_seen(entry))
-        return f"deploy {request_id} is being cancelled and rolled back"
+        return {"cancelled": True, "message": f"deploy {request_id} is being cancelled and rolled back"}
 
     async def is_cancelled(self, request_id: str) -> bool:
         entry = self._requests.get(request_id)

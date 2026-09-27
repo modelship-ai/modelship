@@ -1,4 +1,4 @@
-"""CLI argument parsing for the engine's start, join and deploy commands."""
+"""CLI argument parsing for the engine's start, join, deploy and stop commands."""
 
 from __future__ import annotations
 
@@ -53,7 +53,6 @@ _ARG_TO_ENV: dict[str, str] = {
     "openai_api_port": "MSHIP_OPENAI_API_PORT",
     "responses_ttl_s": "MSHIP_RESPONSES_TTL_S",
     "state_sweep_interval_s": "MSHIP_STATE_SWEEP_INTERVAL_S",
-    "deploy_timeout": "MSHIP_DEPLOY_TIMEOUT_S",
 }
 
 # store_true flags -> (env var, value when passed).
@@ -67,11 +66,13 @@ _USAGE = {
     "start": f"mship start {_MODEL_USAGE}",
     "join": "mship join --cluster HOST:PORT [options]",
     "deploy": f"mship deploy {_MODEL_USAGE}",
+    "stop": "mship stop --deploy-id ID [options]",
 }
 _DESCRIPTION = {
     "start": "Start a cluster on this machine: its head node, the API gateway and any models given. Stays running.",
     "join": "Add this machine to a running cluster as a worker node. Stays running.",
-    "deploy": "Change the models of the cluster running on this machine, then exit.",
+    "deploy": "Change the models of the cluster running on this machine; waits for the change to succeed or fail.",
+    "stop": "Cancel a deploy on the cluster running on this machine, rolling back what it has done so far.",
 }
 
 
@@ -88,6 +89,10 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
     if command in ("start", "deploy"):
         _add_auth_arg(parser)
         _add_cluster_args(parser)
+    if command == "stop":
+        _add_auth_arg(parser)
+        _add_token_arg(parser)
+        parser.add_argument("--deploy-id", required=True, help="The deploy to cancel, as `mship deploy` printed it")
     if command == "deploy":
         _add_token_arg(parser)
         parser.add_argument(
@@ -288,14 +293,6 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "TTL in seconds for stored /v1/responses conversation state; <=0 disables "
             "expiry (env: MSHIP_RESPONSES_TTL_S, default: 2592000 = 30 days)"
-        ),
-    )
-    parser.add_argument(
-        "--deploy-timeout",
-        type=float,
-        help=(
-            "Seconds to wait for models to come up before reporting the rest as still "
-            "pending; they keep deploying (env: MSHIP_DEPLOY_TIMEOUT_S, default: 600)"
         ),
     )
     parser.add_argument(

@@ -346,7 +346,7 @@ class TestCancel:
         coord = _ledger()
         await coord.submit(_request())
         queued = await coord.submit(_request())
-        assert await coord.cancel(queued["id"]) == f"deploy {queued['id']} cancelled"
+        assert await coord.cancel(queued["id"]) == {"cancelled": True, "message": f"deploy {queued['id']} cancelled"}
         assert (await queued["outcome"])["state"] == "cancelled"
         await _until(lambda: workers.created)
         workers.created[0].finish()
@@ -389,10 +389,12 @@ class TestCancel:
         await _settle()
         await coord.switch(receipt["id"], "g", [_raw("a")])
         await coord.commit(receipt["id"], "g", [_raw("a")])
-        assert "already committed" in await coord.cancel(receipt["id"])
+        result = await coord.cancel(receipt["id"])
+        assert not result["cancelled"]
+        assert "already committed" in result["message"]
 
     async def test_an_unknown_request(self, workers):
-        assert await _ledger().cancel("nope") == "no queued or running deploy nope"
+        assert await _ledger().cancel("nope") == {"cancelled": False, "message": "no queued or running deploy nope"}
 
 
 @pytest.mark.asyncio
