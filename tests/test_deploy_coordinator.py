@@ -394,8 +394,8 @@ class TestRouting:
         versions = await coord.routing_versions(["g"])
         assert versions["g"]["apps"] == {"a": _app_name(_raw("a"))}
 
-    async def test_a_gateway_without_a_version_has_no_table(self, workers):
-        assert (await _ledger().routing_versions(["g"]))["g"]["apps"] is None
+    async def test_a_gateway_without_a_version_has_an_empty_table(self, workers):
+        assert (await _ledger().routing_versions(["g"]))["g"]["apps"] == {}
 
     async def test_a_switch_routes_by_the_proposed_models_under_a_new_seq(self, workers):
         coord = _ledger()
@@ -413,7 +413,7 @@ class TestRouting:
         await _settle()
         seq = await coord.switch(receipt["id"], "g", [_raw("b")])
         assert await coord.reset_routing("g") > seq
-        assert (await coord.routing_versions(["g"]))["g"]["apps"] is None
+        assert (await coord.routing_versions(["g"]))["g"]["apps"] == {}
 
     async def test_a_reset_on_the_committed_version_keeps_the_seq(self, workers):
         coord = _ledger()

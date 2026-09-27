@@ -64,8 +64,8 @@ class _Routing(NamedTuple):
     seq: int
     # None: the gateway has no committed version
     models: list[dict] | None
-    # model -> app, from models
-    apps: dict[str, str] | None
+    # model -> app, from models; empty without a committed version
+    apps: dict[str, str]
 
 
 @dataclass
@@ -93,7 +93,7 @@ def _seconds_env(name: str, default: float) -> float:
 
 
 def _routing(seq: int, models: list[dict] | None, gateway_name: str) -> _Routing:
-    return _Routing(seq, models, Version(0, models).apps(gateway_name) if models is not None else None)
+    return _Routing(seq, models, Version(0, models).apps(gateway_name) if models is not None else {})
 
 
 def _outcome(entry: _Entry, state: str, reason: str) -> dict:
@@ -263,7 +263,7 @@ class DeployCoordinator:
         return version.number
 
     async def routing_versions(self, gateway_names: list[str]) -> dict[str, dict]:
-        """Each gateway's routing seq and model -> app table; the table is None without a committed version."""
+        """Each gateway's routing seq and model -> app table; the table is empty without a committed version."""
         self._start_recovery()
         versions = {}
         for name in gateway_names:

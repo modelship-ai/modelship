@@ -5,8 +5,6 @@ from dataclasses import dataclass
 
 from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview
 
-from modelship.utils.config_schema import parse_deployment_name
-
 # Serve reports replica states as plain strings, though typed as its ReplicaState enum.
 _RUNNING = "RUNNING"
 
@@ -42,22 +40,10 @@ def running_replicas(app: ApplicationStatusOverview) -> int:
 
 
 def compute_routing(
-    gateway_name: str, targets: Mapping[str, str] | None, apps: Mapping[str, ApplicationStatusOverview]
+    gateway_name: str, targets: Mapping[str, str], apps: Mapping[str, ApplicationStatusOverview]
 ) -> Routing | None:
-    """Each model's app from *targets* (model -> app), while it can serve. *targets* None routes each
-    model to its newest app that can serve. None when *apps* lacks the gateway's own app."""
+    """Each model's app from *targets* (model -> app), while it can serve. None when *apps* lacks the gateway's own app."""
     if gateway_name not in apps:
         return None
-    if targets is not None:
-        models = {app: model for model, app in targets.items() if app in apps and can_serve(apps[app])}
-        return Routing(models=models, expected=list(targets))
-
-    newest: dict[str, str] = {}
-    for name, app in apps.items():
-        parsed = parse_deployment_name(name)
-        if parsed is None or parsed[0] != gateway_name or not can_serve(app):
-            continue
-        current = newest.get(parsed[1])
-        if current is None or app.last_deployed_time_s > apps[current].last_deployed_time_s:
-            newest[parsed[1]] = name
-    return Routing(models={app: model for model, app in newest.items()}, expected=sorted(newest))
+    models = {app: model for model, app in targets.items() if app in apps and can_serve(apps[app])}
+    return Routing(models=models, expected=list(targets))

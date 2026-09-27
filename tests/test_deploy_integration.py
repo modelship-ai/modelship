@@ -3,6 +3,7 @@ outcomes, cancel, rollback, and a deploy coordinator restart."""
 
 import time
 from functools import partial
+from pathlib import Path
 
 import httpx
 import pytest
@@ -17,6 +18,7 @@ _BROKEN_SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:README.md"
 _PAST_GRACE_S = 15
 _PING = [{"role": "user", "content": "hi"}]
 _OTHER_GATEWAY = "other-gateway"
+_FIRST_GATEWAY = "first-gateway"
 
 
 def _flags(name: str, *, num_cpus: int = 1, source: str = _SOURCE) -> list[str]:
@@ -52,9 +54,24 @@ def _listed_everywhere(client: OpenAI, model: str, samples: int = 20) -> bool:
     return all(model in {m.id for m in client.models.list().data} for _ in range(samples))
 
 
-def _status(model: str) -> int:
+def _running(gateway: str, model: str) -> bool:
+    apps = serve_apps()
+    return any(apps[app]["status"] == "RUNNING" for app in _apps_for(gateway, model))
+
+
+def _half_placeable(tmp_path) -> Path:
+    config = tmp_path / "half-placeable.yaml"
+    config.write_text(
+        "models:\n"
+        f"  - {{name: up-model, model: {_SOURCE!r}, usecase: generate, loader: llama_server, num_cpus: 1}}\n"
+        f"  - {{name: never-model, model: {_SOURCE!r}, usecase: generate, loader: llama_server, num_cpus: 1000}}\n"
+    )
+    return config
+
+
+def _status(model: str, base: str = OPENAI_API_BASE) -> int:
     return httpx.post(
-        f"{OPENAI_API_BASE}/chat/completions", json={"model": model, "messages": _PING, "max_tokens": 1}, timeout=30
+        f"{base}/chat/completions", json={"model": model, "messages": _PING, "max_tokens": 1}, timeout=30
     ).status_code
 
 
@@ -80,10 +97,10 @@ def _kill_replicas(app: str) -> int:
     return int(out.strip().splitlines()[-1])
 
 
-def _delete_other_gateway() -> None:
+def _delete_gateway(gateway: str) -> None:
     run_on_cluster(f"""
         from ray import serve
-        for name in [n for n in serve.status().applications if n.split(".")[0] == {_OTHER_GATEWAY!r}]:
+        for name in [n for n in serve.status().applications if n.split(".")[0] == {gateway!r}]:
             serve.delete(name)
     """)
 
@@ -130,7 +147,7 @@ class TestQueue:
             queued.wait()
             assert _apps_for("modelship", "behind")
         finally:
-            _delete_other_gateway()
+            _delete_gateway(_OTHER_GATEWAY)
 
 
 @pytest.mark.integration
@@ -138,18 +155,9 @@ class TestQueue:
 @pytest.mark.deploy
 class TestCancel:
     def test_a_cancelled_deploy_is_rolled_back_including_models_already_up(self, model_deployer, tmp_path):
-        config = tmp_path / "half-placeable.yaml"
-        config.write_text(
-            "models:\n"
-            f"  - {{name: up-model, model: {_SOURCE!r}, usecase: generate, loader: llama_server, num_cpus: 1}}\n"
-            f"  - {{name: never-model, model: {_SOURCE!r}, usecase: generate, loader: llama_server, num_cpus: 1000}}\n"
-        )
-        deploy = model_deployer.spawn("--config", str(config), log_name="half-placeable")
+        deploy = model_deployer.spawn("--config", str(_half_placeable(tmp_path)), log_name="half-placeable")
         request_id = deploy.request_id()
-        assert _poll(
-            lambda: any(serve_apps()[app]["status"] == "RUNNING" for app in _apps_for("modelship", "up-model")),
-            deadline_s=180,
-        ), "the placeable model never came up"
+        assert _poll(partial(_running, "modelship", "up-model"), deadline_s=180), "the placeable model never came up"
         assert _answers("up-model", 404), "a model was routed before its deploy committed"
 
         log = model_deployer.stop(request_id, log_name="stop-half-placeable")
@@ -163,6 +171,30 @@ class TestCancel:
     def test_an_unknown_deploy_cannot_be_cancelled(self, model_deployer):
         log = model_deployer.stop("nosuchdeploy", log_name="stop-unknown", expect_code=1)
         assert "no queued or running deploy nosuchdeploy" in log
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+@pytest.mark.deploy
+class TestFirstDeploy:
+    def test_a_gateways_first_deploy_is_not_routed_before_it_commits(self, model_deployer, tmp_path):
+        base = f"http://localhost:8000/{_FIRST_GATEWAY}/v1"
+        deploy = model_deployer.spawn(
+            "--gateway-name", _FIRST_GATEWAY, "--config", str(_half_placeable(tmp_path)), log_name="first-deploy"
+        )
+        request_id = deploy.request_id()
+        try:
+            assert _poll(partial(_running, _FIRST_GATEWAY, "up-model"), deadline_s=180), (
+                "the placeable model never came up"
+            )
+            assert _poll(lambda: httpx.get(f"{base}/models", timeout=30).status_code == 200, deadline_s=60)
+            assert not _poll(lambda: _status("up-model", base) != 404, deadline_s=10), (
+                "a gateway's first deploy was routed before it committed"
+            )
+        finally:
+            model_deployer.stop(request_id, log_name="stop-first-deploy")
+            deploy.wait(expect_code=1)
+            _delete_gateway(_FIRST_GATEWAY)
 
 
 @pytest.mark.integration
@@ -251,7 +283,7 @@ class TestTwoGateways:
             )
             assert not _apps_for(_OTHER_GATEWAY, "shared-name")
         finally:
-            _delete_other_gateway()
+            _delete_gateway(_OTHER_GATEWAY)
 
 
 @pytest.mark.integration

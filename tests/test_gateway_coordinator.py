@@ -73,7 +73,7 @@ class _Cluster:
     async def _routing_versions(self, gateways):
         if self.unreachable:
             raise RuntimeError("deploy coordinator restarting")
-        return {g: self.versions.get(g, {"seq": 0, "apps": None}) for g in gateways}
+        return {g: self.versions.get(g, {"seq": 0, "apps": {}}) for g in gateways}
 
     def configure(self, *raws: dict, gateway: str = "gw") -> int:
         """Routes *gateway* by *raws* under a new seq, which it returns."""
@@ -120,11 +120,12 @@ class TestTables:
         assert (routing["models"], routing["expected"]) == ({}, ["a"])
 
     @pytest.mark.asyncio
-    async def test_a_gateway_without_a_version_routes_each_models_newest_app(self, cluster):
-        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
+    async def test_a_gateway_without_a_committed_version_routes_nothing(self, cluster):
+        cluster.apps[_app_name(NEW)] = _app()
         coord = _coordinator()
         await _pass(coord)
-        assert (await coord.get_routing("gw"))["models"] == {_app_name(NEW): "a"}
+        routing = await coord.get_routing("gw")
+        assert (routing["models"], routing["expected"]) == ({}, [])
 
     @pytest.mark.asyncio
     async def test_a_gateway_is_found_through_its_apps(self, cluster):
@@ -168,13 +169,14 @@ class TestTables:
         assert (await coord.get_routing("gw"))["models"] == {_app_name(NEW): "a"}
 
     @pytest.mark.asyncio
-    async def test_without_a_deploy_coordinator_each_models_newest_app_is_routed(self, cluster, caplog):
+    async def test_without_a_deploy_coordinator_nothing_is_routed(self, cluster, caplog):
         cluster.exists = False
         cluster.configure(NEW)
-        cluster.apps |= {_app_name(OLD): _app(), _app_name(NEW): _app(deployed_at=1)}
+        cluster.apps[_app_name(NEW)] = _app()
         coord = _coordinator()
         await _pass(coord)
-        assert (await coord.get_routing("gw"))["models"] == {_app_name(NEW): "a"}
+        routing = await coord.get_routing("gw")
+        assert (routing["models"], routing["expected"]) == ({}, [])
         assert caplog.messages == []
 
     @pytest.mark.asyncio

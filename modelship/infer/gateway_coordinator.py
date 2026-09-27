@@ -50,10 +50,10 @@ class GatewayCoordinator:
         # Nothing else configures logging here; without it the logger falls back to Python's lastResort handler.
         configure_logging()
         self._routing: dict[str, Routing] = {}
-        # gateway -> {"seq": int, "apps": {model: app} | None}, as the deploy coordinator last gave it
+        # gateway -> {"seq": int, "apps": {model: app}}, as the deploy coordinator last gave it
         self._versions: dict[str, dict[str, Any]] = {}
         # gateway -> the routing seq its published table was computed from
-        self._seqs: dict[str, int | None] = {}
+        self._seqs: dict[str, int] = {}
         # Millisecond clock; at most one change per pass, so a restarted gateway coordinator never repeats a generation.
         self._first_generation = int(time.time() * 1000)
         self._generation: dict[str, int] = {}
@@ -82,7 +82,7 @@ class GatewayCoordinator:
             await asyncio.sleep(_PASS_INTERVAL_S)
 
     async def _compute(self) -> None:
-        """One pass: every gateway's table."""
+        """One pass: the table of every gateway whose routing version is known."""
         apps = dict((await asyncio.to_thread(serve.status)).applications)
         gateways = set(self._watched)
         for name in apps:
@@ -90,12 +90,12 @@ class GatewayCoordinator:
                 gateways.add(parsed[0])
         await self._fetch_versions(sorted(gateways))
         for gateway in gateways:
-            version = self._versions.get(gateway)
-            routing = compute_routing(gateway, version["apps"] if version else None, apps)
-            if routing is None:
+            if (version := self._versions.get(gateway)) is None:
+                continue
+            if (routing := compute_routing(gateway, version["apps"], apps)) is None:
                 continue
             self._replicas[gateway] = running_replicas(apps[gateway])
-            self._publish(gateway, routing, version["seq"] if version else None)
+            self._publish(gateway, routing, version["seq"])
         self._computed.set()
 
     async def _fetch_versions(self, gateways: list[str]) -> None:
@@ -116,7 +116,7 @@ class GatewayCoordinator:
         self._versions_unreachable = False
         self._versions.update(versions)
 
-    def _publish(self, gateway: str, routing: Routing, seq: int | None) -> None:
+    def _publish(self, gateway: str, routing: Routing, seq: int) -> None:
         previous = self._routing.get(gateway)
         self._routing[gateway] = routing
         changed = previous is None or (previous.models, previous.expected) != (routing.models, routing.expected)

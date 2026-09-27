@@ -12,7 +12,7 @@ from ray.serve.schema import (
 
 from modelship.deploy.routing import can_serve, compute_routing, running_replicas
 
-OLD, NEW, NEWER = "gw.m-aaaaaaaaaa", "gw.m-bbbbbbbbbb", "gw.m-cccccccccc"
+OLD, NEW = "gw.m-aaaaaaaaaa", "gw.m-bbbbbbbbbb"
 OTHER = "gw.x-dddddddddd"
 
 
@@ -90,22 +90,6 @@ class TestExpected:
 
     def test_a_model_whose_target_cannot_serve_is_expected(self):
         assert _route({NEW: _app(ApplicationStatus.DEPLOYING, running=0)}, {"m": NEW}).expected == ["m"]
-
-
-class TestUnknownTargets:
-    def test_each_model_is_served_by_its_newest_app_that_can_serve(self):
-        apps = {
-            OLD: _app(deployed_at=1),
-            NEW: _app(deployed_at=2),
-            NEWER: _app(ApplicationStatus.DEPLOYING, running=0, deployed_at=3),
-            OTHER: _app(),
-        }
-        r = _route(apps, None)
-        assert r.models == {NEW: "m", OTHER: "x"}
-        assert r.expected == ["m", "x"]
-
-    def test_a_model_with_nothing_serving_is_not_expected(self):
-        assert _route({NEW: _app(ApplicationStatus.DEPLOY_FAILED, running=0)}, None).expected == []
 
 
 class TestRunningReplicas:
