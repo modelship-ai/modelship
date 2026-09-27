@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import os
 import time
+import warnings
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
@@ -107,7 +108,12 @@ def _kill(handle) -> None:
 def _reconstructed() -> bool:
     try:
         context = ray.get_runtime_context()
-        return context.get_actor_id() is not None and context.was_current_actor_reconstructed
+        if context.get_actor_id() is None:
+            return False
+        # Ray's own implementation reads a deprecated property
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            return context.was_current_actor_reconstructed
     except Exception:
         return False
 
