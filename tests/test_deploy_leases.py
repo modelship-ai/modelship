@@ -24,11 +24,9 @@ def no_logging_setup(monkeypatch):
 
 
 async def _leases():
-    leases = _Coord(False)
+    leases = _Coord()
     leases._lease_checker.cancel()
     leases._store = _MemoryStore()
-    # the patched runtime context reads as a restart
-    leases._grants_from = 0.0
     await leases._leases_loaded
     return leases
 

@@ -188,7 +188,6 @@ def _send(args, gateway_name: str, serve_logging_config) -> dict:
     from modelship.deploy.actor_options import deploy_env_vars
     from modelship.deploy.config import resolve_input_models
     from modelship.deploy.ledger import DeployRequest
-    from modelship.deploy.serve_utils import get_app_statuses
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
     from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.openai.compaction_crypto import ensure_key_seeded
@@ -217,8 +216,7 @@ def _send(args, gateway_name: str, serve_logging_config) -> dict:
     )
 
     # Detached actors: the deploy coordinator and the gateway coordinator.
-    # With this gateway the only app, no replica can hold a lease, so a new deploy coordinator grants at once.
-    coordinator = get_or_create_coordinator(startup_window=set(get_app_statuses()) != {gateway_name})
+    coordinator = get_or_create_coordinator()
     get_or_create_gateway_coordinator()
     receipt: dict = ray.get(coordinator.submit.remote(request))
     behind = f", queued behind deploy {receipt['behind']}" if receipt["behind"] else ""

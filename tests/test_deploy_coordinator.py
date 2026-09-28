@@ -13,7 +13,6 @@ from ray.serve.schema import LoggingConfig
 from modelship.deploy import worker as worker_module
 from modelship.deploy.ledger import DeployRequest, Version, commit_version, read_versions
 from modelship.infer import deploy_coordinator
-from modelship.infer.deploy_coordinator import LEASE_SECONDS
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
 from modelship.state.base import StateStoreUnavailableError
@@ -29,8 +28,8 @@ def no_logging_setup(monkeypatch):
     monkeypatch.setattr(deploy_coordinator, "configure_logging", lambda: None)
 
 
-def _fresh(startup_window: bool = False):
-    coord = _Coord(startup_window)
+def _fresh():
+    coord = _Coord()
     coord._lease_checker.cancel()
     coord._store = _MemoryStore()
     return coord
@@ -151,7 +150,7 @@ class TestLeaseChecks:
     async def test_a_restarted_deploy_coordinator_keeps_the_leases_it_reads_back(self, replicas):
         first = await _loaded()
         await first.acquire("node", _holder("r1"))
-        restarted = _Coord(False)
+        restarted = _Coord()
         restarted._lease_checker.cancel()
         restarted._store = first._store
         await _loaded(restarted)
@@ -193,27 +192,6 @@ class TestReplicaStates:
         assert hasattr(ServeControllerClient, "get_serve_details")
         assert hasattr(ServeController, "get_serve_instance_details")
         assert {"replica_id", "state"} <= set(ReplicaDetails.__fields__)
-
-
-@pytest.mark.asyncio
-class TestStartupWindow:
-    async def test_a_new_actor_grants_nothing_for_one_lease_period(self):
-        coord = await _loaded(_fresh(startup_window=True))
-        assert await coord.acquire("node", _holder()) == "deploy lease service starting"
-        assert coord._grants_from >= time.monotonic() + LEASE_SECONDS - 1
-
-    async def test_grants_resume_once_the_window_passes(self):
-        coord = await _loaded(_fresh(startup_window=True))
-        coord._grants_from = time.monotonic()
-        assert await coord.acquire("node", _holder()) is None
-
-    async def test_an_actor_without_the_window_grants_at_once(self):
-        assert await (await _loaded()).acquire("node", _holder()) is None
-
-    async def test_a_restarted_actor_waits_out_the_window_anyway(self, monkeypatch):
-        monkeypatch.setattr(deploy_coordinator, "_reconstructed", lambda: True)
-        coord = await _loaded()
-        assert await coord.acquire("node", _holder()) == "deploy lease service starting"
 
 
 @pytest.mark.asyncio

@@ -24,7 +24,6 @@ import asyncio
 import contextlib
 import os
 import time
-import warnings
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
@@ -45,7 +44,6 @@ logger = get_logger("deploy_coordinator")
 COORDINATOR_ACTOR_NAME = "modelship-deploy-coordinator"
 COORDINATOR_NAMESPACE = "modelship"
 
-LEASE_SECONDS = 30.0
 POLL_SECONDS = 2.0
 _LEASE_CHECK_SECONDS = 10.0
 # checks in a row that don't list a lease's replica before it is freed
@@ -131,26 +129,13 @@ def _kill(handle) -> None:
         ray.kill(handle)
 
 
-def _reconstructed() -> bool:
-    try:
-        context = ray.get_runtime_context()
-        if context.get_actor_id() is None:
-            return False
-        # Ray's own implementation reads a deprecated property
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            return context.was_current_actor_reconstructed
-    except Exception:
-        return False
-
-
 @ray.remote(num_cpus=0)
 class DeployCoordinator:
     """Cluster-wide deploy bookkeeping: per-gateway deploy queues and routing versions, per-node
     deploy leases, replica-death counts and fatal errors. A lease is freed once Serve lists its
     replica RUNNING, or doesn't list it on `_UNLISTED_CHECKS` checks in a row."""
 
-    def __init__(self, startup_window: bool = True):
+    def __init__(self):
         # nothing else configures logging in this process
         configure_logging()
         self._store = get_state_store()
@@ -161,9 +146,6 @@ class DeployCoordinator:
         self._leases: dict[str, _Lease] = {}
         # node -> checks in a row that didn't list its lease's replica
         self._unlisted: dict[str, int] = {}
-        # holders of a crashed predecessor stop within one lease period
-        window = startup_window or _reconstructed()
-        self._grants_from = time.monotonic() + (LEASE_SECONDS if window else 0.0)
         self._leases_loaded = asyncio.create_task(self._load_leases())
         self._lease_checker = asyncio.create_task(self._check_leases_forever())
         self._switch_timeout = _seconds_env(_SWITCH_TIMEOUT_ENV, _DEFAULT_SWITCH_TIMEOUT_S)
@@ -184,7 +166,7 @@ class DeployCoordinator:
     async def acquire(self, key: str, holder: dict) -> str | None:
         """Grants node *key*'s deploy lease to *holder* (app, deployment, replica, label) and stores it.
         None when granted, else what holds the node up."""
-        if time.monotonic() < self._grants_from or not self._leases_loaded.done():
+        if not self._leases_loaded.done():
             return "deploy lease service starting"
         lease = _Lease(**holder)
         held = self._leases.get(key)
@@ -494,9 +476,8 @@ def find_coordinator():
         return None
 
 
-def get_or_create_coordinator(startup_window: bool = True):
-    """Return the cluster-wide deploy coordinator handle, creating it on the head node if absent.
-    *startup_window* applies only when this call creates it; a restarted one always waits it out."""
+def get_or_create_coordinator():
+    """Return the cluster-wide deploy coordinator handle, creating it on the head node if absent."""
     return DeployCoordinator.options(
         name=COORDINATOR_ACTOR_NAME,
         namespace=COORDINATOR_NAMESPACE,
@@ -506,4 +487,4 @@ def get_or_create_coordinator(startup_window: bool = True):
         max_restarts=-1,
         runtime_env={"env_vars": build_env_vars(DEPLOY_COORDINATOR_ENV_VARS) | state_store_env_var()},
         **head_node_options(),
-    ).remote(startup_window)
+    ).remote()

@@ -362,7 +362,6 @@ class TestSend:
             with (
                 patch("modelship.infer.deploy_coordinator.get_or_create_coordinator", return_value=coordinator),
                 patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator"),
-                patch("modelship.deploy.serve_utils.get_app_statuses", return_value={"gw": "RUNNING"}),
                 patch(
                     "modelship.state.get_state_store", return_value=MemoryStoreActor.__ray_metadata__.modified_class()
                 ),
