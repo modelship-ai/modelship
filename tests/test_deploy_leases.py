@@ -65,14 +65,14 @@ class TestWaitForDeployLease:
     async def test_asks_for_the_nodes_lease_as_its_replica(self, monkeypatch):
         leases = await _leases()
         handle = _FakeHandle(leases)
-        monkeypatch.setattr(deploy_leases, "get_or_create_coordinator", lambda: handle)
+        monkeypatch.setattr(deploy_leases, "find_coordinator", lambda: handle)
         await wait_for_deploy_lease("qwen")
         assert handle.calls == [("acquire", ("node-a", _HOLDER))]
         assert await leases.acquire("node-a", _HOLDER | {"replica": "r2"}) == "held by qwen/r1"
 
     async def test_waits_while_the_node_is_held(self, monkeypatch):
         leases = await _leases()
-        monkeypatch.setattr(deploy_leases, "get_or_create_coordinator", lambda: _FakeHandle(leases))
+        monkeypatch.setattr(deploy_leases, "find_coordinator", lambda: _FakeHandle(leases))
         incumbent = _HOLDER | {"replica": "r0", "label": "other/r0"}
         await leases.acquire("node-a", incumbent)
         waiting = asyncio.ensure_future(wait_for_deploy_lease("qwen"))
@@ -90,7 +90,21 @@ class TestWaitForDeployLease:
             lookups.append(handle)
             return handle
 
-        monkeypatch.setattr(deploy_leases, "get_or_create_coordinator", unreachable)
+        monkeypatch.setattr(deploy_leases, "find_coordinator", unreachable)
         with pytest.raises(DeployLeaseError, match="unreachable"):
             await wait_for_deploy_lease("qwen")
         assert len(lookups) == deploy_leases._MAX_LOOKUPS
+
+    async def test_a_missing_deploy_coordinator_is_looked_up_again_then_raises(self, monkeypatch):
+        lookups = []
+        monkeypatch.setattr(deploy_leases, "find_coordinator", lambda: lookups.append(None))
+        with pytest.raises(DeployLeaseError, match="no deploy coordinator on this cluster"):
+            await wait_for_deploy_lease("qwen")
+        assert len(lookups) == deploy_leases._MAX_LOOKUPS
+
+    async def test_a_deploy_coordinator_found_on_a_later_lookup_grants(self, monkeypatch):
+        leases = await _leases()
+        found = iter([None, _FakeHandle(leases)])
+        monkeypatch.setattr(deploy_leases, "find_coordinator", lambda: next(found))
+        await wait_for_deploy_lease("qwen")
+        assert await leases.acquire("node-a", _HOLDER | {"replica": "r2"}) == "held by qwen/r1"

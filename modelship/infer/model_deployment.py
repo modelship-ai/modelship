@@ -245,13 +245,15 @@ class ModelDeployment:
             tb = traceback.format_exc()
             err_msg = f"{config.loader.value} engine init failed for '{config.name}': {e}"
             try:
-                from modelship.infer.deploy_coordinator import get_or_create_coordinator
+                from modelship.infer.deploy_coordinator import find_coordinator
 
-                coordinator = get_or_create_coordinator()
-                app_name = serve.get_replica_context().app_name
-                await coordinator.report_fatal_error.remote(app_name, f"{err_msg}\n{tb}")
+                if (coordinator := find_coordinator()) is None:
+                    logger.error("No deploy coordinator to report the fatal error of '%s' to", config.name)
+                else:
+                    app_name = serve.get_replica_context().app_name
+                    await coordinator.report_fatal_error.remote(app_name, f"{err_msg}\n{tb}")
             except Exception:
-                logger.exception("Failed to report fatal error to coordinator for %s", config.name)
+                logger.exception("Failed to report fatal error to the deploy coordinator for %s", config.name)
 
             raise RuntimeError(err_msg) from e
         finally:
