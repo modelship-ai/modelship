@@ -345,9 +345,10 @@ class BaseInfer[Prepared](ABC):
         try:
             config = self.model_config
             ceiling = config.autoscaling_config.max_replicas if config.autoscaling_config else config.num_replicas
-            self._deploy_coordinator().report_replica_death.remote(
-                serve.get_replica_context().app_name, ceiling, reason
-            )
+            if (coordinator := self._deploy_coordinator()) is None:
+                logger.error("No deploy coordinator to report the backend death of '%s' to", config.name)
+            else:
+                coordinator.report_replica_death.remote(serve.get_replica_context().app_name, ceiling, reason)
         except Exception:
             logger.exception("Failed to report backend death for '%s'", self.model_config.name)
         logger.error("Exiting actor for '%s': %s", self.model_config.name, reason)
@@ -355,9 +356,9 @@ class BaseInfer[Prepared](ABC):
 
     def _deploy_coordinator(self):
         if self._coordinator is None:
-            from modelship.infer.deploy_coordinator import get_or_create_coordinator
+            from modelship.infer.deploy_coordinator import find_coordinator
 
-            self._coordinator = get_or_create_coordinator()
+            self._coordinator = find_coordinator()
         return self._coordinator
 
     @abstractmethod

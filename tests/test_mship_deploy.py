@@ -259,6 +259,30 @@ class TestDriverVerbs:
             driver._start(parse_args("start", []))
         mock_start_head.assert_not_called()
 
+    def test_start_creates_both_coordinators_and_sends_to_the_deploy_coordinator(self):
+        from modelship import driver
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.object(serve_utils, "local_ray_clusters", return_value=set()),
+            patch.object(serve_utils, "start_head"),
+            patch.object(serve_utils, "start_serve"),
+            patch.object(serve_utils, "start_gateway"),
+            patch.object(driver, "_log_cluster"),
+            patch.object(driver, "_log_join_hint"),
+            patch.object(driver, "_log_gpus"),
+            patch(
+                "modelship.infer.deploy_coordinator.get_or_create_coordinator", return_value="deploy-coordinator"
+            ) as mock_deploy_coordinator,
+            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator") as mock_gateway_coordinator,
+            patch.object(driver, "_send") as mock_send,
+            patch.object(driver.signal, "pause"),
+        ):
+            driver._start(parse_args("start", []))
+        mock_deploy_coordinator.assert_called_once_with()
+        mock_gateway_coordinator.assert_called_once_with()
+        assert mock_send.call_args.args[3] == "deploy-coordinator"
+
     def test_deploy_refuses_without_a_local_cluster(self):
         from modelship import driver
         from modelship.deploy import serve_utils
@@ -271,7 +295,7 @@ class TestDriverVerbs:
             driver._deploy(parse_args("deploy", []))
         mock_attach.assert_not_called()
 
-    def _deploy(self, argv, existing_apps, outcome=None, waiting=None):
+    def _deploy(self, argv, existing_apps, outcome=None, waiting=None, coordinator="deploy-coordinator"):
         from modelship import driver
         from modelship.deploy import serve_utils
 
@@ -283,6 +307,7 @@ class TestDriverVerbs:
             patch.object(serve_utils, "start_serve"),
             patch.object(serve_utils, "get_existing_apps", return_value=existing_apps),
             patch.object(serve_utils, "start_gateway") as mock_gateway,
+            patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
             patch.object(driver, "_log_cluster"),
             patch.object(driver, "_send", return_value=receipt) as mock_send,
             patch("ray.get", side_effect=waiting or (lambda ref: outcome)) as mock_get,
@@ -295,6 +320,14 @@ class TestDriverVerbs:
     def test_deploy_refuses_a_missing_default_gateway(self):
         with pytest.raises(SystemExit, match="no gateway 'modelship'"):
             self._deploy([], existing_apps=set())
+
+    def test_deploy_refuses_without_a_deploy_coordinator(self):
+        with pytest.raises(SystemExit, match="no deploy coordinator on this cluster; `mship start` creates it"):
+            self._deploy([], existing_apps={"modelship"}, coordinator=None)
+
+    def test_deploy_sends_to_the_deploy_coordinator_it_found(self):
+        _, mock_send, _ = self._deploy([], existing_apps={"modelship"})
+        assert mock_send.call_args.args[3] == "deploy-coordinator"
 
     def test_deploy_creates_a_named_gateway_that_is_missing(self):
         mock_gateway, mock_send, _ = self._deploy(["--gateway-name", "edge"], existing_apps={"modelship"})
@@ -360,15 +393,13 @@ class TestSend:
         def run(argv):
             args = parse_args("deploy", argv)
             with (
-                patch("modelship.infer.deploy_coordinator.get_or_create_coordinator", return_value=coordinator),
-                patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator"),
                 patch(
                     "modelship.state.get_state_store", return_value=MemoryStoreActor.__ray_metadata__.modified_class()
                 ),
                 patch("modelship.openai.compaction_crypto.ensure_key_seeded"),
                 patch("ray.get", side_effect=lambda value: value),
             ):
-                receipt = driver._send(args, "gw", LoggingConfig())
+                receipt = driver._send(args, "gw", LoggingConfig(), coordinator)
             submitted.append(coordinator.submit.remote.call_args.args[0])
             return receipt
 
@@ -513,6 +544,8 @@ class TestSignalHandlersOutliveRay:
             patch.object(driver, "_log_cluster"),
             patch.object(driver, "_log_join_hint"),
             patch.object(driver, "_log_gpus"),
+            patch("modelship.infer.deploy_coordinator.get_or_create_coordinator"),
+            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator"),
             patch.object(driver, "_send"),
             patch.object(driver.signal, "pause"),
         ):

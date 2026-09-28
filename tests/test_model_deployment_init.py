@@ -112,13 +112,13 @@ async def test_download_error_does_not_report_fatal():
             MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
         ),
-        patch("modelship.infer.deploy_coordinator.get_or_create_coordinator") as mock_get_coordinator,
+        patch("modelship.infer.deploy_coordinator.find_coordinator") as mock_find_coordinator,
         pytest.raises(ModelDownloadError),
     ):
         await _ModelDeployment.__init__(inst, config)
 
-    # No coordinator lookup/report happens on this path.
-    mock_get_coordinator.assert_not_called()
+    # No deploy coordinator lookup/report happens on this path.
+    mock_find_coordinator.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -145,12 +145,38 @@ async def test_generic_init_failure_reports_fatal():
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
             serve=MagicMock(get_replica_context=MagicMock(return_value=MagicMock(app_name="app"))),
         ),
-        patch("modelship.infer.deploy_coordinator.get_or_create_coordinator", return_value=coordinator),
+        patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
         pytest.raises(RuntimeError),
     ):
         await _ModelDeployment.__init__(inst, config)
 
     coordinator.report_fatal_error.remote.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_an_init_failure_without_a_deploy_coordinator_still_raises(caplog):
+    inst = _ModelDeployment.__new__(_ModelDeployment)
+    config = _make_config()
+
+    mock_base_infer = MagicMock()
+    mock_base_infer.ensure_downloaded = AsyncMock(side_effect=ValueError("bad config"))
+
+    with (
+        _patch_init_globals(
+            configure_logging=MagicMock(),
+            stamp_gateway=MagicMock(),
+            _spawn_orphan_reaper=MagicMock(return_value=None),
+            reject_unset_cache_roots=MagicMock(),
+            BaseInfer=mock_base_infer,
+            MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
+            MODEL_LOAD_DURATION_SECONDS=MagicMock(),
+        ),
+        patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=None),
+        pytest.raises(RuntimeError, match="bad config"),
+    ):
+        await _ModelDeployment.__init__(inst, config)
+
+    assert f"No deploy coordinator to report the fatal error of '{config.name}' to" in caplog.messages
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ import ray
 from ray import serve
 from ray.exceptions import ActorDiedError, ActorUnavailableError
 
-from modelship.infer.deploy_coordinator import POLL_SECONDS, get_or_create_coordinator
+from modelship.infer.deploy_coordinator import POLL_SECONDS, find_coordinator
 from modelship.logging import get_logger
 
 logger = get_logger("deploy_leases")
@@ -35,17 +35,19 @@ async def wait_for_deploy_lease(model_name: str) -> None:
         "label": f"{model_name}/{replica}",
     }
     waiting = f"{model_name}: waiting to load on this node"
-    leases = get_or_create_coordinator()
+    leases = find_coordinator()
     lookups = 1
     logged: tuple[str, float] | None = None
     while True:
         try:
+            if leases is None:
+                raise ActorUnavailableError("no deploy coordinator on this cluster", None)
             blocker = await leases.acquire.remote(key, holder)
         except (ActorDiedError, ActorUnavailableError) as e:
             if lookups >= _MAX_LOOKUPS:
                 raise DeployLeaseError(f"deploy lease service unreachable: {e}") from e
             await asyncio.sleep(POLL_SECONDS)
-            leases = get_or_create_coordinator()
+            leases = find_coordinator()
             lookups += 1
             continue
         if blocker is None:

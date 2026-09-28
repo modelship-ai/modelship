@@ -44,6 +44,8 @@ def run(command: str, argv: list[str] | None = None) -> None:
 
 def _start(args) -> None:
     from modelship.deploy.serve_utils import local_ray_clusters, start_gateway, start_head, start_serve
+    from modelship.infer.deploy_coordinator import get_or_create_coordinator
+    from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.state import reject_inline_password
 
     gateway_name, route_prefix, _ = _gateway_from_env()
@@ -73,7 +75,8 @@ def _start(args) -> None:
         start_serve(serve_logging_config)
         # First, so /health and /readyz answer while models load.
         start_gateway(gateway_name, serve_logging_config, route_prefix)
-        _send(args, gateway_name, serve_logging_config)
+        get_or_create_gateway_coordinator()
+        _send(args, gateway_name, serve_logging_config, get_or_create_coordinator())
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
@@ -135,6 +138,7 @@ def _deploy(args) -> None:
         start_gateway,
         start_serve,
     )
+    from modelship.infer.deploy_coordinator import find_coordinator
     from modelship.state import reject_inline_password
 
     gateway_name, route_prefix, explicit_gateway = _gateway_from_env()
@@ -147,6 +151,8 @@ def _deploy(args) -> None:
     lib_level, serve_logging_config = _serve_logging()
     attach_cluster(lib_level)
     _log_cluster()
+    if (coordinator := find_coordinator()) is None:
+        sys.exit("error: no deploy coordinator on this cluster; `mship start` creates it.")
     # A no-op when Serve already runs; the first call on a cluster sets it up.
     start_serve(serve_logging_config)
 
@@ -158,7 +164,7 @@ def _deploy(args) -> None:
         )
     if create_gateway:
         start_gateway(gateway_name, serve_logging_config, route_prefix)
-    receipt = _send(args, gateway_name, serve_logging_config)
+    receipt = _send(args, gateway_name, serve_logging_config, coordinator)
     request_id = receipt["id"]
 
     def _stop_waiting(sig, _frame) -> None:
@@ -181,15 +187,13 @@ def _deploy(args) -> None:
         sys.exit(1)
 
 
-def _send(args, gateway_name: str, serve_logging_config) -> dict:
+def _send(args, gateway_name: str, serve_logging_config, coordinator) -> dict:
     """Queues this invocation's models on the gateway; returns the deploy coordinator's receipt."""
     import ray
 
     from modelship.deploy.actor_options import deploy_env_vars
     from modelship.deploy.config import resolve_input_models
     from modelship.deploy.ledger import DeployRequest
-    from modelship.infer.deploy_coordinator import get_or_create_coordinator
-    from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.openai.compaction_crypto import ensure_key_seeded
     from modelship.state import MemoryStateStore, get_state_store
 
@@ -215,9 +219,6 @@ def _send(args, gateway_name: str, serve_logging_config) -> dict:
         env=deploy_env_vars(),
     )
 
-    # Detached actors: the deploy coordinator and the gateway coordinator.
-    coordinator = get_or_create_coordinator()
-    get_or_create_gateway_coordinator()
     receipt: dict = ray.get(coordinator.submit.remote(request))
     behind = f", queued behind deploy {receipt['behind']}" if receipt["behind"] else ""
     logger.info("Deploy %s sent to gateway %r (%s%s).", receipt["id"], gateway_name, mode, behind)

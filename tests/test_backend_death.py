@@ -42,7 +42,7 @@ def harness(monkeypatch):
     coordinator = MagicMock()
     monkeypatch.setattr(base_infer.os, "_exit", MagicMock(side_effect=_ExitError))
     monkeypatch.setattr(base_infer.serve, "get_replica_context", lambda: SimpleNamespace(app_name="qwen-aaaa"))
-    with patch("modelship.infer.deploy_coordinator.get_or_create_coordinator", return_value=coordinator):
+    with patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator):
         yield coordinator
 
 
@@ -78,6 +78,16 @@ class TestBackendDied:
         with pytest.raises(_ExitError):
             _infer().backend_died("engine core died")
         base_infer.os._exit.assert_called_once_with(1)
+
+    def test_exits_without_a_report_when_there_is_no_deploy_coordinator(self, harness, caplog):
+        with (
+            patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=None),
+            pytest.raises(_ExitError),
+        ):
+            _infer().backend_died("engine core died")
+        harness.report_replica_death.remote.assert_not_called()
+        base_infer.os._exit.assert_called_once_with(1)
+        assert "No deploy coordinator to report the backend death of 'qwen' to" in caplog.messages
 
     def test_the_report_is_submitted_not_awaited(self, harness):
         # Serve retries an ActorDiedError; anything that keeps this replica alive
