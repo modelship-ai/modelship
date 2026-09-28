@@ -19,7 +19,7 @@ from ray.serve.schema import (
 from modelship.deploy import strategy, worker
 from modelship.deploy.ledger import DeployRequest, to_config
 from modelship.deploy.strategy import plan_request, proposed_models, submit_app, unnamed_apps
-from modelship.deploy.worker import Run, roll_back
+from modelship.deploy.worker import DeployLedger, Run, roll_back
 from modelship.infer.infer_config import ModelshipModelConfig
 
 
@@ -94,6 +94,9 @@ class _Ledger:
         self.serve = serve
         self.cancel = False
         self.cancel_on_commit = False
+        # the commit's store write lands, then the call raises
+        self.commit_error: Exception | None = None
+        self.committed: list[dict] | None = None
         self.crashing: dict[str, str] = {}
         self.fatal: dict[str, str] = {}
         self.routing = 0
@@ -118,11 +121,14 @@ class _Ledger:
 
     def reset_routing(self, gateway_name):
         self.serve.events.append(("reset", str(self.routing)))
-        return self.routing
+        return self.routing, self.committed
 
     def commit(self, request_id, gateway_name, models):
         if self.cancel_on_commit:
             return None
+        self.committed = models
+        if self.commit_error is not None:
+            raise self.commit_error
         self.commits.append(models)
         self.serve.events.append(("commit", str(len(self.commits))))
         return len(self.commits)
@@ -168,6 +174,7 @@ def cluster(monkeypatch):
 
 def _run(cluster, models, committed=None, mode="additive", strategy="blue_green") -> dict:
     request = DeployRequest("gw", mode, strategy, models, LoggingConfig(), {}, id="r1")
+    cluster.ledger.committed = committed
     return Run(request, committed, cluster.ledger, cluster.replicas, 60.0).execute()
 
 
@@ -362,6 +369,14 @@ class TestRollsBack:
         assert _run(cluster, [A])["state"] == "cancelled"
         assert ("delete", _app_name(A)) in cluster.serve.events
 
+    def test_a_commit_that_lands_despite_an_error_keeps_its_apps(self, cluster):
+        _existing(cluster, A)
+        cluster.ledger.commit_error = RuntimeError("store connection reset")
+        outcome = _run(cluster, [A2], committed=[A])
+        assert outcome["state"] == "failed"
+        assert _app_name(A2) in cluster.serve.apps
+        assert ("delete", _app_name(A)) in cluster.serve.events
+
     def test_serve_unreadable_for_30s_fails_the_request(self, cluster):
         cluster.serve.scripts["a"] = [DEPLOYING]
         cluster.serve.unreadable = 1000
@@ -391,19 +406,26 @@ class TestRollsBack:
 class TestRollBack:
     def test_deletes_only_what_the_committed_version_does_not_name(self, cluster):
         _existing(cluster, A, A2, B)
-        assert roll_back(cluster.ledger, cluster.replicas, "gw", [A, B], False, 60.0) == [_app_name(A2)]
+        cluster.ledger.committed = [A, B]
+        assert roll_back(cluster.ledger, cluster.replicas, "gw", False, 60.0) == [_app_name(A2)]
         assert cluster.replicas.waits == []
 
     def test_waits_for_the_switch_back_only_when_switching(self, cluster):
-        roll_back(cluster.ledger, cluster.replicas, "gw", [A], True, 60.0)
+        roll_back(cluster.ledger, cluster.replicas, "gw", True, 60.0)
         assert cluster.replicas.waits == [0]
 
     def test_without_a_committed_version_every_model_app_goes(self, cluster):
         _existing(cluster, A, B)
-        assert roll_back(cluster.ledger, cluster.replicas, "gw", None, False, 60.0) == sorted(
-            [_app_name(A), _app_name(B)]
-        )
+        assert roll_back(cluster.ledger, cluster.replicas, "gw", False, 60.0) == sorted([_app_name(A), _app_name(B)])
         assert "gw" in cluster.serve.apps
+
+
+def test_deploy_coordinator_calls_have_no_timeout(monkeypatch):
+    calls = []
+    monkeypatch.setattr(worker.ray, "get", lambda ref, **kwargs: calls.append(kwargs))
+    handle = SimpleNamespace(commit=SimpleNamespace(remote=lambda *args: None))
+    DeployLedger(handle).commit("r1", "gw", [A])
+    assert calls == [{}]
 
 
 class TestSubmitApp:
