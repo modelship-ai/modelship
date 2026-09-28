@@ -1,5 +1,6 @@
-"""The vllm loader rejects GGUF models at driver preflight (0.24 dropped in-tree GGUF)."""
+"""Driver preflight GGUF rules: the vllm loader rejects GGUF (0.24 dropped in-tree GGUF), llama_server requires it."""
 
+import re
 from unittest.mock import patch
 
 import pytest
@@ -11,7 +12,7 @@ from modelship.infer.infer_config import (
     ModelshipModelConfig,
     ModelUsecase,
 )
-from modelship.infer.sources import HfSource
+from modelship.infer.sources import HfSource, LocalSource
 
 
 def _make_cfg(**overrides) -> ModelshipModelConfig:
@@ -67,3 +68,36 @@ class TestVllmGgufGuard:
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
         assert cfg._pinned_source == _SNAPSHOT_PIN
         assert not _SNAPSHOT_PIN.resolves_to_gguf
+
+
+class TestLlamaServerGgufRule:
+    @pytest.mark.parametrize(
+        "pinned",
+        [
+            _SNAPSHOT_PIN,
+            _GGUF_PIN._replace(filename="README.md"),
+            LocalSource("/models/snapshot"),
+        ],
+        ids=["snapshot", "non-gguf-file", "local-directory"],
+    )
+    def test_a_source_that_is_not_a_gguf_file_is_rejected(self, pinned):
+        cfg = _make_cfg(loader=ModelLoader.llama_server, model="some/repo-GGUF:README.md", num_gpus=0)
+        with (
+            patch("modelship.infer.sources.check_model_source", return_value=pinned),
+            pytest.raises(ValueError, match=re.escape("'some/repo-GGUF:README.md' does not resolve to a GGUF file")),
+        ):
+            resolve_all_model_sources(ModelshipConfig(models=[cfg]))
+
+    @pytest.mark.parametrize(
+        "pinned",
+        [
+            _GGUF_PIN._replace(filename=None, patterns=["*Q4_K_M*.gguf"], first_shard="model-00001-of-00002.gguf"),
+            LocalSource("/models/x.gguf"),
+        ],
+        ids=["sharded", "local-file"],
+    )
+    def test_a_gguf_source_is_allowed(self, pinned):
+        cfg = _make_cfg(loader=ModelLoader.llama_server, num_gpus=0)
+        with patch("modelship.infer.sources.check_model_source", return_value=pinned):
+            resolve_all_model_sources(ModelshipConfig(models=[cfg]))
+        assert cfg._pinned_source == pinned

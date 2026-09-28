@@ -12,8 +12,8 @@ from openai import OpenAI
 from tests.conftest import OPENAI_API_BASE, run_on_cluster, serve_apps
 
 _SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf"
-# passes the source check, then fails to load in its replica
-_BROKEN_SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:README.md"
+# a text model's GGUF as the vision projector: passes the source check, llama-server exits at startup
+_BROKEN = ["--llama-server-config.mmproj", _SOURCE]
 # long enough for anything that deletes apps in the background to have acted
 _PAST_GRACE_S = 15
 _PING = [{"role": "user", "content": "hi"}]
@@ -21,18 +21,19 @@ _OTHER_GATEWAY = "other-gateway"
 _FIRST_GATEWAY = "first-gateway"
 
 
-def _flags(name: str, *, num_cpus: int = 1, source: str = _SOURCE) -> list[str]:
+def _flags(name: str, *, num_cpus: int = 1, broken: bool = False) -> list[str]:
     return [
         "--name",
         name,
         "--model",
-        source,
+        _SOURCE,
         "--usecase",
         "generate",
         "--loader",
         "llama_server",
         "--num-cpus",
         str(num_cpus),
+        *(_BROKEN if broken else []),
     ]
 
 
@@ -219,7 +220,7 @@ class TestFailedChange:
         model_deployer.run(*_flags("survivor"), log_name="survivor")
         (old,) = _apps_for("modelship", "survivor")
 
-        log = model_deployer.run(*_flags("survivor", source=_BROKEN_SOURCE), log_name="survivor-broken", expect_code=1)
+        log = model_deployer.run(*_flags("survivor", broken=True), log_name="survivor-broken", expect_code=1)
         assert "failed" in log
         assert _apps_for("modelship", "survivor") == {old}, "the failed change was not rolled back"
 
@@ -233,7 +234,7 @@ class TestFailedChange:
         (old,) = _apps_for("modelship", "gap-model")
 
         model_deployer.run(
-            *_flags("gap-model", source=_BROKEN_SOURCE),
+            *_flags("gap-model", broken=True),
             "--replace-strategy",
             "stop_start",
             log_name="gap-model-broken",

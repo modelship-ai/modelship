@@ -140,6 +140,11 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
                 f"(vLLM 0.24 dropped in-tree GGUF). Use `loader: llama_server` for GGUF models, or point "
                 f"the vllm loader at a non-GGUF checkpoint (safetensors, or an AWQ/GPTQ/FP8 quant)."
             )
+        if cfg.loader == ModelLoader.llama_server and not pinned.resolves_to_gguf:
+            raise ValueError(
+                f"Model '{cfg.name}': {cfg.model!r} does not resolve to a GGUF file, which the llama_server loader "
+                f"needs. Pick one with the `:filename` syntax (glob supported), e.g. `repo:*Q4_K_M.gguf`."
+            )
 
 
 def config_absent(arg_path: str | None) -> bool:
