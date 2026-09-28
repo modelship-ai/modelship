@@ -72,7 +72,7 @@ class _Routing(NamedTuple):
 class _Entry:
     request: DeployRequest
     done: asyncio.Future = field(default_factory=lambda: asyncio.get_running_loop().create_future())
-    # queued | applying | switching | committing | retiring
+    # queued | applying | switching | committing | retiring | rolling_back
     state: str = "queued"
     cancelled: bool = False
     # set once the worker has been told of the cancel
@@ -282,6 +282,8 @@ class DeployCoordinator:
         entry = self._running.get(gateway_name)
         if entry is None or entry.request.id != request_id:
             raise ValueError(f"deploy {request_id} is not running on gateway {gateway_name}")
+        if entry.state == "rolling_back":
+            raise ValueError(f"deploy {request_id} is being rolled back")
         return entry
 
     def _next_seq(self) -> int:
@@ -334,7 +336,11 @@ class DeployCoordinator:
             logger.warning(
                 "Deploy %s's worker stopped while %s; rolling back gateway %s", entry.request.id, entry.state, gateway
             )
-            await self._roll_back(gateway, switching=entry.state in ("switching", "committing"))
+            switching = entry.state in ("switching", "committing")
+            if entry.state not in ("committing", "retiring"):
+                # refuses a switch or commit the dead worker sent before it died
+                entry.state = "rolling_back"
+            await self._roll_back(gateway, switching=switching)
             # after the rollback, which waits out a commit in flight
             if entry.state == "retiring":
                 return _outcome(entry, "succeeded", "")

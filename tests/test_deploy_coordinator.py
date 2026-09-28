@@ -191,6 +191,10 @@ class _Workers:
         self.rollbacks: list[tuple] = []
         # when set, a rollback routes back through it as the real worker does
         self.ledger = None
+        # what each rollback's reset_routing returned
+        self.resets: list[tuple] = []
+        # when set, a rollback waits for it after its reset
+        self.hold: asyncio.Event | None = None
 
     def create(self, coordinator):
         worker = _Worker(self)
@@ -203,7 +207,9 @@ class _Workers:
 
     async def _roll_back(self, gateway_name):
         if self.ledger is not None:
-            await self.ledger.reset_routing(gateway_name)
+            self.resets.append(await self.ledger.reset_routing(gateway_name))
+        if self.hold is not None:
+            await self.hold.wait()
         return []
 
     def kill(self, handle):
@@ -421,6 +427,38 @@ class TestWorkerDeath:
         release.set()
         assert (await reset)[1] == [_raw("a")]
         await commit
+
+    async def test_a_commit_that_reaches_a_rollback_after_its_reset_is_refused(self, workers):
+        coord = _ledger()
+        workers.ledger = coord
+        workers.hold = asyncio.Event()
+        commit_version(coord._store, "g", [_raw("a")])
+        receipt = await coord.submit(_request(models=[_raw("b")]))
+        await _settle()
+        await coord.switch(receipt["id"], "g", [_raw("b")])
+        workers.kill(workers.created[0])
+        await _until(lambda: workers.resets)
+        with pytest.raises(ValueError, match="being rolled back"):
+            await coord.commit(receipt["id"], "g", [_raw("b")])
+        workers.hold.set()
+        assert (await receipt["outcome"])["state"] == "failed"
+        assert workers.resets[0][1] == [_raw("a")]
+        assert read_versions(coord._store, "g")[0] == Version(1, [_raw("a")])
+
+    async def test_a_switch_that_reaches_a_rollback_after_its_reset_is_refused(self, workers):
+        coord = _ledger()
+        workers.ledger = coord
+        workers.hold = asyncio.Event()
+        commit_version(coord._store, "g", [_raw("a")])
+        receipt = await coord.submit(_request(models=[_raw("b")]))
+        await _settle()
+        workers.kill(workers.created[0])
+        await _until(lambda: workers.resets)
+        with pytest.raises(ValueError, match="being rolled back"):
+            await coord.switch(receipt["id"], "g", [_raw("b")])
+        workers.hold.set()
+        assert (await receipt["outcome"])["state"] == "failed"
+        assert (await coord.routing_versions(["g"]))["g"]["apps"] == {"a": _app_name(_raw("a"))}
 
     async def test_a_worker_that_dies_after_the_commit_still_succeeds(self, workers):
         coord = _ledger()
