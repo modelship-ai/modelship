@@ -8,14 +8,16 @@ or replica can:
   own worker actor (`deploy/worker.py`), and a gateway's version is committed only
   when one succeeds;
 - each gateway's routing version, which the gateway coordinator routes by;
-- one deploy lease per node, held by a replica for the duration of its load, so
-  loads on one node run one at a time (the holder's side is `deploy_leases.py`);
+- one deploy lease per node, granted to a replica and freed once Serve lists it
+  RUNNING or no longer lists it, so loads on one node run one at a time (the
+  replica's side is `deploy_leases.py`);
 - a per-deployment backend-death count, which fails a deploy whose model keeps dying;
 - fatal init errors, reported by a replica and read back by the worker, which
   is how a permanently-broken model is told apart from a transient failure.
 
 Requests and routing versions live in memory: after a restart every gateway with
-model apps is rolled back to its committed version.
+model apps is rolled back to its committed version. Deploy leases live in the state
+store and are read back.
 """
 
 import asyncio
@@ -44,9 +46,11 @@ COORDINATOR_ACTOR_NAME = "modelship-deploy-coordinator"
 COORDINATOR_NAMESPACE = "modelship"
 
 LEASE_SECONDS = 30.0
-RENEW_SECONDS = 10.0
 POLL_SECONDS = 2.0
-_REAP_INTERVAL_SECONDS = 1.0
+_LEASE_CHECK_SECONDS = 10.0
+# checks in a row that don't list a lease's replica before it is freed
+_UNLISTED_CHECKS = 2
+_LEASE_NAMESPACE = "deploy-leases"
 _DEATHS_PER_REPLICA = 3
 _SWITCH_TIMEOUT_ENV = "MSHIP_DEPLOY_SWITCH_TIMEOUT_S"
 _CANCEL_GRACE_ENV = "MSHIP_DEPLOY_CANCEL_GRACE_S"
@@ -55,8 +59,11 @@ _DEFAULT_CANCEL_GRACE_S = 30.0
 
 
 class _Lease(NamedTuple):
-    holder: str
-    expires_at: float
+    # the holder's Serve replica
+    app: str
+    deployment: str
+    replica: str
+    label: str
 
 
 class _Routing(NamedTuple):
@@ -100,6 +107,25 @@ def _outcome(entry: _Entry, state: str, reason: str) -> dict:
     return {"id": entry.request.id, "state": state, "reason": reason, "models": {}, "version": None}
 
 
+def _lease_key(node_id: str) -> str:
+    return f"{_LEASE_NAMESPACE}/{node_id}"
+
+
+def _replica_states() -> dict[tuple[str, str, str], str]:
+    """(app, deployment, replica id) -> state, for every replica Serve lists."""
+    from ray.serve.context import _get_global_client
+
+    client = _get_global_client(_health_check_controller=True)
+    assert client is not None
+    details = client.get_serve_details()
+    return {
+        (app, deployment, replica["replica_id"]): replica["state"]
+        for app, app_details in details.get("applications", {}).items()
+        for deployment, deployment_details in app_details.get("deployments", {}).items()
+        for replica in deployment_details.get("replicas", [])
+    }
+
+
 def _kill(handle) -> None:
     with contextlib.suppress(Exception):
         ray.kill(handle)
@@ -121,8 +147,8 @@ def _reconstructed() -> bool:
 @ray.remote(num_cpus=0)
 class DeployCoordinator:
     """Cluster-wide deploy bookkeeping: per-gateway deploy queues and routing versions, per-node
-    deploy leases, replica-death counts and fatal errors. A lease unrenewed for `LEASE_SECONDS`
-    is freed, so a holder that died doesn't hold its node shut."""
+    deploy leases, replica-death counts and fatal errors. A lease is freed once Serve lists its
+    replica RUNNING, or doesn't list it on `_UNLISTED_CHECKS` checks in a row."""
 
     def __init__(self, startup_window: bool = True):
         # nothing else configures logging in this process
@@ -133,10 +159,13 @@ class DeployCoordinator:
         # deployment -> (death limit, last reason)
         self._last_deaths: dict[str, tuple[int, str]] = {}
         self._leases: dict[str, _Lease] = {}
+        # node -> checks in a row that didn't list its lease's replica
+        self._unlisted: dict[str, int] = {}
         # holders of a crashed predecessor stop within one lease period
         window = startup_window or _reconstructed()
         self._grants_from = time.monotonic() + (LEASE_SECONDS if window else 0.0)
-        self._reaper = asyncio.create_task(self._reap_forever())
+        self._leases_loaded = asyncio.create_task(self._load_leases())
+        self._lease_checker = asyncio.create_task(self._check_leases_forever())
         self._switch_timeout = _seconds_env(_SWITCH_TIMEOUT_ENV, _DEFAULT_SWITCH_TIMEOUT_S)
         self._cancel_grace = _seconds_env(_CANCEL_GRACE_ENV, _DEFAULT_CANCEL_GRACE_S)
         # queued and running requests by id, until their outcome is collected
@@ -152,39 +181,80 @@ class DeployCoordinator:
         self._recovery: asyncio.Task | None = None
         self._tasks: set[asyncio.Task] = set()
 
-    async def acquire(self, key: str, holder: str) -> str | None:
-        """None when granted, else what holds `key` up."""
-        now = time.monotonic()
-        if now < self._grants_from:
-            return "lease service starting"
-        lease = self._leases.get(key)
-        if lease is not None:
-            return f"held by {lease.holder}"
-        self._leases[key] = _Lease(holder, now + LEASE_SECONDS)
+    async def acquire(self, key: str, holder: dict) -> str | None:
+        """Grants node *key*'s deploy lease to *holder* (app, deployment, replica, label) and stores it.
+        None when granted, else what holds the node up."""
+        if time.monotonic() < self._grants_from or not self._leases_loaded.done():
+            return "deploy lease service starting"
+        lease = _Lease(**holder)
+        held = self._leases.get(key)
+        if held is not None:
+            return None if held == lease else f"held by {held.label}"
+        self._leases[key] = lease
+        self._unlisted.pop(key, None)
+        try:
+            await self._store.set_async(_lease_key(key), lease._asdict())
+        except Exception as e:
+            logger.warning("Could not store the deploy lease on node %s: %s", key, e)
+            if self._leases.get(key) == lease:
+                del self._leases[key]
+            return "deploy lease store unavailable"
         return None
 
-    async def renew(self, key: str, holder: str) -> bool:
-        lease = self._leases.get(key)
-        if lease is None or lease.holder != holder:
-            return False
-        self._leases[key] = lease._replace(expires_at=time.monotonic() + LEASE_SECONDS)
-        return True
-
-    async def release(self, key: str, holder: str) -> None:
-        lease = self._leases.get(key)
-        if lease is not None and lease.holder == holder:
-            del self._leases[key]
-
-    async def _reap_forever(self) -> None:
+    async def _load_leases(self) -> None:
+        """Reads back the stored deploy leases, retrying until the store answers."""
         while True:
-            await asyncio.sleep(_REAP_INTERVAL_SECONDS)
-            self._reap(time.monotonic())
+            try:
+                keys = await self._store.list_async(_LEASE_NAMESPACE)
+                for key in keys:
+                    value = await self._store.get_async(key)
+                    if not isinstance(value, dict):
+                        continue
+                    try:
+                        self._leases[key.removeprefix(f"{_LEASE_NAMESPACE}/")] = _Lease(**value)
+                    except TypeError:
+                        logger.warning("Ignoring an unreadable deploy lease at %s: %r", key, value)
+                return
+            except Exception as e:
+                logger.warning("Could not read the deploy leases, retrying: %s", e)
+                await asyncio.sleep(POLL_SECONDS)
 
-    def _reap(self, now: float) -> None:
+    async def _check_leases_forever(self) -> None:
+        await self._leases_loaded
+        while True:
+            await asyncio.sleep(_LEASE_CHECK_SECONDS)
+            await self._check_leases()
+
+    async def _check_leases(self) -> None:
+        """Frees each lease whose replica Serve lists RUNNING, or hasn't listed on `_UNLISTED_CHECKS` checks."""
+        if not self._leases:
+            return
+        try:
+            states = await asyncio.to_thread(_replica_states)
+        except Exception as e:
+            logger.warning("Could not read Serve's replicas to check the deploy leases: %s", e)
+            return
         for key, lease in list(self._leases.items()):
-            if lease.expires_at <= now:
-                logger.warning("Deploy lease %s expired without release (holder %s)", key, lease.holder)
-                del self._leases[key]
+            state = states.get((lease.app, lease.deployment, lease.replica))
+            if state is None:
+                self._unlisted[key] = self._unlisted.get(key, 0) + 1
+                if self._unlisted[key] < _UNLISTED_CHECKS:
+                    continue
+                logger.info("Freeing the deploy lease on node %s: %s is gone", key, lease.label)
+            elif state != "RUNNING":
+                self._unlisted.pop(key, None)
+                continue
+            await self._release(key, lease)
+
+    async def _release(self, key: str, lease: _Lease) -> None:
+        # the store key goes first, so a grant during the delete is refused rather than deleted
+        try:
+            await self._store.delete_async(_lease_key(key))
+        except Exception as e:
+            logger.warning("Could not delete the deploy lease on node %s from the store: %s", key, e)
+        if self._leases.get(key) == lease:
+            del self._leases[key]
+        self._unlisted.pop(key, None)
 
     async def submit(self, request: DeployRequest) -> dict:
         """Queues *request* on its gateway. Returns its id, the request it waits behind, and a ref to its outcome."""

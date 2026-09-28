@@ -1,6 +1,5 @@
 """ModelDeployment.__init__: which failures are fatal, and the order of a successful load."""
 
-import contextlib
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -155,7 +154,7 @@ async def test_generic_init_failure_reports_fatal():
 
 
 @pytest.mark.asyncio
-async def test_loads_under_the_lease():
+async def test_loads_once_the_lease_is_granted():
     inst = _ModelDeployment.__new__(_ModelDeployment)
     config = _make_config()
     config.loader = ModelLoader.llama_server
@@ -164,11 +163,8 @@ async def test_loads_under_the_lease():
     base_infer = MagicMock()
     base_infer.ensure_downloaded = AsyncMock(side_effect=lambda c: events.append("download"))
 
-    @contextlib.asynccontextmanager
     async def lease(model_name):
         events.append("lease")
-        yield
-        events.append("release")
 
     infer = MagicMock()
     infer.start = AsyncMock()
@@ -185,11 +181,11 @@ async def test_loads_under_the_lease():
             _reject_unsupported_darwin_loader=MagicMock(),
             _reject_unsupported_accelerator=MagicMock(),
             BaseInfer=base_infer,
-            deploy_lease=lease,
+            wait_for_deploy_lease=lease,
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
         ),
         patch.dict(sys.modules, {"modelship.infer.llama_server.llama_server_infer": loader_module}),
     ):
         await _ModelDeployment.__init__(inst, config)
 
-    assert events == ["download", "lease", "load", "warmup", "release"]
+    assert events == ["download", "lease", "load", "warmup"]

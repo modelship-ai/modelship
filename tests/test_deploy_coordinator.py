@@ -16,6 +16,7 @@ from modelship.infer import deploy_coordinator
 from modelship.infer.deploy_coordinator import LEASE_SECONDS
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
+from modelship.state.base import StateStoreUnavailableError
 
 # The plain class behind @ray.remote; its methods are ordinary coroutines.
 _Coord = deploy_coordinator.DeployCoordinator.__ray_metadata__.modified_class
@@ -28,85 +29,191 @@ def no_logging_setup(monkeypatch):
     monkeypatch.setattr(deploy_coordinator, "configure_logging", lambda: None)
 
 
-def _fresh():
-    coord = _Coord()
-    coord._reaper.cancel()
-    coord._grants_from = 0.0
+def _fresh(startup_window: bool = False):
+    coord = _Coord(startup_window)
+    coord._lease_checker.cancel()
     coord._store = _MemoryStore()
     return coord
 
 
+async def _loaded(coord=None):
+    """A fresh deploy coordinator once its stored leases are read back."""
+    coord = coord or _fresh()
+    await coord._leases_loaded
+    return coord
+
+
+def _holder(replica: str = "r1") -> dict:
+    return {"app": "g.a-1", "deployment": "ModelDeployment", "replica": replica, "label": f"a/{replica}"}
+
+
+def _replica(holder: dict) -> tuple[str, str, str]:
+    return holder["app"], holder["deployment"], holder["replica"]
+
+
 @pytest.mark.asyncio
 class TestGrants:
-    async def test_granted_immediately_on_a_fresh_actor(self):
-        assert await _fresh().acquire("node", "a") is None
+    async def test_granted_once_the_stored_leases_are_read_back(self):
+        coord = _fresh()
+        assert await coord.acquire("node", _holder()) == "deploy lease service starting"
+        await _loaded(coord)
+        assert await coord.acquire("node", _holder()) is None
 
     async def test_one_holder_per_node(self):
-        coord = _fresh()
-        assert await coord.acquire("node", "a") is None
-        assert await coord.acquire("node", "b") == "held by a"
-        assert await coord.acquire("other-node", "b") is None
+        coord = await _loaded()
+        assert await coord.acquire("node", _holder("r1")) is None
+        assert await coord.acquire("node", _holder("r2")) == "held by a/r1"
+        assert await coord.acquire("other-node", _holder("r2")) is None
 
-    async def test_renew_extends_only_the_holders_lease(self):
-        coord = _fresh()
-        await coord.acquire("node", "a")
-        coord._leases["node"] = coord._leases["node"]._replace(expires_at=0.0)
-        assert await coord.renew("node", "a")
-        assert coord._leases["node"].expires_at > time.monotonic() + LEASE_SECONDS - 1
-        assert not await coord.renew("node", "b")
-        assert not await coord.renew("unknown", "a")
+    async def test_the_holders_retry_is_granted(self):
+        coord = await _loaded()
+        await coord.acquire("node", _holder())
+        assert await coord.acquire("node", _holder()) is None
 
-    async def test_release_frees_only_for_the_holder(self):
-        coord = _fresh()
-        await coord.acquire("node", "a")
-        await coord.release("node", "b")
-        assert await coord.acquire("node", "b") == "held by a"
-        await coord.release("node", "a")
-        assert await coord.acquire("node", "b") is None
+    async def test_a_grant_is_stored(self):
+        coord = await _loaded()
+        await coord.acquire("node", _holder())
+        assert coord._store.get("deploy-leases/node") == _holder()
+
+    async def test_a_failed_store_write_refuses_and_leaves_the_node_free(self, monkeypatch):
+        coord = await _loaded()
+
+        async def unavailable(*args, **kwargs):
+            raise StateStoreUnavailableError("down")
+
+        monkeypatch.setattr(coord._store, "set_async", unavailable)
+        assert await coord.acquire("node", _holder("r1")) == "deploy lease store unavailable"
+        monkeypatch.undo()
+        assert await coord.acquire("node", _holder("r2")) is None
+
+
+@pytest.mark.asyncio
+class TestLeaseChecks:
+    @pytest.fixture
+    def replicas(self, monkeypatch) -> dict:
+        states: dict = {}
+        monkeypatch.setattr(deploy_coordinator, "_replica_states", lambda: states)
+        return states
+
+    async def test_a_running_replica_frees_its_lease(self, replicas):
+        coord = await _loaded()
+        await coord.acquire("node", _holder("r1"))
+        replicas[_replica(_holder("r1"))] = "RUNNING"
+        await coord._check_leases()
+        assert coord._store.get("deploy-leases/node") is None
+        assert await coord.acquire("node", _holder("r2")) is None
+
+    @pytest.mark.parametrize("state", ["STARTING", "RECOVERING", "STOPPING"])
+    async def test_a_replica_still_loading_keeps_its_lease(self, replicas, state):
+        coord = await _loaded()
+        await coord.acquire("node", _holder("r1"))
+        replicas[_replica(_holder("r1"))] = state
+        await coord._check_leases()
+        await coord._check_leases()
+        assert await coord.acquire("node", _holder("r2")) == "held by a/r1"
+
+    async def test_an_unlisted_replica_is_freed_on_the_second_check(self, replicas):
+        coord = await _loaded()
+        await coord.acquire("node", _holder("r1"))
+        await coord._check_leases()
+        assert await coord.acquire("node", _holder("r2")) == "held by a/r1"
+        await coord._check_leases()
+        assert await coord.acquire("node", _holder("r2")) is None
+
+    async def test_a_replica_listed_again_between_checks_is_kept(self, replicas):
+        coord = await _loaded()
+        await coord.acquire("node", _holder("r1"))
+        await coord._check_leases()
+        replicas[_replica(_holder("r1"))] = "STARTING"
+        await coord._check_leases()
+        del replicas[_replica(_holder("r1"))]
+        await coord._check_leases()
+        assert await coord.acquire("node", _holder("r2")) == "held by a/r1"
+
+    async def test_a_failed_read_frees_nothing(self, monkeypatch):
+        coord = await _loaded()
+        await coord.acquire("node", _holder("r1"))
+
+        def unreadable():
+            raise RuntimeError("controller restarting")
+
+        monkeypatch.setattr(deploy_coordinator, "_replica_states", unreadable)
+        await coord._check_leases()
+        await coord._check_leases()
+        assert await coord.acquire("node", _holder("r2")) == "held by a/r1"
+
+    async def test_serve_is_not_read_while_no_lease_is_held(self, monkeypatch):
+        reads = []
+        monkeypatch.setattr(deploy_coordinator, "_replica_states", lambda: reads.append(1) or {})
+        await (await _loaded())._check_leases()
+        assert reads == []
+
+    async def test_a_restarted_deploy_coordinator_keeps_the_leases_it_reads_back(self, replicas):
+        first = await _loaded()
+        await first.acquire("node", _holder("r1"))
+        restarted = _Coord(False)
+        restarted._lease_checker.cancel()
+        restarted._store = first._store
+        await _loaded(restarted)
+        assert await restarted.acquire("node", _holder("r2")) == "held by a/r1"
+        replicas[_replica(_holder("r1"))] = "RUNNING"
+        await restarted._check_leases()
+        assert await restarted.acquire("node", _holder("r2")) is None
+
+
+class TestReplicaStates:
+    def test_every_listed_replica_with_its_state(self, monkeypatch):
+        details = {
+            "applications": {
+                "g.a-1": {
+                    "deployments": {
+                        "ModelDeployment": {
+                            "replicas": [
+                                {"replica_id": "r1", "state": "RUNNING"},
+                                {"replica_id": "r2", "state": "STARTING"},
+                            ]
+                        }
+                    }
+                },
+                "g": {"deployments": {"ModelshipAPI": {"replicas": []}}},
+            }
+        }
+        client = SimpleNamespace(get_serve_details=lambda: details)
+        monkeypatch.setattr("ray.serve.context._get_global_client", lambda **kwargs: client)
+        assert deploy_coordinator._replica_states() == {
+            ("g.a-1", "ModelDeployment", "r1"): "RUNNING",
+            ("g.a-1", "ModelDeployment", "r2"): "STARTING",
+        }
+
+    def test_serve_still_has_the_calls_it_reads(self):
+        from ray.serve._private.client import ServeControllerClient
+        from ray.serve._private.controller import ServeController
+        from ray.serve.schema import ReplicaDetails
+
+        assert hasattr(ServeControllerClient, "get_serve_details")
+        assert hasattr(ServeController, "get_serve_instance_details")
+        assert {"replica_id", "state"} <= set(ReplicaDetails.__fields__)
 
 
 @pytest.mark.asyncio
 class TestStartupWindow:
     async def test_a_new_actor_grants_nothing_for_one_lease_period(self):
-        coord = _Coord()
-        coord._reaper.cancel()
-        assert await coord.acquire("node", "a") == "lease service starting"
+        coord = await _loaded(_fresh(startup_window=True))
+        assert await coord.acquire("node", _holder()) == "deploy lease service starting"
         assert coord._grants_from >= time.monotonic() + LEASE_SECONDS - 1
 
     async def test_grants_resume_once_the_window_passes(self):
-        coord = _Coord()
-        coord._reaper.cancel()
+        coord = await _loaded(_fresh(startup_window=True))
         coord._grants_from = time.monotonic()
-        assert await coord.acquire("node", "a") is None
+        assert await coord.acquire("node", _holder()) is None
 
     async def test_an_actor_without_the_window_grants_at_once(self):
-        coord = _Coord(startup_window=False)
-        coord._reaper.cancel()
-        assert await coord.acquire("node", "a") is None
+        assert await (await _loaded()).acquire("node", _holder()) is None
 
     async def test_a_restarted_actor_waits_out_the_window_anyway(self, monkeypatch):
         monkeypatch.setattr(deploy_coordinator, "_reconstructed", lambda: True)
-        coord = _Coord(startup_window=False)
-        coord._reaper.cancel()
-        assert await coord.acquire("node", "a") == "lease service starting"
-
-
-@pytest.mark.asyncio
-class TestReaping:
-    async def test_expired_lease_frees_the_node(self, caplog):
-        coord = _fresh()
-        await coord.acquire("node", "a")
-        with caplog.at_level("WARNING"):
-            coord._reap(time.monotonic() + LEASE_SECONDS + 1)
-        assert "expired without release" in caplog.text
-        assert await coord.acquire("node", "b") is None
-
-    async def test_renewed_lease_is_not_reaped(self):
-        coord = _fresh()
-        await coord.acquire("node", "a")
-        await coord.renew("node", "a")
-        coord._reap(time.monotonic() + LEASE_SECONDS - 1)
-        assert await coord.acquire("node", "b") == "held by a"
+        coord = await _loaded()
+        assert await coord.acquire("node", _holder()) == "deploy lease service starting"
 
 
 @pytest.mark.asyncio
