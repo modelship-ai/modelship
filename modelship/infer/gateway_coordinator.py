@@ -21,7 +21,6 @@ from modelship.deploy.routing import Routing, compute_routing, running_replicas
 from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import COORDINATOR_GENERATION
-from modelship.state import state_store_env_var
 from modelship.utils import head_node_options
 from modelship.utils.config_schema import parse_deployment_name
 from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
@@ -201,6 +200,6 @@ def get_or_create_gateway_coordinator():
         lifetime="detached",
         num_cpus=0,
         max_restarts=-1,
-        runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS) | state_store_env_var()},
+        runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS)},
         **head_node_options(),
     ).remote()

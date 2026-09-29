@@ -88,13 +88,13 @@ class TestStateStoreForwarding:
 
 
 class TestHeadActorCreation:
-    def test_the_gateway_coordinator_is_created_with_the_store_uri(self):
+    def test_the_gateway_coordinator_is_created_without_the_store_uri(self):
         with (
             patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),
             patch.object(gateway_coordinator.GatewayCoordinator, "options") as options,
         ):
             gateway_coordinator.get_or_create_gateway_coordinator()
-        assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
+        assert "MSHIP_STATE_STORE" not in options.call_args.kwargs["runtime_env"]["env_vars"]
 
     def test_the_deploy_coordinator_is_created_with_the_store_uri(self):
         with (
