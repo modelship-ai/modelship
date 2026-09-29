@@ -1412,8 +1412,9 @@ class TestStartHead:
         kwargs = self._init_call({"MSHIP_RAY_DASHBOARD_PORT": "8266"})
         assert kwargs["dashboard_port"] == 8266
 
-    def test_omits_metrics_port_when_disabled(self):
-        kwargs = self._init_call({"MSHIP_METRICS": "false"})
+    @pytest.mark.parametrize("value", ["false", ""])
+    def test_omits_metrics_port_when_disabled(self, value):
+        kwargs = self._init_call({"MSHIP_METRICS": value})
         assert "_metrics_export_port" not in kwargs
 
     def test_redis_credentials_passed_with_a_redis_backed_gcs(self):

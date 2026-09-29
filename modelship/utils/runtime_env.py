@@ -45,5 +45,5 @@ def cluster_env_vars() -> dict[str, str]:
 
 
 def cluster_env_value(name: str) -> str:
-    """This process's value for the cluster setting *name*, or its default."""
-    return os.environ.get(name) or CLUSTER_ENV_DEFAULTS[name]
+    """This process's value for the cluster setting *name*, or its default when unset."""
+    return os.environ.get(name, CLUSTER_ENV_DEFAULTS[name])

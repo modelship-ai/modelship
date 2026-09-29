@@ -63,6 +63,10 @@ class TestClusterEnvVars:
             forwarded = cluster_env_vars()
         assert (forwarded["MSHIP_LOG_FORMAT"], forwarded["MSHIP_METRICS"]) == ("json", "false")
 
+    def test_an_empty_value_is_forwarded_as_set(self):
+        with patch.dict(os.environ, {"MSHIP_METRICS": ""}, clear=True):
+            assert cluster_env_vars()["MSHIP_METRICS"] == ""
+
 
 class TestStateStoreForwarding:
     def test_the_password_is_not_forwarded(self):
