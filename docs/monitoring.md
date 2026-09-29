@@ -256,7 +256,7 @@ curl http://localhost:8000/modelship/health
 # {"status": "ok", "uptime_s": 12.3}
 ```
 
-**`/readyz`** — readiness + timing. Returns 200 when every expected model has a deployment the gateway routes to; 503 with the same JSON body while any model is still pending. Bodies carry full state so a single poll tells you what's loaded, what's outstanding, and how long each model took to come up:
+**`/readyz`** — readiness + timing. Returns 200 when at least one model is expected and every expected model has a deployment the gateway routes to; 503 with the same JSON body while any model is still pending. **A gateway with no models configured at all is never ready — `/readyz` stays 503 indefinitely**, even though `models_expected` and `models_pending` are both empty (there is nothing to be "pending" on, but nothing to serve either, so it never reports ready). This matters for a genuinely model-less control-plane node (e.g. a k8s head-only install with an empty `models.yaml`) or an external LB/Ingress health check pointed at `/readyz` before any model is configured — both stay permanently unhealthy by design, not by bug. Bodies carry full state so a single poll tells you what's loaded, what's outstanding, and how long each model took to come up:
 
 ```bash
 curl http://localhost:8000/modelship/readyz
