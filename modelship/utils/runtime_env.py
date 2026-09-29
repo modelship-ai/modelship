@@ -7,14 +7,14 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable
 
-# Every modelship actor's logging and metrics, set once by `mship start`; an empty OTLP endpoint exports nothing.
-CLUSTER_ENV_DEFAULTS = {
-    "MSHIP_LOG_LEVEL": "INFO",
-    "MSHIP_LOG_FORMAT": "text",
-    "MSHIP_LOG_TARGET": "console",
-    "MSHIP_METRICS": "true",
-    "OTEL_EXPORTER_OTLP_ENDPOINT": "",
-}
+# Set once by `mship start` and forwarded to every modelship actor.
+CLUSTER_ENV_DEFAULTS = {"MSHIP_LOG_FORMAT": "text", "MSHIP_METRICS": "true"}
+
+# Set by each node's `mship start` or `mship join`; never forwarded, so actors inherit their node's.
+# An empty OTLP endpoint exports nothing.
+NODE_ENV_DEFAULTS = {"MSHIP_LOG_LEVEL": "INFO", "MSHIP_LOG_TARGET": "console", "OTEL_EXPORTER_OTLP_ENDPOINT": ""}
+
+_ENV_DEFAULTS = CLUSTER_ENV_DEFAULTS | NODE_ENV_DEFAULTS
 
 MODEL_ENV_VARS = ("MSHIP_GATEWAY_NAME", "MSHIP_PREFLIGHT")
 
@@ -40,10 +40,10 @@ def build_env_vars(names: Iterable[str]) -> dict[str, str]:
 
 
 def cluster_env_vars() -> dict[str, str]:
-    """The creating process's logging and metrics settings, the defaults included."""
-    return {name: cluster_env_value(name) for name in CLUSTER_ENV_DEFAULTS}
+    """The creating process's cluster-wide settings, the defaults included."""
+    return {name: env_setting(name) for name in CLUSTER_ENV_DEFAULTS}
 
 
-def cluster_env_value(name: str) -> str:
-    """This process's value for the cluster setting *name*, or its default when unset."""
-    return os.environ.get(name, CLUSTER_ENV_DEFAULTS[name])
+def env_setting(name: str) -> str:
+    """This process's value for the cluster or node setting *name*, or its default when unset."""
+    return os.environ.get(name, _ENV_DEFAULTS[name])

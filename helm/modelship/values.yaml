@@ -130,7 +130,7 @@ head:
     # `thin` (no torch/vllm) regardless of the top-level image.variant — set this
     # only if you genuinely want model capacity on the head (rare).
     variant: ""
-  # Extra env for the head's `mship start` (e.g. MSHIP_LOG_LEVEL).
+  # Extra env for the head's `mship start` (e.g. MSHIP_LOG_LEVEL, which covers the head's actors only).
   env: []
   resources:
     requests:
@@ -162,8 +162,8 @@ workerGroups: []
   #   replicas: 1
   #   minReplicas: 1
   #   maxReplicas: 1
-  #   # Extra env for this group's `mship join`. Its node sizing comes from the
-  #   # `resources` limits, else requests (MSHIP_NODE_NUM_CPUS, MSHIP_NODE_MEMORY),
+  #   # Extra env for this group's `mship join` (e.g. MSHIP_LOG_LEVEL for this group's actors). Its node
+  #   # sizing comes from the `resources` limits, else requests (MSHIP_NODE_NUM_CPUS, MSHIP_NODE_MEMORY),
   #   # unless set here.
   #   env: []
   #   resources:

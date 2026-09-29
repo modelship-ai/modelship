@@ -17,7 +17,7 @@ from modelship.deploy.actor_options import (
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, VllmEngineConfig
 from modelship.utils import parse_memory_bytes, rand_suffix
 from modelship.utils.cli import apply_args_to_env, parse_args
-from modelship.utils.runtime_env import CLUSTER_ENV_DEFAULTS
+from modelship.utils.runtime_env import CLUSTER_ENV_DEFAULTS, NODE_ENV_DEFAULTS
 
 
 class TestParseMemoryBytes:
@@ -99,6 +99,8 @@ class TestParseArgs:
             ("start", ["--state-sweep-interval-s", "30"], "state_sweep_interval_s", 30.0),
             ("start", ["--log-format", "json"], "log_format", "json"),
             ("start", ["--otel-endpoint", "http://c:4317"], "otel_endpoint", "http://c:4317"),
+            ("join", ["--cluster", "h:1", "--log-level", "debug"], "log_level", "DEBUG"),
+            ("join", ["--cluster", "h:1", "--log-target", "syslog://h:514"], "log_target", "syslog://h:514"),
             ("stop", ["--deploy-id", "abc123"], "deploy_id", "abc123"),
             ("stop", ["--deploy-id", "abc123", "--token", "secret"], "token", "secret"),
         ],
@@ -127,7 +129,8 @@ class TestParseArgs:
             ("deploy", ["--state-sweep-interval-s", "30"]),
             ("deploy", ["--no-metrics"]),
             ("deploy", ["--log-format", "json"]),
-            ("join", ["--cluster", "h:1", "--log-target", "syslog://h:514"]),
+            ("join", ["--cluster", "h:1", "--log-format", "json"]),
+            ("deploy", ["--log-level", "DEBUG"]),
             ("stop", ["--deploy-id", "a", "--otel-endpoint", "http://c:4317"]),
             ("stop", ["--deploy-id", "a", "--config", "models.yaml"]),
             ("stop", ["--deploy-id", "a", "--gateway-name", "gw"]),
@@ -177,6 +180,7 @@ class TestApplyArgsToEnv:
             ("join", ["--cluster", "h:1", "--prune-ray-sessions", "false"], "MSHIP_PRUNE_RAY_SESSIONS", "false"),
             ("start", ["--no-preflight"], "MSHIP_PREFLIGHT", "false"),
             ("start", ["--no-metrics"], "MSHIP_METRICS", "false"),
+            ("join", ["--cluster", "h:1", "--log-level", "TRACE"], "MSHIP_LOG_LEVEL", "TRACE"),
             ("deploy", ["--responses-ttl-s", "60"], "MSHIP_RESPONSES_TTL_S", "60.0"),
             ("start", ["--state-sweep-interval-s", "30"], "MSHIP_STATE_SWEEP_INTERVAL_S", "30.0"),
         ],
@@ -187,6 +191,16 @@ class TestApplyArgsToEnv:
             os.environ.pop(env_var, None)
             apply_args_to_env(parse_args(command, argv))
             assert os.environ[env_var] == expected
+
+    def test_the_log_level_flag_sets_the_library_levels(self):
+        from modelship.logging import propagate_lib_log_env
+
+        with patch.dict(os.environ, {}, clear=False):
+            for name in ("MSHIP_LOG_LEVEL", "VLLM_LOGGING_LEVEL", "TRANSFORMERS_VERBOSITY"):
+                os.environ.pop(name, None)
+            apply_args_to_env(parse_args("join", ["--cluster", "h:1", "--log-level", "debug"]))
+            propagate_lib_log_env()
+            assert (os.environ["VLLM_LOGGING_LEVEL"], os.environ["TRANSFORMERS_VERBOSITY"]) == ("DEBUG", "debug")
 
     def test_flag_overrides_preset_env(self, monkeypatch):
         monkeypatch.setenv("MSHIP_STATE_STORE", "redis://from-env:6379/0")
@@ -496,10 +510,10 @@ class TestSend:
         assert "MSHIP_STATE_STORE" not in send.submitted[0].env
 
     def test_logging_and_metrics_are_not_sent(self, send, monkeypatch):
-        for name in CLUSTER_ENV_DEFAULTS:
+        for name in CLUSTER_ENV_DEFAULTS | NODE_ENV_DEFAULTS:
             monkeypatch.setenv(name, "from-deploy")
         send.run(["--reconcile"])
-        assert set(CLUSTER_ENV_DEFAULTS).isdisjoint(send.submitted[0].env)
+        assert set(CLUSTER_ENV_DEFAULTS | NODE_ENV_DEFAULTS).isdisjoint(send.submitted[0].env)
 
 
 class TestPrepareStateStore:
@@ -921,7 +935,7 @@ class TestBuildDeploymentOptions:
         assert env_vars["MSHIP_METRICS"] == "true"
         assert "MSHIP_PREFLIGHT" not in env_vars
 
-    def test_logging_and_metrics_are_this_processes_whatever_the_request_carries(self):
+    def test_cluster_settings_are_this_processes_and_node_settings_are_not_forwarded(self):
         config = ModelshipModelConfig(
             name="test-model",
             model="some-model",
@@ -929,10 +943,12 @@ class TestBuildDeploymentOptions:
             loader=ModelLoader.vllm,
             num_gpus=1,
         )
-        env = {"MSHIP_LOG_LEVEL": "INFO", "MSHIP_METRICS": "true"}
-        with patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "TRACE", "MSHIP_METRICS": "false"}, clear=True):
+        env = {"MSHIP_LOG_FORMAT": "text", "MSHIP_METRICS": "true"}
+        head = {"MSHIP_LOG_FORMAT": "json", "MSHIP_METRICS": "false", "MSHIP_LOG_LEVEL": "TRACE"}
+        with patch.dict(os.environ, head, clear=True):
             env_vars = build_deployment_options(config, env)["ray_actor_options"]["runtime_env"]["env_vars"]
-        assert (env_vars["MSHIP_LOG_LEVEL"], env_vars["MSHIP_METRICS"]) == ("TRACE", "false")
+        assert (env_vars["MSHIP_LOG_FORMAT"], env_vars["MSHIP_METRICS"]) == ("json", "false")
+        assert set(NODE_ENV_DEFAULTS).isdisjoint(env_vars)
         for key in build_cache_env_vars():
             assert key in env_vars
 
@@ -1169,11 +1185,11 @@ class TestStartGateway:
 
     def test_the_cluster_settings_are_the_ones_given_not_this_processes(self):
         options, _ = self._run(
-            {"MSHIP_STATE_STORE": "redis://deploy-host:6379/0", "MSHIP_LOG_LEVEL": "DEBUG"},
-            cluster_env={"MSHIP_STATE_STORE": "redis://head:6379/0", "MSHIP_LOG_LEVEL": "TRACE"},
+            {"MSHIP_STATE_STORE": "redis://deploy-host:6379/0", "MSHIP_LOG_FORMAT": "text"},
+            cluster_env={"MSHIP_STATE_STORE": "redis://head:6379/0", "MSHIP_LOG_FORMAT": "json"},
         )
         env_vars = options.call_args.kwargs["ray_actor_options"]["runtime_env"]["env_vars"]
-        assert (env_vars["MSHIP_STATE_STORE"], env_vars["MSHIP_LOG_LEVEL"]) == ("redis://head:6379/0", "TRACE")
+        assert (env_vars["MSHIP_STATE_STORE"], env_vars["MSHIP_LOG_FORMAT"]) == ("redis://head:6379/0", "json")
 
     @pytest.mark.parametrize(
         "name, value",

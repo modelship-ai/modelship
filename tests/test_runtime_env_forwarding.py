@@ -19,6 +19,7 @@ from modelship.utils.runtime_env import (
     CLUSTER_ENV_DEFAULTS,
     GATEWAY_ENV_VARS,
     MODEL_ENV_VARS,
+    NODE_ENV_DEFAULTS,
     build_env_vars,
     cluster_env_vars,
 )
@@ -50,18 +51,21 @@ class TestForwardedEnvVars:
 class TestClusterEnvVars:
     def test_the_defaults_are_filled_in(self):
         with patch.dict(os.environ, {}, clear=True):
-            assert cluster_env_vars() == {
-                "MSHIP_LOG_LEVEL": "INFO",
-                "MSHIP_LOG_FORMAT": "text",
-                "MSHIP_LOG_TARGET": "console",
-                "MSHIP_METRICS": "true",
-                "OTEL_EXPORTER_OTLP_ENDPOINT": "",
-            }
+            assert cluster_env_vars() == {"MSHIP_LOG_FORMAT": "text", "MSHIP_METRICS": "true"}
 
     def test_set_values_win(self):
         with patch.dict(os.environ, {"MSHIP_LOG_FORMAT": "json", "MSHIP_METRICS": "false"}, clear=True):
             forwarded = cluster_env_vars()
         assert (forwarded["MSHIP_LOG_FORMAT"], forwarded["MSHIP_METRICS"]) == ("json", "false")
+
+    def test_node_settings_are_not_forwarded(self):
+        node = {
+            "MSHIP_LOG_LEVEL": "DEBUG",
+            "MSHIP_LOG_TARGET": "syslog://h:514",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://c:4317",
+        }
+        with patch.dict(os.environ, node, clear=True):
+            assert set(NODE_ENV_DEFAULTS).isdisjoint(cluster_env_vars())
 
     def test_an_empty_value_is_forwarded_as_set(self):
         with patch.dict(os.environ, {"MSHIP_METRICS": ""}, clear=True):
@@ -129,11 +133,12 @@ class TestHeadActorCreation:
     )
     def test_every_actor_is_created_with_the_cluster_settings(self, actor, create):
         with (
-            patch.dict(os.environ, {"MSHIP_METRICS": "false"}, clear=True),
+            patch.dict(os.environ, {"MSHIP_METRICS": "false", "MSHIP_LOG_LEVEL": "DEBUG"}, clear=True),
             patch.object(actor, "options") as options,
         ):
             create()
         env_vars = options.call_args.kwargs["runtime_env"]["env_vars"]
+        assert set(NODE_ENV_DEFAULTS).isdisjoint(env_vars)
         assert {name: env_vars[name] for name in CLUSTER_ENV_DEFAULTS} == {
             **CLUSTER_ENV_DEFAULTS,
             "MSHIP_METRICS": "false",

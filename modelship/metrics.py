@@ -20,9 +20,9 @@ Both APIs expose the same ``inc`` / ``set`` / ``observe`` surface, so the no-op
 stubs below cover either and call sites stay identical.
 """
 
-from modelship.utils.runtime_env import cluster_env_value
+from modelship.utils.runtime_env import env_setting
 
-_ENABLED = cluster_env_value("MSHIP_METRICS").lower() == "true"
+_ENABLED = env_setting("MSHIP_METRICS").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # No-op metric stubs (used when metrics are disabled)

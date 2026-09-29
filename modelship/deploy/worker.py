@@ -418,7 +418,7 @@ class DeployWorker:
 
 def create_worker(coordinator):
     """A deploy worker on the head node; source checks need the replicas' cache paths, and the replicas get its
-    logging, metrics and state store."""
+    cluster-wide settings and state store."""
     return DeployWorker.options(
         runtime_env={"env_vars": build_cache_env_vars() | cluster_env_vars() | state_store_env_var()},
         **head_node_options(),

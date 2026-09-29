@@ -6,7 +6,7 @@ import socket
 from logging.handlers import SysLogHandler
 from urllib.parse import urlparse
 
-from modelship.utils.runtime_env import cluster_env_value
+from modelship.utils.runtime_env import env_setting
 
 request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 # Caller-identity fields for log correlation (see modelship.openai.auth.identity_key).
@@ -129,7 +129,7 @@ def propagate_lib_log_env(level_name: str | None = None) -> None:
     pick up the right level. Uses setdefault so explicit user overrides win.
     Safe to call multiple times.
     """
-    name = (level_name or cluster_env_value("MSHIP_LOG_LEVEL")).upper()
+    name = (level_name or env_setting("MSHIP_LOG_LEVEL")).upper()
     app_level = _resolve_app_level(name)
     _, lib_level_name = compute_lib_level(app_level)
     for env_var, lib_name in _LIB_ENV_VARS.items():
@@ -168,9 +168,9 @@ def configure_logging() -> None:
         return
     _configured = True
 
-    level_name = cluster_env_value("MSHIP_LOG_LEVEL").upper()
-    log_format = cluster_env_value("MSHIP_LOG_FORMAT").lower()
-    log_target = cluster_env_value("MSHIP_LOG_TARGET").lower()
+    level_name = env_setting("MSHIP_LOG_LEVEL").upper()
+    log_format = env_setting("MSHIP_LOG_FORMAT").lower()
+    log_target = env_setting("MSHIP_LOG_TARGET").lower()
 
     app_level = _resolve_app_level(level_name)
     lib_level, _ = compute_lib_level(app_level)
@@ -194,7 +194,7 @@ def configure_logging() -> None:
     root_logger.addHandler(handler)
 
     # OpenTelemetry: add an OTLP log exporter as a second handler when configured.
-    otel_endpoint = cluster_env_value("OTEL_EXPORTER_OTLP_ENDPOINT")
+    otel_endpoint = env_setting("OTEL_EXPORTER_OTLP_ENDPOINT")
     if otel_endpoint:
         _setup_otel(root_logger, otel_endpoint, app_level)
 

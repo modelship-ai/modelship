@@ -14,7 +14,7 @@ from modelship.openai.protocol import (
     ImageVariationRequest,
 )
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight
-from modelship.utils.runtime_env import cluster_env_value
+from modelship.utils.runtime_env import env_setting
 
 logger = get_logger("infer.stable_diffusion_cpp")
 
@@ -41,7 +41,7 @@ class StableDiffusionCppInfer(BaseInfer):
         self.config = user_config.model_copy(update=merged)
 
         # Verbose native logging when MSHIP_LOG_LEVEL is TRACE.
-        mship_log_level = cluster_env_value("MSHIP_LOG_LEVEL").upper()
+        mship_log_level = env_setting("MSHIP_LOG_LEVEL").upper()
         self._verbose = mship_log_level == "TRACE"
 
         # CPU-only in v1: the actor is given num_gpus=0 in actor_options, so warn

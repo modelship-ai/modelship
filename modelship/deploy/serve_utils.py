@@ -22,7 +22,7 @@ from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
 from modelship.utils import parse_memory_bytes
 from modelship.utils.accelerator import detect_accelerator
-from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars, cluster_env_value
+from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars, env_setting
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -148,7 +148,7 @@ def _own_cluster_init_kwargs() -> dict[str, object]:
     if node_memory := _resolve_node_memory_kwargs():
         kwargs["_memory"] = node_memory["memory"]
         kwargs["object_store_memory"] = node_memory["object_store_memory"]
-    if cluster_env_value("MSHIP_METRICS").lower() == "true":
+    if env_setting("MSHIP_METRICS").lower() == "true":
         # _metrics_export_port is a private ray.init kwarg; guarded by a start_head test.
         kwargs["_metrics_export_port"] = int(os.environ.get("MSHIP_METRICS_PORT", str(_DEFAULT_METRICS_PORT)))
     if os.environ.get("RAY_REDIS_ADDRESS"):
@@ -417,7 +417,7 @@ def _positive_int_env(name: str, default: int) -> int:
 def start_gateway(
     gateway_name: str, serve_logging_config: LoggingConfig, route_prefix: str, cluster_env: dict[str, str]
 ) -> None:
-    """*cluster_env* is the head's logging, metrics and state-store env vars."""
+    """*cluster_env* is the head's cluster-wide and state-store env vars."""
     logger.info("Starting API gateway...")
     gateway_replicas = _positive_int_env("MSHIP_GATEWAY_REPLICAS", 1)
     gateway_max_ongoing = _positive_int_env("MSHIP_GATEWAY_MAX_ONGOING", 1024)

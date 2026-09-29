@@ -59,7 +59,7 @@ def deploy_env_vars() -> dict[str, str]:
 
 def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] | None = None) -> dict:
     """kwargs for `Deployment.options(**...)`. *env* replaces this process's per-deploy settings; the cache
-    paths, logging, metrics and state store are always this process's, the deploy worker on the head."""
+    paths, cluster-wide settings and state store are always this process's, the deploy worker on the head."""
     env_vars = build_cache_env_vars()
     env_vars.update(deploy_env_vars() if env is None else env)
     env_vars.update(cluster_env_vars() | state_store_env_var())

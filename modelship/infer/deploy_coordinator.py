@@ -349,7 +349,7 @@ class DeployCoordinator:
         return versions
 
     async def cluster_settings(self) -> dict:
-        """The logging, metrics and state-store env vars `mship start` created this actor with, and Serve's
+        """The cluster-wide and state-store env vars `mship start` created this actor with, and Serve's
         LoggingConfig at its level."""
         return {"env": cluster_env_vars() | state_store_env_var(), "serve_logging_config": serve_logging_config()}
 

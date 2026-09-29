@@ -15,7 +15,7 @@ Modelship uses a centralized logging system with structured output and request c
 | `MSHIP_LOG_TARGET` | `console` | Log target. `console` writes to stderr; syslog URIs ship logs to a remote syslog server (see below). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | When set, logs are also exported to an OpenTelemetry collector via OTLP (see below). |
 
-These are set once, on `mship start`, and apply to every actor on the cluster whichever node it runs on. `mship join`, `deploy` and `stop` read them only for their own output.
+`MSHIP_LOG_FORMAT` (`--log-format`) is set once, on `mship start`, for every actor on the cluster. The level, target and OTLP endpoint (`--log-level`, `--log-target`, `--otel-endpoint`) belong to a node: set them on `mship start` or `mship join`, and every actor on that node uses them, library levels included. `mship deploy` and `stop` read these env vars only for their own output.
 
 ### Log Levels
 

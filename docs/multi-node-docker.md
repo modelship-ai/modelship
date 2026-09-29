@@ -125,6 +125,13 @@ This means, per fleet:
   that path on every node that could host it, since there's no cross-node
   copying of a local reference.
 
+## Logging per node
+
+The log level, syslog target and OTLP endpoint are per node: an actor uses the settings of the node it
+runs on. Pass `--log-level`, `--log-target` or `--otel-endpoint` to each `mship join` as well as to
+`mship start`; a worker without them logs at `INFO` to its console, which Ray streams into the head's log.
+The log format and `--no-metrics` come from the head alone.
+
 ## Capability-aware scheduling
 
 Every node advertises `mship_<loader>` Ray custom resources for whatever it can
