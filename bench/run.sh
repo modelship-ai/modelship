@@ -173,7 +173,7 @@ SITE_MODELSHIP="$(docker run --rm --entrypoint python "$IMAGE" \
 SOURCE_MOUNT=(-v "$REPO_ROOT/modelship:$SITE_MODELSHIP:ro")
 SOURCE_REV="$(git -C "$REPO_ROOT" describe --always --dirty 2>/dev/null || echo unknown)"
 
-# `mship deploy` resolves this itself; the baseline runs python directly. Read
+# `mship start` resolves this itself; the baseline runs python directly. Read
 # out of the image so a llama.cpp tag bump needs no edit.
 LLAMA_SERVER_BIN=""
 if [[ "$LOADER" == "llama_server" ]]; then
@@ -197,7 +197,7 @@ start_modelship() {
         -v "$CACHE_DIR:/.cache:rw" \
         "${SOURCE_MOUNT[@]}" \
         --name "$MODELSHIP_CONTAINER" "$IMAGE" \
-        deploy --config /modelship/config/models.yaml >/dev/null
+        start --config /modelship/config/models.yaml >/dev/null
 }
 
 start_baseline() {
