@@ -20,7 +20,6 @@ from modelship.deploy.capabilities import node_capability_resources
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
-from modelship.state import state_store_env_var
 from modelship.utils import parse_memory_bytes
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars
@@ -415,13 +414,16 @@ def _positive_int_env(name: str, default: int) -> int:
     return value
 
 
-def start_gateway(gateway_name: str, serve_logging_config: LoggingConfig, route_prefix: str) -> None:
+def start_gateway(
+    gateway_name: str, serve_logging_config: LoggingConfig, route_prefix: str, store_env: dict[str, str]
+) -> None:
+    """*store_env* is the head's state-store env var."""
     logger.info("Starting API gateway...")
     gateway_replicas = _positive_int_env("MSHIP_GATEWAY_REPLICAS", 1)
     gateway_max_ongoing = _positive_int_env("MSHIP_GATEWAY_MAX_ONGOING", 1024)
     # A replica can land on any node, so these come from here, not that node's env.
     # MSHIP_GATEWAY_NAME is pinned from the arg so metrics stamping stays correct.
-    env_vars = build_env_vars(GATEWAY_ENV_VARS) | state_store_env_var()
+    env_vars = build_env_vars(GATEWAY_ENV_VARS) | store_env
     env_vars["MSHIP_GATEWAY_NAME"] = gateway_name
     serve.run(
         ModelshipAPI.options(

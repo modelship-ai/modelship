@@ -348,6 +348,10 @@ class DeployCoordinator:
             versions[name] = {"seq": routing.seq, "apps": routing.apps}
         return versions
 
+    async def state_store_env(self) -> dict[str, str]:
+        """The state-store env var `mship start` created this actor with."""
+        return state_store_env_var()
+
     def _running_entry(self, request_id: str, gateway_name: str) -> _Entry:
         entry = self._running.get(gateway_name)
         if entry is None or entry.request.id != request_id:

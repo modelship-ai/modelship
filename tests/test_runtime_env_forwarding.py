@@ -6,6 +6,7 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
+from modelship.deploy import worker
 from modelship.infer import deploy_coordinator, gateway_coordinator
 from modelship.state import (
     REDIS_PASSWORD_ENV,
@@ -50,9 +51,9 @@ class TestStateStoreForwarding:
         with patch.dict(os.environ, {"MSHIP_STATE_STORE": uri, REDIS_PASSWORD_ENV: "pw"}, clear=True):
             assert state_store_env_var() == {"MSHIP_STATE_STORE": uri}
 
-    def test_nothing_to_forward_without_a_uri(self):
+    def test_the_default_is_forwarded_without_a_uri(self):
         with patch.dict(os.environ, {}, clear=True):
-            assert state_store_env_var() == {}
+            assert state_store_env_var() == {"MSHIP_STATE_STORE": "memory://"}
 
     def test_local_reader_applies_the_password(self):
         env = {"MSHIP_STATE_STORE": "redis://host:6379/0", REDIS_PASSWORD_ENV: "s3cret"}
@@ -86,14 +87,14 @@ class TestStateStoreForwarding:
             assert resolve_state_store_uri() == "memory://"
 
 
-class TestCoordinatorCreation:
-    def test_the_gateway_coordinator_is_created_with_the_store_uri(self):
+class TestHeadActorCreation:
+    def test_the_gateway_coordinator_is_created_without_the_store_uri(self):
         with (
             patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),
             patch.object(gateway_coordinator.GatewayCoordinator, "options") as options,
         ):
             gateway_coordinator.get_or_create_gateway_coordinator()
-        assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
+        assert "MSHIP_STATE_STORE" not in options.call_args.kwargs["runtime_env"]["env_vars"]
 
     def test_the_deploy_coordinator_is_created_with_the_store_uri(self):
         with (
@@ -101,6 +102,14 @@ class TestCoordinatorCreation:
             patch.object(deploy_coordinator.DeployCoordinator, "options") as options,
         ):
             deploy_coordinator.get_or_create_coordinator()
+        assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
+
+    def test_the_deploy_worker_is_created_with_the_store_uri(self):
+        with (
+            patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),
+            patch.object(worker.DeployWorker, "options") as options,
+        ):
+            worker.create_worker("deploy-coordinator")
         assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
 
 

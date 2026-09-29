@@ -47,7 +47,7 @@ def _start(args) -> None:
     from modelship.deploy.serve_utils import local_ray_clusters, start_gateway, start_head, start_serve
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
     from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
-    from modelship.state import reject_inline_password
+    from modelship.state import reject_inline_password, state_store_env_var
 
     gateway_name, route_prefix, _ = _gateway_from_env()
     reject_inline_password(os.environ.get("MSHIP_STATE_STORE", ""))
@@ -74,8 +74,9 @@ def _start(args) -> None:
         _log_join_hint()
         _log_gpus()
         start_serve(serve_logging_config)
+        _prepare_state_store()
         # First, so /health and /readyz answer while models load.
-        start_gateway(gateway_name, serve_logging_config, route_prefix)
+        start_gateway(gateway_name, serve_logging_config, route_prefix, state_store_env_var())
         get_or_create_gateway_coordinator()
         _send(args, gateway_name, serve_logging_config, get_or_create_coordinator())
     except BaseException as e:
@@ -104,6 +105,21 @@ def _stop_head() -> None:
     shutdown_ray()
 
 
+def _prepare_state_store() -> None:
+    """Seeds the head's state store with the compaction key, warning when it's the memory one."""
+    from modelship.openai.compaction_crypto import ensure_key_seeded
+    from modelship.state import MemoryStateStore, get_state_store
+
+    store = get_state_store()
+    if isinstance(getattr(store, "inner", store), MemoryStateStore):
+        logger.warning(
+            "Deploy versions are kept in a cluster-scoped (non-durable) memory state store; they survive "
+            "deploys and deploy/gateway coordinator restarts but NOT cluster loss. Set MSHIP_STATE_STORE "
+            "to redis:// for self-heal after cluster loss."
+        )
+    ensure_key_seeded(store)
+
+
 def _join() -> None:
     from modelship.deploy.serve_utils import join_cluster, leave_ray_cluster, supervise_join_node
 
@@ -129,6 +145,8 @@ def _join() -> None:
 
 
 def _deploy(args) -> None:
+    import ray
+
     from modelship.deploy.serve_utils import (
         attach_cluster,
         get_existing_apps,
@@ -137,10 +155,8 @@ def _deploy(args) -> None:
         start_serve,
     )
     from modelship.infer.deploy_coordinator import find_coordinator
-    from modelship.state import reject_inline_password
 
     gateway_name, route_prefix, explicit_gateway = _gateway_from_env()
-    reject_inline_password(os.environ.get("MSHIP_STATE_STORE", ""))
     if not local_ray_clusters():
         sys.exit(
             "error: no Ray cluster is running on this machine. Start one with `mship start`, "
@@ -161,7 +177,8 @@ def _deploy(args) -> None:
             f"another gateway, or --gateway-name {gateway_name} to create this one."
         )
     if create_gateway:
-        start_gateway(gateway_name, serve_logging_config, route_prefix)
+        store_env: dict[str, str] = ray.get(coordinator.state_store_env.remote())
+        start_gateway(gateway_name, serve_logging_config, route_prefix, store_env)
     receipt = _send(args, gateway_name, serve_logging_config, coordinator)
     request_id = receipt["id"]
     if not args.wait:
@@ -184,17 +201,6 @@ def _send(args, gateway_name: str, serve_logging_config, coordinator) -> dict:
     from modelship.deploy.actor_options import deploy_env_vars
     from modelship.deploy.config import resolve_input_models
     from modelship.deploy.ledger import DeployRequest
-    from modelship.openai.compaction_crypto import ensure_key_seeded
-    from modelship.state import MemoryStateStore, get_state_store
-
-    store = get_state_store()
-    if isinstance(getattr(store, "inner", store), MemoryStateStore):
-        logger.warning(
-            "Deploy versions are kept in a cluster-scoped (non-durable) memory state store; they survive "
-            "deploys and deploy/gateway coordinator restarts but NOT cluster loss. Set MSHIP_STATE_STORE "
-            "to redis:// for self-heal after cluster loss."
-        )
-    ensure_key_seeded(store)
 
     models = None if args.config is None and args.model is None and args.reconcile else resolve_input_models(args)
     if models is None:

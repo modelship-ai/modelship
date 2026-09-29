@@ -54,14 +54,15 @@ def _total_reservation(deploy_opts: dict, bundle_key: str, actor_key: str) -> fl
 
 def deploy_env_vars() -> dict[str, str]:
     """This process's per-deploy settings that replicas read from their runtime_env."""
-    # MSHIP_STATE_STORE is unread by replicas: relayed on when one recreates the deploy coordinator.
-    return build_env_vars(MODEL_ENV_VARS) | state_store_env_var()
+    return build_env_vars(MODEL_ENV_VARS)
 
 
 def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] | None = None) -> dict:
-    """kwargs for `Deployment.options(**...)`. *env* replaces this process's per-deploy settings."""
+    """kwargs for `Deployment.options(**...)`. *env* replaces this process's per-deploy settings; the cache
+    paths and the state store are always this process's, the deploy worker on the head."""
     env_vars = build_cache_env_vars()
     env_vars.update(deploy_env_vars() if env is None else env)
+    env_vars.update(state_store_env_var())
 
     runtime_env: dict = {"env_vars": env_vars}
 

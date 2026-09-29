@@ -204,10 +204,9 @@ def reject_inline_password(uri: str) -> None:
 
 
 def state_store_env_var() -> dict[str, str]:
-    """``{MSHIP_STATE_STORE: uri}`` to forward. It carries no password: each node applies
-    its own MSHIP_REDIS_PASSWORD. Empty when this process has no URI to forward."""
-    uri = os.environ.get(_STATE_STORE_ENV)
-    return {_STATE_STORE_ENV: uri} if uri else {}
+    """``{MSHIP_STATE_STORE: uri}`` to forward, the default included. It carries no password:
+    each node applies its own MSHIP_REDIS_PASSWORD."""
+    return {_STATE_STORE_ENV: os.environ.get(_STATE_STORE_ENV) or _DEFAULT_URI}
 
 
 def resolve_state_store_uri() -> str:

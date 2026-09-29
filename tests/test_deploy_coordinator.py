@@ -613,6 +613,12 @@ class TestWorkerDeath:
 
 
 @pytest.mark.asyncio
+async def test_the_deploy_coordinator_reports_its_state_store(monkeypatch):
+    monkeypatch.setenv("MSHIP_STATE_STORE", "redis://head:6379/0")
+    assert await _fresh().state_store_env() == {"MSHIP_STATE_STORE": "redis://head:6379/0"}
+
+
+@pytest.mark.asyncio
 class TestRouting:
     async def test_a_gateway_routes_by_its_committed_version(self, workers):
         coord = _ledger()
