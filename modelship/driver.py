@@ -1,3 +1,4 @@
+import functools
 import os
 import signal
 import sys
@@ -254,8 +255,15 @@ def _cancel(args) -> None:
 
 
 def _on_signals(handler) -> None:
-    signal.signal(signal.SIGINT, handler)
-    signal.signal(signal.SIGTERM, handler)
+    @functools.wraps(handler)
+    def once(sig, frame) -> None:
+        # A repeat signal would re-enter the handler mid-teardown.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        handler(sig, frame)
+
+    signal.signal(signal.SIGINT, once)
+    signal.signal(signal.SIGTERM, once)
 
 
 def _gateway_from_env() -> tuple[str, str, bool]:

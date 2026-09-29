@@ -565,6 +565,29 @@ class TestSignalHandlersOutliveRay:
         assert signal.getsignal(signal.SIGTERM).__name__ == "_leave"
 
 
+class TestRepeatSignals:
+    @pytest.fixture(autouse=True)
+    def _restore(self):
+        saved = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+        yield
+        for sig, handler in saved.items():
+            signal.signal(sig, handler)
+
+    def test_a_signal_during_the_handler_is_dropped(self):
+        from modelship import driver
+
+        calls = []
+
+        def _stop(sig, _frame):
+            calls.append(sig)
+            if len(calls) == 1:
+                os.kill(os.getpid(), signal.SIGINT)
+
+        driver._on_signals(_stop)
+        os.kill(os.getpid(), signal.SIGTERM)
+        assert calls == [signal.SIGTERM]
+
+
 class TestRandSuffix:
     def test_default_length(self):
         suffix = rand_suffix()
