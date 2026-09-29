@@ -7,8 +7,6 @@ The store holds raw, user-equivalent model dicts, not dumped validated configs: 
 from dataclasses import dataclass
 from typing import Literal
 
-from ray.serve.schema import LoggingConfig
-
 from modelship.deploy.config import validate_models
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.logging import get_logger
@@ -32,7 +30,6 @@ class DeployRequest:
     strategy: ReplaceStrategy
     # raw model dicts as sent; None for a bare request
     models: list[dict] | None
-    serve_logging_config: LoggingConfig
     # per-deploy settings replicas read from their runtime_env
     env: dict[str, str]
     # set by the deploy coordinator

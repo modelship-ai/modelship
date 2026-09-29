@@ -15,6 +15,8 @@ Modelship uses a centralized logging system with structured output and request c
 | `MSHIP_LOG_TARGET` | `console` | Log target. `console` writes to stderr; syslog URIs ship logs to a remote syslog server (see below). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | When set, logs are also exported to an OpenTelemetry collector via OTLP (see below). |
 
+These are set once, on `mship start`, and apply to every actor on the cluster whichever node it runs on. `mship join`, `deploy` and `stop` read them only for their own output.
+
 ### Log Levels
 
 Each level sets library logs (Ray, vLLM, transformers) to the next level up:
@@ -136,7 +138,7 @@ docker run --rm --shm-size=8g --gpus all \
 
 | Env Var | Default | Description |
 |---|---|---|
-| `MSHIP_METRICS` | `true` | Master toggle for modelship's own metrics; also pins the Ray metrics export port. |
+| `MSHIP_METRICS` | `true` | Master toggle for modelship's own metrics on the whole cluster (`--no-metrics` on `mship start`); also pins the Ray metrics export port. |
 | `MSHIP_METRICS_PORT` | `8079` on `start`, random on `join` | This node's metrics port (`--metrics-port`). |
 
 `MSHIP_METRICS=false` turns modelship's own metrics into no-ops and leaves port 8079 free. Ray's

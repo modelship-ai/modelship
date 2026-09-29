@@ -246,9 +246,7 @@ def _app_name(raw: dict, gateway: str = "g") -> str:
 
 
 def _request(gateway: str = "g", models=None, mode="additive") -> DeployRequest:
-    return DeployRequest(
-        gateway, mode, "blue_green", models if models is not None else [_raw("a")], LoggingConfig(), {}
-    )
+    return DeployRequest(gateway, mode, "blue_green", models if models is not None else [_raw("a")], {})
 
 
 class _Worker:
@@ -613,9 +611,13 @@ class TestWorkerDeath:
 
 
 @pytest.mark.asyncio
-async def test_the_deploy_coordinator_reports_its_state_store(monkeypatch):
+async def test_the_deploy_coordinator_reports_its_cluster_settings(monkeypatch):
     monkeypatch.setenv("MSHIP_STATE_STORE", "redis://head:6379/0")
-    assert await _fresh().state_store_env() == {"MSHIP_STATE_STORE": "redis://head:6379/0"}
+    monkeypatch.setenv("MSHIP_METRICS", "false")
+    settings = await _fresh().cluster_settings()
+    assert settings["env"]["MSHIP_STATE_STORE"] == "redis://head:6379/0"
+    assert settings["env"]["MSHIP_METRICS"] == "false"
+    assert isinstance(settings["serve_logging_config"], LoggingConfig)
 
 
 @pytest.mark.asyncio

@@ -7,14 +7,21 @@ from urllib.parse import unquote, urlsplit
 import pytest
 
 from modelship.deploy import worker
-from modelship.infer import deploy_coordinator, gateway_coordinator
+from modelship.infer import deploy_coordinator, download_leases, gateway_coordinator
 from modelship.state import (
     REDIS_PASSWORD_ENV,
+    memory,
     reject_inline_password,
     resolve_state_store_uri,
     state_store_env_var,
 )
-from modelship.utils.runtime_env import GATEWAY_ENV_VARS, MODEL_ENV_VARS, build_env_vars
+from modelship.utils.runtime_env import (
+    CLUSTER_ENV_DEFAULTS,
+    GATEWAY_ENV_VARS,
+    MODEL_ENV_VARS,
+    build_env_vars,
+    cluster_env_vars,
+)
 
 
 class TestForwardedEnvVars:
@@ -38,6 +45,23 @@ class TestForwardedEnvVars:
         with patch.dict(os.environ, {"MSHIP_MAX_REQUEST_BODY_BYTES": "128"}, clear=True):
             forwarded = build_env_vars(GATEWAY_ENV_VARS)
         assert forwarded == {"MSHIP_MAX_REQUEST_BODY_BYTES": "128"}
+
+
+class TestClusterEnvVars:
+    def test_the_defaults_are_filled_in(self):
+        with patch.dict(os.environ, {}, clear=True):
+            assert cluster_env_vars() == {
+                "MSHIP_LOG_LEVEL": "INFO",
+                "MSHIP_LOG_FORMAT": "text",
+                "MSHIP_LOG_TARGET": "console",
+                "MSHIP_METRICS": "true",
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "",
+            }
+
+    def test_set_values_win(self):
+        with patch.dict(os.environ, {"MSHIP_LOG_FORMAT": "json", "MSHIP_METRICS": "false"}, clear=True):
+            forwarded = cluster_env_vars()
+        assert (forwarded["MSHIP_LOG_FORMAT"], forwarded["MSHIP_METRICS"]) == ("json", "false")
 
 
 class TestStateStoreForwarding:
@@ -88,6 +112,29 @@ class TestStateStoreForwarding:
 
 
 class TestHeadActorCreation:
+    @pytest.mark.parametrize(
+        ("actor", "create"),
+        [
+            (deploy_coordinator.DeployCoordinator, deploy_coordinator.get_or_create_coordinator),
+            (gateway_coordinator.GatewayCoordinator, gateway_coordinator.get_or_create_gateway_coordinator),
+            (worker.DeployWorker, lambda: worker.create_worker("deploy-coordinator")),
+            (download_leases.DownloadLeases, download_leases.get_or_create_leases),
+            (memory.MemoryStoreActor, memory.get_or_create_memory_store_actor),
+        ],
+        ids=["deploy-coordinator", "gateway-coordinator", "deploy-worker", "download-leases", "memory-store"],
+    )
+    def test_every_actor_is_created_with_the_cluster_settings(self, actor, create):
+        with (
+            patch.dict(os.environ, {"MSHIP_METRICS": "false"}, clear=True),
+            patch.object(actor, "options") as options,
+        ):
+            create()
+        env_vars = options.call_args.kwargs["runtime_env"]["env_vars"]
+        assert {name: env_vars[name] for name in CLUSTER_ENV_DEFAULTS} == {
+            **CLUSTER_ENV_DEFAULTS,
+            "MSHIP_METRICS": "false",
+        }
+
     def test_the_gateway_coordinator_is_created_without_the_store_uri(self):
         with (
             patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),

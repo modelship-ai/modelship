@@ -62,6 +62,7 @@ class _Serve:
         self.deleted: set[str] = set()
         self.unreadable = 0
         self.events: list[tuple[str, str]] = []
+        self.logging_configs: list = []
 
     def status(self):
         if self.unreadable:
@@ -85,6 +86,7 @@ class _Serve:
     def submit(self, config, gateway_name, serve_logging_config, env) -> None:
         name = config.deployment_name(gateway_name)
         self.events.append(("submit", name))
+        self.logging_configs.append(serve_logging_config)
         self.running[name] = self.scripts.setdefault(config.name, [RUNNING])
         self.apps[name] = DEPLOYING
 
@@ -176,7 +178,7 @@ def cluster(monkeypatch):
 
 
 def _run(cluster, models, committed=None, mode="additive", strategy="blue_green") -> dict:
-    request = DeployRequest("gw", mode, strategy, models, LoggingConfig(), {}, id="r1")
+    request = DeployRequest("gw", mode, strategy, models, {}, id="r1")
     cluster.ledger.committed = committed
     return Run(request, committed, cluster.ledger, cluster.replicas, 60.0).execute()
 
@@ -252,6 +254,11 @@ class TestSucceeds:
         assert cluster.serve.events == [("submit", _app_name(A)), ("switch", "1"), ("commit", "1")]
         assert cluster.ledger.commits == [[A]]
         assert cluster.serve.pinned[0].name == "a"
+
+    def test_apps_are_submitted_with_the_workers_serve_logging(self, cluster, monkeypatch):
+        monkeypatch.setattr(worker, "serve_logging_config", lambda: "worker-logging")
+        _run(cluster, [A])
+        assert cluster.serve.logging_configs == ["worker-logging"]
 
     def test_blue_green_deletes_the_replaced_app_only_after_the_commit(self, cluster):
         _existing(cluster, A)

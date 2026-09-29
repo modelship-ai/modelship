@@ -7,7 +7,6 @@
   "--replace-strategy" .Values.deploy.replaceStrategy
   "--wait" -}}
 {{- if .Values.deploy.reconcile }}{{- $args = append $args "--reconcile" }}{{- end }}
-{{- if not .Values.metrics.enabled }}{{- $args = append $args "--no-metrics" }}{{- end }}
 {{- range .Values.deploy.extraArgs }}{{- $args = append $args (toString .) }}{{- end }}
 {{- range $args }}
 {{- if not (regexMatch "^[A-Za-z0-9._=/:,@+-]+$" .) }}

@@ -23,7 +23,7 @@ from modelship.logging import configure_logging, get_logger
 from modelship.metrics import COORDINATOR_GENERATION
 from modelship.utils import head_node_options
 from modelship.utils.config_schema import parse_deployment_name
-from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
+from modelship.utils.runtime_env import cluster_env_vars
 
 logger = get_logger("gateway_coordinator")
 
@@ -200,6 +200,6 @@ def get_or_create_gateway_coordinator():
         lifetime="detached",
         num_cpus=0,
         max_restarts=-1,
-        runtime_env={"env_vars": build_env_vars(COMMON_ENV_VARS)},
+        runtime_env={"env_vars": cluster_env_vars()},
         **head_node_options(),
     ).remote()

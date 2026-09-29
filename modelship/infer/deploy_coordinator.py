@@ -33,11 +33,11 @@ from ray import serve
 from ray.exceptions import RayActorError
 
 from modelship.deploy.ledger import DeployRequest, Version, commit_version, read_versions
-from modelship.logging import configure_logging, get_logger
+from modelship.logging import configure_logging, get_logger, serve_logging_config
 from modelship.state import get_state_store, state_store_env_var
 from modelship.utils import head_node_options, random_uuid
 from modelship.utils.config_schema import parse_deployment_name
-from modelship.utils.runtime_env import DEPLOY_COORDINATOR_ENV_VARS, build_env_vars
+from modelship.utils.runtime_env import DEPLOY_COORDINATOR_ENV_VARS, build_env_vars, cluster_env_vars
 
 logger = get_logger("deploy_coordinator")
 
@@ -348,9 +348,10 @@ class DeployCoordinator:
             versions[name] = {"seq": routing.seq, "apps": routing.apps}
         return versions
 
-    async def state_store_env(self) -> dict[str, str]:
-        """The state-store env var `mship start` created this actor with."""
-        return state_store_env_var()
+    async def cluster_settings(self) -> dict:
+        """The logging, metrics and state-store env vars `mship start` created this actor with, and Serve's
+        LoggingConfig at its level."""
+        return {"env": cluster_env_vars() | state_store_env_var(), "serve_logging_config": serve_logging_config()}
 
     def _running_entry(self, request_id: str, gateway_name: str) -> _Entry:
         entry = self._running.get(gateway_name)
@@ -512,6 +513,8 @@ def get_or_create_coordinator():
         lifetime="detached",
         num_cpus=0,
         max_restarts=-1,
-        runtime_env={"env_vars": build_env_vars(DEPLOY_COORDINATOR_ENV_VARS) | state_store_env_var()},
+        runtime_env={
+            "env_vars": build_env_vars(DEPLOY_COORDINATOR_ENV_VARS) | cluster_env_vars() | state_store_env_var()
+        },
         **head_node_options(),
     ).remote()

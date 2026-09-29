@@ -4,7 +4,13 @@ import signal
 import sys
 
 # Module scope stays Ray/HF-free: run() sets env vars those latch at import.
-from modelship.logging import configure_logging, get_lib_log_config, get_logger, propagate_lib_log_env
+from modelship.logging import (
+    configure_logging,
+    get_lib_log_config,
+    get_logger,
+    propagate_lib_log_env,
+    serve_logging_config,
+)
 from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
 from modelship.utils.cli import apply_args_to_env, parse_args
 from modelship.utils.ray_auth import resolve_ray_auth_env
@@ -48,6 +54,7 @@ def _start(args) -> None:
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
     from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.state import reject_inline_password, state_store_env_var
+    from modelship.utils.runtime_env import cluster_env_vars
 
     gateway_name, route_prefix, _ = _gateway_from_env()
     reject_inline_password(os.environ.get("MSHIP_STATE_STORE", ""))
@@ -76,9 +83,9 @@ def _start(args) -> None:
         start_serve(serve_logging_config)
         _prepare_state_store()
         # First, so /health and /readyz answer while models load.
-        start_gateway(gateway_name, serve_logging_config, route_prefix, state_store_env_var())
+        start_gateway(gateway_name, serve_logging_config, route_prefix, cluster_env_vars() | state_store_env_var())
         get_or_create_gateway_coordinator()
-        _send(args, gateway_name, serve_logging_config, get_or_create_coordinator())
+        _send(args, gateway_name, get_or_create_coordinator())
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
@@ -162,13 +169,14 @@ def _deploy(args) -> None:
             "error: no Ray cluster is running on this machine. Start one with `mship start`, "
             "or run deploy on a node of a running cluster."
         )
-    lib_level, serve_logging_config = _serve_logging()
+    lib_level, _ = _serve_logging()
     attach_cluster(lib_level)
     _log_cluster()
     if (coordinator := find_coordinator()) is None:
         sys.exit("error: no deploy coordinator on this cluster; `mship start` creates it.")
+    head: dict = ray.get(coordinator.cluster_settings.remote())
     # A no-op when Serve already runs; the first call on a cluster sets it up.
-    start_serve(serve_logging_config)
+    start_serve(head["serve_logging_config"])
 
     create_gateway = gateway_name not in get_existing_apps()
     if create_gateway and not explicit_gateway:
@@ -177,9 +185,8 @@ def _deploy(args) -> None:
             f"another gateway, or --gateway-name {gateway_name} to create this one."
         )
     if create_gateway:
-        store_env: dict[str, str] = ray.get(coordinator.state_store_env.remote())
-        start_gateway(gateway_name, serve_logging_config, route_prefix, store_env)
-    receipt = _send(args, gateway_name, serve_logging_config, coordinator)
+        start_gateway(gateway_name, head["serve_logging_config"], route_prefix, head["env"])
+    receipt = _send(args, gateway_name, coordinator)
     request_id = receipt["id"]
     if not args.wait:
         logger.info("Follow it in the head's log; cancel it with `mship stop --deploy-id %s`.", request_id)
@@ -194,7 +201,7 @@ def _deploy(args) -> None:
         sys.exit(1)
 
 
-def _send(args, gateway_name: str, serve_logging_config, coordinator) -> dict:
+def _send(args, gateway_name: str, coordinator) -> dict:
     """Queues this invocation's models on the gateway; returns the deploy coordinator's receipt."""
     import ray
 
@@ -211,7 +218,6 @@ def _send(args, gateway_name: str, serve_logging_config, coordinator) -> dict:
         mode=mode,
         strategy=getattr(args, "replace_strategy", "blue_green"),
         models=models,
-        serve_logging_config=serve_logging_config,
         env=deploy_env_vars(),
     )
 
@@ -306,11 +312,8 @@ def _gateway_from_env() -> tuple[str, str, bool]:
 
 
 def _serve_logging():
-    from ray.serve.schema import LoggingConfig
-
     # One level above the app's; Serve's system actors and Ray's driver logger ignore setLevel.
-    lib_level, lib_level_name = get_lib_log_config()
-    return lib_level, LoggingConfig(log_level=lib_level_name)
+    return get_lib_log_config()[0], serve_logging_config()
 
 
 def _log_cluster() -> None:

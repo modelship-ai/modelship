@@ -88,6 +88,7 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
         _add_node_args(parser)
     if command == "start":
         _add_head_args(parser)
+        _add_logging_metrics_args(parser)
     if command in ("start", "deploy"):
         _add_auth_arg(parser)
         _add_cluster_args(parser)
@@ -117,7 +118,6 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
                 "stop_start: drop old first, then deploy new (brief unavailability, no overlap)."
             ),
         )
-    _add_logging_args(parser)
     if command in ("start", "deploy"):
         _add_model_args(parser)
 
@@ -315,18 +315,31 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
             "expiry (env: MSHIP_RESPONSES_TTL_S, default: 2592000 = 30 days)"
         ),
     )
-    parser.add_argument("--no-metrics", action="store_true", default=None, help="Disable metrics (env: MSHIP_METRICS)")
 
 
-def _add_logging_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--log-format", choices=["text", "json"], help="Log format (env: MSHIP_LOG_FORMAT)")
+def _add_logging_metrics_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--no-metrics",
+        action="store_true",
+        default=None,
+        help="Disable metrics on the whole cluster (env: MSHIP_METRICS)",
+    )
+    parser.add_argument(
+        "--log-format", choices=["text", "json"], help="Log format for the whole cluster (env: MSHIP_LOG_FORMAT)"
+    )
     parser.add_argument(
         "--log-target",
-        help="Log target: 'console' (default) or syslog URI e.g. syslog://host:514, syslog+tcp://host:514 (env: MSHIP_LOG_TARGET)",
+        help=(
+            "Log target for the whole cluster: 'console' (default) or syslog URI e.g. syslog://host:514, "
+            "syslog+tcp://host:514 (env: MSHIP_LOG_TARGET)"
+        ),
     )
     parser.add_argument(
         "--otel-endpoint",
-        help="OpenTelemetry OTLP endpoint e.g. http://collector:4317 (env: OTEL_EXPORTER_OTLP_ENDPOINT)",
+        help=(
+            "OpenTelemetry OTLP endpoint for the whole cluster e.g. http://collector:4317 "
+            "(env: OTEL_EXPORTER_OTLP_ENDPOINT)"
+        ),
     )
 
 
