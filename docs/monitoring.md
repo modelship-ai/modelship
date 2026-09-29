@@ -10,7 +10,7 @@ Modelship uses a centralized logging system with structured output and request c
 
 | Env Var | Default | Description |
 |---|---|---|
-| `MSHIP_LOG_LEVEL` | `INFO` | App log level. Set to `TRACE` for request/response payloads, `DEBUG` for detailed diagnostics. Each level sets library logs to the next level up (e.g. `DEBUG` app → `INFO` libs). |
+| `MSHIP_LOG_LEVEL` | `INFO` | App log level. Set to `TRACE` for request/response payloads, `DEBUG` for detailed diagnostics. Library logs are silent unless it is `DEBUG` or `TRACE`, which set them to `DEBUG`. |
 | `MSHIP_LOG_FORMAT` | `text` | `text` for human-readable output, `json` for structured JSON lines (for log aggregation with ELK/Loki/Splunk). |
 | `MSHIP_LOG_TARGET` | `console` | Log target. `console` writes to stderr; syslog URIs ship logs to a remote syslog server (see below). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | When set, logs are also exported to an OpenTelemetry collector via OTLP (see below). |
@@ -19,14 +19,14 @@ Modelship uses a centralized logging system with structured output and request c
 
 ### Log Levels
 
-Each level sets library logs (Ray, vLLM, transformers) to the next level up:
+Library logs (Ray, vLLM, transformers) are silent unless the level is `DEBUG` or `TRACE`:
 
 | Level | App logs (`modelship.*`) | Library logs |
 |---|---|---|
 | `TRACE` | Request/response payloads (audio bytes, transcription text, chat messages, etc.) | `DEBUG` |
-| `DEBUG` | Detailed diagnostics, per-chunk details | `INFO` |
-| `INFO` (default) | Startup, deployment, request summaries | `WARNING` |
-| `WARNING` | Warnings only | `ERROR` |
+| `DEBUG` | Detailed diagnostics, per-chunk details | `DEBUG` |
+| `INFO` (default) | Startup, deployment, request summaries | silent |
+| `WARNING` | Warnings only | silent |
 
 ### Request Correlation
 

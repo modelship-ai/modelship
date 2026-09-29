@@ -81,7 +81,6 @@ _LIB_LOGGERS = (
 # Setting these ensures the level sticks even when a library re-configures
 # its loggers after our configure_logging() call (e.g. vLLM's init_logger).
 _LIB_ENV_VARS = {
-    "RAY_LOG_LEVEL": "ray",
     "VLLM_LOGGING_LEVEL": "vllm",
     "TRANSFORMERS_VERBOSITY": "transformers",
     "DIFFUSERS_VERBOSITY": "diffusers",
