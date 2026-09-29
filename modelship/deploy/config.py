@@ -127,10 +127,15 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
         logger.info("Checked '%s' (%s)", cfg.name, _pin_label(pinned))
 
         if cfg.loader == ModelLoader.llama_server and cfg.llama_server_config and cfg.llama_server_config.mmproj:
-            logger.info("Checking mmproj source for '%s': %s", cfg.name, cfg.llama_server_config.mmproj)
-            cfg.llama_server_config._pinned_mmproj = check_model_source(
-                cfg.llama_server_config.mmproj, trust_remote_code=trust_remote_code
-            )
+            mmproj = cfg.llama_server_config.mmproj
+            logger.info("Checking mmproj source for '%s': %s", cfg.name, mmproj)
+            pinned_mmproj = check_model_source(mmproj, trust_remote_code=trust_remote_code)
+            if not pinned_mmproj.resolves_to_gguf:
+                raise ValueError(
+                    f"Model '{cfg.name}': mmproj {mmproj!r} does not resolve to a GGUF file. Pick one with the "
+                    f"`:filename` syntax (glob supported), e.g. `repo:mmproj-*.gguf`."
+                )
+            cfg.llama_server_config._pinned_mmproj = pinned_mmproj
 
         # GGUF is not supported on the vllm loader (vLLM 0.24 dropped in-tree
         # GGUF). Reject early using the listed filename, before any download.

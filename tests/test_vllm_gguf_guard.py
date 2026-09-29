@@ -1,4 +1,5 @@
-"""Driver preflight GGUF rules: the vllm loader rejects GGUF (0.24 dropped in-tree GGUF), llama_server requires it."""
+"""Driver preflight GGUF rules: the vllm loader rejects GGUF (0.24 dropped in-tree GGUF), llama_server requires it
+(model and mmproj)."""
 
 import re
 from unittest.mock import patch
@@ -101,3 +102,26 @@ class TestLlamaServerGgufRule:
         with patch("modelship.infer.sources.check_model_source", return_value=pinned):
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
         assert cfg._pinned_source == pinned
+
+    def test_an_mmproj_that_is_not_a_gguf_file_is_rejected(self):
+        cfg = _make_cfg(
+            loader=ModelLoader.llama_server, num_gpus=0, llama_server_config={"mmproj": "some/repo-GGUF:mmproj.bin"}
+        )
+        with (
+            patch(
+                "modelship.infer.sources.check_model_source",
+                side_effect=[_GGUF_PIN, _GGUF_PIN._replace(filename="mmproj.bin")],
+            ),
+            pytest.raises(ValueError, match=re.escape("mmproj 'some/repo-GGUF:mmproj.bin' does not resolve to a GGUF")),
+        ):
+            resolve_all_model_sources(ModelshipConfig(models=[cfg]))
+
+    def test_a_gguf_mmproj_is_allowed(self):
+        mmproj_pin = _GGUF_PIN._replace(filename="mmproj-F16.gguf")
+        cfg = _make_cfg(
+            loader=ModelLoader.llama_server, num_gpus=0, llama_server_config={"mmproj": "some/repo-GGUF:mmproj-*.gguf"}
+        )
+        with patch("modelship.infer.sources.check_model_source", side_effect=[_GGUF_PIN, mmproj_pin]):
+            resolve_all_model_sources(ModelshipConfig(models=[cfg]))
+        assert cfg.llama_server_config is not None
+        assert cfg.llama_server_config._pinned_mmproj == mmproj_pin
