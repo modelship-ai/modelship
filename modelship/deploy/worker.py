@@ -84,6 +84,9 @@ class DeployLedger:
     def cancelled(self, request_id: str) -> bool:
         return self._call("is_cancelled", request_id)
 
+    def rolling_back(self, request_id: str, gateway_name: str) -> None:
+        self._call("rolling_back", request_id, gateway_name)
+
     def crash_looping(self, apps: list[str]) -> dict[str, str]:
         return self._call("crash_looping", apps)
 
@@ -368,6 +371,7 @@ class Run:
 
     def _rolled_back(self, state: str, reason: str) -> dict:
         request = self._request
+        self._ledger.rolling_back(request.id, request.gateway)
         roll_back(self._ledger, self._replicas, request.gateway, self._switching, self._switch_timeout)
         logger.info("Deploy %s rolled back", request.id)
         for model, result in self._results.items():

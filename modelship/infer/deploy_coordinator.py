@@ -82,6 +82,8 @@ class _Entry:
     cancelled: bool = False
     # set once the worker has been told of the cancel
     cancel_seen: bool = False
+    # set once the gateway has been switched to the request's models
+    switched: bool = False
     worker: Any = None
 
 
@@ -275,6 +277,8 @@ class DeployCoordinator:
             return {"cancelled": True, "message": f"deploy {request_id} cancelled"}
         if entry.state in ("committing", "retiring"):
             return {"cancelled": False, "message": f"deploy {request_id} is already committed and can't be cancelled"}
+        if entry.state == "rolling_back" and not entry.cancelled:
+            return {"cancelled": False, "message": f"deploy {request_id} failed and is already being rolled back"}
         if not entry.cancelled:
             entry.cancelled = True
             logger.info("Cancelling deploy %s", request_id)
@@ -289,10 +293,17 @@ class DeployCoordinator:
             entry.cancel_seen = True
         return entry.cancelled
 
+    async def rolling_back(self, request_id: str, gateway_name: str) -> None:
+        """Marks the running request as rolling back, which refuses a later cancel, switch or commit."""
+        entry = self._running.get(gateway_name)
+        if entry is not None and entry.request.id == request_id:
+            entry.state = "rolling_back"
+
     async def switch(self, request_id: str, gateway_name: str, models: list[dict]) -> int:
         """Routes the gateway by *models* while the request confirms its replicas follow; returns the routing seq."""
         entry = self._running_entry(request_id, gateway_name)
         entry.state = "switching"
+        entry.switched = True
         self._routing[gateway_name] = _routing(self._next_seq(), models, gateway_name)
         logger.info("Deploy %s: switching gateway %s to its new models", request_id, gateway_name)
         return self._routing[gateway_name].seq
@@ -388,7 +399,7 @@ class DeployCoordinator:
             logger.warning(
                 "Deploy %s's worker stopped while %s; rolling back gateway %s", entry.request.id, entry.state, gateway
             )
-            switching = entry.state in ("switching", "committing")
+            switching = entry.switched and entry.state != "retiring"
             if entry.state not in ("committing", "retiring"):
                 # refuses a switch or commit the dead worker sent before it died
                 entry.state = "rolling_back"
@@ -416,7 +427,12 @@ class DeployCoordinator:
 
     async def _kill_unless_seen(self, entry: _Entry) -> None:
         await asyncio.sleep(self._cancel_grace)
-        if not entry.cancel_seen and not entry.done.done() and entry.worker is not None:
+        if (
+            not entry.cancel_seen
+            and entry.state != "rolling_back"
+            and not entry.done.done()
+            and entry.worker is not None
+        ):
             logger.warning(
                 "Deploy %s did not stop within %.0f s; killing its worker", entry.request.id, self._cancel_grace
             )
