@@ -339,9 +339,16 @@ class TestDriverVerbs:
         mock_gateway.assert_not_called()
         mock_send.assert_called_once()
 
-    def test_deploy_waits_for_the_outcome(self, caplog):
+    def test_deploy_exits_once_sent(self, caplog):
         caplog.set_level(logging.INFO, logger="modelship")
-        _, _, mock_get = self._deploy([], existing_apps={"modelship"})
+        _, mock_send, mock_get = self._deploy([], existing_apps={"modelship"})
+        mock_send.assert_called_once()
+        mock_get.assert_not_called()
+        assert "Follow it in the head's log; cancel it with `mship stop --deploy-id r1`." in caplog.messages
+
+    def test_deploy_with_wait_waits_for_the_outcome(self, caplog):
+        caplog.set_level(logging.INFO, logger="modelship")
+        _, _, mock_get = self._deploy(["--wait"], existing_apps={"modelship"})
         mock_get.assert_called_once_with("outcome-ref")
         assert "Deploy r1 succeeded; the gateway is on version 1." in caplog.messages
 
@@ -349,7 +356,7 @@ class TestDriverVerbs:
     def test_deploy_exits_nonzero_when_the_request_does_not_succeed(self, state, caplog):
         outcome = {"id": "r1", "state": state, "reason": "boom", "models": {}, "version": None}
         with pytest.raises(SystemExit) as exc:
-            self._deploy([], existing_apps={"modelship"}, outcome=outcome)
+            self._deploy(["--wait"], existing_apps={"modelship"}, outcome=outcome)
         assert exc.value.code == 1
         assert f"Deploy r1 {state}: boom" in caplog.messages
 
@@ -358,7 +365,7 @@ class TestDriverVerbs:
             raise RayActorError()
 
         with pytest.raises(SystemExit) as exc:
-            self._deploy([], existing_apps={"modelship"}, waiting=lost)
+            self._deploy(["--wait"], existing_apps={"modelship"}, waiting=lost)
         assert exc.value.code == 1
         assert "Deploy r1 was lost: the deploy coordinator restarted. Run the deploy again." in caplog.messages
 
@@ -372,7 +379,7 @@ class TestDriverVerbs:
             handler(signal.SIGINT, None)
 
         with patch("modelship.infer.deploy_coordinator.DeployCoordinator") as ledger, pytest.raises(SystemExit) as exc:
-            self._deploy([], existing_apps={"modelship"}, waiting=interrupted)
+            self._deploy(["--wait"], existing_apps={"modelship"}, waiting=interrupted)
         assert exc.value.code == 130
         ledger.assert_not_called()
         assert any("deploy r1 keeps running" in message for message in caplog.messages)

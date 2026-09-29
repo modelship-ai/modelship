@@ -71,7 +71,8 @@ _USAGE = {
 _DESCRIPTION = {
     "start": "Start a cluster on this machine: its head node, the API gateway and any models given. Stays running.",
     "join": "Add this machine to a running cluster as a worker node. Stays running.",
-    "deploy": "Change the models of the cluster running on this machine; waits for the change to succeed or fail.",
+    "deploy": "Change the models of the cluster running on this machine: sends the change and exits, or with --wait, "
+    "waits for it to succeed or fail.",
     "stop": "Cancel a deploy on the cluster running on this machine, rolling back what it has done so far.",
 }
 
@@ -95,6 +96,11 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
         parser.add_argument("--deploy-id", required=True, help="The deploy to cancel, as `mship deploy` printed it")
     if command == "deploy":
         _add_token_arg(parser)
+        parser.add_argument(
+            "--wait",
+            action="store_true",
+            help="Wait for the deploy to succeed or fail, and exit with its outcome. A signal only stops the wait.",
+        )
         parser.add_argument(
             "--replace-strategy",
             choices=["blue_green", "stop_start"],

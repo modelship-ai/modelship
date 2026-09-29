@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CI check: the chart's deploy RayJob entrypoint hands models.yaml to `mship deploy`
+"""CI check: the chart's deploy RayJob entrypoint hands models.yaml to `mship deploy --wait`
 byte for byte, and its entrypoint resources reach `ray job submit` as the head pin.
 Replays the three shells it passes through, with `ray` and `mship` stubbed: KubeRay's
 submitter bash (entrypoint pasted unquoted), `ray job submit` (re-joins its argv with
@@ -92,7 +92,7 @@ def main() -> int:
     if config != _MODELS_YAML:
         print(f"FAIL: mship received a different models.yaml:\n{config}")
         return 1
-    if args[:3] != ["deploy", "--gateway-name", "modelship"]:
+    if args[:3] != ["deploy", "--gateway-name", "modelship"] or "--wait" not in args:
         print(f"FAIL: unexpected mship arguments: {args}")
         return 1
     if resources != {"node:__internal_head__": 0.001}:

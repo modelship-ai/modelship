@@ -167,6 +167,9 @@ def _deploy(args) -> None:
         start_gateway(gateway_name, serve_logging_config, route_prefix)
     receipt = _send(args, gateway_name, serve_logging_config, coordinator)
     request_id = receipt["id"]
+    if not args.wait:
+        logger.info("Follow it in the head's log; cancel it with `mship stop --deploy-id %s`.", request_id)
+        return
 
     def _stop_waiting(sig, _frame) -> None:
         logger.info(

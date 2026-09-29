@@ -198,8 +198,8 @@ workerGroups: []
   #   affinity: {}
   #   annotations: {}
 
-# -- The deploy RayJob: runs `mship deploy` on the head, which waits for the
-# deploy to succeed or fail, then exits with the outcome. Re-run (helm upgrade)
+# -- The deploy RayJob: runs `mship deploy --wait` on the head, which waits for
+# the deploy to succeed or fail, then exits with the outcome. Re-run (helm upgrade)
 # to apply models.yaml changes.
 deploy:
   # Diff models.yaml against what this gateway already owns and remove the
