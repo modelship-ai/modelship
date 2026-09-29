@@ -369,6 +369,7 @@ class Run:
     def _rolled_back(self, state: str, reason: str) -> dict:
         request = self._request
         roll_back(self._ledger, self._replicas, request.gateway, self._switching, self._switch_timeout)
+        logger.info("Deploy %s rolled back", request.id)
         for model, result in self._results.items():
             if result in ("up", "coming up"):
                 self._results[model] = "rolled back"
