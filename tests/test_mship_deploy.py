@@ -122,6 +122,8 @@ class TestParseArgs:
             ("join", ["--cluster", "h:1", "--ray-dashboard-host", "0.0.0.0"]),
             ("deploy", ["--metrics-port", "9090"]),
             ("join", ["--cluster", "h:1", "--state-store", "redis://h:6379/0"]),
+            ("deploy", ["--state-store", "redis://h:6379/0"]),
+            ("deploy", ["--state-sweep-interval-s", "30"]),
             ("stop", ["--deploy-id", "a", "--config", "models.yaml"]),
             ("stop", ["--deploy-id", "a", "--gateway-name", "gw"]),
             ("deploy", ["--deploy-id", "a"]),
@@ -155,7 +157,7 @@ class TestApplyArgsToEnv:
     @pytest.mark.parametrize(
         ("command", "argv", "env_var", "expected"),
         [
-            ("deploy", ["--state-store", "redis://cache:6379/0"], "MSHIP_STATE_STORE", "redis://cache:6379/0"),
+            ("start", ["--state-store", "redis://cache:6379/0"], "MSHIP_STATE_STORE", "redis://cache:6379/0"),
             ("start", ["--gateway-replicas", "4"], "MSHIP_GATEWAY_REPLICAS", "4"),
             ("deploy", ["--ray-auth", "token"], "MSHIP_RAY_AUTH", "token"),
             ("start", ["--ray-port", "6380"], "MSHIP_RAY_PORT", "6380"),
@@ -183,7 +185,7 @@ class TestApplyArgsToEnv:
 
     def test_flag_overrides_preset_env(self, monkeypatch):
         monkeypatch.setenv("MSHIP_STATE_STORE", "redis://from-env:6379/0")
-        apply_args_to_env(parse_args("deploy", ["--state-store", "redis://from-flag:6379/0"]))
+        apply_args_to_env(parse_args("start", ["--state-store", "redis://from-flag:6379/0"]))
         assert os.environ["MSHIP_STATE_STORE"] == "redis://from-flag:6379/0"
 
     @pytest.mark.parametrize("command", ["start", "deploy"])
@@ -259,7 +261,7 @@ class TestDriverVerbs:
             driver._start(parse_args("start", []))
         mock_start_head.assert_not_called()
 
-    def test_start_creates_both_coordinators_and_sends_to_the_deploy_coordinator(self):
+    def _start(self):
         from modelship import driver
         from modelship.deploy import serve_utils
 
@@ -267,21 +269,38 @@ class TestDriverVerbs:
             patch.object(serve_utils, "local_ray_clusters", return_value=set()),
             patch.object(serve_utils, "start_head"),
             patch.object(serve_utils, "start_serve"),
-            patch.object(serve_utils, "start_gateway"),
+            patch.object(serve_utils, "start_gateway") as gateway,
             patch.object(driver, "_log_cluster"),
             patch.object(driver, "_log_join_hint"),
             patch.object(driver, "_log_gpus"),
+            patch.object(driver, "_prepare_state_store") as prepare_state_store,
             patch(
                 "modelship.infer.deploy_coordinator.get_or_create_coordinator", return_value="deploy-coordinator"
-            ) as mock_deploy_coordinator,
-            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator") as mock_gateway_coordinator,
-            patch.object(driver, "_send") as mock_send,
+            ) as deploy_coordinator,
+            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator") as gateway_coordinator,
+            patch.object(driver, "_send") as send,
             patch.object(driver.signal, "pause"),
         ):
             driver._start(parse_args("start", []))
-        mock_deploy_coordinator.assert_called_once_with()
-        mock_gateway_coordinator.assert_called_once_with()
-        assert mock_send.call_args.args[3] == "deploy-coordinator"
+        return SimpleNamespace(
+            gateway=gateway,
+            prepare_state_store=prepare_state_store,
+            deploy_coordinator=deploy_coordinator,
+            gateway_coordinator=gateway_coordinator,
+            send=send,
+        )
+
+    def test_start_creates_both_coordinators_and_sends_to_the_deploy_coordinator(self):
+        started = self._start()
+        started.deploy_coordinator.assert_called_once_with()
+        started.gateway_coordinator.assert_called_once_with()
+        assert started.send.call_args.args[3] == "deploy-coordinator"
+
+    def test_start_prepares_its_state_store_and_gives_it_to_the_gateway(self):
+        os.environ["MSHIP_STATE_STORE"] = "redis://head:6379/0"
+        started = self._start()
+        started.prepare_state_store.assert_called_once_with()
+        assert started.gateway.call_args.args[3] == {"MSHIP_STATE_STORE": "redis://head:6379/0"}
 
     def test_deploy_refuses_without_a_local_cluster(self):
         from modelship import driver
@@ -301,6 +320,7 @@ class TestDriverVerbs:
 
         outcome = outcome or {"id": "r1", "state": "succeeded", "reason": "", "models": {"a": "up"}, "version": 1}
         receipt = {"id": "r1", "behind": None, "outcome": "outcome-ref"}
+        head_store = {"MSHIP_STATE_STORE": "redis://head:6379/0"}
         with (
             patch.object(serve_utils, "local_ray_clusters", return_value={"10.0.0.1:6380"}),
             patch.object(serve_utils, "attach_cluster"),
@@ -310,7 +330,9 @@ class TestDriverVerbs:
             patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
             patch.object(driver, "_log_cluster"),
             patch.object(driver, "_send", return_value=receipt) as mock_send,
-            patch("ray.get", side_effect=waiting or (lambda ref: outcome)) as mock_get,
+            patch(
+                "ray.get", side_effect=waiting or (lambda ref: head_store if ref == "store-env-ref" else outcome)
+            ) as mock_get,
         ):
             args = parse_args("deploy", argv)
             apply_args_to_env(args)
@@ -330,9 +352,24 @@ class TestDriverVerbs:
         assert mock_send.call_args.args[3] == "deploy-coordinator"
 
     def test_deploy_creates_a_named_gateway_that_is_missing(self):
-        mock_gateway, mock_send, _ = self._deploy(["--gateway-name", "edge"], existing_apps={"modelship"})
+        mock_gateway, mock_send, _ = self._deploy(
+            ["--gateway-name", "edge"], existing_apps={"modelship"}, coordinator=self._head_coordinator()
+        )
         assert mock_gateway.call_args.args[0] == "edge"
         assert mock_send.call_args.args[1] == "edge"
+
+    def test_a_gateway_deploy_creates_gets_the_head_state_store(self):
+        os.environ["MSHIP_STATE_STORE"] = "redis://deploy-host:6379/0"
+        mock_gateway, _, _ = self._deploy(
+            ["--gateway-name", "edge"], existing_apps={"modelship"}, coordinator=self._head_coordinator()
+        )
+        assert mock_gateway.call_args.args[3] == {"MSHIP_STATE_STORE": "redis://head:6379/0"}
+
+    @staticmethod
+    def _head_coordinator():
+        coordinator = MagicMock()
+        coordinator.state_store_env.remote.return_value = "store-env-ref"
+        return coordinator
 
     def test_deploy_reuses_an_existing_gateway(self):
         mock_gateway, mock_send, _ = self._deploy([], existing_apps={"modelship"})
@@ -392,7 +429,6 @@ class TestSend:
     @pytest.fixture
     def send(self, monkeypatch, tmp_path):
         from modelship import driver
-        from modelship.state import MemoryStoreActor
 
         monkeypatch.delenv("MSHIP_GATEWAY_NAME", raising=False)
         monkeypatch.chdir(tmp_path)
@@ -402,13 +438,7 @@ class TestSend:
 
         def run(argv):
             args = parse_args("deploy", argv)
-            with (
-                patch(
-                    "modelship.state.get_state_store", return_value=MemoryStoreActor.__ray_metadata__.modified_class()
-                ),
-                patch("modelship.openai.compaction_crypto.ensure_key_seeded"),
-                patch("ray.get", side_effect=lambda value: value),
-            ):
+            with patch("ray.get", side_effect=lambda value: value):
                 receipt = driver._send(args, "gw", LoggingConfig(), coordinator)
             submitted.append(coordinator.submit.remote.call_args.args[0])
             return receipt
@@ -438,6 +468,26 @@ class TestSend:
         monkeypatch.setenv("MSHIP_PREFLIGHT", "false")
         send.run(["--reconcile"])
         assert send.submitted[0].env["MSHIP_PREFLIGHT"] == "false"
+
+    def test_the_state_store_is_neither_opened_nor_sent(self, send, monkeypatch):
+        monkeypatch.setenv("MSHIP_STATE_STORE", "redis://deploy-host:6379/0")
+        with patch("modelship.state.get_state_store") as opened:
+            send.run(["--reconcile"])
+        opened.assert_not_called()
+        assert "MSHIP_STATE_STORE" not in send.submitted[0].env
+
+
+class TestPrepareStateStore:
+    @pytest.mark.parametrize(("uri", "warns"), [("memory://", True), ("redis://head:6379/0", False)])
+    def test_seeds_the_compaction_key_and_warns_only_for_memory(self, monkeypatch, caplog, uri, warns):
+        from modelship import driver
+
+        caplog.set_level(logging.WARNING, logger="modelship")
+        monkeypatch.setenv("MSHIP_STATE_STORE", uri)
+        with patch("modelship.openai.compaction_crypto.ensure_key_seeded") as seeded:
+            driver._prepare_state_store()
+        seeded.assert_called_once()
+        assert any("non-durable" in message for message in caplog.messages) is warns
 
 
 class TestCancelCommand:
@@ -620,6 +670,7 @@ class TestSignalHandlersOutliveRay:
             patch.object(driver, "_log_cluster"),
             patch.object(driver, "_log_join_hint"),
             patch.object(driver, "_log_gpus"),
+            patch.object(driver, "_prepare_state_store"),
             patch("modelship.infer.deploy_coordinator.get_or_create_coordinator"),
             patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator"),
             patch.object(driver, "_send"),
@@ -792,7 +843,6 @@ class TestBuildDeploymentOptions:
         monkeypatch.setenv("MSHIP_PREFLIGHT", "false")
         monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "60")
         monkeypatch.setenv("MSHIP_STATE_SWEEP_INTERVAL_S", "30")
-        monkeypatch.setenv("MSHIP_STATE_STORE", "redis://host:6379/0")
         config = ModelshipModelConfig(
             name="test-model",
             model="some-model",
@@ -807,8 +857,20 @@ class TestBuildDeploymentOptions:
         # Gateway / memory-store settings: nothing in a model replica reads them.
         assert "MSHIP_RESPONSES_TTL_S" not in env_vars
         assert "MSHIP_STATE_SWEEP_INTERVAL_S" not in env_vars
-        # Unread by the replica, but relayed if it recreates the coordinator.
-        assert env_vars["MSHIP_STATE_STORE"] == "redis://host:6379/0"
+
+    def test_the_state_store_is_this_processes_whatever_the_request_carries(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_STATE_STORE", "redis://head:6379/0")
+        config = ModelshipModelConfig(
+            name="test-model",
+            model="some-model",
+            usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
+            num_gpus=1,
+        )
+        env = {"MSHIP_PREFLIGHT": "false", "MSHIP_STATE_STORE": "redis://deploy-host:6379/0"}
+        env_vars = build_deployment_options(config, env)["ray_actor_options"]["runtime_env"]["env_vars"]
+        assert env_vars["MSHIP_STATE_STORE"] == "redis://head:6379/0"
+        assert env_vars["MSHIP_PREFLIGHT"] == "false"
 
     def test_unset_passthrough_env_vars_not_forwarded(self, monkeypatch):
         # Unset on the driver → not forwarded, so the replica keeps its own default.
@@ -1024,7 +1086,7 @@ class TestDeleteModelApps:
 
 
 class TestStartGateway:
-    def _run(self, env):
+    def _run(self, env, store_env=None):
         from modelship.deploy import serve_utils
 
         bound = MagicMock()
@@ -1036,7 +1098,7 @@ class TestStartGateway:
             patch.object(serve_utils.ModelshipAPI, "options", options),
             patch.object(serve_utils.serve, "run") as mock_run,
         ):
-            serve_utils.start_gateway("gw", logging_config, "/gw")
+            serve_utils.start_gateway("gw", logging_config, "/gw", store_env or {})
         return options, mock_run
 
     def test_route_prefix_forwarded_to_serve_run(self):
@@ -1085,9 +1147,16 @@ class TestStartGateway:
             patch.object(serve_utils.ModelshipAPI, "options", options),
             patch.object(serve_utils.serve, "run"),
         ):
-            serve_utils.start_gateway("edge", MagicMock(), "/edge")
+            serve_utils.start_gateway("edge", MagicMock(), "/edge", {})
         _, kwargs = options.call_args
         assert kwargs["ray_actor_options"]["runtime_env"]["env_vars"]["MSHIP_GATEWAY_NAME"] == "edge"
+
+    def test_the_state_store_is_the_one_given_not_this_processes(self):
+        options, _ = self._run(
+            {"MSHIP_STATE_STORE": "redis://deploy-host:6379/0"}, store_env={"MSHIP_STATE_STORE": "redis://head:6379/0"}
+        )
+        env_vars = options.call_args.kwargs["ray_actor_options"]["runtime_env"]["env_vars"]
+        assert env_vars["MSHIP_STATE_STORE"] == "redis://head:6379/0"
 
     @pytest.mark.parametrize(
         "name, value",

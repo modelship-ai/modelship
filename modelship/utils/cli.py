@@ -259,9 +259,6 @@ def _add_head_args(parser: argparse.ArgumentParser) -> None:
             "--network=host, so each head's dashboard gets a distinct port."
         ),
     )
-
-
-def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--state-store",
         help=(
@@ -272,6 +269,17 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
             "the cluster; redis:// survives it."
         ),
     )
+    parser.add_argument(
+        "--state-sweep-interval-s",
+        type=float,
+        help=(
+            "Interval in seconds between expired-key sweeps in the in-memory state store "
+            "(env: MSHIP_STATE_SWEEP_INTERVAL_S, default: 300)"
+        ),
+    )
+
+
+def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--gateway-name",
         help="Name for the API gateway app (env: MSHIP_GATEWAY_NAME, default: modelship)",
@@ -305,14 +313,6 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "TTL in seconds for stored /v1/responses conversation state; <=0 disables "
             "expiry (env: MSHIP_RESPONSES_TTL_S, default: 2592000 = 30 days)"
-        ),
-    )
-    parser.add_argument(
-        "--state-sweep-interval-s",
-        type=float,
-        help=(
-            "Interval in seconds between expired-key sweeps in the in-memory state store "
-            "(env: MSHIP_STATE_SWEEP_INTERVAL_S, default: 300)"
         ),
     )
     parser.add_argument("--no-metrics", action="store_true", default=None, help="Disable metrics (env: MSHIP_METRICS)")

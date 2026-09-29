@@ -20,6 +20,7 @@ from modelship.deploy.strategy import Plan, gateway_apps, plan_request, proposed
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
+from modelship.state import state_store_env_var
 from modelship.utils import head_node_options
 from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
 
@@ -416,8 +417,9 @@ class DeployWorker:
 
 
 def create_worker(coordinator):
-    """A deploy worker on the head node; source checks need the replicas' cache paths."""
+    """A deploy worker on the head node; source checks need the replicas' cache paths, and the replicas get its
+    state store."""
     return DeployWorker.options(
-        runtime_env={"env_vars": build_cache_env_vars() | build_env_vars(COMMON_ENV_VARS)},
+        runtime_env={"env_vars": build_cache_env_vars() | build_env_vars(COMMON_ENV_VARS) | state_store_env_var()},
         **head_node_options(),
     ).remote(coordinator)

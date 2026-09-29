@@ -6,6 +6,7 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
+from modelship.deploy import worker
 from modelship.infer import deploy_coordinator, gateway_coordinator
 from modelship.state import (
     REDIS_PASSWORD_ENV,
@@ -86,7 +87,7 @@ class TestStateStoreForwarding:
             assert resolve_state_store_uri() == "memory://"
 
 
-class TestCoordinatorCreation:
+class TestHeadActorCreation:
     def test_the_gateway_coordinator_is_created_with_the_store_uri(self):
         with (
             patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),
@@ -101,6 +102,14 @@ class TestCoordinatorCreation:
             patch.object(deploy_coordinator.DeployCoordinator, "options") as options,
         ):
             deploy_coordinator.get_or_create_coordinator()
+        assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
+
+    def test_the_deploy_worker_is_created_with_the_store_uri(self):
+        with (
+            patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),
+            patch.object(worker.DeployWorker, "options") as options,
+        ):
+            worker.create_worker("deploy-coordinator")
         assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
 
 

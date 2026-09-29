@@ -160,11 +160,10 @@ Call with (dict "resources" <resources> "env" <group env> "container" <container
 {{- end -}}
 
 {{/*
-Explicit env for every Ray pod (head + workers): the state-store URI the
-coordinator, effective-config and /v1/responses read via get_state_store(). It MUST
-be on every pod so the coordinator — scheduled on any node — agrees with the driver.
+Explicit env for every Ray pod (head + workers): the state-store URI the head's
+`mship start` reads and forwards to every actor and replica.
 
-Always redis://<addr>/<db>?namespace=<storage namespace>, password-free: the driver
+Always redis://<addr>/<db>?namespace=<storage namespace>, password-free: the head
 forwards this URI in runtime_env, and each pod adds MSHIP_REDIS_PASSWORD from its own env
 (the Secret). The same Redis also backs GCS fault tolerance. The chart wires an address
 but does not deploy Redis, so redis.address is required.

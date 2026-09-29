@@ -35,7 +35,7 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--deploy-id` | stop | — | — | The deploy request to cancel, as `mship deploy` printed it. A queued request is dropped; a running one is rolled back, models already up included. A request that has committed, or that failed and is already rolling back, can't be cancelled |
 | `--cache-dir` | start, join | `MSHIP_CACHE_DIR` | `/.cache` | Base cache directory for model weights; may be shared storage |
 | `--node-cache-dir` | start, join | `MSHIP_NODE_CACHE_DIR` | `$MSHIP_HOME/node-cache` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer). Must not be shared storage |
-| `--state-store` | start, deploy | `MSHIP_STATE_STORE` | `memory://` | Connection URI for the gateways' deploy versions + `/v1/responses` state (see [State store](#state-store-mship_state_store)) |
+| `--state-store` | start | `MSHIP_STATE_STORE` | `memory://` | Connection URI for the gateways' deploy versions + `/v1/responses` state (see [State store](#state-store-mship_state_store)) |
 | — | all | `MSHIP_LOG_LEVEL` | `INFO` | Log level (env-var-only: must be set before `import ray` so library loggers latch the right level) |
 | `--log-format` | all | `MSHIP_LOG_FORMAT` | `text` | `text` or `json` |
 | `--log-target` | all | `MSHIP_LOG_TARGET` | `console` | `console` or syslog URI (e.g. `syslog://host:514`, `syslog+tcp://host:514`) |
@@ -47,7 +47,7 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--trusted-identity-header` | start, deploy | `MSHIP_TRUSTED_IDENTITY_HEADER` | — | Header name (e.g. `X-Consumer-Id`) a fronting credentials layer sets with a caller identity it already resolved and authorized. See [Trusted identity header](#trusted-identity-header) |
 | `--max-request-body-bytes` | start, deploy | `MSHIP_MAX_REQUEST_BODY_BYTES` | `52428800` | Max request body size in bytes |
 | `--responses-ttl-s` | start, deploy | `MSHIP_RESPONSES_TTL_S` | `2592000` | TTL in seconds for stored `/v1/responses` conversation state; `<=0` disables expiry |
-| `--state-sweep-interval-s` | start, deploy | `MSHIP_STATE_SWEEP_INTERVAL_S` | `300` | Interval in seconds between expired-key sweeps in the in-memory state store |
+| `--state-sweep-interval-s` | start | `MSHIP_STATE_SWEEP_INTERVAL_S` | `300` | Interval in seconds between expired-key sweeps in the in-memory state store |
 
 ### Single-model deploys (no config file)
 
@@ -613,7 +613,9 @@ Redis keys live under `modelship/state/`. Add `?namespace=<name>` (letters, digi
 
 `memory://` is cluster-scoped, not process-local — every gateway replica and model actor shares one detached Ray actor on the head node, so it's correct at any replica count and outlives any worker node. Sized for small-traffic single-node deployments: every operation is a Ray RPC through that one actor, and large values spill to the object store.
 
-A password belongs in `MSHIP_REDIS_PASSWORD` on every node, not in the URI: the driver forwards the URI to gateway replicas in `runtime_env`, which is plain-text cluster metadata, so the URI travels password-free and each node adds its own before connecting (percent-encoded, so `/`, `#`, `%` and friends in a password are safe). A password inside `--state-store`/`MSHIP_STATE_STORE` is rejected at startup.
+`mship start` sets the store for the whole cluster; `mship deploy` takes none and uses the head's.
+
+A password belongs in `MSHIP_REDIS_PASSWORD` on every node, not in the URI: the head forwards the URI to gateway and model replicas in `runtime_env`, which is plain-text cluster metadata, so the URI travels password-free and each node adds its own before connecting (percent-encoded, so `/`, `#`, `%` and friends in a password are safe). A password inside `--state-store`/`MSHIP_STATE_STORE` is rejected at startup.
 
 The Helm chart always sets `redis://…` in Kubernetes (with the password from its Secret as `MSHIP_REDIS_PASSWORD` on every pod); the same Redis also backs Ray GCS fault tolerance (chart's **Head-node HA** section) and keeps each gateway's committed version across a head restart, so routing carries on without a redeploy.
 
