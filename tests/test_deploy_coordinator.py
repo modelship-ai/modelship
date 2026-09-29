@@ -420,7 +420,9 @@ class TestCancel:
         coord = _ledger()
         await coord.submit(_request())
         queued = await coord.submit(_request())
-        assert await coord.cancel(queued["id"]) == {"cancelled": True, "message": f"deploy {queued['id']} cancelled"}
+        result = await coord.cancel(queued["id"])
+        assert (result["cancelled"], result["message"]) == (True, f"deploy {queued['id']} cancelled")
+        assert result["outcome"] is queued["outcome"]
         assert (await queued["outcome"])["state"] == "cancelled"
         await _until(lambda: workers.created)
         workers.created[0].finish()
@@ -431,7 +433,7 @@ class TestCancel:
         coord = _ledger()
         receipt = await coord.submit(_request())
         await _settle()
-        await coord.cancel(receipt["id"])
+        assert (await coord.cancel(receipt["id"]))["outcome"] is receipt["outcome"]
         assert await coord.is_cancelled(receipt["id"])
         assert coord._requests[receipt["id"]].cancel_seen
 

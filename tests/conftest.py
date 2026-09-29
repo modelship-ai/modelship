@@ -370,12 +370,12 @@ class _Deployer:
             _fail_deploy(log_path, result.returncode, expect_code)
         return log_path.read_text()
 
-    def stop(self, request_id: str, *, log_name: str, expect_code: int = 0) -> str:
-        """Runs `mship stop --deploy-id`; returns its log."""
+    def stop(self, request_id: str, *args: str, log_name: str, expect_code: int = 0) -> str:
+        """Runs `mship stop --deploy-id` with *args*; returns its log."""
         log_path = self._tmp / f"{log_name}.log"
         with open(log_path, "w") as log_file:
             result = subprocess.run(
-                [*MSHIP, "stop", "--deploy-id", request_id],
+                [*MSHIP, "stop", "--deploy-id", request_id, *args],
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 check=False,
