@@ -352,13 +352,16 @@ class TestDriverVerbs:
         mock_get.assert_called_once_with("outcome-ref")
         assert "Deploy r1 succeeded; the gateway is on version 1." in caplog.messages
 
-    @pytest.mark.parametrize("state", ["failed", "cancelled"])
-    def test_deploy_exits_nonzero_when_the_request_does_not_succeed(self, state, caplog):
+    @pytest.mark.parametrize(
+        ("state", "message"), [("failed", "Deploy r1 failed: boom"), ("cancelled", "Deploy r1 cancelled.")]
+    )
+    def test_deploy_exits_nonzero_when_the_request_does_not_succeed(self, state, message, caplog):
+        caplog.set_level(logging.INFO, logger="modelship")
         outcome = {"id": "r1", "state": state, "reason": "boom", "models": {}, "version": None}
         with pytest.raises(SystemExit) as exc:
             self._deploy(["--wait"], existing_apps={"modelship"}, outcome=outcome)
         assert exc.value.code == 1
-        assert f"Deploy r1 {state}: boom" in caplog.messages
+        assert message in caplog.messages
 
     def test_a_lost_deploy_coordinator_exits_nonzero(self, caplog):
         def lost(ref):
@@ -438,19 +441,21 @@ class TestSend:
 
 
 class TestCancelCommand:
-    def _cancel(self, result, *, clusters=frozenset({"10.0.0.1:6380"}), actor=True):
+    def _cancel(self, result, *, clusters=frozenset({"10.0.0.1:6380"}), actor=True, argv=(), waiting=None):
         from modelship import driver
         from modelship.deploy import serve_utils
 
         coordinator = MagicMock()
         coordinator.cancel.remote.return_value = result
+        rolled_back = {"id": "r1", "state": "cancelled", "reason": "", "models": {"a": "rolled back"}}
         with (
             patch.object(serve_utils, "local_ray_clusters", return_value=set(clusters)),
             patch.object(serve_utils, "attach_cluster"),
             patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator if actor else None),
-            patch("ray.get", side_effect=lambda value: value),
+            patch("ray.get", side_effect=waiting or (lambda value: rolled_back if value == "outcome-ref" else value)),
+            patch.object(driver.signal, "signal"),
         ):
-            driver._cancel(parse_args("stop", ["--deploy-id", "r1"]))
+            driver._cancel(parse_args("stop", ["--deploy-id", "r1", *argv]))
         return coordinator
 
     def test_cancels_the_deploy(self, caplog):
@@ -458,6 +463,70 @@ class TestCancelCommand:
         coordinator = self._cancel({"cancelled": True, "message": "deploy r1 cancelled"})
         coordinator.cancel.remote.assert_called_once_with("r1")
         assert "Deploy r1 cancelled." in caplog.messages
+
+    def test_wait_waits_for_the_rollback(self, caplog):
+        caplog.set_level(logging.INFO, logger="modelship")
+        result = {
+            "cancelled": True,
+            "message": "deploy r1 is being cancelled and rolled back",
+            "outcome": "outcome-ref",
+        }
+        self._cancel(result, argv=["--wait"])
+        assert caplog.messages[-2:] == ["  a: rolled back", "Deploy r1 cancelled."]
+
+    def test_wait_exits_nonzero_when_the_deploy_ends_otherwise(self, caplog):
+        result = {
+            "cancelled": True,
+            "message": "deploy r1 is being cancelled and rolled back",
+            "outcome": "outcome-ref",
+        }
+        failed = {"id": "r1", "state": "failed", "reason": "boom", "models": {}}
+
+        with pytest.raises(SystemExit) as exc:
+            self._cancel(result, argv=["--wait"], waiting=lambda value: failed if value == "outcome-ref" else value)
+        assert exc.value.code == 1
+        assert "Deploy r1 failed: boom" in caplog.messages
+
+    def test_wait_exits_nonzero_when_the_deploy_coordinator_is_lost(self, caplog):
+        result = {
+            "cancelled": True,
+            "message": "deploy r1 is being cancelled and rolled back",
+            "outcome": "outcome-ref",
+        }
+
+        def lost(value):
+            if value == "outcome-ref":
+                raise RayActorError()
+            return value
+
+        with pytest.raises(SystemExit) as exc:
+            self._cancel(result, argv=["--wait"], waiting=lost)
+        assert exc.value.code == 1
+        assert (
+            "Deploy r1 was lost: the deploy coordinator restarted, which rolls back what wasn't committed."
+            in caplog.messages
+        )
+
+    def test_a_signal_while_waiting_only_stops_waiting(self, caplog):
+        from modelship import driver
+
+        caplog.set_level(logging.INFO, logger="modelship")
+        result = {
+            "cancelled": True,
+            "message": "deploy r1 is being cancelled and rolled back",
+            "outcome": "outcome-ref",
+        }
+
+        def interrupted(value):
+            if value != "outcome-ref":
+                return value
+            handler = driver.signal.signal.call_args.args[1]
+            handler(signal.SIGINT, None)
+
+        with pytest.raises(SystemExit) as exc:
+            self._cancel(result, argv=["--wait"], waiting=interrupted)
+        assert exc.value.code == 130
+        assert f"Stopped waiting (signal {signal.SIGINT}); deploy r1 keeps rolling back." in caplog.messages
 
     def test_exits_nonzero_when_nothing_was_cancelled(self):
         with pytest.raises(SystemExit, match="no queued or running deploy r1"):

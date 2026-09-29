@@ -57,7 +57,7 @@ When in doubt, check OpenAI's reference for the exact route. Existing deviations
 - `mship start` creates this machine's Ray head (sized from `MSHIP_NODE_NUM_CPUS`/`MSHIP_NODE_NUM_GPUS`, auto-detected if unset; metrics on `--metrics-port`, default 8079), brings up Serve and the gateway, sends any `--config`/`--model` as a deploy request without waiting for it, stays running and tears the cluster down on exit. It refuses when any Ray node already runs on the machine.
 - `mship join --cluster HOST:PORT` starts this machine's Ray node as a worker, stays running and leaves on exit. Node only — no driver, no model changes.
 - `mship deploy` attaches to the cluster of a node on this machine, sends a deploy request to the deploy coordinator and exits (with `--wait`, waits for it to succeed or fail and exits with the outcome); it must run **on** a cluster node (Docker co-located / k8s RayJob / bare-metal node) and cannot attach from off-cluster. A failed request is rolled back; a signal only stops the `--wait`.
-- `mship stop --deploy-id ID` cancels a queued or running deploy request and rolls back what it submitted.
+- `mship stop --deploy-id ID` cancels a queued or running deploy request and rolls back what it submitted, then exits; with `--wait` it waits for the rollback and exits with the outcome (a signal only stops the wait).
 
 `start` and `deploy` share the model handling:
 

@@ -105,6 +105,9 @@ class _Ledger:
     def cancelled(self, request_id):
         return self.cancel
 
+    def rolling_back(self, request_id, gateway_name):
+        self.serve.events.append(("rolling back", request_id))
+
     def crash_looping(self, apps):
         return {app: reason for app, reason in self.crashing.items() if app in apps}
 
@@ -363,6 +366,12 @@ class TestRollsBack:
         assert outcome["state"] == "cancelled"
         assert outcome["models"] == {"a": "rolled back"}
         assert ("delete", _app_name(A)) in cluster.serve.events
+
+    def test_a_request_marks_itself_rolling_back_before_routing_back(self, cluster):
+        cluster.serve.scripts["a"] = [FAILED]
+        _run(cluster, [A])
+        rolling_back = cluster.serve.events.index(("rolling back", "r1"))
+        assert cluster.serve.events[rolling_back + 1] == ("reset", "0")
 
     def test_a_cancel_that_lands_while_switching_is_refused_at_commit(self, cluster):
         cluster.ledger.cancel_on_commit = True

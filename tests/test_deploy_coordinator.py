@@ -420,7 +420,9 @@ class TestCancel:
         coord = _ledger()
         await coord.submit(_request())
         queued = await coord.submit(_request())
-        assert await coord.cancel(queued["id"]) == {"cancelled": True, "message": f"deploy {queued['id']} cancelled"}
+        result = await coord.cancel(queued["id"])
+        assert (result["cancelled"], result["message"]) == (True, f"deploy {queued['id']} cancelled")
+        assert result["outcome"] is queued["outcome"]
         assert (await queued["outcome"])["state"] == "cancelled"
         await _until(lambda: workers.created)
         workers.created[0].finish()
@@ -431,7 +433,7 @@ class TestCancel:
         coord = _ledger()
         receipt = await coord.submit(_request())
         await _settle()
-        await coord.cancel(receipt["id"])
+        assert (await coord.cancel(receipt["id"]))["outcome"] is receipt["outcome"]
         assert await coord.is_cancelled(receipt["id"])
         assert coord._requests[receipt["id"]].cancel_seen
 
@@ -469,6 +471,50 @@ class TestCancel:
 
     async def test_an_unknown_request(self, workers):
         assert await _ledger().cancel("nope") == {"cancelled": False, "message": "no queued or running deploy nope"}
+
+    async def test_a_request_rolling_itself_back_cannot_be_cancelled(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.rolling_back(receipt["id"], "g")
+        result = await coord.cancel(receipt["id"])
+        assert result == {
+            "cancelled": False,
+            "message": f"deploy {receipt['id']} failed and is already being rolled back",
+        }
+        assert not await coord.is_cancelled(receipt["id"])
+
+    async def test_a_cancelled_request_rolling_back_can_be_cancelled_again(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.cancel(receipt["id"])
+        await coord.is_cancelled(receipt["id"])
+        await coord.rolling_back(receipt["id"], "g")
+        assert (await coord.cancel(receipt["id"]))["cancelled"]
+
+    async def test_a_worker_rolling_back_is_not_killed_for_a_cancel_it_missed(self, workers):
+        coord = _ledger()
+        coord._cancel_grace = 0.01
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.cancel(receipt["id"])
+        await coord.rolling_back(receipt["id"], "g")
+        await asyncio.sleep(0.05)
+        assert not workers.created[0].killed
+        workers.created[0].finish("failed")
+        assert (await receipt["outcome"])["state"] == "failed"
+
+    async def test_a_dead_workers_rollback_cannot_be_cancelled(self, workers):
+        coord = _ledger()
+        workers.hold = asyncio.Event()
+        receipt = await coord.submit(_request())
+        await _settle()
+        workers.kill(workers.created[0])
+        await _until(lambda: workers.rollbacks)
+        assert not (await coord.cancel(receipt["id"]))["cancelled"]
+        workers.hold.set()
+        assert (await receipt["outcome"])["state"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -544,6 +590,16 @@ class TestWorkerDeath:
         workers.hold.set()
         assert (await receipt["outcome"])["state"] == "failed"
         assert (await coord.routing_versions(["g"]))["g"]["apps"] == {"a": _app_name(_raw("a"))}
+
+    async def test_a_worker_that_dies_rolling_back_a_switch_waits_for_the_switch_back(self, workers):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.switch(receipt["id"], "g", [_raw("a")])
+        await coord.rolling_back(receipt["id"], "g")
+        workers.kill(workers.created[0])
+        assert (await receipt["outcome"])["state"] == "failed"
+        assert workers.rollbacks == [("g", True, 60.0)]
 
     async def test_a_worker_that_dies_after_the_commit_still_succeeds(self, workers):
         coord = _ledger()

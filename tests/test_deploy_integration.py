@@ -161,13 +161,11 @@ class TestCancel:
         assert _poll(partial(_running, "modelship", "up-model"), deadline_s=180), "the placeable model never came up"
         assert _answers("up-model", 404), "a model was routed before its deploy committed"
 
-        log = model_deployer.stop(request_id, log_name="stop-half-placeable")
+        log = model_deployer.stop(request_id, "--wait", log_name="stop-half-placeable")
         assert f"Deploy {request_id} is being cancelled and rolled back." in log
-        assert f"Deploy {request_id} cancelled: cancelled" in deploy.wait(expect_code=1)
-        assert _poll(
-            lambda: not _apps_for("modelship", "up-model") and not _apps_for("modelship", "never-model"),
-            deadline_s=60,
-        )
+        assert f"Deploy {request_id} cancelled." in log
+        assert not _apps_for("modelship", "up-model") and not _apps_for("modelship", "never-model")
+        assert f"Deploy {request_id} cancelled." in deploy.wait(expect_code=1)
 
     def test_an_unknown_deploy_cannot_be_cancelled(self, model_deployer):
         log = model_deployer.stop("nosuchdeploy", log_name="stop-unknown", expect_code=1)

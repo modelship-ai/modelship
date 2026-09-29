@@ -73,7 +73,8 @@ _DESCRIPTION = {
     "join": "Add this machine to a running cluster as a worker node. Stays running.",
     "deploy": "Change the models of the cluster running on this machine: sends the change and exits, or with --wait, "
     "waits for it to succeed or fail.",
-    "stop": "Cancel a deploy on the cluster running on this machine, rolling back what it has done so far.",
+    "stop": "Cancel a deploy on the cluster running on this machine, rolling back what it has done so far: sends the "
+    "cancel and exits, or with --wait, waits for the rollback.",
 }
 
 
@@ -94,6 +95,11 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
         _add_auth_arg(parser)
         _add_token_arg(parser)
         parser.add_argument("--deploy-id", required=True, help="The deploy to cancel, as `mship deploy` printed it")
+        parser.add_argument(
+            "--wait",
+            action="store_true",
+            help="Wait for the deploy to be rolled back, and exit with its outcome. A signal only stops the wait.",
+        )
     if command == "deploy":
         _add_token_arg(parser)
         parser.add_argument(

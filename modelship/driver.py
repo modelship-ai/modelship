@@ -129,9 +129,6 @@ def _join() -> None:
 
 
 def _deploy(args) -> None:
-    import ray
-    from ray.exceptions import ObjectLostError, RayActorError
-
     from modelship.deploy.serve_utils import (
         attach_cluster,
         get_existing_apps,
@@ -171,22 +168,11 @@ def _deploy(args) -> None:
         logger.info("Follow it in the head's log; cancel it with `mship stop --deploy-id %s`.", request_id)
         return
 
-    def _stop_waiting(sig, _frame) -> None:
-        logger.info(
-            "Stopped waiting (signal %s); deploy %s keeps running. Cancel it with `mship stop --deploy-id %s`.",
-            sig,
-            request_id,
-            request_id,
-        )
-        sys.exit(130)
-
-    _on_signals(_stop_waiting)
-    try:
-        outcome: dict = ray.get(receipt["outcome"])
-    except (RayActorError, ObjectLostError):
-        logger.error("Deploy %s was lost: the deploy coordinator restarted. Run the deploy again.", request_id)
-        sys.exit(1)
-    _log_outcome(outcome)
+    outcome = _wait_for_outcome(
+        receipt["outcome"],
+        stopped=f"deploy {request_id} keeps running. Cancel it with `mship stop --deploy-id {request_id}`.",
+        lost=f"Deploy {request_id} was lost: the deploy coordinator restarted. Run the deploy again.",
+    )
     if outcome["state"] != "succeeded":
         sys.exit(1)
 
@@ -229,12 +215,34 @@ def _send(args, gateway_name: str, serve_logging_config, coordinator) -> dict:
     return receipt
 
 
+def _wait_for_outcome(ref, stopped: str, lost: str) -> dict:
+    """Waits for a deploy's outcome and logs it. A signal stops the wait, logging *stopped*; a lost deploy
+    coordinator exits 1, logging *lost*."""
+    import ray
+    from ray.exceptions import ObjectLostError, RayActorError
+
+    def _stop_waiting(sig, _frame) -> None:
+        logger.info("Stopped waiting (signal %s); %s", sig, stopped)
+        sys.exit(130)
+
+    _on_signals(_stop_waiting)
+    try:
+        outcome: dict = ray.get(ref)
+    except (RayActorError, ObjectLostError):
+        logger.error(lost)
+        sys.exit(1)
+    _log_outcome(outcome)
+    return outcome
+
+
 def _log_outcome(outcome: dict) -> None:
     for model, result in sorted(outcome["models"].items()):
         logger.info("  %s: %s", model, result)
     if outcome["state"] == "succeeded":
         version = f"; the gateway is on version {outcome['version']}" if outcome["version"] else ""
         logger.info("Deploy %s succeeded%s.", outcome["id"], version)
+    elif outcome["state"] == "cancelled":
+        logger.info("Deploy %s cancelled.", outcome["id"])
     else:
         logger.error("Deploy %s %s: %s", outcome["id"], outcome["state"], outcome["reason"])
 
@@ -255,6 +263,15 @@ def _cancel(args) -> None:
     if not result["cancelled"]:
         sys.exit(f"error: {result['message']}.")
     logger.info("%s.", result["message"].capitalize())
+    if not args.wait:
+        return
+    outcome = _wait_for_outcome(
+        result["outcome"],
+        stopped=f"deploy {args.deploy_id} keeps rolling back.",
+        lost=f"Deploy {args.deploy_id} was lost: the deploy coordinator restarted, which rolls back what wasn't committed.",
+    )
+    if outcome["state"] != "cancelled":
+        sys.exit(1)
 
 
 def _on_signals(handler) -> None:
