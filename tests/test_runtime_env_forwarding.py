@@ -51,9 +51,9 @@ class TestStateStoreForwarding:
         with patch.dict(os.environ, {"MSHIP_STATE_STORE": uri, REDIS_PASSWORD_ENV: "pw"}, clear=True):
             assert state_store_env_var() == {"MSHIP_STATE_STORE": uri}
 
-    def test_nothing_to_forward_without_a_uri(self):
+    def test_the_default_is_forwarded_without_a_uri(self):
         with patch.dict(os.environ, {}, clear=True):
-            assert state_store_env_var() == {}
+            assert state_store_env_var() == {"MSHIP_STATE_STORE": "memory://"}
 
     def test_local_reader_applies_the_password(self):
         env = {"MSHIP_STATE_STORE": "redis://host:6379/0", REDIS_PASSWORD_ENV: "s3cret"}

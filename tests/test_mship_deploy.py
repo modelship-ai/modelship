@@ -302,6 +302,9 @@ class TestDriverVerbs:
         started.prepare_state_store.assert_called_once_with()
         assert started.gateway.call_args.args[3] == {"MSHIP_STATE_STORE": "redis://head:6379/0"}
 
+    def test_start_gives_the_gateway_the_default_state_store_explicitly(self):
+        assert self._start().gateway.call_args.args[3] == {"MSHIP_STATE_STORE": "memory://"}
+
     def test_deploy_refuses_without_a_local_cluster(self):
         from modelship import driver
         from modelship.deploy import serve_utils
@@ -871,6 +874,18 @@ class TestBuildDeploymentOptions:
         env_vars = build_deployment_options(config, env)["ray_actor_options"]["runtime_env"]["env_vars"]
         assert env_vars["MSHIP_STATE_STORE"] == "redis://head:6379/0"
         assert env_vars["MSHIP_PREFLIGHT"] == "false"
+
+    def test_the_default_state_store_is_forwarded_explicitly(self, monkeypatch):
+        monkeypatch.delenv("MSHIP_STATE_STORE", raising=False)
+        config = ModelshipModelConfig(
+            name="test-model",
+            model="some-model",
+            usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
+            num_gpus=1,
+        )
+        env_vars = build_deployment_options(config, {})["ray_actor_options"]["runtime_env"]["env_vars"]
+        assert env_vars["MSHIP_STATE_STORE"] == "memory://"
 
     def test_unset_passthrough_env_vars_not_forwarded(self, monkeypatch):
         # Unset on the driver → not forwarded, so the replica keeps its own default.
