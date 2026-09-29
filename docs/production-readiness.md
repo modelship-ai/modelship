@@ -79,7 +79,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 - [ ] **SLO/SLI definitions** — define target availability and latency for each endpoint type
 - [x] **Structured logging (JSON)** — `MSHIP_LOG_FORMAT=json` for log aggregation (ELK/Loki/Splunk)
 - [x] **Request-ID correlation** — trace a request from gateway through Ray actor boundaries via `contextvars`
-- [x] **Log level configuration** — `MSHIP_LOG_LEVEL` controls app logs; `TRACE` enables library debug logs
+- [x] **Log level configuration** — `MSHIP_LOG_LEVEL` controls app logs; `DEBUG` and `TRACE` enable library debug logs
 - [x] **Syslog support** — `--log-target syslog://host:port` ships logs to a remote syslog server (UDP or TCP)
 - [x] **OpenTelemetry log export** — `--otel-endpoint` ships logs (and enables Ray traces) via OTLP to any OTel collector
 

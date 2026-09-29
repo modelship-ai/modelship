@@ -18,11 +18,11 @@ from modelship.deploy.config import resolve_all_model_sources
 from modelship.deploy.ledger import DeployRequest, to_config
 from modelship.deploy.strategy import Plan, gateway_apps, plan_request, proposed_models, submit_app, unnamed_apps
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
-from modelship.logging import configure_logging, get_logger
+from modelship.logging import configure_logging, get_logger, serve_logging_config
 from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
 from modelship.state import state_store_env_var
 from modelship.utils import head_node_options
-from modelship.utils.runtime_env import COMMON_ENV_VARS, build_env_vars
+from modelship.utils.runtime_env import cluster_env_vars
 
 logger = get_logger("deploy")
 
@@ -313,7 +313,7 @@ class Run:
     def _submit(self, name: str, item: _Add) -> None:
         request = self._request
         try:
-            submit_app(item.config, request.gateway, request.serve_logging_config, request.env)
+            submit_app(item.config, request.gateway, serve_logging_config(), request.env)
         except Exception as e:
             self._failed_attempt(name, item, f"{type(e).__name__}: {e}")
 
@@ -418,8 +418,8 @@ class DeployWorker:
 
 def create_worker(coordinator):
     """A deploy worker on the head node; source checks need the replicas' cache paths, and the replicas get its
-    state store."""
+    cluster-wide settings and state store."""
     return DeployWorker.options(
-        runtime_env={"env_vars": build_cache_env_vars() | build_env_vars(COMMON_ENV_VARS) | state_store_env_var()},
+        runtime_env={"env_vars": build_cache_env_vars() | cluster_env_vars() | state_store_env_var()},
         **head_node_options(),
     ).remote(coordinator)

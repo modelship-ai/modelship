@@ -9,6 +9,8 @@ from logging.handlers import SysLogHandler
 from unittest.mock import patch
 
 import pytest
+from ray.serve._private.logging_utils import configure_component_logger
+from ray.serve.schema import LoggingConfig
 
 from modelship.logging import (
     _LIB_ENV_VARS,
@@ -118,6 +120,18 @@ class TestConfigureLogging:
         assert logging.getLogger("modelship").level == logging.DEBUG
         for name in _LIB_LOGGERS:
             assert logging.getLogger(name).level == logging.DEBUG
+
+    @patch.dict(os.environ, {"MSHIP_LOG_LEVEL": "DEBUG"})
+    def test_a_replica_resets_serves_logger_to_its_nodes_level(self):
+        # Serve applies the app's LoggingConfig before the replica's __init__ runs configure_logging.
+        configure_component_logger(
+            component_name="m",
+            component_id="r",
+            logging_config=LoggingConfig(log_level="CRITICAL"),
+            stream_handler_only=True,
+        )
+        configure_logging()
+        assert logging.getLogger("ray.serve").level == logging.DEBUG
 
     def test_lib_loggers_get_modelship_handler(self):
         # Also covers the double-print risk: a pre-existing handler (e.g. Ray's

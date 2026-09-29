@@ -20,7 +20,7 @@ from ray import exceptions as ray_exceptions
 from modelship.logging import get_logger
 from modelship.state.base import JsonValue, StateStore, StateStoreUnavailableError, normalize_prefix
 from modelship.utils import head_node_options
-from modelship.utils.runtime_env import MEMORY_STORE_ENV_VARS, build_env_vars
+from modelship.utils.runtime_env import MEMORY_STORE_ENV_VARS, build_env_vars, cluster_env_vars
 
 logger = get_logger("startup")
 
@@ -176,7 +176,7 @@ def get_or_create_memory_store_actor():
         lifetime="detached",
         num_cpus=0,
         max_restarts=-1,
-        runtime_env={"env_vars": build_env_vars(MEMORY_STORE_ENV_VARS)},
+        runtime_env={"env_vars": build_env_vars(MEMORY_STORE_ENV_VARS) | cluster_env_vars()},
         **head_node_options(),
     ).remote()
 

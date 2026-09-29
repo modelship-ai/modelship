@@ -31,6 +31,7 @@ _ARG_TO_ENV: dict[str, str] = {
     "cache_dir": "MSHIP_CACHE_DIR",
     "node_cache_dir": "MSHIP_NODE_CACHE_DIR",
     "state_store": "MSHIP_STATE_STORE",
+    "log_level": "MSHIP_LOG_LEVEL",
     "log_format": "MSHIP_LOG_FORMAT",
     "log_target": "MSHIP_LOG_TARGET",
     "otel_endpoint": "OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -86,8 +87,10 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
         _add_join_args(parser)
     if command in ("start", "join"):
         _add_node_args(parser)
+        _add_node_logging_args(parser)
     if command == "start":
         _add_head_args(parser)
+        _add_logging_metrics_args(parser)
     if command in ("start", "deploy"):
         _add_auth_arg(parser)
         _add_cluster_args(parser)
@@ -117,7 +120,6 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
                 "stop_start: drop old first, then deploy new (brief unavailability, no overlap)."
             ),
         )
-    _add_logging_args(parser)
     if command in ("start", "deploy"):
         _add_model_args(parser)
 
@@ -315,18 +317,40 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
             "expiry (env: MSHIP_RESPONSES_TTL_S, default: 2592000 = 30 days)"
         ),
     )
-    parser.add_argument("--no-metrics", action="store_true", default=None, help="Disable metrics (env: MSHIP_METRICS)")
 
 
-def _add_logging_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--log-format", choices=["text", "json"], help="Log format (env: MSHIP_LOG_FORMAT)")
+def _add_logging_metrics_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--no-metrics",
+        action="store_true",
+        default=None,
+        help="Disable metrics on the whole cluster (env: MSHIP_METRICS)",
+    )
+    parser.add_argument(
+        "--log-format", choices=["text", "json"], help="Log format for the whole cluster (env: MSHIP_LOG_FORMAT)"
+    )
+
+
+def _add_node_logging_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--log-level",
+        type=str.upper,
+        choices=["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Log level of this node's actors; library levels follow it (env: MSHIP_LOG_LEVEL, default: INFO)",
+    )
     parser.add_argument(
         "--log-target",
-        help="Log target: 'console' (default) or syslog URI e.g. syslog://host:514, syslog+tcp://host:514 (env: MSHIP_LOG_TARGET)",
+        help=(
+            "Log target of this node's actors: 'console' (default) or syslog URI e.g. syslog://host:514, "
+            "syslog+tcp://host:514 (env: MSHIP_LOG_TARGET)"
+        ),
     )
     parser.add_argument(
         "--otel-endpoint",
-        help="OpenTelemetry OTLP endpoint e.g. http://collector:4317 (env: OTEL_EXPORTER_OTLP_ENDPOINT)",
+        help=(
+            "OpenTelemetry OTLP endpoint of this node's actors e.g. http://collector:4317 "
+            "(env: OTEL_EXPORTER_OTLP_ENDPOINT)"
+        ),
     )
 
 

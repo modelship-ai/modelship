@@ -8,7 +8,7 @@ from modelship.deploy.capabilities import deployment_capability_resources
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.state import state_store_env_var
-from modelship.utils.runtime_env import MODEL_ENV_VARS, build_env_vars
+from modelship.utils.runtime_env import MODEL_ENV_VARS, build_env_vars, cluster_env_vars
 
 logger = get_logger("startup")
 
@@ -59,10 +59,10 @@ def deploy_env_vars() -> dict[str, str]:
 
 def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] | None = None) -> dict:
     """kwargs for `Deployment.options(**...)`. *env* replaces this process's per-deploy settings; the cache
-    paths and the state store are always this process's, the deploy worker on the head."""
+    paths, cluster-wide settings and state store are always this process's, the deploy worker on the head."""
     env_vars = build_cache_env_vars()
     env_vars.update(deploy_env_vars() if env is None else env)
-    env_vars.update(state_store_env_var())
+    env_vars.update(cluster_env_vars() | state_store_env_var())
 
     runtime_env: dict = {"env_vars": env_vars}
 

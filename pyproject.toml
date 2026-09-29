@@ -221,6 +221,7 @@ markers = [
     "deploy: integration tests that exercise mship deploy end to end (additive, still coming up, two gateways)",
     "cluster_join: integration test that exercises the --address/--token multi-node cluster join",
     "fractional_gpu_sharing: integration test that exercises two loaders sharing one physical GPU via fractional num_gpus",
+    "node_logging: integration test that exercises per-node logging on a replica scheduled on a joined node",
 ]
 
 [tool.pyright]

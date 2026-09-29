@@ -6,6 +6,8 @@ import socket
 from logging.handlers import SysLogHandler
 from urllib.parse import urlparse
 
+from modelship.utils.runtime_env import env_setting
+
 request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 # Caller-identity fields for log correlation (see modelship.openai.auth.identity_key).
 # identity_tier records which resolution tier produced the identity ("header" /
@@ -79,8 +81,6 @@ _LIB_LOGGERS = (
 # Setting these ensures the level sticks even when a library re-configures
 # its loggers after our configure_logging() call (e.g. vLLM's init_logger).
 _LIB_ENV_VARS = {
-    "RAY_LOG_LEVEL": "ray",
-    "RAY_SERVE_LOG_LEVEL": "ray",
     "VLLM_LOGGING_LEVEL": "vllm",
     "TRANSFORMERS_VERBOSITY": "transformers",
     "DIFFUSERS_VERBOSITY": "diffusers",
@@ -113,6 +113,13 @@ def get_lib_log_config() -> tuple[int, str]:
     return compute_lib_level(logging.getLogger("modelship").getEffectiveLevel())
 
 
+def serve_logging_config():
+    """Serve's LoggingConfig at this process's library level."""
+    from ray.serve.schema import LoggingConfig
+
+    return LoggingConfig(log_level=get_lib_log_config()[1])
+
+
 def propagate_lib_log_env(level_name: str | None = None) -> None:
     """Set library-native log env vars from MSHIP_LOG_LEVEL.
 
@@ -120,7 +127,7 @@ def propagate_lib_log_env(level_name: str | None = None) -> None:
     pick up the right level. Uses setdefault so explicit user overrides win.
     Safe to call multiple times.
     """
-    name = (level_name or os.environ.get("MSHIP_LOG_LEVEL", "INFO")).upper()
+    name = (level_name or env_setting("MSHIP_LOG_LEVEL")).upper()
     app_level = _resolve_app_level(name)
     _, lib_level_name = compute_lib_level(app_level)
     for env_var, lib_name in _LIB_ENV_VARS.items():
@@ -159,9 +166,9 @@ def configure_logging() -> None:
         return
     _configured = True
 
-    level_name = os.environ.get("MSHIP_LOG_LEVEL", "INFO").upper()
-    log_format = os.environ.get("MSHIP_LOG_FORMAT", "text").lower()
-    log_target = os.environ.get("MSHIP_LOG_TARGET", "console").lower()
+    level_name = env_setting("MSHIP_LOG_LEVEL").upper()
+    log_format = env_setting("MSHIP_LOG_FORMAT").lower()
+    log_target = env_setting("MSHIP_LOG_TARGET").lower()
 
     app_level = _resolve_app_level(level_name)
     lib_level, _ = compute_lib_level(app_level)
@@ -185,7 +192,7 @@ def configure_logging() -> None:
     root_logger.addHandler(handler)
 
     # OpenTelemetry: add an OTLP log exporter as a second handler when configured.
-    otel_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    otel_endpoint = env_setting("OTEL_EXPORTER_OTLP_ENDPOINT")
     if otel_endpoint:
         _setup_otel(root_logger, otel_endpoint, app_level)
 

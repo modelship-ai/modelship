@@ -20,9 +20,9 @@ Both APIs expose the same ``inc`` / ``set`` / ``observe`` surface, so the no-op
 stubs below cover either and call sites stay identical.
 """
 
-import os
+from modelship.utils.runtime_env import env_setting
 
-_ENABLED = os.environ.get("MSHIP_METRICS", "true").lower() == "true"
+_ENABLED = env_setting("MSHIP_METRICS").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # No-op metric stubs (used when metrics are disabled)
