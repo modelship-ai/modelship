@@ -7,7 +7,8 @@ Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `m
 `mship start` starts a cluster on this machine — its head node, the API gateway and any models
 given — and stays running. `mship join` adds this machine to a running cluster as a worker node
 and stays running. `mship deploy` changes the models of the cluster running on this machine: it
-sends a deploy request, waits for it to succeed or fail, and exits with the outcome. `mship stop
+sends a deploy request and exits; with `--wait` it waits for the request to succeed or fail and exits with
+the outcome. `mship stop
 --deploy-id ID` cancels a deploy request, rolling back what it submitted. Each takes the arguments
 marked for it (env vars work as fallbacks; CLI wins over env):
 
@@ -29,6 +30,7 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--prune-ray-sessions` | start, join | `MSHIP_PRUNE_RAY_SESSIONS` | `true` | At node startup, delete stale `session_*` dirs left under the Ray temp root by previous, no-longer-running nodes. A live node's session is always kept |
 | `--reconcile` | start, deploy | — | `false` | Make the cluster match the config: add new models, remove dropped ones, replace changed ones (vs. the default additive union). With no `--config`, redeploys this gateway's committed models that are missing (self-heal) |
 | `--replace-strategy` | deploy | — | `blue_green` | How to replace a changed model: `blue_green` (deploy new before dropping old, no request loss) or `stop_start` (drop old first, brief unavailability) |
+| `--wait` | deploy | — | `false` | Wait for the deploy request to succeed or fail and exit with its outcome (`0` succeeded, `1` failed or cancelled). A signal only stops the wait; `mship stop --deploy-id` cancels. Without it, `deploy` exits once the request is queued, and the outcome shows in the head's log |
 | `--deploy-id` | stop | — | — | The deploy request to cancel, as `mship deploy` printed it. A queued request is dropped; a running one is rolled back, models already up included. A request that has committed can't be cancelled |
 | `--cache-dir` | start, join | `MSHIP_CACHE_DIR` | `/.cache` | Base cache directory for model weights; may be shared storage |
 | `--node-cache-dir` | start, join | `MSHIP_NODE_CACHE_DIR` | `$MSHIP_HOME/node-cache` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer). Must not be shared storage |

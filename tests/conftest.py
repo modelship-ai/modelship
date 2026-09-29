@@ -308,7 +308,7 @@ class _DeployProcess:
         self._log_path = log_path
         self._log_file = open(log_path, "w")  # noqa: SIM115 — closed in wait()
         self._proc = subprocess.Popen(
-            [*MSHIP, "deploy", *args], stdout=self._log_file, stderr=subprocess.STDOUT, start_new_session=True
+            [*MSHIP, "deploy", "--wait", *args], stdout=self._log_file, stderr=subprocess.STDOUT, start_new_session=True
         )
 
     def log(self) -> str:
@@ -359,12 +359,12 @@ class _Deployer:
         self._current = None
 
     def run(self, *args: str, log_name: str, expect_code: int = 0) -> str:
-        """Runs `mship deploy` with exactly *args*; returns its log, failing the test on any other exit code."""
+        """Runs `mship deploy --wait` with *args*; returns its log, failing the test on any other exit code."""
         self._current = None
         log_path = self._tmp / f"{log_name}.log"
         with open(log_path, "w") as log_file:
             result = subprocess.run(
-                [*MSHIP, "deploy", *args], stdout=log_file, stderr=subprocess.STDOUT, check=False, timeout=900
+                [*MSHIP, "deploy", "--wait", *args], stdout=log_file, stderr=subprocess.STDOUT, check=False, timeout=900
             )
         if result.returncode != expect_code:
             _fail_deploy(log_path, result.returncode, expect_code)
@@ -388,7 +388,7 @@ class _Deployer:
         return log_path.read_text()
 
     def spawn(self, *args: str, log_name: str) -> _DeployProcess:
-        """Starts `mship deploy` with exactly *args* in the background."""
+        """Starts `mship deploy --wait` with *args* in the background."""
         self._current = None
         return _DeployProcess(list(args), self._tmp / f"{log_name}.log")
 
