@@ -1,8 +1,5 @@
-"""Same-box integration test for gateway autoscaling: load past its target scales the gateway out, and the
-new replica serves the deployed model.
-
-Its own throwaway `mship start` on distinct ports + RAY_TMPDIR; only ever signals its own process, never `ray stop`.
-"""
+"""Runs its own throwaway `mship start` on distinct ports + RAY_TMPDIR; only ever signals its own process, never
+`ray stop`."""
 
 import os
 import shutil
