@@ -78,15 +78,14 @@ models:
         num_gpus: 1
 ```
 
-Gated/private weights need a Hugging Face token; gateway auth needs API keys:
+Gated/private weights need a Hugging Face token:
 
 ```yaml
 secrets:
   huggingfaceToken: "hf_..."   # mounted as HF_TOKEN
-  apiKeys: "sk-local-1,sk-local-2"
 ```
 
-(Or reference an existing Secret with keys `HF_TOKEN` / `MSHIP_API_KEYS` via
+(Or reference an existing Secret with key `HF_TOKEN` via
 `secrets.existingSecret`.)
 
 ## Topology
@@ -255,7 +254,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `gateway.autoscaling.minReplicas` / `maxReplicas` | `1` / `4` | Range the API gateway autoscales in; a `minReplicas` of 2 or more (with ≥1 worker) gives routing/ingress HA |
 | `gateway.autoscaling.targetOngoingRequests` | `64` | Ongoing requests per gateway replica that autoscaling aims for |
 | `gateway.maxOngoingRequests` | `1024` | Most requests one gateway replica handles at once |
-| `secrets.huggingfaceToken` / `secrets.apiKeys` | `""` | HF token / gateway API keys |
+| `secrets.huggingfaceToken` | `""` | HF token |
 | `cache.size` / `cache.accessModes` | `100Gi` / `[ReadWriteOnce]` | Shared weight cache |
 | `nodeCache.sizeLimit` | `""` (uncapped) | Per-pod compile-cache emptyDir; a pod over the cap is evicted |
 | `workerGroups` | `[]` | Worker pool layout (a list — set the full set; copy the example in `values.yaml`) |

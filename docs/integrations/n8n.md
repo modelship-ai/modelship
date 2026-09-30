@@ -10,8 +10,8 @@ takes an OpenAI credential with a configurable **Base URL**:
 
 1. Create a new credential of type **OpenAI API**.
 2. Set **Base URL** to `http://<modelship-host>:8000/modelship/v1`.
-3. Set **API Key** to a real key if `MSHIP_API_KEYS` is configured, or any
-   non-empty placeholder if not.
+3. Set **API Key** to any non-empty placeholder, or to a key your auth layer in
+   front of Modelship accepts.
 4. Use that credential in the **OpenAI Chat Model** node and set **Model** to
    a name from your `models.yaml`.
 
@@ -26,8 +26,8 @@ use the **HTTP Request** node:
 
 - **Method:** `POST`
 - **URL:** `http://<modelship-host>:8000/modelship/v1/responses`
-- **Authentication:** Generic → Header Auth, header `Authorization` = `Bearer
-  <key>` (if `MSHIP_API_KEYS` is set)
+- **Authentication:** none, or Generic → Header Auth, header `Authorization` =
+  `Bearer <key>` if your auth layer in front of Modelship needs one
 - **Body (JSON):**
 
 ```json

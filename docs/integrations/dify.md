@@ -7,8 +7,8 @@
    **OpenAI-API-compatible** provider (Dify lists this as a distinct provider
    type from "OpenAI").
 2. Set the **API Base** to `http://<modelship-host>:8000/modelship/v1`.
-3. Set the **API Key** to a real key if `MSHIP_API_KEYS` is configured, or any
-   non-empty placeholder if not.
+3. Set the **API Key** to any non-empty placeholder, or to a key your auth layer
+   in front of Modelship accepts.
 4. Add a model entry for each model name in your `models.yaml` (Dify needs
    the model registered explicitly per provider — it doesn't auto-discover
    via `GET /v1/models`), matching its type (chat, embeddings, etc.) to the

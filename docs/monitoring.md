@@ -299,7 +299,6 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 | `ray_modelship_request_in_progress` | Gauge | `model`, `endpoint`, `gateway` | Currently processing requests |
 | `ray_modelship_client_disconnects_total` | Counter | `model`, `endpoint`, `gateway` | Client disconnected before response completed |
 | `ray_modelship_stream_chunks_total` | Counter | `model`, `gateway` | Streaming chunks emitted |
-| `ray_modelship_auth_failures_total` | Counter | `reason`, `gateway` | Requests rejected for invalid/missing API key (`reason`: `missing`, `invalid`) |
 
 ### Model Deployment
 

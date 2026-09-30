@@ -25,7 +25,7 @@ You can expect an initial response within **72 hours**. If a fix is warranted, a
 
 This project is a self-hosted server intended to run on private infrastructure. Relevant security concerns include:
 
-- Unauthenticated API access — API key auth (`MSHIP_API_KEYS`) is optional and off by default; users are expected to enable it or handle auth at the network level
+- Unauthenticated API access — the gateway doesn't authenticate callers; users are expected to put an auth layer in front of it or restrict it at the network level
 - Dependency vulnerabilities in vLLM, Ray, or other upstream packages
 - Docker image vulnerabilities
 - Prompt injection or model abuse vectors if the API is publicly exposed

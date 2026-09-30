@@ -45,7 +45,6 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--no-metrics` | start | `MSHIP_METRICS` | enabled | Disable modelship's own Prometheus metrics on the whole cluster. Ray's node exporter has no off switch and falls back to a random port |
 | `--metrics-port` | start, join | `MSHIP_METRICS_PORT` | `8079` on start, random on join | This node's Prometheus metrics port. A joiner's random port is listed in the head's service-discovery file; pin it where the scraper targets a fixed port, e.g. a Kubernetes PodMonitor |
 | `--no-preflight` | start, deploy | `MSHIP_PREFLIGHT` | enabled | Disable preflight hardware auto-sizing; models run on loader/library defaults plus explicit config. Useful for benchmarking |
-| `--api-keys` | start, join | `MSHIP_API_KEYS` | — | Comma-separated API keys that gateway replicas on this node accept. A replica reads them from its own node, so set them on every node |
 | `--trusted-identity-header` | start, deploy | `MSHIP_TRUSTED_IDENTITY_HEADER` | — | Header name (e.g. `X-Consumer-Id`) a fronting credentials layer sets with a caller identity it already resolved and authorized. See [Trusted identity header](#trusted-identity-header) |
 | `--max-request-body-bytes` | start, deploy | `MSHIP_MAX_REQUEST_BODY_BYTES` | `52428800` | Max request body size in bytes |
 | `--responses-ttl-s` | start, deploy | `MSHIP_RESPONSES_TTL_S` | `2592000` | TTL in seconds for stored `/v1/responses` conversation state; `<=0` disables expiry |
@@ -151,7 +150,7 @@ mship deploy --config config/models.yaml --reconcile   # make the cluster match 
 
 ## Trusted Identity Header
 
-modelship never authenticates callers itself — that's `MSHIP_API_KEYS`' job, and it stops at "is this caller allowed at all." There is no login, permissions, or per-model access control, and none is planned; that belongs to whatever sits in front (nginx, Kong, LiteLLM, a custom credentials layer). `MSHIP_TRUSTED_IDENTITY_HEADER` lets that layer forward a caller identity it already resolved (a consumer/tenant id), used for log correlation and for scoping server-side state (see [Stateful responses](#stateful-responses)) — never for authorization.
+modelship never authenticates callers. There is no login, API keys, permissions, or per-model access control, and none is planned; that belongs to whatever sits in front (nginx, Kong, LiteLLM, a custom credentials layer). `MSHIP_TRUSTED_IDENTITY_HEADER` lets that layer forward a caller identity it already resolved (a consumer/tenant id), used for log correlation and for scoping server-side state (see [Stateful responses](#stateful-responses)) — never for authorization.
 
 The header's value is trusted **unconditionally** — no signature check. Safe only if both hold:
 
@@ -160,7 +159,7 @@ The header's value is trusted **unconditionally** — no signature check. Safe o
 
 For stronger guarantees than network isolation, add mTLS on that internal hop (service-mesh sidecar, Kong, a local proxy) so the peer's certificate — not just placement — proves the request's origin. modelship does not implement or verify certificates itself.
 
-If unset (the default), modelship falls back to hashing the matched `MSHIP_API_KEYS` entry, and further to a single shared bucket if no key matches (or auth is disabled).
+If it's unset (the default), or a request doesn't carry the header, the caller lands in a single shared identity bucket.
 
 ## Fields
 
@@ -650,7 +649,7 @@ Send `"store": false` to opt out of storage — no id to continue from. An unkno
 
 `"background": true` returns `status: "queued"` immediately instead of blocking; poll `GET` until `status` reaches a terminal value (`completed`/`incomplete`/`failed`/`cancelled`). Requires `store`. Combined with `"stream": true`, the initial call instead streams live, and a disconnected client can resume with `GET /v1/responses/{id}?stream=true&starting_after=<last sequence_number seen>` — the replay buffer is short-lived (`MSHIP_RESPONSES_STREAM_BUFFER_TTL_S`, default 600s). Use `redis://` for production background use, since a background response must outlive the request that created it.
 
-Conversations are scoped to the caller's identity, so one caller can never read or continue another's. **With no auth configured, every caller shares the single `unscoped` identity** — one conversation pool. Set `MSHIP_API_KEYS` or `MSHIP_TRUSTED_IDENTITY_HEADER` (see [Trusted identity header](#trusted-identity-header)) before serving more than one user.
+Conversations are scoped to the caller's identity, so one caller can never read or continue another's. **Without a trusted identity header, every caller shares the single `unscoped` identity** — one conversation pool. Set `MSHIP_TRUSTED_IDENTITY_HEADER` (see [Trusted identity header](#trusted-identity-header)) before serving more than one user.
 
 | Variable | Description | Default |
 |---|---|---|

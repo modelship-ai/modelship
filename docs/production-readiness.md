@@ -44,7 +44,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 #### Security
 
-- [x] **API authentication layer** — API key auth at the gateway level via `MSHIP_API_KEYS` env var; OpenAI-compatible `Authorization: Bearer <key>` header
+- [x] **API authentication layer** — delegated to the layer in front of the gateway (nginx, Kong, LiteLLM); modelship takes the caller identity it resolved from `MSHIP_TRUSTED_IDENTITY_HEADER`
 - [ ] **Rate limiting** — per-user/IP/model throttling to prevent GPU resource monopolization
 - [x] **Input size limits** — coarse payload size limit at the gateway (`MSHIP_MAX_REQUEST_BODY_BYTES`, default 50 MB)
 - [ ] **Per-model context validation** — no loader validates a request's prompt length against the model's context before inference
