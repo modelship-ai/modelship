@@ -11,7 +11,7 @@ from modelship.utils.runtime_env import env_setting
 request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 # Caller-identity fields for log correlation (see modelship.openai.auth.identity_key).
 # identity_tier records which resolution tier produced the identity ("header" /
-# "api_key" / "unscoped") so an unexpected shift to "unscoped" — e.g. a fronting
+# "unscoped") so an unexpected shift to "unscoped" — e.g. a fronting
 # proxy that stopped setting the trusted header — is visible in logs.
 identity_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("identity", default=None)
 identity_tier_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("identity_tier", default=None)

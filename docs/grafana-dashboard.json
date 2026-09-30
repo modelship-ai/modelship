@@ -123,38 +123,12 @@
       ]
     },
     {
-      "title": "Auth Failures",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 16,
-        "y": 5
-      },
-      "id": 6,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "targets": [
-        {
-          "expr": "sum(rate(ray_modelship_auth_failures_total{gateway=~\"$gateway\"}[5m])) by (reason)",
-          "legendFormat": "{{ reason }}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps"
-        }
-      }
-    },
-    {
       "title": "Client Disconnects",
       "type": "timeseries",
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 20,
+        "w": 8,
+        "x": 16,
         "y": 5
       },
       "id": 5,

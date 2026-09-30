@@ -34,7 +34,7 @@ from modelship.metrics import (
     STREAM_CHUNKS_TOTAL,
     stamp_gateway,
 )
-from modelship.openai.auth import ApiKeyMiddleware, check_ws_auth, get_api_keys, resolve_identity
+from modelship.openai.auth import resolve_identity
 from modelship.openai.mcp import loop as mcp_loop
 from modelship.openai.protocol import (
     TERMINAL_EVENT_TYPES,
@@ -110,10 +110,6 @@ def build_app():
 
     max_body_bytes = int(os.environ.get("MSHIP_MAX_REQUEST_BODY_BYTES", _DEFAULT_MAX_BODY_BYTES))
     app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=max_body_bytes)
-
-    api_keys = get_api_keys()
-    if api_keys:
-        app.add_middleware(ApiKeyMiddleware, api_keys=api_keys)
 
     @app.exception_handler(RequestValidationError)
     async def log_validation_error(request: Request, exc: RequestValidationError):
@@ -201,11 +197,6 @@ class ModelshipAPI:
         configure_logging()
         max_body_bytes = int(os.environ.get("MSHIP_MAX_REQUEST_BODY_BYTES", _DEFAULT_MAX_BODY_BYTES))
         logger.info("Request body limit: %.4g MiB", max_body_bytes / 1024**2)
-        api_keys = get_api_keys()
-        if api_keys:
-            logger.info("API key authentication enabled (%d key(s))", len(api_keys))
-        else:
-            logger.warning("API key authentication disabled (MSHIP_API_KEYS not set)")
         # model_name -> (app_name -> handle), keyed by app_name so _drop_apps can drop one deployment.
         self.models: dict[str, dict[str, DeploymentHandle]] = {}
         self.model_list: list[OpenAiModelCard] = []
@@ -727,9 +718,6 @@ class ModelshipAPI:
         turns. Each frame in is a `{"type": "response.create", ...}` body; each
         frame out is one raw event dict (`json.dumps`d, no SSE framing, no `[DONE]`).
         """
-        # BaseHTTPMiddleware skips websocket connections, so auth runs here, before accept().
-        if not await check_ws_auth(websocket):
-            return
         await websocket.accept()
         identity = self._set_identity(websocket)
         headers = dict(websocket.headers)

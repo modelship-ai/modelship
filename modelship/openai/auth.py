@@ -1,24 +1,12 @@
 import hashlib
-import hmac
 import os
 import re
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import HTTPConnection, Request
-from starlette.responses import JSONResponse
-from starlette.websockets import WebSocket
+from starlette.requests import HTTPConnection
 
-from modelship.logging import get_logger
-from modelship.metrics import AUTH_FAILURES_TOTAL
-
-logger = get_logger("api.auth")
-
-_PUBLIC_PATHS = {"/health"}
-
-# Sentinel returned by identity_key() when no identity is resolvable (no trusted
-# header, no matched API key). Deliberately not hash-shaped (a sha256 hex digest
-# is 64 lowercase hex chars) so it can never collide with a real identity value.
-# Every caller with no resolvable identity shares this one bucket.
+# Sentinel returned by identity_key() when no trusted header resolves an identity.
+# Deliberately not hash-shaped (a sha256 hex digest is 64 lowercase hex chars) so it
+# can never collide with a real identity value. Every such caller shares this one bucket.
 UNSCOPED_IDENTITY = "unscoped"
 
 # Charset a trusted-header identity value must match to be used raw (as a log
@@ -28,86 +16,11 @@ UNSCOPED_IDENTITY = "unscoped"
 _SAFE_IDENTITY_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9_.:-]{1,128}$")
 
 
-# (raw env string, parsed value) caches for get_api_keys()/get_trusted_identity_header().
+# (raw env string, parsed value) cache for get_trusted_identity_header().
 # Keyed on the raw string rather than parsed once at import time so tests using
 # patch.dict(os.environ, ...) still see up-to-date values with no manual cache clearing —
 # the cache only pays off across the many requests within one unchanging-env process.
-_api_keys_cache: tuple[str, set[str]] | None = None
 _trusted_header_cache: tuple[str, str | None] | None = None
-
-
-class ApiKeyMiddleware(BaseHTTPMiddleware):
-    """Validates ``Authorization: Bearer <key>`` against a set of allowed API keys."""
-
-    def __init__(self, app, api_keys: set[str]):
-        super().__init__(app)
-        self.api_keys = api_keys
-
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path in _PUBLIC_PATHS:
-            return await call_next(request)
-
-        auth = request.headers.get("authorization", "")
-        token = auth[7:] if auth.startswith("Bearer ") else ""
-
-        if not token:
-            AUTH_FAILURES_TOTAL.inc(tags={"reason": "missing"})
-            logger.warning("auth failed (missing key): %s %s", request.method, request.url.path)
-            return JSONResponse(
-                status_code=401,
-                content={
-                    "error": {
-                        "message": "Missing API key. Use Authorization: Bearer <key>.",
-                        "type": "auth_error",
-                        "code": 401,
-                    }
-                },
-            )
-
-        if _matched_api_key(token, self.api_keys) is None:
-            AUTH_FAILURES_TOTAL.inc(tags={"reason": "invalid"})
-            logger.warning("auth failed (invalid key): %s %s", request.method, request.url.path)
-            return JSONResponse(
-                status_code=401,
-                content={"error": {"message": "Invalid API key.", "type": "auth_error", "code": 401}},
-            )
-
-        return await call_next(request)
-
-
-def _matched_api_key(token: str, keys: set[str]) -> str | None:
-    """Return the key in *keys* that constant-time-matches *token*, or None."""
-    return next((key for key in keys if hmac.compare_digest(token, key)), None)
-
-
-async def check_ws_auth(websocket: WebSocket) -> bool:
-    """WebSocket counterpart of ``ApiKeyMiddleware.dispatch`` — ``BaseHTTPMiddleware``
-    never runs for websocket connections, so this must be called before ``accept()``.
-    Closes with code 1008 (policy violation) on failure, without accepting.
-    """
-    api_keys = get_api_keys()
-    if not api_keys:
-        return True
-    auth = websocket.headers.get("authorization", "")
-    token = auth[7:] if auth.startswith("Bearer ") else ""
-    if token and _matched_api_key(token, api_keys) is not None:
-        return True
-    AUTH_FAILURES_TOTAL.inc(tags={"reason": "missing" if not token else "invalid"})
-    logger.warning("auth failed (%s key): websocket %s", "missing" if not token else "invalid", websocket.url.path)
-    await websocket.close(code=1008)
-    return False
-
-
-def get_api_keys() -> set[str]:
-    """Read allowed API keys from the ``MSHIP_API_KEYS`` environment variable (comma-separated)."""
-    global _api_keys_cache
-    raw = os.environ.get("MSHIP_API_KEYS", "")
-    cached = _api_keys_cache
-    if cached is not None and cached[0] == raw:
-        return cached[1]
-    keys = {k.strip() for k in raw.split(",") if k.strip()}
-    _api_keys_cache = (raw, keys)
-    return keys
 
 
 def get_trusted_identity_header() -> str | None:
@@ -134,39 +47,20 @@ def resolve_identity(request: HTTPConnection) -> tuple[str, str]:
        credentials layer assigned, kept legible in logs/state keys. Requires that
        layer to unconditionally overwrite the header and modelship to be
        unreachable except from it (see docs/model-configuration.md). Tier: "header".
-    2. The matched ``MSHIP_API_KEYS`` entry: sha256 hex (key material never
-       appears in logs or keys). Tier: "api_key".
-    3. Neither: ``UNSCOPED_IDENTITY`` — every such caller shares one bucket. Tier: "unscoped".
-
-    identity_key() and identity_tier() both delegate here so the header lookup, token
-    extraction, and constant-time key match happen once per request instead of twice.
+    2. Otherwise: ``UNSCOPED_IDENTITY`` — every such caller shares one bucket. Tier: "unscoped".
     """
     state = getattr(request, "state", None)
     cached = getattr(state, "_identity", None) if state is not None else None
     if isinstance(cached, tuple):
         return cached
 
+    result = (UNSCOPED_IDENTITY, "unscoped")
     header_name = get_trusted_identity_header()
     if header_name:
         value = request.headers.get(header_name, "").strip()
         if value:
             key = value if _SAFE_IDENTITY_RE.match(value) else hashlib.sha256(value.encode()).hexdigest()
             result = (key, "header")
-            if state is not None:
-                state._identity = result
-            return result
-
-    auth = request.headers.get("authorization", "")
-    token = auth[7:] if auth.startswith("Bearer ") else ""
-    if token:
-        matched = _matched_api_key(token, get_api_keys())
-        if matched is not None:
-            result = (hashlib.sha256(matched.encode()).hexdigest(), "api_key")
-            if state is not None:
-                state._identity = result
-            return result
-
-    result = (UNSCOPED_IDENTITY, "unscoped")
     if state is not None:
         state._identity = result
     return result
@@ -178,7 +72,7 @@ def identity_key(request: HTTPConnection) -> str:
 
 
 def identity_tier(request: HTTPConnection) -> str:
-    """Return which identity_key() tier resolved for *request*: "header" / "api_key" / "unscoped".
+    """Return which identity_key() tier resolved for *request*: "header" / "unscoped".
 
     For logging/observability only — lets an unexpected shift to "unscoped" (e.g. a
     fronting proxy that stopped setting the trusted header) show up in logs.

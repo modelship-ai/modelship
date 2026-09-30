@@ -73,14 +73,11 @@ models:
   config: |
     models: []
 
-# -- Secrets: Hugging Face token (gated/private weights) and gateway API keys.
-# Provide inline (rendered into a Secret) or reference an existing Secret with
-# keys: HF_TOKEN, MSHIP_API_KEYS.
+# -- Secrets: Hugging Face token (gated/private weights). Provide inline
+# (rendered into a Secret) or reference an existing Secret with key HF_TOKEN.
 secrets:
   existingSecret: ""
   huggingfaceToken: ""
-  # Comma-separated keys; when non-empty the gateway requires Authorization.
-  apiKeys: ""
 
 # -- Ray cluster authentication (RAY_AUTH_MODE=token). Off by default, as in Ray
 # itself. Sets the RayCluster's `authOptions` (KubeRay 1.6+): KubeRay injects the

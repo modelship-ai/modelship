@@ -35,7 +35,6 @@ _ARG_TO_ENV: dict[str, str] = {
     "log_format": "MSHIP_LOG_FORMAT",
     "log_target": "MSHIP_LOG_TARGET",
     "otel_endpoint": "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "api_keys": "MSHIP_API_KEYS",
     "trusted_identity_header": "MSHIP_TRUSTED_IDENTITY_HEADER",
     "gateway_name": "MSHIP_GATEWAY_NAME",
     "cluster": "MSHIP_CLUSTER",
@@ -237,10 +236,6 @@ def _add_node_args(parser: argparse.ArgumentParser) -> None:
             "Whether to delete stale dead-pid Ray session dirs under the temp root at node "
             "startup (env: MSHIP_PRUNE_RAY_SESSIONS, default: true)"
         ),
-    )
-    parser.add_argument(
-        "--api-keys",
-        help="Comma-separated API keys gateway replicas on this node accept (env: MSHIP_API_KEYS)",
     )
     parser.add_argument(
         "--metrics-port",

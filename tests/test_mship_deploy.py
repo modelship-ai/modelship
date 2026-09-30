@@ -98,7 +98,6 @@ class TestParseArgs:
             ("start", ["--node-num-cpus", "4"], "node_num_cpus", 4),
             ("join", ["--cluster", "h:1", "--node-num-gpus", "2"], "node_num_gpus", 2),
             ("join", ["--cluster", "h:1", "--node-memory", "8Gi"], "node_memory", 8 * 1024**3),
-            ("join", ["--cluster", "h:1", "--api-keys", "k1"], "api_keys", "k1"),
             ("deploy", ["--responses-ttl-s", "60"], "responses_ttl_s", 60.0),
             ("start", ["--state-sweep-interval-s", "30"], "state_sweep_interval_s", 30.0),
             ("start", ["--log-format", "json"], "log_format", "json"),
@@ -120,7 +119,6 @@ class TestParseArgs:
             ("join", ["--cluster", "h:1", "--gateway-min-replicas", "2"]),
             ("deploy", ["--node-num-cpus", "4"]),
             ("deploy", ["--prune-ray-sessions", "false"]),
-            ("deploy", ["--api-keys", "k1"]),
             ("deploy", ["--cluster", "h:1"]),
             ("start", ["--cluster", "h:1"]),
             ("start", ["--token", "secret"]),
@@ -147,7 +145,8 @@ class TestParseArgs:
 
     @pytest.mark.parametrize("command", ["start", "join", "deploy"])
     @pytest.mark.parametrize(
-        "flag", ["--use-existing-ray-cluster", "--address=h:1", "--deploy-timeout=5", "--gateway-replicas=2"]
+        "flag",
+        ["--use-existing-ray-cluster", "--address=h:1", "--deploy-timeout=5", "--gateway-replicas=2", "--api-keys=k1"],
     )
     def test_removed_flags_are_rejected(self, command, flag):
         with pytest.raises(SystemExit):
