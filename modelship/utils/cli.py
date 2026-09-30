@@ -37,10 +37,10 @@ _ARG_TO_ENV: dict[str, str] = {
     "otel_endpoint": "OTEL_EXPORTER_OTLP_ENDPOINT",
     "trusted_identity_header": "MSHIP_TRUSTED_IDENTITY_HEADER",
     "gateway_name": "MSHIP_GATEWAY_NAME",
-    "cluster": "MSHIP_CLUSTER",
+    "gcs_address": "MSHIP_GCS_ADDRESS",
     "token": "MSHIP_RAY_AUTH_TOKEN",
     "ray_auth": "MSHIP_RAY_AUTH",
-    "ray_port": "MSHIP_RAY_PORT",
+    "gcs_port": "MSHIP_GCS_PORT",
     "ray_dashboard_host": "MSHIP_RAY_DASHBOARD_HOST",
     "ray_dashboard_port": "MSHIP_RAY_DASHBOARD_PORT",
     "metrics_port": "MSHIP_METRICS_PORT",
@@ -67,7 +67,7 @@ _SWITCH_TO_ENV: dict[str, tuple[str, str]] = {
 _MODEL_USAGE = "[options] [--model REF [--<block>.<key> VALUE ...]]"
 _USAGE = {
     "start": f"mship start {_MODEL_USAGE}",
-    "join": "mship join --cluster HOST:PORT [options]",
+    "join": "mship join --gcs-address HOST[:PORT] [options]",
     "deploy": f"mship deploy {_MODEL_USAGE}\n       mship deploy --cancel ID [--wait]",
 }
 _DESCRIPTION = {
@@ -122,8 +122,8 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
         _add_model_args(parser)
 
     args = parser.parse_args(argv)
-    if command == "join" and not (args.cluster or os.environ.get("MSHIP_CLUSTER")):
-        parser.error("--cluster is required: the head's address as HOST:PORT (env: MSHIP_CLUSTER)")
+    if command == "join" and not (args.gcs_address or os.environ.get("MSHIP_GCS_ADDRESS")):
+        parser.error("--gcs-address is required: the head's GCS address as HOST[:PORT] (env: MSHIP_GCS_ADDRESS)")
     if command == "deploy" and args.cancel is not None:
         _check_cancel_args(parser, args)
     elif command in ("start", "deploy"):
@@ -169,10 +169,10 @@ def _check_model_args(parser: argparse.ArgumentParser, args: argparse.Namespace)
 
 def _add_join_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--cluster",
+        "--gcs-address",
         help=(
-            "The head node's address as HOST:PORT, e.g. mship-head:6380 — the head's --ray-port "
-            "(env: MSHIP_CLUSTER). Reachable only from inside the cluster's private network."
+            "The head's GCS address as HOST[:PORT], e.g. mship-head:6380; PORT is the head's --gcs-port "
+            "(env: MSHIP_GCS_ADDRESS, default port: 6380). Reachable only from inside the cluster's private network."
         ),
     )
     _add_token_arg(parser)
@@ -249,11 +249,11 @@ def _add_node_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_head_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--ray-port",
+        "--gcs-port",
         type=int,
         help=(
-            "Port for Ray's GCS server, the address `mship join --cluster` takes "
-            "(env: MSHIP_RAY_PORT, default: 6380). Change this if 6380 is already taken on "
+            "Port for Ray's GCS server, the address `mship join --gcs-address` takes "
+            "(env: MSHIP_GCS_PORT, default: 6380). Change this if 6380 is already taken on "
             "the host — e.g. avoid 6379, which the docs-recommended same-host Redis state "
             "store (MSHIP_STATE_STORE=redis://) may also want under --network=host."
         ),

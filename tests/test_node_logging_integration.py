@@ -139,7 +139,7 @@ def two_node_cluster(tmp_path):
                 "0",
                 "--node-num-gpus",
                 "0",
-                "--ray-port",
+                "--gcs-port",
                 str(_GCS_PORT),
                 "--ray-dashboard-port",
                 str(_DASHBOARD_PORT),
@@ -167,7 +167,7 @@ def two_node_cluster(tmp_path):
             _spawn(
                 [
                     "join",
-                    "--cluster",
+                    "--gcs-address",
                     f"127.0.0.1:{_GCS_PORT}",
                     "--log-level",
                     "debug",

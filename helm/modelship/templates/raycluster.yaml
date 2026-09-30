@@ -62,7 +62,7 @@ spec:
             # dashboard through the head Service.
             args:
               - start
-              - --ray-port
+              - --gcs-port
               - "$(RAY_PORT)"
               - --ray-dashboard-host
               - "0.0.0.0"
@@ -159,7 +159,7 @@ spec:
               # RAY_ADDRESS is KubeRay's head Service address and GCS port.
               args:
                 - join
-                - --cluster
+                - --gcs-address
                 - "$(RAY_ADDRESS)"
                 {{- if $.Values.metrics.enabled }}
                 - --metrics-port

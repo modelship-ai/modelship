@@ -87,23 +87,23 @@ class TestParseArgs:
             ("deploy", ["--gateway-name", "my-gateway"], "gateway_name", "my-gateway"),
             ("start", ["--ray-auth", "token"], "ray_auth", "token"),
             ("deploy", ["--ray-auth", "token"], "ray_auth", "token"),
-            ("start", ["--ray-port", "6380"], "ray_port", 6380),
+            ("start", ["--gcs-port", "6380"], "gcs_port", 6380),
             ("start", ["--ray-dashboard-port", "8266"], "ray_dashboard_port", 8266),
             ("start", ["--ray-dashboard-host", "0.0.0.0"], "ray_dashboard_host", "0.0.0.0"),
             ("start", ["--metrics-port", "9090"], "metrics_port", 9090),
-            ("join", ["--cluster", "h:1", "--metrics-port", "9090"], "metrics_port", 9090),
-            ("join", ["--cluster", "mship-head:6380"], "cluster", "mship-head:6380"),
-            ("join", ["--cluster", "h:1", "--token", "secret"], "token", "secret"),
+            ("join", ["--gcs-address", "h:1", "--metrics-port", "9090"], "metrics_port", 9090),
+            ("join", ["--gcs-address", "mship-head:6380"], "gcs_address", "mship-head:6380"),
+            ("join", ["--gcs-address", "h:1", "--token", "secret"], "token", "secret"),
             ("deploy", ["--token", "secret"], "token", "secret"),
             ("start", ["--node-num-cpus", "4"], "node_num_cpus", 4),
-            ("join", ["--cluster", "h:1", "--node-num-gpus", "2"], "node_num_gpus", 2),
-            ("join", ["--cluster", "h:1", "--node-memory", "8Gi"], "node_memory", 8 * 1024**3),
+            ("join", ["--gcs-address", "h:1", "--node-num-gpus", "2"], "node_num_gpus", 2),
+            ("join", ["--gcs-address", "h:1", "--node-memory", "8Gi"], "node_memory", 8 * 1024**3),
             ("deploy", ["--responses-ttl-s", "60"], "responses_ttl_s", 60.0),
             ("start", ["--state-sweep-interval-s", "30"], "state_sweep_interval_s", 30.0),
             ("start", ["--log-format", "json"], "log_format", "json"),
             ("start", ["--otel-endpoint", "http://c:4317"], "otel_endpoint", "http://c:4317"),
-            ("join", ["--cluster", "h:1", "--log-level", "debug"], "log_level", "DEBUG"),
-            ("join", ["--cluster", "h:1", "--log-target", "syslog://h:514"], "log_target", "syslog://h:514"),
+            ("join", ["--gcs-address", "h:1", "--log-level", "debug"], "log_level", "DEBUG"),
+            ("join", ["--gcs-address", "h:1", "--log-target", "syslog://h:514"], "log_target", "syslog://h:514"),
             ("deploy", ["--cancel", "abc123"], "cancel", "abc123"),
             ("deploy", ["--cancel", "abc123", "--token", "secret"], "token", "secret"),
         ],
@@ -114,26 +114,26 @@ class TestParseArgs:
     @pytest.mark.parametrize(
         ("command", "argv"),
         [
-            ("deploy", ["--ray-port", "6380"]),
+            ("deploy", ["--gcs-port", "6380"]),
             ("deploy", ["--gateway-max-replicas", "8"]),
-            ("join", ["--cluster", "h:1", "--gateway-min-replicas", "2"]),
+            ("join", ["--gcs-address", "h:1", "--gateway-min-replicas", "2"]),
             ("deploy", ["--node-num-cpus", "4"]),
             ("deploy", ["--prune-ray-sessions", "false"]),
-            ("deploy", ["--cluster", "h:1"]),
-            ("start", ["--cluster", "h:1"]),
+            ("deploy", ["--gcs-address", "h:1"]),
+            ("start", ["--gcs-address", "h:1"]),
             ("start", ["--token", "secret"]),
             ("start", ["--replace-strategy", "stop_start"]),
-            ("join", ["--cluster", "h:1", "--config", "models.yaml"]),
-            ("join", ["--cluster", "h:1", "--model", "org/repo"]),
-            ("join", ["--cluster", "h:1", "--ray-port", "6380"]),
-            ("join", ["--cluster", "h:1", "--ray-dashboard-host", "0.0.0.0"]),
+            ("join", ["--gcs-address", "h:1", "--config", "models.yaml"]),
+            ("join", ["--gcs-address", "h:1", "--model", "org/repo"]),
+            ("join", ["--gcs-address", "h:1", "--gcs-port", "6380"]),
+            ("join", ["--gcs-address", "h:1", "--ray-dashboard-host", "0.0.0.0"]),
             ("deploy", ["--metrics-port", "9090"]),
-            ("join", ["--cluster", "h:1", "--state-store", "redis://h:6379/0"]),
+            ("join", ["--gcs-address", "h:1", "--state-store", "redis://h:6379/0"]),
             ("deploy", ["--state-store", "redis://h:6379/0"]),
             ("deploy", ["--state-sweep-interval-s", "30"]),
             ("deploy", ["--no-metrics"]),
             ("deploy", ["--log-format", "json"]),
-            ("join", ["--cluster", "h:1", "--log-format", "json"]),
+            ("join", ["--gcs-address", "h:1", "--log-format", "json"]),
             ("deploy", ["--log-level", "DEBUG"]),
             ("deploy", ["--deploy-id", "a"]),
             ("start", ["--cancel", "a"]),
@@ -146,7 +146,15 @@ class TestParseArgs:
     @pytest.mark.parametrize("command", ["start", "join", "deploy"])
     @pytest.mark.parametrize(
         "flag",
-        ["--use-existing-ray-cluster", "--address=h:1", "--deploy-timeout=5", "--gateway-replicas=2", "--api-keys=k1"],
+        [
+            "--use-existing-ray-cluster",
+            "--address=h:1",
+            "--deploy-timeout=5",
+            "--gateway-replicas=2",
+            "--api-keys=k1",
+            "--cluster=h:1",
+            "--ray-port=6380",
+        ],
     )
     def test_removed_flags_are_rejected(self, command, flag):
         with pytest.raises(SystemExit):
@@ -169,14 +177,14 @@ class TestParseArgs:
             parse_args("deploy", ["--cancel", "r1", *argv])
         assert f"--cancel takes no model options: {argv[0]}." in capsys.readouterr().err
 
-    def test_join_requires_a_cluster(self, monkeypatch):
-        monkeypatch.delenv("MSHIP_CLUSTER", raising=False)
+    def test_join_requires_a_gcs_address(self, monkeypatch):
+        monkeypatch.delenv("MSHIP_GCS_ADDRESS", raising=False)
         with pytest.raises(SystemExit):
             parse_args("join", [])
 
-    def test_join_takes_the_cluster_from_env(self, monkeypatch):
-        monkeypatch.setenv("MSHIP_CLUSTER", "mship-head:6380")
-        assert parse_args("join", []).cluster is None
+    def test_join_takes_the_gcs_address_from_env(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_GCS_ADDRESS", "mship-head:6380")
+        assert parse_args("join", []).gcs_address is None
 
 
 class TestApplyArgsToEnv:
@@ -189,19 +197,19 @@ class TestApplyArgsToEnv:
             ("start", ["--gateway-target-ongoing-requests", "32"], "MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS", "32.0"),
             ("start", ["--gateway-max-ongoing-requests", "256"], "MSHIP_GATEWAY_MAX_ONGOING_REQUESTS", "256"),
             ("deploy", ["--ray-auth", "token"], "MSHIP_RAY_AUTH", "token"),
-            ("start", ["--ray-port", "6380"], "MSHIP_RAY_PORT", "6380"),
+            ("start", ["--gcs-port", "6380"], "MSHIP_GCS_PORT", "6380"),
             ("start", ["--ray-dashboard-port", "8266"], "MSHIP_RAY_DASHBOARD_PORT", "8266"),
             ("start", ["--ray-dashboard-host", "0.0.0.0"], "MSHIP_RAY_DASHBOARD_HOST", "0.0.0.0"),
-            ("join", ["--cluster", "h:1", "--metrics-port", "9090"], "MSHIP_METRICS_PORT", "9090"),
-            ("join", ["--cluster", "mship-head:6380"], "MSHIP_CLUSTER", "mship-head:6380"),
+            ("join", ["--gcs-address", "h:1", "--metrics-port", "9090"], "MSHIP_METRICS_PORT", "9090"),
+            ("join", ["--gcs-address", "mship-head:6380"], "MSHIP_GCS_ADDRESS", "mship-head:6380"),
             ("deploy", ["--token", "secret"], "MSHIP_RAY_AUTH_TOKEN", "secret"),
-            ("join", ["--cluster", "h:1", "--node-num-cpus", "4"], "MSHIP_NODE_NUM_CPUS", "4"),
+            ("join", ["--gcs-address", "h:1", "--node-num-cpus", "4"], "MSHIP_NODE_NUM_CPUS", "4"),
             ("start", ["--node-num-gpus", "2"], "MSHIP_NODE_NUM_GPUS", "2"),
             ("start", ["--node-memory", "8Gi"], "MSHIP_NODE_MEMORY", str(8 * 1024**3)),
-            ("join", ["--cluster", "h:1", "--prune-ray-sessions", "false"], "MSHIP_PRUNE_RAY_SESSIONS", "false"),
+            ("join", ["--gcs-address", "h:1", "--prune-ray-sessions", "false"], "MSHIP_PRUNE_RAY_SESSIONS", "false"),
             ("start", ["--no-preflight"], "MSHIP_PREFLIGHT", "false"),
             ("start", ["--no-metrics"], "MSHIP_METRICS", "false"),
-            ("join", ["--cluster", "h:1", "--log-level", "TRACE"], "MSHIP_LOG_LEVEL", "TRACE"),
+            ("join", ["--gcs-address", "h:1", "--log-level", "TRACE"], "MSHIP_LOG_LEVEL", "TRACE"),
             ("deploy", ["--responses-ttl-s", "60"], "MSHIP_RESPONSES_TTL_S", "60.0"),
             ("start", ["--state-sweep-interval-s", "30"], "MSHIP_STATE_SWEEP_INTERVAL_S", "30.0"),
         ],
@@ -219,7 +227,7 @@ class TestApplyArgsToEnv:
         with patch.dict(os.environ, {}, clear=False):
             for name in ("MSHIP_LOG_LEVEL", "VLLM_LOGGING_LEVEL", "TRANSFORMERS_VERBOSITY"):
                 os.environ.pop(name, None)
-            apply_args_to_env(parse_args("join", ["--cluster", "h:1", "--log-level", "debug"]))
+            apply_args_to_env(parse_args("join", ["--gcs-address", "h:1", "--log-level", "debug"]))
             propagate_lib_log_env()
             assert (os.environ["VLLM_LOGGING_LEVEL"], os.environ["TRANSFORMERS_VERBOSITY"]) == ("DEBUG", "debug")
 
@@ -738,7 +746,7 @@ class TestSignalHandlersOutliveRay:
     @pytest.fixture(autouse=True)
     def _restore(self):
         saved = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
-        with patch.dict(os.environ, {"MSHIP_CLUSTER": "head:6380"}, clear=False):
+        with patch.dict(os.environ, {"MSHIP_GCS_ADDRESS": "head:6380"}, clear=False):
             os.environ.pop("MSHIP_GATEWAY_NAME", None)
             os.environ.pop("MSHIP_STATE_STORE", None)
             yield
@@ -1524,11 +1532,11 @@ class TestStartHead:
         assert '"_redis_password"' in source
         assert '"_redis_username"' in source
 
-    def test_ray_port_sets_gcs_server_port(self):
+    def test_gcs_port_sets_gcs_server_port(self):
         from modelship.deploy import serve_utils
 
         with (
-            patch.dict(os.environ, {"MSHIP_RAY_PORT": "6390"}, clear=False),
+            patch.dict(os.environ, {"MSHIP_GCS_PORT": "6390"}, clear=False),
             patch.object(serve_utils.ray, "init"),
             patch.object(serve_utils, "prune_ray_sessions"),
         ):
@@ -1536,7 +1544,7 @@ class TestStartHead:
             serve_utils.start_head(20)
             assert os.environ.get("RAY_GCS_SERVER_PORT") == "6390"
 
-    def test_ray_port_absent_defaults_gcs_server_port_to_6380(self):
+    def test_gcs_port_absent_defaults_gcs_server_port_to_6380(self):
         from modelship.deploy import serve_utils
 
         with (
@@ -1544,21 +1552,21 @@ class TestStartHead:
             patch.object(serve_utils.ray, "init"),
             patch.object(serve_utils, "prune_ray_sessions"),
         ):
-            os.environ.pop("MSHIP_RAY_PORT", None)
+            os.environ.pop("MSHIP_GCS_PORT", None)
             os.environ.pop("RAY_GCS_SERVER_PORT", None)
             serve_utils.start_head(20)
             # Not Ray's own 6379 default — that collides with the recommended
             # same-host Redis state store under --network=host.
             assert os.environ.get("RAY_GCS_SERVER_PORT") == "6380"
 
-    def test_ray_port_respects_explicit_gcs_server_port(self):
+    def test_gcs_port_respects_explicit_gcs_server_port(self):
         from modelship.deploy import serve_utils
 
         with (
             patch.dict(
                 os.environ,
                 {
-                    "MSHIP_RAY_PORT": "6380",
+                    "MSHIP_GCS_PORT": "6380",
                     "RAY_GCS_SERVER_PORT": "6381",
                 },
                 clear=False,
@@ -1587,7 +1595,7 @@ class TestAttachCluster:
         from modelship.deploy import serve_utils
 
         with (
-            patch.dict(os.environ, {"MSHIP_RAY_PORT": "6380", "MSHIP_RAY_DASHBOARD_PORT": "8266"}, clear=False),
+            patch.dict(os.environ, {"MSHIP_GCS_PORT": "6380", "MSHIP_RAY_DASHBOARD_PORT": "8266"}, clear=False),
             patch.object(serve_utils.ray, "init") as mock_init,
             patch.object(serve_utils, "prune_ray_sessions") as mock_prune,
         ):
@@ -1807,6 +1815,26 @@ class TestJoinCluster:
         mock_join.assert_called_once_with("head:6380")
         mock_prune.assert_called_once()
         mock_init.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("address", "expected"),
+        [
+            ("head", "head:6380"),
+            ("head:6390", "head:6390"),
+            ("10.0.0.5", "10.0.0.5:6380"),
+            ("[fd00::5]", "[fd00::5]:6380"),
+            ("[fd00::5]:6390", "[fd00::5]:6390"),
+        ],
+    )
+    def test_the_gcs_port_defaults_to_6380(self, address, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.object(serve_utils, "_join_ray_cluster") as mock_join,
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            serve_utils.join_cluster(address)
+        mock_join.assert_called_once_with(expected)
 
 
 class TestLeaveRayCluster:

@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import ray
 from ray import serve
@@ -358,7 +359,7 @@ def start_head(lib_level: int) -> None:
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     # ray.init's only hook for the GCS port; unset, Ray picks a random one per start.
-    os.environ.setdefault("RAY_GCS_SERVER_PORT", os.environ.get("MSHIP_RAY_PORT", str(_DEFAULT_RAY_GCS_PORT)))
+    os.environ.setdefault("RAY_GCS_SERVER_PORT", os.environ.get("MSHIP_GCS_PORT", str(_DEFAULT_RAY_GCS_PORT)))
     prune_ray_sessions()
     # "local" always starts a new instance, ignoring RAY_ADDRESS and the discovery marker.
     ray.init(address="local", ignore_reinit_error=True, logging_level=lib_level, **_own_cluster_init_kwargs())
@@ -371,7 +372,12 @@ def join_cluster(address: str) -> None:
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     prune_ray_sessions()
-    _join_ray_cluster(address)
+    _join_ray_cluster(_with_default_port(address, _DEFAULT_RAY_GCS_PORT))
+
+
+def _with_default_port(address: str, port: int) -> str:
+    """*address* as HOST:PORT, adding *port* when it has none."""
+    return address if urlsplit(f"//{address}").port else f"{address}:{port}"
 
 
 def attach_cluster(lib_level: int) -> None:

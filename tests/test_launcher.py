@@ -195,7 +195,7 @@ class TestCmdRun:
         mock_run.assert_called_once_with("deploy", ["--reconcile"])
 
     def test_join_validates_no_config(self):
-        mock_validate, mock_gate, _, _ = self._run("join", ["--cluster", "10.0.0.1:6380"])
+        mock_validate, mock_gate, _, _ = self._run("join", ["--gcs-address", "10.0.0.1:6380"])
         mock_validate.assert_not_called()
         mock_gate.assert_not_called()
 

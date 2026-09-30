@@ -74,7 +74,7 @@ def main() -> int:
     assert cluster["metadata"]["finalizers"] == ["ray.io/gcs-ft-redis-cleanup-finalizer"]
     assert cluster["spec"]["headGroupSpec"]["rayStartParams"] == {}
     assert all(g["rayStartParams"] == {} for g in cluster["spec"]["workerGroupSpecs"])
-    assert head["args"][:5] == ["start", "--ray-port", "$(RAY_PORT)", "--ray-dashboard-host", "0.0.0.0"], head["args"]
+    assert head["args"][:5] == ["start", "--gcs-port", "$(RAY_PORT)", "--ray-dashboard-host", "0.0.0.0"], head["args"]
     assert head["args"][5:] == [
         "--gateway-name",
         "modelship",
@@ -92,7 +92,7 @@ def main() -> int:
         "8079",
     ], head["args"]
     for worker in (req, lim, own, bare):
-        assert worker["args"] == ["join", "--cluster", "$(RAY_ADDRESS)", "--metrics-port", "8079"], worker["args"]
+        assert worker["args"] == ["join", "--gcs-address", "$(RAY_ADDRESS)", "--metrics-port", "8079"], worker["args"]
     assert all("lifecycle" not in c for c in (head, req, lim, own, bare))
     assert all(_ports(c)["metrics"] == 8079 for c in (head, req, lim, own, bare))
 
@@ -117,7 +117,7 @@ def main() -> int:
 
     head, (worker,) = _containers(_cluster({"metrics": {"enabled": False}, "workerGroups": [_group("w")]}))
     assert head["args"][-1] == "--no-metrics" and "--metrics-port" not in head["args"], head["args"]
-    assert worker["args"] == ["join", "--cluster", "$(RAY_ADDRESS)"], worker["args"]
+    assert worker["args"] == ["join", "--gcs-address", "$(RAY_ADDRESS)"], worker["args"]
     assert _ports(head)["metrics"] == _ports(worker)["metrics"] == 8079
     out = _render({"metrics": {"enabled": False}, "podMonitor": {"enabled": True}})
     assert out.returncode != 0 and "podMonitor.enabled needs metrics.enabled" in out.stderr, out.stderr

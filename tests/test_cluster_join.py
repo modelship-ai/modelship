@@ -1,4 +1,4 @@
-"""Same-box integration test for `mship join --cluster/--token` and for `mship start`
+"""Same-box integration test for `mship join --gcs-address/--token` and for `mship start`
 refusing to run beside another node.
 
 Its own throwaway head — a bare ray.init(address="local") with token auth, on distinct
@@ -165,7 +165,7 @@ class TestClusterJoin:
         args = [
             *_MSHIP,
             "join",
-            "--cluster",
+            "--gcs-address",
             f"127.0.0.1:{head_port}",
             "--node-num-cpus",
             "0",
@@ -202,7 +202,7 @@ class TestClusterJoin:
                     [
                         *_MSHIP,
                         "join",
-                        "--cluster",
+                        "--gcs-address",
                         f"127.0.0.1:{head_port}",
                         "--token",
                         token,

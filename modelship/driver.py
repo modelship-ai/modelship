@@ -142,7 +142,7 @@ def _join() -> None:
     _on_signals(_leave)
 
     try:
-        join_cluster(os.environ["MSHIP_CLUSTER"])
+        join_cluster(os.environ["MSHIP_GCS_ADDRESS"])
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
@@ -346,15 +346,15 @@ def _log_join_hint() -> None:
     actual_port = gcs_address.rsplit(":", 1)[-1]
     if intended_port and actual_port != intended_port:
         logger.warning(
-            "Ray's GCS bound port %s, not the intended %s (RAY_GCS_SERVER_PORT) — pin --ray-port to a "
-            "free port so the address `mship join --cluster` takes stays stable across restarts.",
+            "Ray's GCS bound port %s, not the intended %s (RAY_GCS_SERVER_PORT) — pin --gcs-port to a "
+            "free port so the address `mship join --gcs-address` takes stays stable across restarts.",
             actual_port,
             intended_port,
         )
     token = " --token=<token>" if os.environ.get("RAY_AUTH_MODE") == "token" else ""
     token_hint = "the token is in ~/.ray/auth_token on this machine; " if token else ""
     logger.info(
-        "To add a machine to this cluster, run on it: mship join --cluster=%s%s (%ssee docs/multi-node-docker.md).",
+        "To add a machine to this cluster, run on it: mship join --gcs-address=%s%s (%ssee docs/multi-node-docker.md).",
         gcs_address,
         token,
         token_hint,
