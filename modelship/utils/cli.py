@@ -39,7 +39,6 @@ _ARG_TO_ENV: dict[str, str] = {
     "gateway_name": "MSHIP_GATEWAY_NAME",
     "gcs_address": "MSHIP_GCS_ADDRESS",
     "token": "MSHIP_RAY_AUTH_TOKEN",
-    "ray_auth": "MSHIP_RAY_AUTH",
     "gcs_port": "MSHIP_GCS_PORT",
     "ray_dashboard_host": "MSHIP_RAY_DASHBOARD_HOST",
     "ray_dashboard_port": "MSHIP_RAY_DASHBOARD_PORT",
@@ -62,6 +61,7 @@ _ARG_TO_ENV: dict[str, str] = {
 _SWITCH_TO_ENV: dict[str, tuple[str, str]] = {
     "no_metrics": ("MSHIP_METRICS", "false"),
     "no_preflight": ("MSHIP_PREFLIGHT", "false"),
+    "enable_ray_auth": ("MSHIP_RAY_AUTH", "true"),
 }
 
 _MODEL_USAGE = "[options] [--model REF [--<block>.<key> VALUE ...]]"
@@ -91,8 +91,8 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
     if command == "start":
         _add_head_args(parser)
         _add_logging_metrics_args(parser)
-    if command in ("start", "deploy"):
         _add_auth_arg(parser)
+    if command in ("start", "deploy"):
         _add_cluster_args(parser)
     if command == "deploy":
         _add_token_arg(parser)
@@ -182,7 +182,7 @@ def _add_token_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--token",
         help=(
-            "Ray auth token of a cluster started with --ray-auth=token (env: MSHIP_RAY_AUTH_TOKEN); "
+            "Ray auth token of a cluster started with --enable-ray-auth (env: MSHIP_RAY_AUTH_TOKEN); "
             "read it on the head with `cat ~/.ray/auth_token`."
         ),
     )
@@ -190,12 +190,12 @@ def _add_token_arg(parser: argparse.ArgumentParser) -> None:
 
 def _add_auth_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--ray-auth",
-        choices=["token", "none"],
+        "--enable-ray-auth",
+        action="store_true",
+        default=None,
         help=(
-            "Ray cluster authentication (env: MSHIP_RAY_AUTH, default: none). With 'token', start "
-            "makes the cluster require the bearer token Ray generates at ~/.ray/auth_token, for the "
-            "dashboard and cluster-internal RPC, and deploy sends it."
+            "Require Ray's token auth for the dashboard and cluster-internal RPC (env: MSHIP_RAY_AUTH=true). "
+            "The token is MSHIP_RAY_AUTH_TOKEN when set; otherwise Ray generates it at ~/.ray/auth_token."
         ),
     )
 
@@ -262,7 +262,7 @@ def _add_head_args(parser: argparse.ArgumentParser) -> None:
         "--ray-dashboard-host",
         help=(
             "Bind address for Ray's dashboard (env: MSHIP_RAY_DASHBOARD_HOST, default: 127.0.0.1). Its job API "
-            "runs arbitrary code: bind beyond loopback only on a private network, with --ray-auth=token."
+            "runs arbitrary code: bind beyond loopback only on a private network, with --enable-ray-auth."
         ),
     )
     parser.add_argument(

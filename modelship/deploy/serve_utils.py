@@ -227,7 +227,7 @@ def _join_ray_cluster(address: str) -> Node:
     Binds to a few Ray-internal APIs (Node, RayParams, two services helpers,
     write_ray_address) — the stable public surface for a worker join is only the
     `ray start` CLI. Guarded by TestConnectRayJoin so a Ray bump that moves any
-    of them fails loudly. Auth, if the head runs --ray-auth=token, rides via
+    of them fails loudly. Auth, if the head runs --enable-ray-auth, rides via
     RAY_AUTH_MODE/RAY_AUTH_TOKEN already in this process's env (resolve_ray_auth_env,
     before `import ray`) — a bad/missing token surfaces as an AuthenticationError
     from ensure_token_if_auth_enabled or the GCS handshake in Node().

@@ -74,8 +74,15 @@ def main() -> int:
     assert cluster["metadata"]["finalizers"] == ["ray.io/gcs-ft-redis-cleanup-finalizer"]
     assert cluster["spec"]["headGroupSpec"]["rayStartParams"] == {}
     assert all(g["rayStartParams"] == {} for g in cluster["spec"]["workerGroupSpecs"])
-    assert head["args"][:5] == ["start", "--gcs-port", "$(RAY_PORT)", "--ray-dashboard-host", "0.0.0.0"], head["args"]
-    assert head["args"][5:] == [
+    assert head["args"][:6] == [
+        "start",
+        "--gcs-port",
+        "$(RAY_PORT)",
+        "--ray-dashboard-host",
+        "0.0.0.0",
+        "--enable-ray-auth",
+    ], head["args"]
+    assert head["args"][6:] == [
         "--gateway-name",
         "modelship",
         "--gateway-min-replicas",

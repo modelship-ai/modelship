@@ -79,19 +79,13 @@ secrets:
   existingSecret: ""
   huggingfaceToken: ""
 
-# -- Ray cluster authentication (RAY_AUTH_MODE=token). Off by default, as in Ray
-# itself. Sets the RayCluster's `authOptions` (KubeRay 1.6+): KubeRay injects the
-# token into the head, every worker group and the RayJob submitter, and uses it
-# for its own job-status calls. Never gates the OpenAI API (gateway.port) or
+# -- Ray cluster authentication (RAY_AUTH_MODE=token), always on. KubeRay injects
+# the token into the head, every worker group and the RayJob submitter, and uses
+# it for its own job-status calls. Never gates the OpenAI API (gateway.port) or
 # Prometheus metrics (metrics.port).
-#
-# You supply the token. Any string works (Ray compares a shared secret), e.g.
-# `openssl rand -hex 32`.
 rayAuth:
-  enabled: false
-  # Inline token, rendered into a Secret the chart creates.
-  token: ""
-  # Or an existing Secret you manage, holding the token under key `auth_token`.
+  # An existing Secret you manage, holding the token under key `auth_token`.
+  # Empty: KubeRay generates one, in a Secret named after the RayCluster.
   existingSecret: ""
 
 # -- Shared model-weight cache. vLLM/diffusers download weights here.

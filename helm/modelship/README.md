@@ -216,28 +216,26 @@ Ray's keys then stay in Redis, and a reinstall under the same
 `redis.externalStorageNamespace` starts from the old cluster's state. Delete
 `RAY<namespace>@*` too for a clean start.
 
-## Ray cluster authentication (optional)
+## Ray cluster authentication
 
-Off by default — the same posture as a single-node deploy, and consistent with
-Ray's own insecure-by-default stance (see the ShadowRay/CVE-2023-48022
-background in the main [multi-node docs](../../docs/multi-node-docker.md)).
-Enabling it sets the RayCluster's `authOptions`. KubeRay then gives the same
-token to the head, every worker group **and** the RayJob submitter (the pod that
-runs `ray job submit` to deploy your `models.yaml`), and uses it for its own
-job-status calls.
+Always on: the head's dashboard listens on the pod network, and its job API runs
+arbitrary code (see the ShadowRay/CVE-2023-48022 background in the main
+[multi-node docs](../../docs/multi-node-docker.md)). The chart sets the
+RayCluster's `authOptions` and passes `--enable-ray-auth` to `mship start`.
+KubeRay gives the same token to the head, every worker group **and** the RayJob
+submitter (the pod that runs `ray job submit` to deploy your `models.yaml`), and
+uses it for its own job-status calls.
 
-```yaml
-rayAuth:
-  enabled: true
-  token: "s0me-long-random-string"   # or existingSecret, holding key auth_token
+KubeRay generates the token once, in a Secret named after the RayCluster, and
+deletes it with the cluster. Read it with:
+
+```bash
+kubectl get secret <release-fullname> -o jsonpath='{.data.auth_token}' | base64 -d
 ```
 
-Unlike `mship start` on Docker — where Ray generates and owns the
-token at `~/.ray/auth_token` because there's no "before the head exists" moment
-— the chart has no such moment either way, so **you** supply the token. Any
-string works: Ray's own check is a shared-secret equality comparison, not an
-issued credential. Generate one with `ray get-auth-token --generate` (run
-anywhere with Ray installed) or `openssl rand -hex 32`.
+To manage the token yourself, point `rayAuth.existingSecret` at a Secret holding
+it under key `auth_token`. Any string works: Ray's own check is a shared-secret
+equality comparison, not an issued credential (e.g. `openssl rand -hex 32`).
 
 This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 (`metrics.port`) — only Ray's own dashboard and cluster-internal RPC.
@@ -263,8 +261,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `deploy.replaceStrategy` | `blue_green` | How changed models are replaced |
 | `redis.address` | `""` | **Required.** `host:port` of your Redis — backs GCS-FT + the state store (see [Redis](#redis-required)) |
 | `redis.password` / `redis.existingSecret` | `""` | Redis password inline, or reference an existing Secret (`passwordKey`) |
-| `rayAuth.enabled` | `false` | Ray cluster authentication (`RAY_AUTH_MODE=token`) through KubeRay's `authOptions` (see [Ray cluster authentication](#ray-cluster-authentication-optional)) |
-| `rayAuth.token` / `rayAuth.existingSecret` | `""` | Auth token inline, or an existing Secret holding it under key `auth_token`. Required when `rayAuth.enabled` |
+| `rayAuth.existingSecret` | `""` | An existing Secret holding the Ray auth token under key `auth_token`; empty, KubeRay generates it (see [Ray cluster authentication](#ray-cluster-authentication)) |
 | `service.type` | `ClusterIP` | Set `LoadBalancer` to expose externally |
 | `podMonitor.enabled` | `false` | Prometheus Operator scraping; needs `metrics.enabled` |
 | `prometheusRule.enabled` | `false` | Ship the modelship alert rules as a PrometheusRule |

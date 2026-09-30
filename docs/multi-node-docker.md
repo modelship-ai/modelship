@@ -48,7 +48,7 @@ docker run -d --network=host --shm-size=8g \
   -e MSHIP_STATE_STORE=redis://your-redis-host:6379/0 \
   -e HF_TOKEN=your_token_here \
   ghcr.io/modelship-ai/modelship:0.6.5 start \
-  --ray-auth=token --gcs-port=6380
+  --enable-ray-auth --gcs-port=6380
 ```
 
 `--gcs-port` defaults to `6380` already (deliberately not Ray's own `6379`
@@ -62,8 +62,8 @@ writes or logs it):
 docker exec <head-container> cat ~/.ray/auth_token
 ```
 
-`mship deploy` against this cluster needs it too: `--ray-auth=token` on VM A,
-where the token file is, `--token=<token>` on any other node.
+`mship deploy` against this cluster needs it too: `--token=<token>` (or
+`MSHIP_RAY_AUTH_TOKEN`) on whichever node it runs.
 
 **VM B — joins VM A as a GPU worker:**
 
@@ -83,7 +83,7 @@ their own. To change the model set, run `mship deploy` on any node of the
 cluster. A failed deploy is rolled back and leaves the last committed model set in
 place; fix the config and deploy again.
 
-**`--token` only means anything if the head runs `--ray-auth=token`.** Joining
+**`--token` only means anything if the head runs `--enable-ray-auth`.** Joining
 with a token against a head that has auth disabled doesn't fail — the joiner's
 own node starts demanding bearer tokens on *inbound* RPC while the head never
 sends them, so the join looks like it succeeded and then cluster↔worker traffic
@@ -230,8 +230,8 @@ sides' footprints actually fit together on the card.
 
 - [helm/modelship/README.md](https://github.com/modelship-ai/modelship/blob/main/helm/modelship/README.md) — the Kubernetes rung:
   same image variants and version-pinning rule, but autoscaling, self-healing
-  pod scheduling, and Ray cluster auth set with one value (`rayAuth`) instead
-  of this page's manual token setup.
+  pod scheduling, and Ray cluster auth always on, with a token KubeRay generates,
+  instead of this page's manual token setup.
 - [development.md](development.md) — the full CLI/env var reference table,
   image variants, and dev-container setup.
 - [model-configuration.md](model-configuration.md) — `models.yaml` reference,

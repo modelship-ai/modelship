@@ -119,11 +119,11 @@ Name of the Secret holding the Redis password (existing or the chart's own).
 {{- end -}}
 
 {{/*
-Name of the Secret holding the Ray auth token under key `auth_token` (existing or
-the chart's own).
+Name of the Secret holding the Ray auth token under key `auth_token`: an existing
+one, or the one KubeRay generates, named after the RayCluster.
 */}}
 {{- define "modelship.rayAuthSecretName" -}}
-{{- .Values.rayAuth.existingSecret | default (printf "%s-ray-auth" (include "modelship.fullname" .)) -}}
+{{- .Values.rayAuth.existingSecret | default (include "modelship.fullname" .) -}}
 {{- end -}}
 
 {{/*

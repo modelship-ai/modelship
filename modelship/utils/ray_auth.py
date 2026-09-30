@@ -12,7 +12,7 @@ def resolve_ray_auth_env() -> None:
     RAY_AUTH_MODE check latches at import time, so setting it later has no
     effect on this process's own ray.init()/Node() calls."""
     token = os.environ.get("MSHIP_RAY_AUTH_TOKEN")
-    if token or os.environ.get("MSHIP_RAY_AUTH", "none").lower() == "token":
+    if token or os.environ.get("MSHIP_RAY_AUTH", "false").lower() == "true":
         os.environ.setdefault("RAY_AUTH_MODE", "token")
     if token:
         os.environ.setdefault("RAY_AUTH_TOKEN", token)

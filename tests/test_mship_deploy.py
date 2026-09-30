@@ -85,8 +85,7 @@ class TestParseArgs:
             ("start", ["--gateway-target-ongoing-requests", "32"], "gateway_target_ongoing_requests", 32.0),
             ("start", ["--gateway-max-ongoing-requests", "256"], "gateway_max_ongoing_requests", 256),
             ("deploy", ["--gateway-name", "my-gateway"], "gateway_name", "my-gateway"),
-            ("start", ["--ray-auth", "token"], "ray_auth", "token"),
-            ("deploy", ["--ray-auth", "token"], "ray_auth", "token"),
+            ("start", ["--enable-ray-auth"], "enable_ray_auth", True),
             ("start", ["--gcs-port", "6380"], "gcs_port", 6380),
             ("start", ["--ray-dashboard-port", "8266"], "ray_dashboard_port", 8266),
             ("start", ["--ray-dashboard-host", "0.0.0.0"], "ray_dashboard_host", "0.0.0.0"),
@@ -137,6 +136,8 @@ class TestParseArgs:
             ("deploy", ["--log-level", "DEBUG"]),
             ("deploy", ["--deploy-id", "a"]),
             ("start", ["--cancel", "a"]),
+            ("deploy", ["--enable-ray-auth"]),
+            ("join", ["--gcs-address", "h:1", "--enable-ray-auth"]),
         ],
     )
     def test_flag_owned_by_another_command_is_rejected(self, command, argv):
@@ -154,6 +155,7 @@ class TestParseArgs:
             "--api-keys=k1",
             "--cluster=h:1",
             "--ray-port=6380",
+            "--ray-auth=token",
         ],
     )
     def test_removed_flags_are_rejected(self, command, flag):
@@ -196,7 +198,7 @@ class TestApplyArgsToEnv:
             ("start", ["--gateway-max-replicas", "8"], "MSHIP_GATEWAY_MAX_REPLICAS", "8"),
             ("start", ["--gateway-target-ongoing-requests", "32"], "MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS", "32.0"),
             ("start", ["--gateway-max-ongoing-requests", "256"], "MSHIP_GATEWAY_MAX_ONGOING_REQUESTS", "256"),
-            ("deploy", ["--ray-auth", "token"], "MSHIP_RAY_AUTH", "token"),
+            ("start", ["--enable-ray-auth"], "MSHIP_RAY_AUTH", "true"),
             ("start", ["--gcs-port", "6380"], "MSHIP_GCS_PORT", "6380"),
             ("start", ["--ray-dashboard-port", "8266"], "MSHIP_RAY_DASHBOARD_PORT", "8266"),
             ("start", ["--ray-dashboard-host", "0.0.0.0"], "MSHIP_RAY_DASHBOARD_HOST", "0.0.0.0"),
@@ -1917,8 +1919,8 @@ class TestResolveRayAuthEnv:
             ray_auth.resolve_ray_auth_env()
             return os.environ.get("RAY_AUTH_MODE"), os.environ.get("RAY_AUTH_TOKEN")
 
-    def test_ray_auth_token_sets_mode(self):
-        mode, token = self._resolve({"MSHIP_RAY_AUTH": "token"})
+    def test_enabled_auth_sets_mode(self):
+        mode, token = self._resolve({"MSHIP_RAY_AUTH": "true"})
         assert mode == "token"
         assert token is None
 
@@ -1930,11 +1932,11 @@ class TestResolveRayAuthEnv:
     def test_neither_leaves_auth_unset(self):
         assert self._resolve({}) == (None, None)
 
-    def test_ray_auth_none_leaves_auth_unset(self):
-        assert self._resolve({"MSHIP_RAY_AUTH": "none"}) == (None, None)
+    def test_disabled_auth_leaves_auth_unset(self):
+        assert self._resolve({"MSHIP_RAY_AUTH": "false"}) == (None, None)
 
     def test_explicit_ray_auth_mode_wins(self):
-        mode, _ = self._resolve({"MSHIP_RAY_AUTH": "token", "RAY_AUTH_MODE": "disabled"})
+        mode, _ = self._resolve({"MSHIP_RAY_AUTH": "true", "RAY_AUTH_MODE": "disabled"})
         # setdefault: an operator's explicit RAY_AUTH_MODE always wins.
         assert mode == "disabled"
 

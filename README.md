@@ -129,7 +129,7 @@ Fourteen cluster guarantees — zero-downtime model cutover, load-driven autosca
 - **Per-model isolated deployments** — independent lifecycle, health checks, failure isolation, and replica count per model
 - **Streaming** — SSE for chat completions, responses, and TTS audio
 - **Client disconnect detection** — cancels in-flight inference when the client goes away, freeing the GPU immediately
-- **Security** — Ray cluster token auth (`--ray-auth=token`), caller identity from your auth layer (`MSHIP_TRUSTED_IDENTITY_HEADER`), payload and concurrency limits
+- **Security** — Ray cluster token auth (`--enable-ray-auth`), caller identity from your auth layer (`MSHIP_TRUSTED_IDENTITY_HEADER`), payload and concurrency limits
 - **Built-in observability** — Prometheus metrics, custom `modelship:*` metrics, vLLM engine stats, structured JSON logging, OpenTelemetry export, plus a pre-built Grafana dashboard and alerting rules
 
 </details>
