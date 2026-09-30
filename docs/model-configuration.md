@@ -17,7 +17,10 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 |---|---|---|---|---|
 | `--config` | start, deploy | — | `config/models.yaml` | Path to models config file. An explicit path that doesn't exist is a hard error |
 | `--gateway-name` | start, deploy | `MSHIP_GATEWAY_NAME` | `modelship` | Name for the API gateway app. Multiple gateways can coexist on one cluster, each mounted at `/<slugified-name>` (e.g. `modelship` → `/modelship/v1/...`) |
-| `--gateway-replicas` | start, deploy | `MSHIP_GATEWAY_REPLICAS` | `1` | Number of API gateway replicas (routing/ingress HA; replicas copy routing from the gateway coordinator) |
+| `--gateway-min-replicas` | start | `MSHIP_GATEWAY_MIN_REPLICAS` | `1` | Fewest replicas each API gateway autoscales down to; 2 or more gives routing/ingress HA |
+| `--gateway-max-replicas` | start | `MSHIP_GATEWAY_MAX_REPLICAS` | `4` | Most replicas each API gateway autoscales up to |
+| `--gateway-target-ongoing-requests` | start | `MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS` | `64` | Ongoing requests per gateway replica that autoscaling aims for; a streamed response counts until it ends |
+| `--gateway-max-ongoing-requests` | start | `MSHIP_GATEWAY_MAX_ONGOING_REQUESTS` | `1024` | Most requests one gateway replica handles at once; more wait in the proxy |
 | `--openai-api-port` | start, deploy | `MSHIP_OPENAI_API_PORT` | `8000` | Port for the OpenAI-compatible API |
 | `--cluster` | join | `MSHIP_CLUSTER` | — | The head's GCS address as `host:port` (e.g. `mship-head:6380`) — its `--ray-port`. Reachable only from inside the cluster's private network. See [Multi-node without Kubernetes](multi-node-docker.md) |
 | `--token` | join, deploy, stop | `MSHIP_RAY_AUTH_TOKEN` | — | Auth token of a cluster started with `--ray-auth=token`; read it on the head with `cat ~/.ray/auth_token` |
@@ -579,7 +582,9 @@ Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded 
 | `MSHIP_DEPLOY_CANCEL_GRACE_S` | Seconds a cancelled deploy's worker gets to start its rollback before it is killed and a new worker rolls back instead. Read by the deploy coordinator, set on the process that creates it (`start`) | `30` |
 | `MSHIP_REDIS_PASSWORD` | Password for a `redis://`/`rediss://` state store. Read from each node's own environment, never forwarded by the driver | — |
 | `MSHIP_GATEWAY_NAME` | Name for the API gateway app | `modelship` |
-| `MSHIP_GATEWAY_REPLICAS` | Number of API gateway replicas | `1` |
+| `MSHIP_GATEWAY_MIN_REPLICAS` / `MSHIP_GATEWAY_MAX_REPLICAS` | Range each API gateway autoscales in, set on `start`; a gateway `deploy` creates uses the head's | `1` / `4` |
+| `MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS` | Ongoing requests per gateway replica that autoscaling aims for | `64` |
+| `MSHIP_GATEWAY_MAX_ONGOING_REQUESTS` | Most requests one gateway replica handles at once | `1024` |
 | `MSHIP_OPENAI_API_PORT` | Port for the OpenAI-compatible API | `8000` |
 | `MSHIP_MAX_REQUEST_BODY_BYTES` | Maximum allowed request body size in bytes | `52428800` (50 MB) |
 | `MSHIP_LOG_TARGET` | Log target: `console` or syslog URI | `console` |

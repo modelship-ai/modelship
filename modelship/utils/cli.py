@@ -50,7 +50,10 @@ _ARG_TO_ENV: dict[str, str] = {
     "node_memory": "MSHIP_NODE_MEMORY",
     "prune_ray_sessions": "MSHIP_PRUNE_RAY_SESSIONS",
     "max_request_body_bytes": "MSHIP_MAX_REQUEST_BODY_BYTES",
-    "gateway_replicas": "MSHIP_GATEWAY_REPLICAS",
+    "gateway_min_replicas": "MSHIP_GATEWAY_MIN_REPLICAS",
+    "gateway_max_replicas": "MSHIP_GATEWAY_MAX_REPLICAS",
+    "gateway_target_ongoing_requests": "MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS",
+    "gateway_max_ongoing_requests": "MSHIP_GATEWAY_MAX_ONGOING_REQUESTS",
     "openai_api_port": "MSHIP_OPENAI_API_PORT",
     "responses_ttl_s": "MSHIP_RESPONSES_TTL_S",
     "state_sweep_interval_s": "MSHIP_STATE_SWEEP_INTERVAL_S",
@@ -262,6 +265,32 @@ def _add_head_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--gateway-min-replicas",
+        type=int,
+        help="Fewest replicas each API gateway scales down to (env: MSHIP_GATEWAY_MIN_REPLICAS, default: 1)",
+    )
+    parser.add_argument(
+        "--gateway-max-replicas",
+        type=int,
+        help="Most replicas each API gateway scales up to (env: MSHIP_GATEWAY_MAX_REPLICAS, default: 4)",
+    )
+    parser.add_argument(
+        "--gateway-target-ongoing-requests",
+        type=float,
+        help=(
+            "Ongoing requests per gateway replica that autoscaling aims for; a streamed response counts until it "
+            "ends (env: MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS, default: 64)"
+        ),
+    )
+    parser.add_argument(
+        "--gateway-max-ongoing-requests",
+        type=int,
+        help=(
+            "Most requests one gateway replica handles at once; more wait in the proxy "
+            "(env: MSHIP_GATEWAY_MAX_ONGOING_REQUESTS, default: 1024)"
+        ),
+    )
+    parser.add_argument(
         "--state-store",
         help=(
             "State-store connection URI for the gateways' deploy versions and /v1/responses "
@@ -285,11 +314,6 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--gateway-name",
         help="Name for the API gateway app (env: MSHIP_GATEWAY_NAME, default: modelship)",
-    )
-    parser.add_argument(
-        "--gateway-replicas",
-        type=int,
-        help="Number of API gateway replicas (env: MSHIP_GATEWAY_REPLICAS, default: 1)",
     )
     parser.add_argument(
         "--openai-api-port",

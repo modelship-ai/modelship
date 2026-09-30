@@ -70,8 +70,9 @@ stack; the summary reports the **median** so a single noisy run can't dominate.
 
 Tunable env vars (forwarded to the modelship phase):
 
-- `MSHIP_GATEWAY_REPLICAS` (default 1) — gateway replica count.
-- `MSHIP_GATEWAY_MAX_ONGOING` (default 1024) — gateway per-replica concurrency cap.
+- `MSHIP_GATEWAY_MIN_REPLICAS` / `MSHIP_GATEWAY_MAX_REPLICAS` (default 1 / 4) — range the gateway autoscales in.
+- `MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS` (default 64) — ongoing requests per gateway replica autoscaling aims for.
+- `MSHIP_GATEWAY_MAX_ONGOING_REQUESTS` (default 1024) — gateway per-replica concurrency cap.
 - `MSHIP_CACHE_DIR` — model cache to reuse across phases (default `./models-cache`).
 
 The model and the per-model `max_ongoing_requests` cap come from the config

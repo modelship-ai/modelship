@@ -402,6 +402,32 @@ class TestCancel:
         assert exc.value.status_code == 503
 
 
+class TestReplicaShutdown:
+    @pytest.mark.asyncio
+    async def test_a_stopping_replica_waits_for_its_background_runs(self, api):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def hold(_response_id):
+            started.set()
+            await release.wait()
+
+        _wire(api, _completes_after_callback_factory(hold))
+        result = await api.create_response(ResponsesRequest(model="m", input="hi", background=True), _raw_request())
+        response_id = json.loads(bytes(result.body))["id"]
+        await started.wait()
+
+        # The class @serve.ingress wraps; the wrapper's own __del__ also stops the ASGI lifespan.
+        stopping = asyncio.create_task(_ModelshipAPI.__bases__[0].__del__(api))
+        _, pending = await asyncio.wait({stopping}, timeout=0.1)
+        assert stopping in pending
+
+        release.set()
+        await stopping
+        get_result = await api.get_response(response_id, _raw_request())
+        assert json.loads(bytes(get_result.body))["status"] == "completed"
+
+
 class TestDeleteImpliesCancel:
     @pytest.mark.asyncio
     async def test_delete_in_flight_signals_cancel_and_removes_snapshot(self, api):

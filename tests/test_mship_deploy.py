@@ -14,6 +14,7 @@ from modelship.deploy.actor_options import (
     build_deployment_options,
     total_gpu_reservation,
 )
+from modelship.deploy.gateway_sizing import GATEWAY_SIZING_ENV_VARS, gateway_sizing
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, VllmEngineConfig
 from modelship.utils import parse_memory_bytes, rand_suffix
 from modelship.utils.cli import apply_args_to_env, parse_args
@@ -79,7 +80,10 @@ class TestParseArgs:
         ("command", "argv", "attr", "expected"),
         [
             ("start", ["--config", "/some/path/models.yaml"], "config", "/some/path/models.yaml"),
-            ("start", ["--gateway-replicas", "3"], "gateway_replicas", 3),
+            ("start", ["--gateway-min-replicas", "2"], "gateway_min_replicas", 2),
+            ("start", ["--gateway-max-replicas", "8"], "gateway_max_replicas", 8),
+            ("start", ["--gateway-target-ongoing-requests", "32"], "gateway_target_ongoing_requests", 32.0),
+            ("start", ["--gateway-max-ongoing-requests", "256"], "gateway_max_ongoing_requests", 256),
             ("deploy", ["--gateway-name", "my-gateway"], "gateway_name", "my-gateway"),
             ("start", ["--ray-auth", "token"], "ray_auth", "token"),
             ("deploy", ["--ray-auth", "token"], "ray_auth", "token"),
@@ -112,6 +116,8 @@ class TestParseArgs:
         ("command", "argv"),
         [
             ("deploy", ["--ray-port", "6380"]),
+            ("deploy", ["--gateway-max-replicas", "8"]),
+            ("join", ["--cluster", "h:1", "--gateway-min-replicas", "2"]),
             ("deploy", ["--node-num-cpus", "4"]),
             ("deploy", ["--prune-ray-sessions", "false"]),
             ("deploy", ["--api-keys", "k1"]),
@@ -142,7 +148,9 @@ class TestParseArgs:
             parse_args(command, argv)
 
     @pytest.mark.parametrize("command", ["start", "join", "deploy"])
-    @pytest.mark.parametrize("flag", ["--use-existing-ray-cluster", "--address=h:1", "--deploy-timeout=5"])
+    @pytest.mark.parametrize(
+        "flag", ["--use-existing-ray-cluster", "--address=h:1", "--deploy-timeout=5", "--gateway-replicas=2"]
+    )
     def test_removed_flags_are_rejected(self, command, flag):
         with pytest.raises(SystemExit):
             parse_args(command, [flag])
@@ -166,7 +174,10 @@ class TestApplyArgsToEnv:
         ("command", "argv", "env_var", "expected"),
         [
             ("start", ["--state-store", "redis://cache:6379/0"], "MSHIP_STATE_STORE", "redis://cache:6379/0"),
-            ("start", ["--gateway-replicas", "4"], "MSHIP_GATEWAY_REPLICAS", "4"),
+            ("start", ["--gateway-min-replicas", "2"], "MSHIP_GATEWAY_MIN_REPLICAS", "2"),
+            ("start", ["--gateway-max-replicas", "8"], "MSHIP_GATEWAY_MAX_REPLICAS", "8"),
+            ("start", ["--gateway-target-ongoing-requests", "32"], "MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS", "32.0"),
+            ("start", ["--gateway-max-ongoing-requests", "256"], "MSHIP_GATEWAY_MAX_ONGOING_REQUESTS", "256"),
             ("deploy", ["--ray-auth", "token"], "MSHIP_RAY_AUTH", "token"),
             ("start", ["--ray-port", "6380"], "MSHIP_RAY_PORT", "6380"),
             ("start", ["--ray-dashboard-port", "8266"], "MSHIP_RAY_DASHBOARD_PORT", "8266"),
@@ -263,6 +274,7 @@ class TestDriverCacheEnv:
 _HEAD_SETTINGS = {
     "env": {**CLUSTER_ENV_DEFAULTS, "MSHIP_METRICS": "false", "MSHIP_STATE_STORE": "redis://head:6379/0"},
     "serve_logging_config": "head-logging",
+    "gateway_sizing": "head-sizing",
 }
 
 
@@ -270,7 +282,7 @@ class TestDriverVerbs:
     @pytest.fixture(autouse=True)
     def _isolate(self):
         with patch.dict(os.environ, {}, clear=False), patch("modelship.driver.signal.signal"):
-            for key in ("MSHIP_GATEWAY_NAME", "MSHIP_STATE_STORE", *CLUSTER_ENV_DEFAULTS):
+            for key in ("MSHIP_GATEWAY_NAME", "MSHIP_STATE_STORE", *CLUSTER_ENV_DEFAULTS, *GATEWAY_SIZING_ENV_VARS):
                 os.environ.pop(key, None)
             yield
 
@@ -334,6 +346,22 @@ class TestDriverVerbs:
 
     def test_start_gives_the_gateway_the_defaults_explicitly(self):
         assert self._start().gateway.call_args.args[3] == {**CLUSTER_ENV_DEFAULTS, "MSHIP_STATE_STORE": "memory://"}
+
+    def test_start_sizes_the_gateway_from_its_env(self):
+        os.environ["MSHIP_GATEWAY_MAX_REPLICAS"] = "8"
+        assert self._start().gateway.call_args.args[4]["autoscaling_config"]["max_replicas"] == 8
+
+    def test_start_refuses_invalid_gateway_sizing_before_starting_its_head(self):
+        from modelship import driver
+        from modelship.deploy import serve_utils
+
+        os.environ["MSHIP_GATEWAY_MIN_REPLICAS"] = "0"
+        with (
+            patch.object(serve_utils, "start_head") as mock_start_head,
+            pytest.raises(ValueError, match="MSHIP_GATEWAY_MIN_REPLICAS"),
+        ):
+            driver._start(parse_args("start", []))
+        mock_start_head.assert_not_called()
 
     def test_deploy_refuses_without_a_local_cluster(self):
         from modelship import driver
@@ -400,6 +428,7 @@ class TestDriverVerbs:
         deployed = self._deploy(["--gateway-name", "edge"], existing_apps={"modelship"})
         assert deployed.gateway.call_args.args[1] == "head-logging"
         assert deployed.gateway.call_args.args[3] == _HEAD_SETTINGS["env"]
+        assert deployed.gateway.call_args.args[4] == "head-sizing"
 
     def test_deploy_starts_serve_with_the_head_logging(self):
         self._deploy([], existing_apps={"modelship"}).serve.assert_called_once_with("head-logging")
@@ -1131,78 +1160,98 @@ class TestDeleteModelApps:
         assert "2 deployment(s) still being removed after 0 s" in caplog.text
 
 
+_SIZING = {
+    "autoscaling_config": {"min_replicas": 1, "max_replicas": 4, "target_ongoing_requests": 64.0},
+    "max_ongoing_requests": 1024,
+}
+
+
 class TestStartGateway:
-    def _run(self, env, cluster_env=None):
+    def _run(self, env=None, cluster_env=None, name="gw"):
         from modelship.deploy import serve_utils
 
-        bound = MagicMock()
         options = MagicMock()
-        options.return_value.bind.return_value = bound
-        logging_config = MagicMock()
         with (
-            patch.dict(os.environ, env, clear=False),
+            patch.dict(os.environ, env or {}, clear=env is not None),
             patch.object(serve_utils.ModelshipAPI, "options", options),
             patch.object(serve_utils.serve, "run") as mock_run,
         ):
-            serve_utils.start_gateway("gw", logging_config, "/gw", cluster_env or {})
-        return options, mock_run
+            serve_utils.start_gateway(name, MagicMock(), f"/{name}", cluster_env or {}, _SIZING)
+        return options.call_args.kwargs, mock_run.call_args.kwargs
 
     def test_route_prefix_forwarded_to_serve_run(self):
-        _, mock_run = self._run({"MSHIP_GATEWAY_REPLICAS": "1", "MSHIP_GATEWAY_MAX_ONGOING": "1024"})
-        _, kwargs = mock_run.call_args
-        assert kwargs["route_prefix"] == "/gw"
+        _, run_kwargs = self._run()
+        assert run_kwargs["route_prefix"] == "/gw"
 
-    def test_defaults(self):
-        # Ensure no leftover env from the ambient process leaks the assertion.
-        options, mock_run = self._run({"MSHIP_GATEWAY_REPLICAS": "1", "MSHIP_GATEWAY_MAX_ONGOING": "1024"})
-        _, kwargs = options.call_args
-        assert kwargs["num_replicas"] == 1
-        assert kwargs["max_ongoing_requests"] == 1024
-        mock_run.assert_called_once()
+    def test_the_gateway_autoscales_with_the_given_sizing(self):
+        options, _ = self._run()
+        assert "num_replicas" not in options
+        assert options["autoscaling_config"] == _SIZING["autoscaling_config"]
+        assert options["max_ongoing_requests"] == 1024
 
-    def test_env_overrides(self):
-        options, _ = self._run({"MSHIP_GATEWAY_REPLICAS": "3", "MSHIP_GATEWAY_MAX_ONGOING": "256"})
-        _, kwargs = options.call_args
-        assert kwargs["num_replicas"] == 3
-        assert kwargs["max_ongoing_requests"] == 256
+    def test_a_replica_scaled_down_has_time_to_finish_its_streams(self):
+        options, _ = self._run()
+        assert options["graceful_shutdown_timeout_s"] == 600
 
     def test_gateway_name_pinned_from_arg(self):
-        # MSHIP_GATEWAY_NAME is forwarded from the gateway_name arg even when absent
-        # from os.environ, so metrics stamping stays correct on isolated environments.
-        from modelship.deploy import serve_utils
-
-        bound = MagicMock()
-        options = MagicMock()
-        options.return_value.bind.return_value = bound
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(serve_utils.ModelshipAPI, "options", options),
-            patch.object(serve_utils.serve, "run"),
-        ):
-            serve_utils.start_gateway("edge", MagicMock(), "/edge", {})
-        _, kwargs = options.call_args
-        assert kwargs["ray_actor_options"]["runtime_env"]["env_vars"]["MSHIP_GATEWAY_NAME"] == "edge"
+        options, _ = self._run(env={}, name="edge")
+        assert options["ray_actor_options"]["runtime_env"]["env_vars"]["MSHIP_GATEWAY_NAME"] == "edge"
 
     def test_the_cluster_settings_are_the_ones_given_not_this_processes(self):
         options, _ = self._run(
             {"MSHIP_STATE_STORE": "redis://deploy-host:6379/0", "MSHIP_LOG_FORMAT": "text"},
             cluster_env={"MSHIP_STATE_STORE": "redis://head:6379/0", "MSHIP_LOG_FORMAT": "json"},
         )
-        env_vars = options.call_args.kwargs["ray_actor_options"]["runtime_env"]["env_vars"]
+        env_vars = options["ray_actor_options"]["runtime_env"]["env_vars"]
         assert (env_vars["MSHIP_STATE_STORE"], env_vars["MSHIP_LOG_FORMAT"]) == ("redis://head:6379/0", "json")
+
+
+class TestGatewaySizing:
+    def test_defaults(self):
+        with patch.dict(os.environ, {}, clear=True):
+            assert gateway_sizing() == _SIZING
+
+    def test_env_overrides(self):
+        env = {
+            "MSHIP_GATEWAY_MIN_REPLICAS": "2",
+            "MSHIP_GATEWAY_MAX_REPLICAS": "8",
+            "MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS": "32.5",
+            "MSHIP_GATEWAY_MAX_ONGOING_REQUESTS": "256",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            assert gateway_sizing() == {
+                "autoscaling_config": {"min_replicas": 2, "max_replicas": 8, "target_ongoing_requests": 32.5},
+                "max_ongoing_requests": 256,
+            }
+
+    def test_min_and_max_can_be_equal(self):
+        with patch.dict(os.environ, {"MSHIP_GATEWAY_MIN_REPLICAS": "3", "MSHIP_GATEWAY_MAX_REPLICAS": "3"}, clear=True):
+            assert gateway_sizing()["autoscaling_config"]["min_replicas"] == 3
 
     @pytest.mark.parametrize(
         "name, value",
         [
-            ("MSHIP_GATEWAY_REPLICAS", "0"),
-            ("MSHIP_GATEWAY_REPLICAS", "-2"),
-            ("MSHIP_GATEWAY_MAX_ONGOING", "0"),
-            ("MSHIP_GATEWAY_MAX_ONGOING", "notanint"),
+            ("MSHIP_GATEWAY_MIN_REPLICAS", "0"),
+            ("MSHIP_GATEWAY_MIN_REPLICAS", "1.5"),
+            ("MSHIP_GATEWAY_MAX_REPLICAS", "-2"),
+            ("MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS", "0"),
+            ("MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS", "many"),
+            ("MSHIP_GATEWAY_MAX_ONGOING_REQUESTS", "notanint"),
         ],
     )
     def test_rejects_invalid_env(self, name, value):
-        with pytest.raises(ValueError, match=name):
-            self._run({name: value})
+        with patch.dict(os.environ, {name: value}, clear=True), pytest.raises(ValueError, match=name):
+            gateway_sizing()
+
+    def test_rejects_a_max_below_the_min(self):
+        env = {"MSHIP_GATEWAY_MIN_REPLICAS": "3", "MSHIP_GATEWAY_MAX_REPLICAS": "2"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            pytest.raises(
+                ValueError, match=r"MSHIP_GATEWAY_MAX_REPLICAS \(2\) must be >= MSHIP_GATEWAY_MIN_REPLICAS \(3\)"
+            ),
+        ):
+            gateway_sizing()
 
 
 class TestGatewayRoutePrefix:

@@ -32,6 +32,7 @@ import ray
 from ray import serve
 from ray.exceptions import RayActorError
 
+from modelship.deploy.gateway_sizing import GATEWAY_SIZING_ENV_VARS, gateway_sizing
 from modelship.deploy.ledger import DeployRequest, Version, commit_version, read_versions
 from modelship.logging import configure_logging, get_logger, serve_logging_config
 from modelship.state import get_state_store, state_store_env_var
@@ -349,9 +350,13 @@ class DeployCoordinator:
         return versions
 
     async def cluster_settings(self) -> dict:
-        """The cluster-wide and state-store env vars `mship start` created this actor with, and Serve's
-        LoggingConfig at its level."""
-        return {"env": cluster_env_vars() | state_store_env_var(), "serve_logging_config": serve_logging_config()}
+        """The cluster-wide and state-store env vars and gateway sizing `mship start` created this actor with,
+        and Serve's LoggingConfig at its level."""
+        return {
+            "env": cluster_env_vars() | state_store_env_var(),
+            "serve_logging_config": serve_logging_config(),
+            "gateway_sizing": gateway_sizing(),
+        }
 
     def _running_entry(self, request_id: str, gateway_name: str) -> _Entry:
         entry = self._running.get(gateway_name)
@@ -514,7 +519,9 @@ def get_or_create_coordinator():
         num_cpus=0,
         max_restarts=-1,
         runtime_env={
-            "env_vars": build_env_vars(DEPLOY_COORDINATOR_ENV_VARS) | cluster_env_vars() | state_store_env_var()
+            "env_vars": build_env_vars(DEPLOY_COORDINATOR_ENV_VARS + GATEWAY_SIZING_ENV_VARS)
+            | cluster_env_vars()
+            | state_store_env_var()
         },
         **head_node_options(),
     ).remote()

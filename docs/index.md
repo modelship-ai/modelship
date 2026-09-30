@@ -144,8 +144,8 @@ deployment with its own lifecycle, health checks, and resource budget.
 
 Models can be deployed across multiple GPUs or run on CPU-only. A model name
 maps to one deployment, which scales horizontally with `num_replicas`
-(Ray Serve load-balances across its own replicas); the gateway itself scales
-with `--gateway-replicas`, and several gateways can share one cluster and one
+(Ray Serve load-balances across its own replicas); the gateway itself autoscales
+with its load, and several gateways can share one cluster and one
 port (`--gateway-name`), each mounted at `/<name>/v1` with its own model set.
 See [Architecture](architecture.md) for the full request lifecycle and design.
 

@@ -396,31 +396,19 @@ def start_serve(serve_logging_config: LoggingConfig) -> None:
     )
 
 
-def _positive_int_env(name: str, default: int) -> int:
-    """Read an env var as an int >= 1, failing fast with a clear message.
-
-    Ray Serve rejects num_replicas / max_ongoing_requests < 1 deep in
-    deployment, so validate up front to surface the misconfiguration plainly.
-    """
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        raise ValueError(f"{name} must be a positive integer, got {raw!r}") from None
-    if value < 1:
-        raise ValueError(f"{name} must be >= 1, got {value}")
-    return value
+# Lets a replica being scaled down finish its open streams.
+_GATEWAY_GRACEFUL_SHUTDOWN_S = 600
 
 
 def start_gateway(
-    gateway_name: str, serve_logging_config: LoggingConfig, route_prefix: str, cluster_env: dict[str, str]
+    gateway_name: str,
+    serve_logging_config: LoggingConfig,
+    route_prefix: str,
+    cluster_env: dict[str, str],
+    sizing: dict,
 ) -> None:
-    """*cluster_env* is the head's cluster-wide and state-store env vars."""
+    """*cluster_env* is the head's cluster-wide and state-store env vars, *sizing* its `gateway_sizing()`."""
     logger.info("Starting API gateway...")
-    gateway_replicas = _positive_int_env("MSHIP_GATEWAY_REPLICAS", 1)
-    gateway_max_ongoing = _positive_int_env("MSHIP_GATEWAY_MAX_ONGOING", 1024)
     # A replica can land on any node, so these come from here, not that node's env.
     # MSHIP_GATEWAY_NAME is pinned from the arg so metrics stamping stays correct.
     env_vars = build_env_vars(GATEWAY_ENV_VARS) | cluster_env
@@ -428,19 +416,24 @@ def start_gateway(
     serve.run(
         ModelshipAPI.options(
             name=gateway_name,
-            num_replicas=gateway_replicas,
-            max_ongoing_requests=gateway_max_ongoing,
+            autoscaling_config=sizing["autoscaling_config"],
+            max_ongoing_requests=sizing["max_ongoing_requests"],
+            graceful_shutdown_timeout_s=_GATEWAY_GRACEFUL_SHUTDOWN_S,
             ray_actor_options={"num_cpus": 0, "runtime_env": {"env_vars": env_vars}},
             logging_config=serve_logging_config,
         ).bind(gateway_name),
         name=gateway_name,
         route_prefix=route_prefix,
     )
+    autoscaling = sizing["autoscaling_config"]
     logger.info(
-        "Gateway up at %s — %s/health and %s/readyz now serving. (replicas=%d, max_ongoing=%d)",
+        "Gateway up at %s — %s/health and %s/readyz now serving. (replicas %d-%d, target %g ongoing requests "
+        "per replica, max %d)",
         route_prefix,
         route_prefix.rstrip("/"),
         route_prefix.rstrip("/"),
-        gateway_replicas,
-        gateway_max_ongoing,
+        autoscaling["min_replicas"],
+        autoscaling["max_replicas"],
+        autoscaling["target_ongoing_requests"],
+        sizing["max_ongoing_requests"],
     )

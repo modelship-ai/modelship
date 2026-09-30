@@ -68,8 +68,14 @@ spec:
               - "0.0.0.0"
               - --gateway-name
               - {{ .Values.gateway.name | quote }}
-              - --gateway-replicas
-              - {{ .Values.gateway.replicas | quote }}
+              - --gateway-min-replicas
+              - {{ .Values.gateway.autoscaling.minReplicas | quote }}
+              - --gateway-max-replicas
+              - {{ .Values.gateway.autoscaling.maxReplicas | quote }}
+              - --gateway-target-ongoing-requests
+              - {{ .Values.gateway.autoscaling.targetOngoingRequests | quote }}
+              - --gateway-max-ongoing-requests
+              - {{ .Values.gateway.maxOngoingRequests | quote }}
               - --openai-api-port
               - {{ .Values.gateway.port | quote }}
               {{- if .Values.metrics.enabled }}

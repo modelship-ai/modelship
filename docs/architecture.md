@@ -73,7 +73,7 @@ Egress is permissive by default (plain HTTP, localhost, private IPs allowed) exc
 
 ### Background mode (`background: true`)
 
-Returns a `status: "queued"` `ResponseObject` immediately; generation continues on a task on the dispatching gateway replica (not the model deployment). Poll `GET /v1/responses/{id}` until terminal (`completed`/`incomplete`/`failed`/`cancelled`), or `POST /v1/responses/{id}/cancel` (reuses the `DisconnectRegistry` actor). `DELETE` on an in-flight run implies cancel. Requires `store: true` (default) — `background: true` + `store: false` is a 400.
+Returns a `status: "queued"` `ResponseObject` immediately; generation continues on a task on the dispatching gateway replica (not the model deployment); a replica the gateway scales down waits up to 10 minutes for its runs to finish before it stops. Poll `GET /v1/responses/{id}` until terminal (`completed`/`incomplete`/`failed`/`cancelled`), or `POST /v1/responses/{id}/cancel` (reuses the `DisconnectRegistry` actor). `DELETE` on an in-flight run implies cancel. Requires `store: true` (default) — `background: true` + `store: false` is a 400.
 
 A detached run has no client connection to detect a dead worker, so the drain task heartbeats a separate `HeartbeatRegistry` actor every few seconds; a poller finding no live heartbeat for a non-terminal snapshot reports it `failed`. `background: true` + `stream: true` tees events into a short-lived per-response replay log (`MSHIP_RESPONSES_STREAM_BUFFER_TTL_S`, default 600s) as well as the durable snapshot; a disconnected client resumes via `GET .../{id}?stream=true&starting_after=<sequence_number>`. `redis://` (`MSHIP_STATE_STORE`) is the supported backend for production background use — `memory://` doesn't survive a restart.
 
