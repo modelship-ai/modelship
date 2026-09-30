@@ -387,10 +387,14 @@ class ModelshipAPI:
                 logger.debug("gateway: watch iteration failed; retrying", exc_info=True)
                 await asyncio.sleep(_WATCH_RETRY_S)
 
-    def __del__(self):
+    async def __del__(self):
         task = getattr(self, "_watch_task", None)
         if task is not None and not task.done():
             task.cancel()
+        # Serve calls this once the replica's requests drain, and kills it after graceful_shutdown_timeout_s.
+        if background := list(getattr(self, "_background_tasks", ())):
+            logger.info("gateway: waiting for %d background response(s) before this replica stops", len(background))
+            await asyncio.gather(*background, return_exceptions=True)
 
     async def list_deployments(self) -> dict[str, list[str]]:
         """Return model_name -> list of deployment app_names currently registered."""
