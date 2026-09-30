@@ -38,8 +38,13 @@ kuberay-operator:
 gateway:
   name: "modelship"
   port: 8000
-  # Number of gateway replicas (`mship start --gateway-replicas`).
-  replicas: 1
+  # Replica range and per-replica target of the gateway's autoscaling (`mship start --gateway-*`).
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 4
+    targetOngoingRequests: 64
+  # Most requests one gateway replica handles at once (`mship start --gateway-max-ongoing-requests`).
+  maxOngoingRequests: 1024
 
 # -- Metrics exporter (Ray + modelship Prometheus metrics), pinned to `port` on
 # every Ray pod.

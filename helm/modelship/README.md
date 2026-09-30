@@ -101,9 +101,10 @@ secrets:
 - **Serve HTTP proxies** — one runs on **every** Ray node (`proxy_location=EveryNode`),
   not just the head, and the gateway Service load-balances across all of them so
   ingress survives losing any single pod. Each proxy can route to any gateway
-  replica wherever it's scheduled. Set `gateway.replicas > 1` (with ≥1 worker) for
-  routing/ingress HA; replicas keep their routing tables in sync via the deploy
-  coordinator.
+  replica wherever it's scheduled. The gateway autoscales between
+  `gateway.autoscaling.minReplicas` and `maxReplicas`; set `minReplicas` to 2 or more
+  (with ≥1 worker) for routing/ingress HA. Each replica copies its routing table from
+  the gateway coordinator.
 - **Worker groups** — where models actually run. **Empty by default**, so a
   no-values install brings up only the head and schedules nothing; declare the
   groups that match your hardware under `workerGroups` (a commented cuda+cpu
@@ -251,7 +252,9 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `head.image.variant` | `thin` | The head/RayJob submitter always default to `thin` regardless of `image.variant` above — override only if you genuinely want model capacity on the head |
 | `rayVersion` | `2.54.1` | Must match the Ray in the image |
 | `models.config` | `models: []` | Your model set |
-| `gateway.replicas` | `1` | API gateway replicas; raise (with ≥1 worker) for routing/ingress HA |
+| `gateway.autoscaling.minReplicas` / `maxReplicas` | `1` / `4` | Range the API gateway autoscales in; a `minReplicas` of 2 or more (with ≥1 worker) gives routing/ingress HA |
+| `gateway.autoscaling.targetOngoingRequests` | `64` | Ongoing requests per gateway replica that autoscaling aims for |
+| `gateway.maxOngoingRequests` | `1024` | Most requests one gateway replica handles at once |
 | `secrets.huggingfaceToken` / `secrets.apiKeys` | `""` | HF token / gateway API keys |
 | `cache.size` / `cache.accessModes` | `100Gi` / `[ReadWriteOnce]` | Shared weight cache |
 | `nodeCache.sizeLimit` | `""` (uncapped) | Per-pod compile-cache emptyDir; a pod over the cap is evicted |
