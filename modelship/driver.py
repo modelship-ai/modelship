@@ -43,7 +43,7 @@ def run(command: str, argv: list[str] | None = None) -> None:
         _start(args)
     elif command == "join":
         _join()
-    elif command == "stop":
+    elif args.cancel is not None:
         _cancel(args)
     else:
         _deploy(args)
@@ -193,12 +193,12 @@ def _deploy(args) -> None:
     receipt = _send(args, gateway_name, coordinator)
     request_id = receipt["id"]
     if not args.wait:
-        logger.info("Follow it in the head's log; cancel it with `mship stop --deploy-id %s`.", request_id)
+        logger.info("Follow it in the head's log; cancel it with `mship deploy --cancel %s`.", request_id)
         return
 
     outcome = _wait_for_outcome(
         receipt["outcome"],
-        stopped=f"deploy {request_id} keeps running. Cancel it with `mship stop --deploy-id {request_id}`.",
+        stopped=f"deploy {request_id} keeps running. Cancel it with `mship deploy --cancel {request_id}`.",
         lost=f"Deploy {request_id} was lost: the deploy coordinator restarted. Run the deploy again.",
     )
     if outcome["state"] != "succeeded":
@@ -220,7 +220,7 @@ def _send(args, gateway_name: str, coordinator) -> dict:
     request = DeployRequest(
         gateway=gateway_name,
         mode=mode,
-        strategy=getattr(args, "replace_strategy", "blue_green"),
+        strategy=getattr(args, "replace_strategy", None) or "blue_green",
         models=models,
         env=deploy_env_vars(),
     )
@@ -273,9 +273,10 @@ def _cancel(args) -> None:
         sys.exit("error: no Ray cluster is running on this machine.")
     lib_level, _ = _serve_logging()
     attach_cluster(lib_level)
+    deploy_id = args.cancel
     if (coordinator := find_coordinator()) is None:
-        sys.exit(f"error: no deploy {args.deploy_id} on this cluster.")
-    result: dict = ray.get(coordinator.cancel.remote(args.deploy_id))
+        sys.exit(f"error: no deploy {deploy_id} on this cluster.")
+    result: dict = ray.get(coordinator.cancel.remote(deploy_id))
     if not result["cancelled"]:
         sys.exit(f"error: {result['message']}.")
     logger.info("%s.", result["message"].capitalize())
@@ -283,8 +284,8 @@ def _cancel(args) -> None:
         return
     outcome = _wait_for_outcome(
         result["outcome"],
-        stopped=f"deploy {args.deploy_id} keeps rolling back.",
-        lost=f"Deploy {args.deploy_id} was lost: the deploy coordinator restarted, which rolls back what wasn't committed.",
+        stopped=f"deploy {deploy_id} keeps rolling back.",
+        lost=f"Deploy {deploy_id} was lost: the deploy coordinator restarted, which rolls back what wasn't committed.",
     )
     if outcome["state"] != "cancelled":
         sys.exit(1)

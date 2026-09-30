@@ -69,7 +69,7 @@ class TestParseArgs:
     def test_reconcile_flag(self):
         args = parse_args("deploy", ["--reconcile"])
         assert args.reconcile is True
-        assert args.replace_strategy == "blue_green"
+        assert args.replace_strategy is None
 
     def test_reconcile_with_stop_start_strategy(self):
         args = parse_args("deploy", ["--reconcile", "--replace-strategy", "stop_start"])
@@ -105,8 +105,8 @@ class TestParseArgs:
             ("start", ["--otel-endpoint", "http://c:4317"], "otel_endpoint", "http://c:4317"),
             ("join", ["--cluster", "h:1", "--log-level", "debug"], "log_level", "DEBUG"),
             ("join", ["--cluster", "h:1", "--log-target", "syslog://h:514"], "log_target", "syslog://h:514"),
-            ("stop", ["--deploy-id", "abc123"], "deploy_id", "abc123"),
-            ("stop", ["--deploy-id", "abc123", "--token", "secret"], "token", "secret"),
+            ("deploy", ["--cancel", "abc123"], "cancel", "abc123"),
+            ("deploy", ["--cancel", "abc123", "--token", "secret"], "token", "secret"),
         ],
     )
     def test_flag_parses(self, command, argv, attr, expected):
@@ -137,10 +137,8 @@ class TestParseArgs:
             ("deploy", ["--log-format", "json"]),
             ("join", ["--cluster", "h:1", "--log-format", "json"]),
             ("deploy", ["--log-level", "DEBUG"]),
-            ("stop", ["--deploy-id", "a", "--otel-endpoint", "http://c:4317"]),
-            ("stop", ["--deploy-id", "a", "--config", "models.yaml"]),
-            ("stop", ["--deploy-id", "a", "--gateway-name", "gw"]),
             ("deploy", ["--deploy-id", "a"]),
+            ("start", ["--cancel", "a"]),
         ],
     )
     def test_flag_owned_by_another_command_is_rejected(self, command, argv):
@@ -155,9 +153,22 @@ class TestParseArgs:
         with pytest.raises(SystemExit):
             parse_args(command, [flag])
 
-    def test_stop_requires_a_deploy_id(self):
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--config", "models.yaml"],
+            ["--model", "org/repo"],
+            ["--name", "qwen"],
+            ["--reconcile"],
+            ["--replace-strategy", "stop_start"],
+            ["--no-preflight"],
+            ["--llama-server-config.n-ctx", "8192"],
+        ],
+    )
+    def test_cancel_takes_no_model_options(self, argv, capsys):
         with pytest.raises(SystemExit):
-            parse_args("stop", [])
+            parse_args("deploy", ["--cancel", "r1", *argv])
+        assert f"--cancel takes no model options: {argv[0]}." in capsys.readouterr().err
 
     def test_join_requires_a_cluster(self, monkeypatch):
         monkeypatch.delenv("MSHIP_CLUSTER", raising=False)
@@ -443,7 +454,7 @@ class TestDriverVerbs:
         deployed = self._deploy([], existing_apps={"modelship"})
         deployed.send.assert_called_once()
         assert [c.args[0] for c in deployed.get.call_args_list] == ["settings-ref"]
-        assert "Follow it in the head's log; cancel it with `mship stop --deploy-id r1`." in caplog.messages
+        assert "Follow it in the head's log; cancel it with `mship deploy --cancel r1`." in caplog.messages
 
     def test_deploy_with_wait_waits_for_the_outcome(self, caplog):
         caplog.set_level(logging.INFO, logger="modelship")
@@ -573,8 +584,21 @@ class TestCancelCommand:
             patch("ray.get", side_effect=waiting or (lambda value: rolled_back if value == "outcome-ref" else value)),
             patch.object(driver.signal, "signal"),
         ):
-            driver._cancel(parse_args("stop", ["--deploy-id", "r1", *argv]))
+            driver._cancel(parse_args("deploy", ["--cancel", "r1", *argv]))
         return coordinator
+
+    def test_deploy_with_cancel_runs_the_cancel(self):
+        from modelship import driver
+
+        with (
+            patch.dict(os.environ),
+            patch.object(driver, "configure_logging"),
+            patch.object(driver, "_cancel") as cancel,
+            patch.object(driver, "_deploy") as deploy,
+        ):
+            driver.run("deploy", ["--cancel", "r1"])
+        assert cancel.call_args.args[0].cancel == "r1"
+        deploy.assert_not_called()
 
     def test_cancels_the_deploy(self, caplog):
         caplog.set_level(logging.INFO, logger="modelship")

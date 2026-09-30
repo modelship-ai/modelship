@@ -143,7 +143,7 @@ class TestQueue:
             model_deployer.run("--gateway-name", _OTHER_GATEWAY, *_flags("elsewhere"), log_name="elsewhere")
             assert not _apps_for("modelship", "behind"), "a deploy ran while another held its gateway's queue"
 
-            model_deployer.stop(blocker_id, log_name="stop-blocker")
+            model_deployer.cancel(blocker_id, log_name="cancel-blocker")
             pending.wait(expect_code=1)
             queued.wait()
             assert _apps_for("modelship", "behind")
@@ -161,14 +161,14 @@ class TestCancel:
         assert _poll(partial(_running, "modelship", "up-model"), deadline_s=180), "the placeable model never came up"
         assert _answers("up-model", 404), "a model was routed before its deploy committed"
 
-        log = model_deployer.stop(request_id, "--wait", log_name="stop-half-placeable")
+        log = model_deployer.cancel(request_id, "--wait", log_name="cancel-half-placeable")
         assert f"Deploy {request_id} is being cancelled and rolled back." in log
         assert f"Deploy {request_id} cancelled." in log
         assert not _apps_for("modelship", "up-model") and not _apps_for("modelship", "never-model")
         assert f"Deploy {request_id} cancelled." in deploy.wait(expect_code=1)
 
     def test_an_unknown_deploy_cannot_be_cancelled(self, model_deployer):
-        log = model_deployer.stop("nosuchdeploy", log_name="stop-unknown", expect_code=1)
+        log = model_deployer.cancel("nosuchdeploy", log_name="cancel-unknown", expect_code=1)
         assert "no queued or running deploy nosuchdeploy" in log
 
 
@@ -191,7 +191,7 @@ class TestFirstDeploy:
                 "a gateway's first deploy was routed before it committed"
             )
         finally:
-            model_deployer.stop(request_id, log_name="stop-first-deploy")
+            model_deployer.cancel(request_id, log_name="cancel-first-deploy")
             deploy.wait(expect_code=1)
             _delete_gateway(_FIRST_GATEWAY)
 

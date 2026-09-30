@@ -69,16 +69,14 @@ _MODEL_USAGE = "[options] [--model REF [--<block>.<key> VALUE ...]]"
 _USAGE = {
     "start": f"mship start {_MODEL_USAGE}",
     "join": "mship join --cluster HOST:PORT [options]",
-    "deploy": f"mship deploy {_MODEL_USAGE}",
-    "stop": "mship stop --deploy-id ID [options]",
+    "deploy": f"mship deploy {_MODEL_USAGE}\n       mship deploy --cancel ID [--wait]",
 }
 _DESCRIPTION = {
     "start": "Start a cluster on this machine: its head node, the API gateway and any models given. Stays running.",
     "join": "Add this machine to a running cluster as a worker node. Stays running.",
     "deploy": "Change the models of the cluster running on this machine: sends the change and exits, or with --wait, "
-    "waits for it to succeed or fail.",
-    "stop": "Cancel a deploy on the cluster running on this machine, rolling back what it has done so far: sends the "
-    "cancel and exits, or with --wait, waits for the rollback.",
+    "waits for it to succeed or fail. With --cancel ID, cancels a deploy instead, rolling back what it has done so "
+    "far.",
 }
 
 
@@ -97,26 +95,24 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
     if command in ("start", "deploy"):
         _add_auth_arg(parser)
         _add_cluster_args(parser)
-    if command == "stop":
-        _add_auth_arg(parser)
-        _add_token_arg(parser)
-        parser.add_argument("--deploy-id", required=True, help="The deploy to cancel, as `mship deploy` printed it")
-        parser.add_argument(
-            "--wait",
-            action="store_true",
-            help="Wait for the deploy to be rolled back, and exit with its outcome. A signal only stops the wait.",
-        )
     if command == "deploy":
         _add_token_arg(parser)
         parser.add_argument(
+            "--cancel",
+            metavar="ID",
+            help="Cancel this deploy instead, rolling back what it has done so far (the id `mship deploy` printed)",
+        )
+        parser.add_argument(
             "--wait",
             action="store_true",
-            help="Wait for the deploy to succeed or fail, and exit with its outcome. A signal only stops the wait.",
+            help=(
+                "Wait for the deploy to succeed or fail, or with --cancel, to be rolled back, and exit with its "
+                "outcome. A signal only stops the wait."
+            ),
         )
         parser.add_argument(
             "--replace-strategy",
             choices=["blue_green", "stop_start"],
-            default="blue_green",
             help=(
                 "How to replace a model whose config changed. blue_green (default): deploy "
                 "new alongside old, then drop old (no request loss, peak resource = old+new). "
@@ -129,9 +125,28 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
     args = parser.parse_args(argv)
     if command == "join" and not (args.cluster or os.environ.get("MSHIP_CLUSTER")):
         parser.error("--cluster is required: the head's address as HOST:PORT (env: MSHIP_CLUSTER)")
-    if command in ("start", "deploy"):
+    if command == "deploy" and args.cancel is not None:
+        _check_cancel_args(parser, args)
+    elif command in ("start", "deploy"):
         _check_model_args(parser, args)
     return args
+
+
+def _check_cancel_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    given = [
+        flag
+        for flag, value in (
+            ("--config", args.config),
+            ("--reconcile", args.reconcile),
+            ("--replace-strategy", args.replace_strategy),
+            ("--no-preflight", args.no_preflight),
+        )
+        if value
+    ]
+    given += [f"--{key.replace('_', '-')}" for key in MODEL_ARG_KEYS if getattr(args, key) is not None]
+    given += set_generated_options(args)
+    if given:
+        parser.error(f"--cancel takes no model options: {', '.join(given)}.")
 
 
 def _check_model_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:

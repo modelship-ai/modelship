@@ -370,12 +370,12 @@ class _Deployer:
             _fail_deploy(log_path, result.returncode, expect_code)
         return log_path.read_text()
 
-    def stop(self, request_id: str, *args: str, log_name: str, expect_code: int = 0) -> str:
-        """Runs `mship stop --deploy-id` with *args*; returns its log."""
+    def cancel(self, request_id: str, *args: str, log_name: str, expect_code: int = 0) -> str:
+        """Runs `mship deploy --cancel` with *args*; returns its log."""
         log_path = self._tmp / f"{log_name}.log"
         with open(log_path, "w") as log_file:
             result = subprocess.run(
-                [*MSHIP, "stop", "--deploy-id", request_id, *args],
+                [*MSHIP, "deploy", "--cancel", request_id, *args],
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 check=False,
@@ -383,7 +383,8 @@ class _Deployer:
             )
         if result.returncode != expect_code:
             pytest.fail(
-                f"mship stop exited {result.returncode}, expected {expect_code}.\n{log_path.read_text()[-4000:]}"
+                f"mship deploy --cancel exited {result.returncode}, expected {expect_code}.\n"
+                f"{log_path.read_text()[-4000:]}"
             )
         return log_path.read_text()
 

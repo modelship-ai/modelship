@@ -199,6 +199,11 @@ class TestCmdRun:
         mock_validate.assert_not_called()
         mock_gate.assert_not_called()
 
+    def test_cancel_validates_no_config(self):
+        mock_validate, _, _, mock_run = self._run("deploy", ["--cancel", "r1"])
+        mock_validate.assert_not_called()
+        mock_run.assert_called_once_with("deploy", ["--cancel", "r1"])
+
     def test_gate_skipped_on_a_zero_capacity_start(self):
         _, mock_gate, _, _ = self._run("start", ["--node-num-cpus", "0", "--node-num-gpus", "0"])
         mock_gate.assert_not_called()
@@ -220,7 +225,7 @@ class TestMain:
             launcher.main([])
         assert exc.value.code == 2
 
-    @pytest.mark.parametrize("command", ["bogus", "bootstrap"])
+    @pytest.mark.parametrize("command", ["bogus", "bootstrap", "stop"])
     def test_unknown_command_exits_2(self, command):
         with pytest.raises(SystemExit) as exc:
             launcher.main([command])
