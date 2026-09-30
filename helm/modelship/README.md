@@ -11,7 +11,7 @@ declared in your `models.yaml`. Re-running (`helm upgrade`) re-applies the confi
 additively, or reconciles it when `deploy.reconcile=true`. The RayJob succeeds only
 when the deploy does: a failed deploy is rolled back, and a model waiting for
 capacity keeps the RayJob running until the nodes arrive (cancel it with
-`mship stop --deploy-id ID` on the head).
+`mship deploy --cancel ID` on the head).
 
 Each successful deploy commits this gateway's model set, keeping the one before it,
 to a **state store** (see [Head-node HA](#head-node-ha-redis)). Routing is

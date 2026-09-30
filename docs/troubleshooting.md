@@ -52,7 +52,7 @@ vLLM reserves VRAM based on `num_gpus` — a whole number of GPUs, or a fraction
 
 ## Deploy stuck pending, never schedules
 
-Every deploy requests an `mship_<loader>` Ray resource; nodes only advertise the loaders they can run. A node missing the right extras (e.g. `-cpu` given a `loader: vllm` config) pends the deploy instead of failing it. Check `ray status`/dashboard for the missing `mship_*` resource, and override a bad probe with `MSHIP_NODE_CAPABILITIES` (JSON). A pending deploy has no timeout and holds its gateway's deploy queue, so later deploys to that gateway wait behind it; `mship stop --deploy-id ID` cancels it and rolls back what it submitted.
+Every deploy requests an `mship_<loader>` Ray resource; nodes only advertise the loaders they can run. A node missing the right extras (e.g. `-cpu` given a `loader: vllm` config) pends the deploy instead of failing it. Check `ray status`/dashboard for the missing `mship_*` resource, and override a bad probe with `MSHIP_NODE_CAPABILITIES` (JSON). A pending deploy has no timeout and holds its gateway's deploy queue, so later deploys to that gateway wait behind it; `mship deploy --cancel ID` cancels it and rolls back what it submitted.
 
 ## Can't reach the server from another host
 

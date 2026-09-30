@@ -8,9 +8,8 @@ Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `m
 given — and stays running. `mship join` adds this machine to a running cluster as a worker node
 and stays running. `mship deploy` changes the models of the cluster running on this machine: it
 sends a deploy request and exits; with `--wait` it waits for the request to succeed or fail and exits with
-the outcome. `mship stop
---deploy-id ID` cancels a deploy request, rolling back what it submitted; with `--wait` it waits for the
-rollback. Each takes the arguments
+the outcome; `mship deploy --cancel ID` cancels a deploy request instead, rolling back what it submitted, and
+with `--wait` waits for the rollback. Each takes the arguments
 marked for it (env vars work as fallbacks; CLI wins over env):
 
 | Argument | Commands | Env Var | Default | Description |
@@ -23,8 +22,8 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--gateway-max-ongoing-requests` | start | `MSHIP_GATEWAY_MAX_ONGOING_REQUESTS` | `1024` | Most requests one gateway replica handles at once; more wait in the proxy |
 | `--openai-api-port` | start, deploy | `MSHIP_OPENAI_API_PORT` | `8000` | Port for the OpenAI-compatible API |
 | `--cluster` | join | `MSHIP_CLUSTER` | — | The head's GCS address as `host:port` (e.g. `mship-head:6380`) — its `--ray-port`. Reachable only from inside the cluster's private network. See [Multi-node without Kubernetes](multi-node-docker.md) |
-| `--token` | join, deploy, stop | `MSHIP_RAY_AUTH_TOKEN` | — | Auth token of a cluster started with `--ray-auth=token`; read it on the head with `cat ~/.ray/auth_token` |
-| `--ray-auth` | start, deploy, stop | `MSHIP_RAY_AUTH` | `none` | With `token`, `start` makes the cluster require the bearer token Ray generates at `~/.ray/auth_token` for the dashboard and cluster-internal RPC, and `deploy`/`stop` send it from that file |
+| `--token` | join, deploy | `MSHIP_RAY_AUTH_TOKEN` | — | Auth token of a cluster started with `--ray-auth=token`; read it on the head with `cat ~/.ray/auth_token` |
+| `--ray-auth` | start, deploy | `MSHIP_RAY_AUTH` | `none` | With `token`, `start` makes the cluster require the bearer token Ray generates at `~/.ray/auth_token` for the dashboard and cluster-internal RPC, and `deploy` sends it from that file |
 | `--ray-port` | start | `MSHIP_RAY_PORT` | `6380` | Ray GCS server port — what `mship join --cluster` points at |
 | `--ray-dashboard-host` | start | `MSHIP_RAY_DASHBOARD_HOST` | `127.0.0.1` | Ray dashboard bind address. The dashboard's job API runs arbitrary code, so bind beyond loopback only on a private network and with `--ray-auth=token` |
 | `--ray-dashboard-port` | start | `MSHIP_RAY_DASHBOARD_PORT` | `8265` | Ray dashboard port. Only needed to run multiple modelship heads on one host under `--network=host` |
@@ -34,8 +33,8 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--prune-ray-sessions` | start, join | `MSHIP_PRUNE_RAY_SESSIONS` | `true` | At node startup, delete stale `session_*` dirs left under the Ray temp root by previous, no-longer-running nodes. A live node's session is always kept |
 | `--reconcile` | start, deploy | — | `false` | Make the cluster match the config: add new models, remove dropped ones, replace changed ones (vs. the default additive union). With no `--config`, redeploys this gateway's committed models that are missing (self-heal) |
 | `--replace-strategy` | deploy | — | `blue_green` | How to replace a changed model: `blue_green` (deploy new before dropping old, no request loss) or `stop_start` (drop old first, brief unavailability) |
-| `--wait` | deploy, stop | — | `false` | Wait for the deploy request's outcome and exit with it. `deploy` waits for the request to succeed or fail (`0` succeeded, `1` failed or cancelled); without it, `deploy` exits once the request is queued, and the outcome shows in the head's log. `stop` waits for the rollback (`0` once cancelled, `1` if the request ends otherwise). A signal only stops the wait; `mship stop --deploy-id` cancels |
-| `--deploy-id` | stop | — | — | The deploy request to cancel, as `mship deploy` printed it. A queued request is dropped; a running one is rolled back, models already up included. A request that has committed, or that failed and is already rolling back, can't be cancelled |
+| `--wait` | deploy | — | `false` | Wait for the deploy request's outcome and exit with it. `deploy` waits for the request to succeed or fail (`0` succeeded, `1` failed or cancelled); without it, `deploy` exits once the request is queued, and the outcome shows in the head's log. With `--cancel`, it waits for the rollback (`0` once cancelled, `1` if the request ends otherwise). A signal only stops the wait; `mship deploy --cancel` cancels |
+| `--cancel` | deploy | — | — | Cancel the deploy request with this id, as `mship deploy` printed it, instead of sending one; takes no model options. A queued request is dropped; a running one is rolled back, models already up included. A request that has committed, or that failed and is already rolling back, can't be cancelled |
 | `--cache-dir` | start, join | `MSHIP_CACHE_DIR` | `/.cache` | Base cache directory for model weights; may be shared storage |
 | `--node-cache-dir` | start, join | `MSHIP_NODE_CACHE_DIR` | `$MSHIP_HOME/node-cache` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer). Must not be shared storage |
 | `--state-store` | start | `MSHIP_STATE_STORE` | `memory://` | Connection URI for the gateways' deploy versions + `/v1/responses` state (see [State store](#state-store-mship_state_store)) |
