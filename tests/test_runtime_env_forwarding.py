@@ -160,6 +160,14 @@ class TestHeadActorCreation:
             deploy_coordinator.get_or_create_coordinator()
         assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_STATE_STORE"] == "redis://host:6379/0"
 
+    def test_the_deploy_coordinator_is_created_with_the_gateway_sizing(self):
+        with (
+            patch.dict(os.environ, {"MSHIP_GATEWAY_MAX_REPLICAS": "8"}, clear=True),
+            patch.object(deploy_coordinator.DeployCoordinator, "options") as options,
+        ):
+            deploy_coordinator.get_or_create_coordinator()
+        assert options.call_args.kwargs["runtime_env"]["env_vars"]["MSHIP_GATEWAY_MAX_REPLICAS"] == "8"
+
     def test_the_deploy_worker_is_created_with_the_store_uri(self):
         with (
             patch.dict(os.environ, {"MSHIP_STATE_STORE": "redis://host:6379/0"}, clear=True),

@@ -614,10 +614,12 @@ class TestWorkerDeath:
 async def test_the_deploy_coordinator_reports_its_cluster_settings(monkeypatch):
     monkeypatch.setenv("MSHIP_STATE_STORE", "redis://head:6379/0")
     monkeypatch.setenv("MSHIP_METRICS", "false")
+    monkeypatch.setenv("MSHIP_GATEWAY_MAX_REPLICAS", "8")
     settings = await _fresh().cluster_settings()
     assert settings["env"]["MSHIP_STATE_STORE"] == "redis://head:6379/0"
     assert settings["env"]["MSHIP_METRICS"] == "false"
     assert isinstance(settings["serve_logging_config"], LoggingConfig)
+    assert settings["gateway_sizing"]["autoscaling_config"]["max_replicas"] == 8
 
 
 @pytest.mark.asyncio

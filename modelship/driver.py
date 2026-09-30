@@ -50,6 +50,7 @@ def run(command: str, argv: list[str] | None = None) -> None:
 
 
 def _start(args) -> None:
+    from modelship.deploy.gateway_sizing import gateway_sizing
     from modelship.deploy.serve_utils import local_ray_clusters, start_gateway, start_head, start_serve
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
     from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
@@ -58,6 +59,7 @@ def _start(args) -> None:
 
     gateway_name, route_prefix, _ = _gateway_from_env()
     reject_inline_password(os.environ.get("MSHIP_STATE_STORE", ""))
+    sizing = gateway_sizing()
     if running := local_ray_clusters():
         sys.exit(
             f"error: a Ray cluster is already running on this machine (GCS at {', '.join(sorted(running))}). "
@@ -83,7 +85,9 @@ def _start(args) -> None:
         start_serve(serve_logging_config)
         _prepare_state_store()
         # First, so /health and /readyz answer while models load.
-        start_gateway(gateway_name, serve_logging_config, route_prefix, cluster_env_vars() | state_store_env_var())
+        start_gateway(
+            gateway_name, serve_logging_config, route_prefix, cluster_env_vars() | state_store_env_var(), sizing
+        )
         get_or_create_gateway_coordinator()
         _send(args, gateway_name, get_or_create_coordinator())
     except BaseException as e:
@@ -185,7 +189,7 @@ def _deploy(args) -> None:
             f"another gateway, or --gateway-name {gateway_name} to create this one."
         )
     if create_gateway:
-        start_gateway(gateway_name, head["serve_logging_config"], route_prefix, head["env"])
+        start_gateway(gateway_name, head["serve_logging_config"], route_prefix, head["env"], head["gateway_sizing"])
     receipt = _send(args, gateway_name, coordinator)
     request_id = receipt["id"]
     if not args.wait:

@@ -450,7 +450,7 @@ def mship_cluster(tmp_path_factory):
 
     log_file = open(log_path, "w")  # noqa: SIM115 — kept open for subprocess lifetime, closed in cleanup
     proc = subprocess.Popen(
-        # 2 gateway replicas exercise multi-replica convergence; num_cpus=0 makes this cheap.
+        # At least 2 gateway replicas exercise multi-replica convergence; num_cpus=0 makes this cheap.
         [
             "uv",
             "run",
@@ -460,7 +460,7 @@ def mship_cluster(tmp_path_factory):
             "start",
             "--config",
             str(empty_config),
-            "--gateway-replicas",
+            "--gateway-min-replicas",
             "2",
             "--prune-ray-sessions",
             "false",
