@@ -38,7 +38,6 @@ _ARG_TO_ENV: dict[str, str] = {
     "trusted_identity_header": "MSHIP_TRUSTED_IDENTITY_HEADER",
     "gateway_name": "MSHIP_GATEWAY_NAME",
     "gcs_address": "MSHIP_GCS_ADDRESS",
-    "token": "MSHIP_RAY_AUTH_TOKEN",
     "gcs_port": "MSHIP_GCS_PORT",
     "ray_dashboard_host": "MSHIP_RAY_DASHBOARD_HOST",
     "ray_dashboard_port": "MSHIP_RAY_DASHBOARD_PORT",
@@ -95,7 +94,6 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
     if command in ("start", "deploy"):
         _add_cluster_args(parser)
     if command == "deploy":
-        _add_token_arg(parser)
         parser.add_argument(
             "--cancel",
             metavar="ID",
@@ -173,17 +171,6 @@ def _add_join_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "The head's GCS address as HOST[:PORT], e.g. mship-head:6380; PORT is the head's --gcs-port "
             "(env: MSHIP_GCS_ADDRESS, default port: 6380). Reachable only from inside the cluster's private network."
-        ),
-    )
-    _add_token_arg(parser)
-
-
-def _add_token_arg(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--token",
-        help=(
-            "Ray auth token of a cluster started with --enable-ray-auth (env: MSHIP_RAY_AUTH_TOKEN); "
-            "read it on the head with `cat ~/.ray/auth_token`."
         ),
     )
 

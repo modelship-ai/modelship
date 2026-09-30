@@ -383,7 +383,13 @@ def _with_default_port(address: str, port: int) -> str:
 def attach_cluster(lib_level: int) -> None:
     """Connect this process as a driver to the cluster of a node on this machine."""
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
-    ray.init(address="auto", ignore_reinit_error=True, logging_level=lib_level)
+    try:
+        ray.init(address="auto", ignore_reinit_error=True, logging_level=lib_level)
+    except ConnectionError:
+        sys.exit(
+            "error: can't connect to the Ray cluster on this machine. If it was started with --enable-ray-auth, "
+            "set MSHIP_RAY_AUTH_TOKEN to its token."
+        )
     _pin_ray_log_levels(lib_level)
 
 

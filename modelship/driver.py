@@ -13,7 +13,7 @@ from modelship.logging import (
 )
 from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
 from modelship.utils.cli import apply_args_to_env, parse_args
-from modelship.utils.ray_auth import resolve_ray_auth_env
+from modelship.utils.ray_auth import auth_enabled, is_loopback, resolve_ray_auth_env, token_env_without_auth
 
 propagate_lib_log_env()
 
@@ -33,6 +33,8 @@ def run(command: str, argv: list[str] | None = None) -> None:
     os.environ.setdefault("VLLM_CACHE_ROOT", f"{node_cache}/vllm")
     os.environ.setdefault("FLASHINFER_WORKSPACE_BASE", f"{node_cache}/flashinfer")
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    if command == "start" and (stray := token_env_without_auth()):
+        sys.exit(f"error: {', '.join(stray)} is set but Ray auth is off; pass --enable-ray-auth, or unset it.")
     # Before `import ray`: RAY_AUTH_MODE latches at import.
     resolve_ray_auth_env()
 
@@ -66,6 +68,13 @@ def _start(args) -> None:
             "Change its models with `mship deploy`, or stop it before starting a new one."
         )
     lib_level, serve_logging_config = _serve_logging()
+    dashboard_host = os.environ.get("MSHIP_RAY_DASHBOARD_HOST", "127.0.0.1")
+    if not auth_enabled() and not is_loopback(dashboard_host):
+        logger.warning(
+            "Ray's dashboard listens on %s without token auth: anyone who can reach it can run code on this "
+            "cluster. Pass --enable-ray-auth.",
+            dashboard_host,
+        )
 
     def _cleanup(sig, _frame) -> None:
         logger.info("Shutting down (signal %s)...", sig)
@@ -351,12 +360,18 @@ def _log_join_hint() -> None:
             actual_port,
             intended_port,
         )
-    token = " --token=<token>" if os.environ.get("RAY_AUTH_MODE") == "token" else ""
-    token_hint = "the token is in ~/.ray/auth_token on this machine; " if token else ""
+    token_hint = ""
+    if os.environ.get("RAY_AUTH_MODE") == "token":
+        if os.environ.get("MSHIP_RAY_AUTH_TOKEN"):
+            where = "the one this head was started with"
+        elif os.environ.get("RAY_AUTH_TOKEN"):
+            where = "RAY_AUTH_TOKEN in this head's environment"
+        else:
+            where = "~/.ray/auth_token on this machine"
+        token_hint = f", with MSHIP_RAY_AUTH_TOKEN set to the cluster's token ({where})"
     logger.info(
-        "To add a machine to this cluster, run on it: mship join --gcs-address=%s%s (%ssee docs/multi-node-docker.md).",
+        "To add a machine to this cluster, run on it: mship join --gcs-address=%s%s (see docs/multi-node-docker.md).",
         gcs_address,
-        token,
         token_hint,
     )
 

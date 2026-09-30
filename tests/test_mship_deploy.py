@@ -92,8 +92,6 @@ class TestParseArgs:
             ("start", ["--metrics-port", "9090"], "metrics_port", 9090),
             ("join", ["--gcs-address", "h:1", "--metrics-port", "9090"], "metrics_port", 9090),
             ("join", ["--gcs-address", "mship-head:6380"], "gcs_address", "mship-head:6380"),
-            ("join", ["--gcs-address", "h:1", "--token", "secret"], "token", "secret"),
-            ("deploy", ["--token", "secret"], "token", "secret"),
             ("start", ["--node-num-cpus", "4"], "node_num_cpus", 4),
             ("join", ["--gcs-address", "h:1", "--node-num-gpus", "2"], "node_num_gpus", 2),
             ("join", ["--gcs-address", "h:1", "--node-memory", "8Gi"], "node_memory", 8 * 1024**3),
@@ -104,7 +102,6 @@ class TestParseArgs:
             ("join", ["--gcs-address", "h:1", "--log-level", "debug"], "log_level", "DEBUG"),
             ("join", ["--gcs-address", "h:1", "--log-target", "syslog://h:514"], "log_target", "syslog://h:514"),
             ("deploy", ["--cancel", "abc123"], "cancel", "abc123"),
-            ("deploy", ["--cancel", "abc123", "--token", "secret"], "token", "secret"),
         ],
     )
     def test_flag_parses(self, command, argv, attr, expected):
@@ -156,6 +153,7 @@ class TestParseArgs:
             "--cluster=h:1",
             "--ray-port=6380",
             "--ray-auth=token",
+            "--token=secret",
         ],
     )
     def test_removed_flags_are_rejected(self, command, flag):
@@ -204,7 +202,6 @@ class TestApplyArgsToEnv:
             ("start", ["--ray-dashboard-host", "0.0.0.0"], "MSHIP_RAY_DASHBOARD_HOST", "0.0.0.0"),
             ("join", ["--gcs-address", "h:1", "--metrics-port", "9090"], "MSHIP_METRICS_PORT", "9090"),
             ("join", ["--gcs-address", "mship-head:6380"], "MSHIP_GCS_ADDRESS", "mship-head:6380"),
-            ("deploy", ["--token", "secret"], "MSHIP_RAY_AUTH_TOKEN", "secret"),
             ("join", ["--gcs-address", "h:1", "--node-num-cpus", "4"], "MSHIP_NODE_NUM_CPUS", "4"),
             ("start", ["--node-num-gpus", "2"], "MSHIP_NODE_NUM_GPUS", "2"),
             ("start", ["--node-memory", "8Gi"], "MSHIP_NODE_MEMORY", str(8 * 1024**3)),
@@ -346,6 +343,24 @@ class TestDriverVerbs:
             gateway_coordinator=gateway_coordinator,
             send=send,
         )
+
+    @pytest.mark.parametrize(
+        ("env", "warns"),
+        [
+            ({"MSHIP_RAY_DASHBOARD_HOST": "0.0.0.0"}, True),
+            ({"MSHIP_RAY_DASHBOARD_HOST": "10.0.0.5"}, True),
+            ({"MSHIP_RAY_DASHBOARD_HOST": "0.0.0.0", "MSHIP_RAY_AUTH": "true"}, False),
+            ({"MSHIP_RAY_DASHBOARD_HOST": "127.0.0.1"}, False),
+            ({"MSHIP_RAY_DASHBOARD_HOST": "localhost"}, False),
+            ({}, False),
+        ],
+    )
+    def test_start_warns_about_a_dashboard_beyond_loopback_without_auth(self, env, warns, caplog):
+        os.environ.pop("MSHIP_RAY_DASHBOARD_HOST", None)
+        os.environ.pop("MSHIP_RAY_AUTH", None)
+        os.environ.update(env)
+        self._start()
+        assert any("without token auth" in m for m in caplog.messages) is warns
 
     def test_start_creates_both_coordinators_and_sends_to_the_deploy_coordinator(self):
         started = self._start()
@@ -1593,6 +1608,15 @@ class TestStartHead:
 
 
 class TestAttachCluster:
+    def test_a_refused_connection_names_the_token(self):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.object(serve_utils.ray, "init", side_effect=ConnectionError),
+            pytest.raises(SystemExit, match="set MSHIP_RAY_AUTH_TOKEN to its token"),
+        ):
+            serve_utils.attach_cluster(logging.INFO)
+
     def test_connects_via_auto_without_starting_a_node(self):
         from modelship.deploy import serve_utils
 
@@ -1902,6 +1926,71 @@ class TestSuperviseJoinNode:
         ):
             serve_utils.supervise_join_node()
         node.kill_all_processes.assert_not_called()
+
+
+class TestStartAuthEnv:
+    @pytest.mark.parametrize(
+        ("env", "stray"),
+        [
+            ({"MSHIP_RAY_AUTH_TOKEN": "t"}, ["MSHIP_RAY_AUTH_TOKEN"]),
+            ({"RAY_AUTH_TOKEN": "t"}, ["RAY_AUTH_TOKEN"]),
+            ({"RAY_AUTH_MODE": "token"}, ["RAY_AUTH_MODE=token"]),
+            ({"MSHIP_RAY_AUTH_TOKEN": "t", "MSHIP_RAY_AUTH": "true"}, []),
+            ({}, []),
+        ],
+    )
+    def test_token_env_without_auth(self, env, stray):
+        from modelship.utils import ray_auth
+
+        with patch.dict(os.environ, env):
+            for key in ("MSHIP_RAY_AUTH", "MSHIP_RAY_AUTH_TOKEN", "RAY_AUTH_TOKEN", "RAY_AUTH_MODE"):
+                if key not in env:
+                    os.environ.pop(key, None)
+            assert ray_auth.token_env_without_auth() == stray
+
+    def test_start_refuses_a_token_without_auth(self):
+        from modelship import driver
+
+        with patch.dict(os.environ, {"MSHIP_RAY_AUTH_TOKEN": "t"}), patch.object(driver, "_start") as start:
+            os.environ.pop("MSHIP_RAY_AUTH", None)
+            with pytest.raises(SystemExit, match="MSHIP_RAY_AUTH_TOKEN is set but Ray auth is off"):
+                driver.run("start", [])
+        start.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("host", "loopback"),
+        [("127.0.0.1", True), ("127.0.0.2", True), ("::1", True), ("localhost", True), ("0.0.0.0", False)],
+    )
+    def test_is_loopback(self, host, loopback):
+        from modelship.utils import ray_auth
+
+        assert ray_auth.is_loopback(host) is loopback
+
+
+class TestJoinHint:
+    @pytest.mark.parametrize(
+        ("env", "hint"),
+        [
+            ({}, "(see docs"),
+            ({"RAY_AUTH_MODE": "token", "MSHIP_RAY_AUTH_TOKEN": "t"}, "(the one this head was started with)"),
+            ({"RAY_AUTH_MODE": "token", "RAY_AUTH_TOKEN": "t"}, "(RAY_AUTH_TOKEN in this head's environment)"),
+            ({"RAY_AUTH_MODE": "token"}, "(~/.ray/auth_token on this machine)"),
+        ],
+    )
+    def test_names_where_the_token_is(self, env, hint, caplog):
+        from modelship import driver
+
+        caplog.set_level(logging.INFO, logger="modelship")
+        with patch.dict(os.environ, env), patch("ray.get_runtime_context") as context:
+            for key in ("RAY_AUTH_MODE", "MSHIP_RAY_AUTH_TOKEN", "RAY_AUTH_TOKEN", "RAY_GCS_SERVER_PORT"):
+                if key not in env:
+                    os.environ.pop(key, None)
+            context.return_value.gcs_address = "10.0.0.1:6380"
+            driver._log_join_hint()
+        (message,) = [m for m in caplog.messages if m.startswith("To add a machine")]
+        assert "mship join --gcs-address=10.0.0.1:6380" in message
+        assert hint in message
+        assert ("MSHIP_RAY_AUTH_TOKEN set" in message) is bool(env)
 
 
 class TestResolveRayAuthEnv:

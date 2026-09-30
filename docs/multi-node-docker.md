@@ -39,10 +39,19 @@ joins it as a GPU worker on the `-cuda` tag. Every node in a multi-node cluster
 must share the same version, even across variants — pin all of them to the
 identical `X.Y.Z` release.
 
+Generate the cluster's Ray auth token once, into an env file that every
+container gets. A token never goes on a command line, where `ps` and shell
+history would show it:
+
+```bash
+echo "MSHIP_RAY_AUTH_TOKEN=$(openssl rand -hex 32)" > mship.env
+```
+
 **VM A — head, with cluster auth enabled:**
 
 ```bash
 docker run -d --network=host --shm-size=8g \
+  --env-file mship.env \
   -v ./models.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -e MSHIP_STATE_STORE=redis://your-redis-host:6379/0 \
@@ -55,24 +64,20 @@ docker run -d --network=host --shm-size=8g \
 default, which collides with the Redis state store above under host
 networking) — passed explicitly here only for clarity.
 
-Retrieve the token a joiner needs (Ray generates and owns it; modelship never
-writes or logs it):
-
-```bash
-docker exec <head-container> cat ~/.ray/auth_token
-```
-
-`mship deploy` against this cluster needs it too: `--token=<token>` (or
-`MSHIP_RAY_AUTH_TOKEN`) on whichever node it runs.
+Without `MSHIP_RAY_AUTH_TOKEN`, `--enable-ray-auth` has Ray generate a token
+inside the container (`docker exec <head-container> cat ~/.ray/auth_token`),
+and a new head container gets a new one. `mship deploy` against this cluster
+needs `MSHIP_RAY_AUTH_TOKEN` in its environment too, on whichever node it runs.
 
 **VM B — joins VM A as a GPU worker:**
 
 ```bash
 docker run -d --network=host --shm-size=8g --gpus all \
+  --env-file mship.env \
   -v ./models-cache:/.cache \
   -e HF_TOKEN=your_token_here \
   ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
-  --gcs-address=<vm-a-private-ip>:6380 --token=<token-from-above>
+  --gcs-address=<vm-a-private-ip>:6380
 ```
 
 `HF_TOKEN` goes on every node: the head checks model sources with it, and each
@@ -83,7 +88,8 @@ their own. To change the model set, run `mship deploy` on any node of the
 cluster. A failed deploy is rolled back and leaves the last committed model set in
 place; fix the config and deploy again.
 
-**`--token` only means anything if the head runs `--enable-ray-auth`.** Joining
+**`MSHIP_RAY_AUTH_TOKEN` only means anything if the head runs `--enable-ray-auth`**
+(`start` refuses the token without it). Joining
 with a token against a head that has auth disabled doesn't fail — the joiner's
 own node starts demanding bearer tokens on *inbound* RPC while the head never
 sends them, so the join looks like it succeeded and then cluster↔worker traffic
@@ -97,7 +103,7 @@ pair you set deliberately, not independent toggles.
 |---|---|---|
 | `8000` | Gateway HTTP API (`ProxyLocation.EveryNode` — every node with ≥1 replica runs a proxy) | `--openai-api-port` |
 | `8079` | Prometheus metrics | `--metrics-port`; random on a joiner unless set, and listed in the head's service-discovery file either way |
-| `8265` | Ray dashboard (head only) | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1` — keep it there unless you have a specific reason to expose it) |
+| `8265` | Ray dashboard (head only) | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1`; `start` warns when it's exposed without `--enable-ray-auth`) |
 | GCS (head control plane) | what `mship join --gcs-address` points at | `--gcs-port` (default `6380`) |
 | `10002–19999` + node/object manager | Ray's dynamic worker range | not configurable; open the range between fleet nodes |
 

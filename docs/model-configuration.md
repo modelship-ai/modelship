@@ -22,10 +22,9 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--gateway-max-ongoing-requests` | start | `MSHIP_GATEWAY_MAX_ONGOING_REQUESTS` | `1024` | Most requests one gateway replica handles at once; more wait in the proxy |
 | `--openai-api-port` | start, deploy | `MSHIP_OPENAI_API_PORT` | `8000` | Port for the OpenAI-compatible API |
 | `--gcs-address` | join | `MSHIP_GCS_ADDRESS` | — | The head's GCS address as `host[:port]` (e.g. `mship-head:6380`) — its `--gcs-port`, `6380` when omitted. Reachable only from inside the cluster's private network. See [Multi-node without Kubernetes](multi-node-docker.md) |
-| `--token` | join, deploy | `MSHIP_RAY_AUTH_TOKEN` | — | Auth token of a cluster started with `--enable-ray-auth`; read it on the head with `cat ~/.ray/auth_token` |
 | `--enable-ray-auth` | start | `MSHIP_RAY_AUTH` | `false` | Require Ray's token auth for the dashboard and cluster-internal RPC. The token is `MSHIP_RAY_AUTH_TOKEN` when set; otherwise Ray generates it at `~/.ray/auth_token` |
 | `--gcs-port` | start | `MSHIP_GCS_PORT` | `6380` | Ray GCS server port — what `mship join --gcs-address` points at |
-| `--ray-dashboard-host` | start | `MSHIP_RAY_DASHBOARD_HOST` | `127.0.0.1` | Ray dashboard bind address. The dashboard's job API runs arbitrary code, so bind beyond loopback only on a private network and with `--ray-auth=token` |
+| `--ray-dashboard-host` | start | `MSHIP_RAY_DASHBOARD_HOST` | `127.0.0.1` | Ray dashboard bind address. The dashboard's job API runs arbitrary code, so bind beyond loopback only on a private network and with `--enable-ray-auth`; `start` warns without it |
 | `--ray-dashboard-port` | start | `MSHIP_RAY_DASHBOARD_PORT` | `8265` | Ray dashboard port. Only needed to run multiple modelship heads on one host under `--network=host` |
 | `--node-num-cpus` | start, join | `MSHIP_NODE_NUM_CPUS` | auto-detect | CPUs this node reserves |
 | `--node-num-gpus` | start, join | `MSHIP_NODE_NUM_GPUS` | auto-detect | GPUs this node reserves. Refused at startup if it exceeds what the container can actually see |
@@ -593,7 +592,7 @@ Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded 
 | `MSHIP_GCS_PORT` | Ray GCS server port, `start` only. Pinned so `mship join --gcs-address` has a stable target; not `6379` since that collides with the recommended same-host Redis state store under `--network=host` | `6380` |
 | `MSHIP_RAY_DASHBOARD_PORT` | Ray dashboard port, `start` only. Needed only when running multiple modelship heads on one host under `--network=host` | `8265` |
 | `MSHIP_GCS_ADDRESS` | The head's GCS address as `host[:port]` (port `6380` by default) that `mship join` joins (`--gcs-address`) | — |
-| `MSHIP_RAY_AUTH_TOKEN` | Auth token for `join`/`deploy` against a cluster started with `--enable-ray-auth` (`--token`) | — |
+| `MSHIP_RAY_AUTH_TOKEN` | The Ray auth token, never a flag. `join`/`deploy` send it to a cluster started with `--enable-ray-auth`; `start --enable-ray-auth` uses it instead of generating one, and refuses it without the flag | — |
 | `MSHIP_NODE_NUM_CPUS` | Override: CPUs this node reserves | auto-detect |
 | `MSHIP_NODE_NUM_GPUS` | Override: GPUs this node reserves. Refused at startup if it exceeds what the container can actually see | auto-detect |
 | `MSHIP_NODE_MEMORY` | Override: this node's total memory budget, e.g. `8Gi`. Split into Ray's `object_store_memory` (30%) and schedulable `memory` (70%), matching Ray's own auto-detect proportion. Set when co-locating multiple modelship containers on one host without per-container cgroup memory limits | auto-detect |
