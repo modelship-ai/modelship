@@ -116,7 +116,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 #### Operations
 
-- [ ] **Secrets management integration** — document Vault / K8s Secrets / sealed-secrets usage for `HF_TOKEN` and future API keys
+- [ ] **Secrets management integration** — document Vault / K8s Secrets / sealed-secrets usage for `HF_TOKEN`, the Ray auth token and the Redis password
 - [ ] **Troubleshooting runbook** — common failure modes and resolution steps for on-call
 - [ ] **Capacity planning guide** — estimate concurrent users per GPU setup per model mix
 - [ ] **GPU memory budgeting guide** — model co-location recommendations to avoid fragmentation

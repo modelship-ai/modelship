@@ -72,7 +72,7 @@ both are coordination-only (no models scheduled there), so both default to `thin
 {{- end -}}
 
 {{/*
-Name of the Secret holding the HF token / API keys (existing or templated).
+Name of the Secret holding the HF token (existing or templated).
 */}}
 {{- define "modelship.secretName" -}}
 {{- if .Values.secrets.existingSecret -}}
@@ -110,8 +110,8 @@ The path the gateway is mounted under: its name slugified as gateway_route_prefi
 {{- end -}}
 
 {{/*
-envFrom for the HF token / API keys Secret. optional:true so pods start fine
-when no Secret was created (e.g. all-ungated models, no auth).
+envFrom for the HF token Secret. optional:true so pods start fine when no
+Secret was created (e.g. all-ungated models).
 */}}
 {{- define "modelship.envFrom" -}}
 - secretRef:
