@@ -52,12 +52,12 @@ echo "MSHIP_RAY_AUTH_TOKEN=$(openssl rand -hex 32)" > mship.env
 ```bash
 docker run -d --network=host --shm-size=8g \
   --env-file mship.env \
-  -v ./models.yaml:/modelship/config/models.yaml \
+  -v ./models.yaml:/models.yaml \
   -v ./models-cache:/.cache \
   -e MSHIP_STATE_STORE=redis://your-redis-host:6379/0 \
   -e HF_TOKEN=your_token_here \
   ghcr.io/modelship-ai/modelship:0.6.5 start \
-  --enable-ray-auth --gcs-port=6380
+  --config=/models.yaml --enable-ray-auth --gcs-port=6380
 ```
 
 `--gcs-port` defaults to `6380` already (deliberately not Ray's own `6379`
@@ -225,15 +225,15 @@ another Ray node.
 
 ```bash
 docker run -d --network=host --shm-size=8g \
-  -v ./cluster-a/models.yaml:/modelship/config/models.yaml \
+  -v ./cluster-a/models.yaml:/models.yaml \
   -v ./cluster-a/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 start \
+  ghcr.io/modelship-ai/modelship:0.6.5 start --config=/models.yaml \
   --gcs-port=6380 --openai-api-port=8000 --ray-dashboard-port=8265 --metrics-port=8079
 
 docker run -d --network=host --shm-size=8g \
-  -v ./cluster-b/models.yaml:/modelship/config/models.yaml \
+  -v ./cluster-b/models.yaml:/models.yaml \
   -v ./cluster-b/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 start \
+  ghcr.io/modelship-ai/modelship:0.6.5 start --config=/models.yaml \
   --gcs-port=6381 --openai-api-port=8001 --ray-dashboard-port=8266 --metrics-port=8089
 ```
 

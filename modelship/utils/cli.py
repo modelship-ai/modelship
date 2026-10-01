@@ -394,7 +394,7 @@ def _add_node_logging_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_model_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", help="Path to models.yaml config file (default: config/models.yaml)")
+    parser.add_argument("--config", help="Path to a models.yaml config file")
     parser.add_argument(
         "--no-preflight",
         action="store_true",

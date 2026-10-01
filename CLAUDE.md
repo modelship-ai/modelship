@@ -47,7 +47,7 @@ On k8s the chart runs the same commands: KubeRay's `ray.io/overwrite-container-c
 
 Flags belong to specific commands (`modelship/utils/cli.py`; the table is in `docs/model-configuration.md`). `start` and `deploy` share the model handling:
 
-1. Reads `config/models.yaml` (gitignored — copy from `config/examples/`). An explicit `--config <path>` that doesn't exist is still a hard error. Absent both, it redeploys the gateway's committed models that are missing — on a fresh `start` that's nothing (gateway up, no models) waiting for a `deploy` or a joining node, the mode a bare `docker run modelship:thin start` exercises.
+1. Reads the models from `--config <path>` (a missing file is a hard error; examples in `config/examples/`) or `--model`. There is no default file. Absent both, it redeploys the gateway's committed models that are missing — on a fresh `start` that's nothing (gateway up, no models) waiting for a `deploy` or a joining node, the mode a bare `docker run modelship:thin start` exercises.
 2. Deploys models **additively** by default (each app is named `<gateway>.<model>-<config fingerprint>`, e.g. `modelship.qwen-3f9a0c12de`). Use `--reconcile` to instead make the cluster match the config exactly (add/remove/replace) — it never tears the cluster down.
 3. The gateway is a FastAPI Ray Serve app named `modelship` on port 8000, mounted at `/<slugified-gateway-name>` (e.g. `/modelship/v1/...`). Override the name via `--gateway-name` (multiple gateways can coexist on one cluster, each on its own slug — every gateway shares the cluster's one HTTP proxy/port).
 

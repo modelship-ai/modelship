@@ -633,16 +633,11 @@ class TestPrepareStateStore:
 
 
 class TestRemoteDeploy:
-    def _run(self, argv, tmp_path, default_exists=False):
+    def _run(self, argv):
         from modelship import driver
 
-        default = tmp_path / ("default" if default_exists else "none") / "models.yaml"
-        default.parent.mkdir(exist_ok=True)
-        if default_exists:
-            default.write_text("models: []\n")
         with (
             patch.dict(os.environ),
-            patch("modelship.deploy.config.default_config_path", return_value=default),
             patch("modelship.remote.run") as run_remote,
             patch.object(driver, "_deploy") as deploy,
         ):
@@ -651,19 +646,13 @@ class TestRemoteDeploy:
         deploy.assert_not_called()
         return run_remote.call_args.args
 
-    def test_goes_to_the_dashboard_with_the_config(self, tmp_path):
+    def test_goes_to_the_dashboard_with_the_config(self):
         argv = ["--ray-dashboard-url", "http://head:8265", "--config", "m.yaml", "--wait"]
-        assert self._run(argv, tmp_path) == ("http://head:8265", argv, "m.yaml")
+        assert self._run(argv) == ("http://head:8265", argv, "m.yaml")
 
-    def test_ships_the_default_config_when_it_exists(self, tmp_path):
-        argv = ["--ray-dashboard-url", "http://head:8265"]
-        assert self._run(argv, tmp_path, default_exists=True)[2] == str(tmp_path / "default" / "models.yaml")
-        assert self._run(argv, tmp_path)[2] is None
-
-    @pytest.mark.parametrize("extra", [["--cancel", "r1"], ["--model", "org/repo"]])
-    def test_ships_no_config_for_a_cancel_or_a_model(self, extra, tmp_path):
-        argv = ["--ray-dashboard-url", "http://head:8265", *extra]
-        assert self._run(argv, tmp_path, default_exists=True)[2] is None
+    @pytest.mark.parametrize("extra", [[], ["--cancel", "r1"], ["--model", "org/repo"]])
+    def test_ships_no_config_without_one(self, extra):
+        assert self._run(["--ray-dashboard-url", "http://head:8265", *extra])[2] is None
 
 
 class TestCancelCommand:

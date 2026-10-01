@@ -1,6 +1,5 @@
 import argparse
 import os
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
@@ -17,44 +16,21 @@ if TYPE_CHECKING:
 logger = get_logger("startup")
 
 
-def default_config_path(config_dir: Path | None = None) -> Path:
-    """The default config/models.yaml path used absent an explicit --config."""
-    config_dir = config_dir or Path(__file__).resolve().parent.parent.parent / "config"
-    return config_dir / "models.yaml"
-
-
-def resolve_config_path(arg_path: str | None, config_dir: Path | None = None) -> str:
-    """Resolve the models.yaml to deploy.
-
-    Precedence:
-    1. An explicit ``--config`` path always wins (most specific signal); it must exist.
-    2. Otherwise the default ``config/models.yaml`` must exist.
-    """
-    if arg_path:
-        if not os.path.exists(arg_path):
-            raise FileNotFoundError(f"--config {arg_path} not found.")
-        return arg_path
-
-    default = default_config_path(config_dir)
-    if default.exists():
-        return str(default)
-
-    raise FileNotFoundError(f"{default} not found. Copy an example config from config/examples/ to config/models.yaml.")
-
-
-def load_yaml_config(arg_path: str | None) -> ModelshipConfig:
-    with open(resolve_config_path(arg_path)) as f:
+def load_yaml_config(path: str) -> ModelshipConfig:
+    with open(path) as f:
         return parse_yaml_raw_as(ModelshipConfig, f)
 
 
-def load_raw_models(arg_path: str | None) -> list[dict]:
-    """Read the user's models.yaml as raw, pre-validation dicts.
+def load_raw_models(path: str) -> list[dict]:
+    """Read the --config models.yaml as raw, pre-validation dicts.
 
     The effective-config store keeps raw dicts (not validated configs, which don't
     round-trip through num_gpus/tp normalization), so the deploy path merges at the
     raw-dict level; ``merge()`` validates this input before folding it in, and the
     merged result is validated again before deploy."""
-    with open(resolve_config_path(arg_path)) as f:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"--config {path} not found.")
+    with open(path) as f:
         return parse_raw_models(f.read())
 
 
@@ -157,12 +133,6 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
             )
 
 
-def config_absent(arg_path: str | None) -> bool:
-    """True when there's no file to load: no ``--config`` and no default file.
-    An explicit ``--config`` that doesn't exist is still a hard error."""
-    return arg_path is None and not default_config_path().exists()
-
-
 def validate_models(raw_models: list[dict]) -> ModelshipConfig:
     """Validate raw model dicts into a ModelshipConfig. Both models.yaml and the
     ``--model`` flags land here."""
@@ -171,7 +141,7 @@ def validate_models(raw_models: list[dict]) -> ModelshipConfig:
 
 def resolve_input_models(args: argparse.Namespace) -> list[dict] | None:
     """The raw model dicts this invocation asks for, or None when it asks for
-    none. ``--model`` describes one entry; otherwise models.yaml supplies them.
+    none. ``--model`` describes one entry; otherwise the ``--config`` file supplies them.
 
     Ray-free, so the launcher can validate the result before importing ray.
     """
@@ -188,6 +158,6 @@ def resolve_input_models(args: argparse.Namespace) -> list[dict] | None:
         from modelship.remote import job_models_yaml
 
         return parse_raw_models(job_models_yaml())
-    if config_absent(args.config):
+    if args.config is None:
         return None
     return load_raw_models(args.config)

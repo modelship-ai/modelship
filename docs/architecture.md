@@ -128,4 +128,4 @@ This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu
 | `modelship/infer/stable_diffusion_cpp/stable_diffusion_cpp_infer.py` | stable-diffusion.cpp wrapper (CPU/Metal image gen) |
 | `modelship/infer/whispercpp/` | whisper.cpp STT wrapper |
 | `modelship/infer/sherpa_onnx/` | sherpa-onnx TTS wrapper |
-| `config/models.yaml` | Model configuration |
+| `config/examples/` | Example model configurations, for `--config` |

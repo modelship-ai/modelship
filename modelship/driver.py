@@ -28,7 +28,7 @@ def run(command: str, argv: list[str] | None = None) -> None:
     if command == "deploy" and (url := os.environ.get("MSHIP_RAY_DASHBOARD_URL")):
         from modelship.remote import run as run_remote
 
-        run_remote(url, list(argv or []), _config_to_ship(args))
+        run_remote(url, list(argv or []), args.config)
         return
     # After argv, before Ray starts: raylets inherit the roots replicas expand cache paths from.
     base_cache = os.environ.setdefault("MSHIP_CACHE_DIR", resolve_cache_root())
@@ -54,18 +54,6 @@ def run(command: str, argv: list[str] | None = None) -> None:
         _cancel(args)
     else:
         _deploy(args)
-
-
-def _config_to_ship(args) -> str | None:
-    """The models.yaml a remote deploy carries: --config, else the default one if it exists."""
-    from modelship.deploy.config import default_config_path
-
-    if args.cancel is not None or args.model is not None:
-        return None
-    if args.config is not None:
-        return args.config
-    default = default_config_path()
-    return str(default) if default.exists() else None
 
 
 def _start(args) -> None:

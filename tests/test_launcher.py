@@ -53,9 +53,8 @@ class TestValidateConfig:
     def _args(self, *argv):
         return parse_args("deploy", list(argv))
 
-    def test_absent_config_returns_none(self, tmp_path):
-        with patch("modelship.deploy.config.default_config_path", return_value=tmp_path / "nope.yaml"):
-            assert launcher._validate_config(self._args()) is None
+    def test_absent_config_returns_none(self):
+        assert launcher._validate_config(self._args()) is None
 
     def test_missing_explicit_config_exits(self, tmp_path):
         with pytest.raises(SystemExit) as exc:

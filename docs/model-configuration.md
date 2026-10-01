@@ -1,6 +1,6 @@
 # Model Configuration
 
-Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `models:` defines one deployment. Unknown keys are rejected: a typo like `n_ctxx` is a validation error, not a silently ignored setting — in the file and in the [CLI flags](#single-model-deploys-no-config-file) alike.
+Reference for `models.yaml`, the file `--config` takes. Each entry under `models:` defines one deployment. Unknown keys are rejected: a typo like `n_ctxx` is a validation error, not a silently ignored setting — in the file and in the [CLI flags](#single-model-deploys-no-config-file) alike.
 
 ## CLI Options
 
@@ -14,7 +14,7 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 
 | Argument | Commands | Env Var | Default | Description |
 |---|---|---|---|---|
-| `--config` | start, deploy | — | `config/models.yaml` | Path to models config file. An explicit path that doesn't exist is a hard error |
+| `--config` | start, deploy | — | — | Path to a models.yaml; one that doesn't exist is a hard error. Without it (or `--model`), `start` comes up with no models and `deploy` redeploys the gateway's committed models that are missing |
 | `--gateway-name` | start, deploy | `MSHIP_GATEWAY_NAME` | `modelship` | Name for the API gateway app. Multiple gateways can coexist on one cluster, each mounted at `/<slugified-name>` (e.g. `modelship` → `/modelship/v1/...`) |
 | `--gateway-min-replicas` | start | `MSHIP_GATEWAY_MIN_REPLICAS` | `1` | Fewest replicas each API gateway autoscales down to; 2 or more gives routing/ingress HA |
 | `--gateway-max-replicas` | start | `MSHIP_GATEWAY_MAX_REPLICAS` | `4` | Most replicas each API gateway autoscales up to |
@@ -106,7 +106,7 @@ That includes YAML's own quirks: bare `on`, `off`, `yes` and `no` are booleans, 
 Limits:
 
 - **One model per invocation.** Use `--config` for several. A second `mship deploy --model ...` against a running cluster adds to it (the default additive merge), so models can also be added one at a time.
-- **`--model` and `--config` are mutually exclusive.** With `--model`, the default `config/models.yaml` is ignored entirely. The tuning flags configure the model `--model` deploys, so they need it too.
+- **`--model` and `--config` are mutually exclusive.** The tuning flags configure the model `--model` deploys, so they need it too.
 - **A flag can set a key, not unset one.** Omitting it leaves the schema default; pass `null` for the fields that accept it.
 
 #### Inferred names
@@ -150,7 +150,7 @@ By default, deploys add models to a running cluster without touching existing de
 ```bash
 mship start --config config/llm.yaml             # start the cluster with the LLMs
 mship deploy --config config/tts.yaml             # add, doesn't touch the LLMs
-mship deploy --config config/models.yaml --reconcile   # make the cluster match exactly
+mship deploy --config config/all.yaml --reconcile      # make the cluster match exactly
 ```
 
 ## Trusted Identity Header

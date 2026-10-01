@@ -1,6 +1,6 @@
 # Example configs
 
-Ready-to-run `models.yaml` configs for common scenarios. Mount one into the container at `/modelship/config/models.yaml` to use it.
+Ready-to-run `models.yaml` configs for common scenarios. Pass one with `--config`; the images also carry them under `/modelship/config/examples/`.
 
 | File | What it runs | Hardware |
 |---|---|---|
@@ -19,10 +19,9 @@ Example:
 
 ```bash
 docker run --rm --shm-size=8g \
-  -v ./config/examples/llama-server.yaml:/modelship/config/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cpu
+  ghcr.io/modelship-ai/modelship:latest-cpu start --config /modelship/config/examples/llama-server.yaml
 ```
 
 See [../../docs/model-configuration.md](../../docs/model-configuration.md) for the full field reference.

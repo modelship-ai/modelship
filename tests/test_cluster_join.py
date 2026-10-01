@@ -54,8 +54,7 @@ def _poll(predicate, deadline_s: float) -> bool:
 
 
 def _empty_config_path(dir_path) -> str:
-    """Write an empty models.yaml under dir_path and return its path, for an
-    explicit --config that never falls back to the repo's real config/models.yaml."""
+    """Write an empty models.yaml under dir_path and return its path."""
     path = str(Path(dir_path) / "empty-models.yaml")
     Path(path).write_text("models: []\n")
     return path

@@ -174,11 +174,9 @@ A model name maps to exactly one deployment — swapping GPU/CPU or backend repl
 
 ```bash
 docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
-  -v ./models.yaml:/modelship/config/models.yaml \
-  ghcr.io/modelship-ai/modelship:latest-cpu start
+  -v ./models.yaml:/models.yaml \
+  ghcr.io/modelship-ai/modelship:latest-cpu start --config /models.yaml
 ```
-
-`deploy` reads `config/models.yaml` by default; `--config <path>` picks another.
 
 See [Model Configuration](docs/model-configuration.md) for the full reference, and [config/examples/](config/examples/) for working files per backend.
 
