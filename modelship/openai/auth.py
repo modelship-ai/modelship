@@ -4,22 +4,17 @@ import re
 
 from starlette.requests import HTTPConnection
 
-# Sentinel returned by identity_key() when no trusted header resolves an identity.
-# Deliberately not hash-shaped (a sha256 hex digest is 64 lowercase hex chars) so it
-# can never collide with a real identity value. Every such caller shares this one bucket.
+# identity_key() of a request with no trusted header, shared by all of them. Not hash-shaped (a sha256 hex
+# digest is 64 hex chars), so it never collides with a hashed identity.
 UNSCOPED_IDENTITY = "unscoped"
 
-# Charset a trusted-header identity value must match to be used raw (as a log
-# field / state-key segment). Anything outside this — newlines, "/", control
-# chars, or overlong values — falls back to a sha256 hash instead of ever
-# propagating untrusted bytes into a log line or a state-store key. "." is in
+# A trusted-header value matching this is used raw, as a log field and a state-key segment; any other is hashed.
+# "." and ".." alone don't match: they're path segments.
 _SAFE_IDENTITY_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9_.:-]{1,128}$")
 
 
-# (raw env string, parsed value) cache for get_trusted_identity_header().
-# Keyed on the raw string rather than parsed once at import time so tests using
-# patch.dict(os.environ, ...) still see up-to-date values with no manual cache clearing —
-# the cache only pays off across the many requests within one unchanging-env process.
+# (raw env string, parsed value) for get_trusted_identity_header(); keyed on the raw string, so a changed env
+# replaces it.
 _trusted_header_cache: tuple[str, str | None] | None = None
 
 
