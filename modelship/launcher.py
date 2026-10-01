@@ -50,7 +50,8 @@ def _cmd_run(command: str, argv: list[str]) -> None:
     apply_args_to_env(args)
     _guard_python_version()
 
-    if command in ("start", "deploy") and getattr(args, "cancel", None) is None:
+    remote = command == "deploy" and bool(os.environ.get("MSHIP_RAY_DASHBOARD_URL"))
+    if command in ("start", "deploy") and getattr(args, "cancel", None) is None and not remote:
         config = _validate_config(args)
         # Only a start with capacity of its own runs models in this environment.
         if config is not None and command == "start" and not _advertises_no_capacity():

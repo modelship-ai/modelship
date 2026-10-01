@@ -39,6 +39,7 @@ _ARG_TO_ENV: dict[str, str] = {
     "gateway_name": "MSHIP_GATEWAY_NAME",
     "gcs_address": "MSHIP_GCS_ADDRESS",
     "gcs_port": "MSHIP_GCS_PORT",
+    "ray_dashboard_url": "MSHIP_RAY_DASHBOARD_URL",
     "ray_dashboard_host": "MSHIP_RAY_DASHBOARD_HOST",
     "ray_dashboard_port": "MSHIP_RAY_DASHBOARD_PORT",
     "metrics_port": "MSHIP_METRICS_PORT",
@@ -67,21 +68,24 @@ _MODEL_USAGE = "[options] [--model REF [--<block>.<key> VALUE ...]]"
 _USAGE = {
     "start": f"mship start {_MODEL_USAGE}",
     "join": "mship join --gcs-address HOST[:PORT] [options]",
-    "deploy": f"mship deploy {_MODEL_USAGE}\n       mship deploy --cancel ID [--wait]",
+    "deploy": f"mship deploy [--ray-dashboard-url URL] {_MODEL_USAGE}\n"
+    "       mship deploy [--ray-dashboard-url URL] --cancel ID [--wait]",
 }
 _DESCRIPTION = {
     "start": "Start a cluster on this machine: its head node, the API gateway and any models given. Stays running.",
     "join": "Add this machine to a running cluster as a worker node. Stays running.",
-    "deploy": "Change the models of the cluster running on this machine: sends the change and exits, or with --wait, "
-    "waits for it to succeed or fail. With --cancel ID, cancels a deploy instead, rolling back what it has done so "
-    "far.",
+    "deploy": "Change the models of the cluster running on this machine, or with --ray-dashboard-url, of the cluster "
+    "whose Ray dashboard that is: sends the change and exits, or with --wait, waits for it to succeed or fail. With "
+    "--cancel ID, cancels a deploy instead, rolling back what it has done so far.",
 }
 
 
 def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespace:
     # Explicit usage: the generated model flags make argparse's own usage line
     # ~90 lines, which it reprints on every error.
-    parser = argparse.ArgumentParser(prog=f"mship {command}", usage=_USAGE[command], description=_DESCRIPTION[command])
+    parser = argparse.ArgumentParser(
+        prog=f"mship {command}", usage=_USAGE[command], description=_DESCRIPTION[command], allow_abbrev=False
+    )
     if command == "join":
         _add_join_args(parser)
     if command in ("start", "join"):
@@ -94,6 +98,15 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
     if command in ("start", "deploy"):
         _add_cluster_args(parser)
     if command == "deploy":
+        parser.add_argument(
+            "--ray-dashboard-url",
+            metavar="URL",
+            help=(
+                "Deploy to the cluster whose Ray dashboard is at URL, e.g. http://head:8265, instead of the one on "
+                "this machine; sends MSHIP_RAY_AUTH_TOKEN (env: MSHIP_RAY_DASHBOARD_URL)"
+            ),
+        )
+        parser.add_argument("--config-from-job", action="store_true", help=argparse.SUPPRESS)
         parser.add_argument(
             "--cancel",
             metavar="ID",
@@ -122,6 +135,11 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
     args = parser.parse_args(argv)
     if command == "join" and not (args.gcs_address or os.environ.get("MSHIP_GCS_ADDRESS")):
         parser.error("--gcs-address is required: the head's GCS address as HOST[:PORT] (env: MSHIP_GCS_ADDRESS)")
+    url = args.ray_dashboard_url or os.environ.get("MSHIP_RAY_DASHBOARD_URL") if command == "deploy" else None
+    if url and not re.match(r"https?://", url):
+        parser.error(f"--ray-dashboard-url takes a URL, e.g. http://{url}; got {url!r}.")
+    if command == "deploy" and args.config_from_job and (args.config is not None or args.model is not None):
+        parser.error("--config-from-job takes no --config or --model.")
     if command == "deploy" and args.cancel is not None:
         _check_cancel_args(parser, args)
     elif command in ("start", "deploy"):

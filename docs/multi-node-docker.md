@@ -85,8 +85,9 @@ replica reads it from its own node's environment — the driver never forwards i
 
 A joiner only adds capacity: replicas waiting for room schedule onto it on
 their own. To change the model set, run `mship deploy` on any node of the
-cluster. A failed deploy is rolled back and leaves the last committed model set in
-place; fix the config and deploy again.
+cluster, or [from another machine](#deploy-from-another-machine). A failed
+deploy is rolled back and leaves the last committed model set in place; fix the
+config and deploy again.
 
 **`MSHIP_RAY_AUTH_TOKEN` only means anything if the head runs `--enable-ray-auth`**
 (`start` refuses the token without it). Joining
@@ -97,13 +98,46 @@ fails confusingly. There's no reliable way to detect this from the joining side;
 treat "auth enabled on the head" and "token passed on the join" as a matched
 pair you set deliberately, not independent toggles.
 
+## Deploy from another machine
+
+`mship deploy --ray-dashboard-url` deploys to a cluster through its head's Ray
+dashboard instead of the cluster on this machine. The deploy runs on the head as
+a Ray job, with the head's own environment, and this machine streams its log.
+That machine needs a modelship install of the cluster's release (the thin image
+is enough) and a route to the dashboard on the private network.
+
+The head's dashboard has to listen beyond loopback: add
+`--ray-dashboard-host=0.0.0.0` to VM A's `start`, next to `--enable-ray-auth`.
+Then, from any machine on that network:
+
+```bash
+docker run --rm --env-file mship.env \
+  -v ./models.yaml:/models.yaml \
+  ghcr.io/modelship-ai/modelship:0.6.5 deploy \
+  --ray-dashboard-url=http://<vm-a-private-ip>:8265 --config=/models.yaml --wait
+```
+
+- **What travels:** the `--config` file (up to 96 KiB) and the flags you pass.
+  This machine's `MSHIP_*` env doesn't; the head's own env fills in the rest. A
+  local path in `--model` or `model:` names a file on the cluster's nodes:
+  weights are never uploaded.
+- **The token:** the cluster's `MSHIP_RAY_AUTH_TOKEN`, in this machine's env
+  (the `--env-file` above). A cluster without `--enable-ray-auth` needs none.
+- **Following it:** `--wait` follows the deploy to its outcome, and a dropped
+  connection reconnects. A deploy whose head restarted under it is submitted
+  again, and so is one that reached a head still inside `mship start`, for up
+  to 60 s. A signal stops following; the deploy carries on, and
+  `mship deploy --ray-dashboard-url=… --cancel ID` cancels it.
+- **The URL** is the dashboard's (port `8265`), not the GCS address `mship join`
+  takes; `mship deploy` exits `3` when no dashboard answers there.
+
 ## Ports and firewall
 
 | Port | What | Configurable via |
 |---|---|---|
 | `8000` | Gateway HTTP API (`ProxyLocation.EveryNode` — every node with ≥1 replica runs a proxy) | `--openai-api-port` |
 | `8079` | Prometheus metrics | `--metrics-port`; random on a joiner unless set, and listed in the head's service-discovery file either way |
-| `8265` | Ray dashboard (head only) | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1`; `start` warns when it's exposed without `--enable-ray-auth`) |
+| `8265` | Ray dashboard (head only); what `mship deploy --ray-dashboard-url` points at | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1`; `start` warns when it's exposed without `--enable-ray-auth`) |
 | GCS (head control plane) | what `mship join --gcs-address` points at | `--gcs-port` (default `6380`) |
 | `10002–19999` + node/object manager | Ray's dynamic worker range | not configurable; open the range between fleet nodes |
 

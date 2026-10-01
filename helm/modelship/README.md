@@ -11,7 +11,8 @@ declared in your `models.yaml`. Re-running (`helm upgrade`) re-applies the confi
 additively, or reconciles it when `deploy.reconcile=true`. The RayJob succeeds only
 when the deploy does: a failed deploy is rolled back, and a model waiting for
 capacity keeps the RayJob running until the nodes arrive (cancel it with
-`mship deploy --cancel ID` on the head).
+`mship deploy --cancel ID`, on the head or [from your
+machine](../../docs/install-helm.md#deploy-or-cancel-from-your-machine)).
 
 Each successful deploy commits this gateway's model set, keeping the one before it,
 to a **state store** (see [Head-node HA](#head-node-ha-redis)). Routing is
@@ -232,6 +233,10 @@ deletes it with the cluster. Read it with:
 ```bash
 kubectl get secret <release-fullname> -o jsonpath='{.data.auth_token}' | base64 -d
 ```
+
+`mship deploy --ray-dashboard-url` sends deploys and cancels from your machine with
+it, over a port-forward to `<release-fullname>-head-svc:8265`; see [Deploy or
+cancel from your machine](../../docs/install-helm.md#deploy-or-cancel-from-your-machine).
 
 To manage the token yourself, point `rayAuth.existingSecret` at a Secret holding
 it under key `auth_token`. Any string works: Ray's own check is a shared-secret

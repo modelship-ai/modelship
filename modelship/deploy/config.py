@@ -55,7 +55,12 @@ def load_raw_models(arg_path: str | None) -> list[dict]:
     raw-dict level; ``merge()`` validates this input before folding it in, and the
     merged result is validated again before deploy."""
     with open(resolve_config_path(arg_path)) as f:
-        data = yaml.safe_load(f) or {}
+        return parse_raw_models(f.read())
+
+
+def parse_raw_models(text: str) -> list[dict]:
+    """models.yaml text as raw, pre-validation dicts."""
+    data = yaml.safe_load(text) or {}
     if not isinstance(data, dict):
         raise ValueError("models.yaml: top-level document must be a mapping with a 'models' key.")
     models = data.get("models", [])
@@ -179,6 +184,10 @@ def resolve_input_models(args: argparse.Namespace) -> list[dict] | None:
     cli_model = model_from_args(args)
     if cli_model is not None:
         return [cli_model]
+    if getattr(args, "config_from_job", False):
+        from modelship.remote import job_models_yaml
+
+        return parse_raw_models(job_models_yaml())
     if config_absent(args.config):
         return None
     return load_raw_models(args.config)

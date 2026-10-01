@@ -1,8 +1,10 @@
 """Tests for the start/join/deploy/stop CLI parsing and driver helpers."""
 
+import json
 import logging
 import os
 import signal
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -177,6 +179,28 @@ class TestParseArgs:
             parse_args("deploy", ["--cancel", "r1", *argv])
         assert f"--cancel takes no model options: {argv[0]}." in capsys.readouterr().err
 
+    def test_ray_dashboard_url_takes_a_url(self, capsys):
+        assert parse_args("deploy", ["--ray-dashboard-url", "https://ray.internal"]).ray_dashboard_url == (
+            "https://ray.internal"
+        )
+        with pytest.raises(SystemExit):
+            parse_args("deploy", ["--ray-dashboard-url", "head:8265"])
+        assert "--ray-dashboard-url takes a URL, e.g. http://head:8265" in capsys.readouterr().err
+
+    def test_ray_dashboard_url_env_takes_a_url(self, capsys):
+        with patch.dict(os.environ, {"MSHIP_RAY_DASHBOARD_URL": "head:8265"}), pytest.raises(SystemExit):
+            parse_args("deploy", [])
+        assert "--ray-dashboard-url takes a URL, e.g. http://head:8265" in capsys.readouterr().err
+
+    def test_flags_are_never_abbreviated(self):
+        with pytest.raises(SystemExit):
+            parse_args("deploy", ["--conf", "models.yaml"])
+
+    @pytest.mark.parametrize("argv", [["--config", "m.yaml"], ["--model", "org/repo"]])
+    def test_config_from_job_takes_no_other_config(self, argv):
+        with pytest.raises(SystemExit):
+            parse_args("deploy", ["--config-from-job", *argv])
+
     def test_join_requires_a_gcs_address(self, monkeypatch):
         monkeypatch.delenv("MSHIP_GCS_ADDRESS", raising=False)
         with pytest.raises(SystemExit):
@@ -344,6 +368,10 @@ class TestDriverVerbs:
             send=send,
         )
 
+    def test_start_exports_its_engine_for_job_shells(self):
+        self._start()
+        assert os.environ["MSHIP_ENGINE_PYTHON"] == sys.executable
+
     @pytest.mark.parametrize(
         ("env", "warns"),
         [
@@ -444,9 +472,11 @@ class TestDriverVerbs:
         with pytest.raises(SystemExit, match="no gateway 'modelship'"):
             self._deploy([], existing_apps=set())
 
-    def test_deploy_refuses_without_a_deploy_coordinator(self):
-        with pytest.raises(SystemExit, match="no deploy coordinator on this cluster; `mship start` creates it"):
+    def test_deploy_without_a_deploy_coordinator_exits_4(self, capsys):
+        with pytest.raises(SystemExit) as exc:
             self._deploy([], existing_apps={"modelship"}, found=False)
+        assert exc.value.code == 4
+        assert "no deploy coordinator on this cluster; `mship start` creates it" in capsys.readouterr().err
 
     def test_deploy_sends_to_the_deploy_coordinator_it_found(self):
         deployed = self._deploy([], existing_apps={"modelship"})
@@ -542,6 +572,15 @@ class TestSend:
 
         return SimpleNamespace(run=run, submitted=submitted)
 
+    def test_a_config_from_the_job_is_sent_even_with_reconcile(self, send):
+        from modelship import remote
+
+        config = {"metadata": {remote.MODELS_YAML_KEY: "models:\n  - name: a\n"}}
+        with patch.dict(os.environ, {remote.RAY_JOB_CONFIG_ENV_VAR: json.dumps(config)}):
+            send.run(["--config-from-job", "--reconcile"])
+        (request,) = send.submitted
+        assert (request.mode, request.models) == ("reconcile", [{"name": "a"}])
+
     def test_models_given_are_sent_additively(self, send):
         receipt = send.run(["--model", "org/qwen-gguf:qwen.gguf", "--loader", "llama_server", "--usecase", "generate"])
         (request,) = send.submitted
@@ -591,6 +630,40 @@ class TestPrepareStateStore:
             driver._prepare_state_store()
         seeded.assert_called_once()
         assert any("non-durable" in message for message in caplog.messages) is warns
+
+
+class TestRemoteDeploy:
+    def _run(self, argv, tmp_path, default_exists=False):
+        from modelship import driver
+
+        default = tmp_path / ("default" if default_exists else "none") / "models.yaml"
+        default.parent.mkdir(exist_ok=True)
+        if default_exists:
+            default.write_text("models: []\n")
+        with (
+            patch.dict(os.environ),
+            patch("modelship.deploy.config.default_config_path", return_value=default),
+            patch("modelship.remote.run") as run_remote,
+            patch.object(driver, "_deploy") as deploy,
+        ):
+            os.environ.pop("MSHIP_RAY_DASHBOARD_URL", None)
+            driver.run("deploy", argv)
+        deploy.assert_not_called()
+        return run_remote.call_args.args
+
+    def test_goes_to_the_dashboard_with_the_config(self, tmp_path):
+        argv = ["--ray-dashboard-url", "http://head:8265", "--config", "m.yaml", "--wait"]
+        assert self._run(argv, tmp_path) == ("http://head:8265", argv, "m.yaml")
+
+    def test_ships_the_default_config_when_it_exists(self, tmp_path):
+        argv = ["--ray-dashboard-url", "http://head:8265"]
+        assert self._run(argv, tmp_path, default_exists=True)[2] == str(tmp_path / "default" / "models.yaml")
+        assert self._run(argv, tmp_path)[2] is None
+
+    @pytest.mark.parametrize("extra", [["--cancel", "r1"], ["--model", "org/repo"]])
+    def test_ships_no_config_for_a_cancel_or_a_model(self, extra, tmp_path):
+        argv = ["--ray-dashboard-url", "http://head:8265", *extra]
+        assert self._run(argv, tmp_path, default_exists=True)[2] is None
 
 
 class TestCancelCommand:

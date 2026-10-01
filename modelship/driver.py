@@ -25,6 +25,11 @@ _STOP_DELETE_TIMEOUT_S = 30.0
 def run(command: str, argv: list[str] | None = None) -> None:
     args = parse_args(command, argv)
     apply_args_to_env(args)
+    if command == "deploy" and (url := os.environ.get("MSHIP_RAY_DASHBOARD_URL")):
+        from modelship.remote import run as run_remote
+
+        run_remote(url, list(argv or []), _config_to_ship(args))
+        return
     # After argv, before Ray starts: raylets inherit the roots replicas expand cache paths from.
     base_cache = os.environ.setdefault("MSHIP_CACHE_DIR", resolve_cache_root())
     node_cache = os.environ.setdefault("MSHIP_NODE_CACHE_DIR", resolve_node_cache_root())
@@ -51,6 +56,18 @@ def run(command: str, argv: list[str] | None = None) -> None:
         _deploy(args)
 
 
+def _config_to_ship(args) -> str | None:
+    """The models.yaml a remote deploy carries: --config, else the default one if it exists."""
+    from modelship.deploy.config import default_config_path
+
+    if args.cancel is not None or args.model is not None:
+        return None
+    if args.config is not None:
+        return args.config
+    default = default_config_path()
+    return str(default) if default.exists() else None
+
+
 def _start(args) -> None:
     from modelship.deploy.gateway_sizing import gateway_sizing
     from modelship.deploy.serve_utils import local_ray_clusters, start_gateway, start_head, start_serve
@@ -68,6 +85,8 @@ def _start(args) -> None:
             "Change its models with `mship deploy`, or stop it before starting a new one."
         )
     lib_level, serve_logging_config = _serve_logging()
+    # Inherited by job shells on this head, which run `mship deploy` for a remote one.
+    os.environ["MSHIP_ENGINE_PYTHON"] = sys.executable
     dashboard_host = os.environ.get("MSHIP_RAY_DASHBOARD_HOST", "127.0.0.1")
     if not auth_enabled() and not is_loopback(dashboard_host):
         logger.warning(
@@ -175,6 +194,7 @@ def _deploy(args) -> None:
         start_serve,
     )
     from modelship.infer.deploy_coordinator import find_coordinator
+    from modelship.remote import EXIT_NO_DEPLOY_COORDINATOR
 
     gateway_name, route_prefix, explicit_gateway = _gateway_from_env()
     if not local_ray_clusters():
@@ -186,7 +206,8 @@ def _deploy(args) -> None:
     attach_cluster(lib_level)
     _log_cluster()
     if (coordinator := find_coordinator()) is None:
-        sys.exit("error: no deploy coordinator on this cluster; `mship start` creates it.")
+        print("error: no deploy coordinator on this cluster; `mship start` creates it.", file=sys.stderr)
+        sys.exit(EXIT_NO_DEPLOY_COORDINATOR)
     head: dict = ray.get(coordinator.cluster_settings.remote())
     # A no-op when Serve already runs; the first call on a cluster sets it up.
     start_serve(head["serve_logging_config"])
@@ -222,7 +243,9 @@ def _send(args, gateway_name: str, coordinator) -> dict:
     from modelship.deploy.config import resolve_input_models
     from modelship.deploy.ledger import DeployRequest
 
-    models = None if args.config is None and args.model is None and args.reconcile else resolve_input_models(args)
+    from_job = getattr(args, "config_from_job", False)
+    bare = args.config is None and args.model is None and not from_job and args.reconcile
+    models = None if bare else resolve_input_models(args)
     if models is None:
         logger.info("No models given: redeploying gateway %r's committed models that are missing.", gateway_name)
     mode = "bare" if models is None else ("reconcile" if args.reconcile else "additive")

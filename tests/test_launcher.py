@@ -199,6 +199,12 @@ class TestCmdRun:
         mock_validate.assert_not_called()
         mock_gate.assert_not_called()
 
+    def test_a_remote_deploy_validates_no_config_here(self):
+        argv = ["--ray-dashboard-url", "http://head:8265", "--config", "models.yaml"]
+        mock_validate, _, _, mock_run = self._run("deploy", argv)
+        mock_validate.assert_not_called()
+        mock_run.assert_called_once_with("deploy", argv)
+
     def test_cancel_validates_no_config(self):
         mock_validate, _, _, mock_run = self._run("deploy", ["--cancel", "r1"])
         mock_validate.assert_not_called()

@@ -6,10 +6,10 @@ Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `m
 
 `mship start` starts a cluster on this machine — its head node, the API gateway and any models
 given — and stays running. `mship join` adds this machine to a running cluster as a worker node
-and stays running. `mship deploy` changes the models of the cluster running on this machine: it
-sends a deploy request and exits; with `--wait` it waits for the request to succeed or fail and exits with
-the outcome; `mship deploy --cancel ID` cancels a deploy request instead, rolling back what it submitted, and
-with `--wait` waits for the rollback. Each takes the arguments
+and stays running. `mship deploy` changes the models of the cluster running on this machine, or with
+`--ray-dashboard-url` of a cluster elsewhere: it sends a deploy request and exits; with `--wait` it waits for
+the request to succeed or fail and exits with the outcome; `mship deploy --cancel ID` cancels a deploy request
+instead, rolling back what it submitted, and with `--wait` waits for the rollback. Each takes the arguments
 marked for it (env vars work as fallbacks; CLI wins over env):
 
 | Argument | Commands | Env Var | Default | Description |
@@ -34,6 +34,7 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--replace-strategy` | deploy | — | `blue_green` | How to replace a changed model: `blue_green` (deploy new before dropping old, no request loss) or `stop_start` (drop old first, brief unavailability) |
 | `--wait` | deploy | — | `false` | Wait for the deploy request's outcome and exit with it. `deploy` waits for the request to succeed or fail (`0` succeeded, `1` failed or cancelled); without it, `deploy` exits once the request is queued, and the outcome shows in the head's log. With `--cancel`, it waits for the rollback (`0` once cancelled, `1` if the request ends otherwise). A signal only stops the wait; `mship deploy --cancel` cancels |
 | `--cancel` | deploy | — | — | Cancel the deploy request with this id, as `mship deploy` printed it, instead of sending one; takes no model options. A queued request is dropped; a running one is rolled back, models already up included. A request that has committed, or that failed and is already rolling back, can't be cancelled |
+| `--ray-dashboard-url` | deploy | `MSHIP_RAY_DASHBOARD_URL` | — | Send the deploy (or `--cancel`) to the cluster whose Ray dashboard answers at this URL, e.g. `http://head:8265`, instead of the one on this machine. It runs as a Ray job on that cluster's head, with the head's env. Needs `MSHIP_RAY_AUTH_TOKEN` when the cluster runs with `--enable-ray-auth`. See [Deploy from another machine](multi-node-docker.md#deploy-from-another-machine) |
 | `--cache-dir` | start, join | `MSHIP_CACHE_DIR` | `/.cache` | Base cache directory for model weights; may be shared storage |
 | `--node-cache-dir` | start, join | `MSHIP_NODE_CACHE_DIR` | `$MSHIP_HOME/node-cache` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer). Must not be shared storage |
 | `--state-store` | start | `MSHIP_STATE_STORE` | `memory://` | Connection URI for the gateways' deploy versions + `/v1/responses` state (see [State store](#state-store-mship_state_store)) |
@@ -48,6 +49,11 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--max-request-body-bytes` | start, deploy | `MSHIP_MAX_REQUEST_BODY_BYTES` | `52428800` | Max request body size in bytes |
 | `--responses-ttl-s` | start, deploy | `MSHIP_RESPONSES_TTL_S` | `2592000` | TTL in seconds for stored `/v1/responses` conversation state; `<=0` disables expiry |
 | `--state-sweep-interval-s` | start | `MSHIP_STATE_SWEEP_INTERVAL_S` | `300` | Interval in seconds between expired-key sweeps in the in-memory state store |
+
+`mship deploy` exits `0` on success, `1` when the deploy fails or is cancelled or the cluster refuses the Ray
+auth token, `2` on a usage error, `3` when no Ray dashboard answers at `--ray-dashboard-url`, `4` when the
+cluster has no deploy coordinator (`mship start` creates it last, so a head still starting has none yet; a
+remote deploy submits again for up to 60 s first), and `130` when a signal stops the wait.
 
 ### Single-model deploys (no config file)
 
