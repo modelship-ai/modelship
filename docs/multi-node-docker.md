@@ -123,13 +123,14 @@ docker run --rm --env-file mship.env \
   weights are never uploaded.
 - **The token:** the cluster's `MSHIP_RAY_AUTH_TOKEN`, in this machine's env
   (the `--env-file` above). A cluster without `--enable-ray-auth` needs none.
-- **Following it:** `--wait` follows the deploy to its outcome, and a dropped
-  connection reconnects. A deploy whose head restarted under it is submitted
-  again, and so is one that reached a head still inside `mship start`, for up
-  to 60 s. A signal stops following; the deploy carries on, and
+- **Following it:** `--wait` follows the deploy to its outcome. A signal stops
+  following; the deploy carries on, and
   `mship deploy --ray-dashboard-url=… --cancel ID` cancels it.
+- **Failing fast:** it exits `3` when no dashboard answers at the URL, or when
+  the dashboard stops answering mid-deploy, and `4` when the head is still
+  inside `mship start`. Nothing is retried: run it again once the head is up.
 - **The URL** is the dashboard's (port `8265`), not the GCS address `mship join`
-  takes; `mship deploy` exits `3` when no dashboard answers there.
+  takes.
 
 ## Ports and firewall
 

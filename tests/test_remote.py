@@ -1,6 +1,5 @@
 import inspect
 import json
-import logging
 import os
 import urllib.error
 from types import SimpleNamespace
@@ -130,45 +129,22 @@ class TestRun:
         assert code == 1
         assert len(client.submitted) == 1
 
-    def test_a_job_that_died_with_the_head_is_submitted_again(self, caplog):
-        caplog.set_level(logging.INFO, logger="modelship")
-        client = _FakeClient(
-            [(_info("RUNNING"), ""), requests.ConnectionError(), (_info("FAILED"), "")],
-            [(_info("SUCCEEDED", 0), "")],
-        )
+    def test_no_deploy_coordinator_exits_4_without_submitting_again(self):
+        client = _FakeClient([(_info("FAILED", remote.EXIT_NO_DEPLOY_COORDINATOR), "")])
         code, _ = _run(client)
-        assert code == 0
-        assert len(client.submitted) == 2
-        assert any("submitting it again" in m for m in caplog.messages)
-
-    def test_a_job_the_restarted_head_no_longer_knows_is_submitted_again(self):
-        gone = RuntimeError("Request failed with status code 404: Job raysubmit_1 does not exist.")
-        client = _FakeClient(
-            [(_info("RUNNING"), ""), requests.ConnectionError(), gone],
-            [(_info("SUCCEEDED", 0), "")],
-        )
-        code, _ = _run(client)
-        assert code == 0
-        assert len(client.submitted) == 2
-
-    def test_a_head_still_starting_is_submitted_again(self):
-        client = _FakeClient(
-            [(_info("FAILED", remote.EXIT_NO_DEPLOY_COORDINATOR), "")],
-            [(_info("SUCCEEDED", 0), "")],
-        )
-        code, _ = _run(client)
-        assert code == 0
-        assert len(client.submitted) == 2
-
-    def test_a_head_that_never_finishes_starting_exits_with_its_code(self):
-        starting = [(_info("FAILED", remote.EXIT_NO_DEPLOY_COORDINATOR), "")]
-        client = _FakeClient(starting, list(starting), list(starting))
-        with patch.object(remote.time, "monotonic", side_effect=[100.0, 130.0, 161.0]):
-            code, _ = _run(client)
         assert code == remote.EXIT_NO_DEPLOY_COORDINATOR
-        assert len(client.submitted) == 3
+        assert len(client.submitted) == 1
 
-    def test_a_job_that_never_started_is_not_submitted_again(self):
+    def test_losing_the_dashboard_exits_3_without_submitting_again(self, capsys):
+        client = _FakeClient([(_info("RUNNING"), ""), requests.ConnectionError()])
+        code, _ = _run(client)
+        assert code == remote.EXIT_UNREACHABLE
+        assert len(client.submitted) == 1
+        assert "lost the Ray dashboard at http://head:8265; Ray job raysubmit_1 may still be running" in (
+            capsys.readouterr().err
+        )
+
+    def test_a_job_that_never_ran_exits_with_rays_message(self):
         client = _FakeClient([(_info("FAILED", None, "Argument list too long"), "")])
         code, _ = _run(client)
         assert code == "error: Ray job raysubmit_1 failed: Argument list too long"

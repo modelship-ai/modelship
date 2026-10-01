@@ -33,8 +33,6 @@ EXIT_NO_DEPLOY_COORDINATOR = 4
 _HEAD = {"node:__internal_head__": 0.001}
 _CLIENT_FLAGS = ("--ray-dashboard-url", "--config")
 _POLL_S = 1.0
-_RECONNECT_S = 2.0
-_HEAD_STARTING_S = 60.0
 
 
 def job_models_yaml() -> str:
@@ -125,73 +123,51 @@ def _check_dashboard(url: str, token: str | None) -> None:
 def _submit_and_follow(client: JobSubmissionClient, url: str, argv: list[str], models_yaml: str | None) -> None:
     import requests
 
-    submitted: list[str] = []
+    job_id: str | None = None
 
     def _stop_following(sig, _frame) -> None:
-        running = f"; Ray job {submitted[-1]} keeps running on the cluster" if submitted else ""
+        running = f"; Ray job {job_id} keeps running on the cluster" if job_id else ""
         logger.info("Stopped following (signal %s)%s.", sig, running)
         sys.exit(130)
 
     signal.signal(signal.SIGINT, _stop_following)
     signal.signal(signal.SIGTERM, _stop_following)
     metadata = {MODELS_YAML_KEY: models_yaml} if models_yaml is not None else None
-    starting_since: float | None = None
-    while True:
-        try:
-            job_id = client.submit_job(
-                entrypoint=entrypoint(argv, models_yaml is not None), entrypoint_resources=_HEAD, metadata=metadata
-            )
-        except requests.RequestException as e:
-            _exit_unreachable(url, str(e))
-        submitted.append(job_id)
-        logger.info("Submitted Ray job %s to %s.", job_id, url)
-        info, lost = _follow(client, job_id)
-        if info is not None and info.status == "SUCCEEDED":
-            sys.exit(0)
-        if info is not None and info.driver_exit_code == EXIT_NO_DEPLOY_COORDINATOR:
-            now = time.monotonic()
-            starting_since = now if starting_since is None else starting_since
-            if now - starting_since < _HEAD_STARTING_S:
-                logger.warning("The cluster's head is still starting; submitting the deploy again.")
-                time.sleep(_RECONNECT_S)
-                continue
-        if info is not None and info.driver_exit_code is not None:
-            sys.exit(info.driver_exit_code)
-        if lost:
-            # The job died with the head; a deploy is declarative, so running it again is safe.
-            logger.warning("The cluster's head went away during Ray job %s; submitting it again.", job_id)
-            continue
-        assert info is not None
-        sys.exit(f"error: Ray job {job_id} {info.status.lower()}: {info.message}")
+    try:
+        job_id = client.submit_job(
+            entrypoint=entrypoint(argv, models_yaml is not None), entrypoint_resources=_HEAD, metadata=metadata
+        )
+    except requests.RequestException as e:
+        _exit_unreachable(url, str(e))
+    logger.info("Submitted Ray job %s to %s.", job_id, url)
+    info = _follow(client, url, job_id)
+    if info.status == "SUCCEEDED":
+        sys.exit(0)
+    if info.driver_exit_code is not None:
+        sys.exit(info.driver_exit_code)
+    sys.exit(f"error: Ray job {job_id} {info.status.lower()}: {info.message}")
 
 
-def _follow(client: JobSubmissionClient, job_id: str) -> tuple[JobDetails | None, bool]:
-    """Prints the job's new log text until it ends. Returns its final info, or None when the head came back
-    without it, and whether the dashboard went away meanwhile."""
+def _follow(client: JobSubmissionClient, url: str, job_id: str) -> JobDetails:
+    """Prints the job's new log text until it ends; returns its final info."""
     import requests
 
     printed = 0
-    lost = False
     while True:
         try:
             info = client.get_job_info(job_id)
             logs = client.get_job_logs(job_id)
         except requests.RequestException:
-            if not lost:
-                logger.warning("Lost the Ray dashboard; reconnecting.")
-            lost = True
-            time.sleep(_RECONNECT_S)
-            continue
-        except RuntimeError as e:
-            if lost and _http_status(e) == 404:
-                return None, lost
-            raise
+            print(
+                f"error: lost the Ray dashboard at {url}; Ray job {job_id} may still be running there.", file=sys.stderr
+            )
+            sys.exit(EXIT_UNREACHABLE)
         if len(logs) > printed:
             sys.stdout.write(logs[printed:])
             sys.stdout.flush()
         printed = len(logs)
         if info.status in ("SUCCEEDED", "FAILED", "STOPPED"):
-            return info, lost
+            return info
         time.sleep(_POLL_S)
 
 

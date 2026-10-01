@@ -51,9 +51,9 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--state-sweep-interval-s` | start | `MSHIP_STATE_SWEEP_INTERVAL_S` | `300` | Interval in seconds between expired-key sweeps in the in-memory state store |
 
 `mship deploy` exits `0` on success, `1` when the deploy fails or is cancelled or the cluster refuses the Ray
-auth token, `2` on a usage error, `3` when no Ray dashboard answers at `--ray-dashboard-url`, `4` when the
-cluster has no deploy coordinator (`mship start` creates it last, so a head still starting has none yet; a
-remote deploy submits again for up to 60 s first), and `130` when a signal stops the wait.
+auth token, `2` on a usage error, `3` when no Ray dashboard answers at `--ray-dashboard-url` (or it stops
+answering), `4` when the cluster has no deploy coordinator (`mship start` creates it last, so a head still
+starting has none yet), and `130` when a signal stops the wait.
 
 ### Single-model deploys (no config file)
 
