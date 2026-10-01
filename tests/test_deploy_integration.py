@@ -1,6 +1,8 @@
 """End-to-end `mship deploy` on the session cluster: deploy requests queued per gateway, all-or-nothing
-outcomes, cancel, rollback, and a deploy coordinator restart."""
+outcomes, cancel, rollback, a deploy coordinator restart, and deploys sent through the Ray dashboard."""
 
+import os
+import subprocess
 import time
 from functools import partial
 from pathlib import Path
@@ -9,7 +11,7 @@ import httpx
 import pytest
 
 from openai import OpenAI
-from tests.conftest import OPENAI_API_BASE, run_on_cluster, serve_apps
+from tests.conftest import MSHIP, OPENAI_API_BASE, cluster_env, run_on_cluster, serve_apps
 
 _SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf"
 # a text model's GGUF as the vision projector: passes the source check, llama-server exits at startup
@@ -19,6 +21,8 @@ _PAST_GRACE_S = 15
 _PING = [{"role": "user", "content": "hi"}]
 _OTHER_GATEWAY = "other-gateway"
 _FIRST_GATEWAY = "first-gateway"
+_DASHBOARD = "http://localhost:8265"
+_GCS = "http://localhost:6380"
 
 
 def _flags(name: str, *, num_cpus: int = 1, broken: bool = False) -> list[str]:
@@ -302,3 +306,68 @@ class TestDeployCoordinatorRestart:
         assert _poll(lambda: not _apps_for("modelship", "uncommitted"), deadline_s=120), (
             "the restarted deploy coordinator did not roll the deploy back"
         )
+
+
+def _deploy_remote(url: str, config: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [*MSHIP, "deploy", "--ray-dashboard-url", url, "--config", str(config), "--wait"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+@pytest.mark.deploy
+class TestRemoteDeploy:
+    def test_a_remote_deploy_ships_its_config_and_serves_the_model(self, client, model_deployer, tmp_path):
+        config = tmp_path / "remote.yaml"
+        config.write_text(
+            "models:\n"
+            f"  - {{name: remote-model, model: {_SOURCE!r}, usecase: generate, loader: llama_server, num_cpus: 1}}\n"
+        )
+        log = model_deployer.run("--ray-dashboard-url", _DASHBOARD, "--config", str(config), log_name="remote")
+        assert "Submitted Ray job" in log
+        assert _listed_everywhere(client, "remote-model")
+        assert _chat(client, "remote-model") is not None
+
+    def test_a_remote_cancel_rolls_back_a_remote_deploy(self, model_deployer, tmp_path):
+        deploy = model_deployer.spawn(
+            "--ray-dashboard-url", _DASHBOARD, "--config", str(_half_placeable(tmp_path)), log_name="remote-half"
+        )
+        request_id = deploy.request_id()
+        assert _poll(partial(_running, "modelship", "up-model"), deadline_s=180), "the placeable model never came up"
+
+        log = model_deployer.cancel(request_id, "--ray-dashboard-url", _DASHBOARD, "--wait", log_name="remote-cancel")
+        assert f"Deploy {request_id} cancelled." in log
+        assert not _apps_for("modelship", "up-model") and not _apps_for("modelship", "never-model")
+        assert f"Deploy {request_id} cancelled." in deploy.wait(expect_code=1)
+
+
+@pytest.mark.integration
+@pytest.mark.deploy
+class TestRemoteRefusals:
+    @pytest.fixture
+    def empty_config(self, tmp_path) -> Path:
+        config = tmp_path / "empty.yaml"
+        config.write_text("models: []\n")
+        return config
+
+    def test_no_token_is_refused_naming_the_env_var(self, empty_config):
+        env = {k: v for k, v in os.environ.items() if k != "MSHIP_RAY_AUTH_TOKEN"}
+        result = _deploy_remote(_DASHBOARD, empty_config, env)
+        assert result.returncode == 1
+        assert "requires its Ray auth token: set MSHIP_RAY_AUTH_TOKEN" in result.stderr
+
+    def test_a_wrong_token_is_refused(self, empty_config):
+        result = _deploy_remote(_DASHBOARD, empty_config, cluster_env(MSHIP_RAY_AUTH_TOKEN="wrong-token"))
+        assert result.returncode == 1
+        assert "rejected the Ray auth token: check MSHIP_RAY_AUTH_TOKEN" in result.stderr
+
+    def test_the_gcs_address_exits_3_naming_the_mixup(self, empty_config):
+        result = _deploy_remote(_GCS, empty_config, cluster_env())
+        assert result.returncode == 3
+        assert "not the GCS address `mship join` takes" in result.stderr
