@@ -176,9 +176,24 @@ class TestRun:
 
     def test_a_config_over_the_cap_is_refused(self, tmp_path):
         config = tmp_path / "models.yaml"
-        config.write_text("#" * (remote.MAX_MODELS_YAML_BYTES + 1))
+        config.write_text("#" * remote.MAX_MODELS_YAML_JSON_BYTES)
         code, _ = _run(_FakeClient(), config_path=str(config))
-        assert "over 96 KiB" in code
+        assert "over 96 KiB once JSON-escaped" in code
+
+    def test_the_cap_counts_escaped_bytes(self, tmp_path):
+        config = tmp_path / "models.yaml"
+        # 48 KiB raw, 144 KiB escaped.
+        config.write_text("# " + "é" * (24 * 1024 - 1))
+        code, _ = _run(_FakeClient(), config_path=str(config))
+        assert "over 96 KiB once JSON-escaped" in code
+
+    def test_a_config_at_the_cap_is_sent(self, tmp_path):
+        config = tmp_path / "models.yaml"
+        config.write_text("#" * (remote.MAX_MODELS_YAML_JSON_BYTES - 2))
+        client = _FakeClient([(_info("SUCCEEDED"), "")])
+        code, _ = _run(client, config_path=str(config))
+        assert code == 0
+        assert len(client.submitted[0]["metadata"][remote.MODELS_YAML_KEY]) == remote.MAX_MODELS_YAML_JSON_BYTES - 2
 
 
 class TestCheckDashboard:

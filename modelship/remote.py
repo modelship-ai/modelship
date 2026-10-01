@@ -24,8 +24,8 @@ logger = get_logger("startup")
 # Ray hands a submitted job's metadata to its driver as JSON in this env var (job_supervisor.py).
 RAY_JOB_CONFIG_ENV_VAR = "RAY_JOB_CONFIG_JSON_ENV_VAR"
 MODELS_YAML_KEY = "mship_models_yaml"
-# That env var must fit in one 128 KiB env string.
-MAX_MODELS_YAML_BYTES = 96 * 1024
+# That env var must fit in one 128 KiB env string; the rest leaves room for Ray's own keys.
+MAX_MODELS_YAML_JSON_BYTES = 96 * 1024
 EXIT_UNREACHABLE = 3
 # `mship deploy` on a cluster without one; a head inside `mship start` has none yet.
 EXIT_NO_DEPLOY_COORDINATOR = 4
@@ -101,8 +101,12 @@ def _read_models_yaml(config_path: str | None) -> str | None:
             text = f.read()
     except OSError as e:
         sys.exit(f"error: can't read --config {config_path}: {e.strerror}.")
-    if len(text.encode()) > MAX_MODELS_YAML_BYTES:
-        sys.exit(f"error: {config_path} is over {MAX_MODELS_YAML_BYTES // 1024} KiB, the most a remote deploy carries.")
+    # As Ray escapes it: up to 6 bytes per character.
+    if len(json.dumps(text)) > MAX_MODELS_YAML_JSON_BYTES:
+        sys.exit(
+            f"error: {config_path} is over {MAX_MODELS_YAML_JSON_BYTES // 1024} KiB once JSON-escaped, "
+            "the most a remote deploy carries."
+        )
     return text
 
 

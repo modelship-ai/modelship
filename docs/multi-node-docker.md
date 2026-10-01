@@ -117,7 +117,7 @@ docker run --rm --env-file mship.env \
   --ray-dashboard-url=http://<vm-a-private-ip>:8265 --config=/models.yaml --wait
 ```
 
-- **What travels:** the `--config` file (up to 96 KiB) and the flags you pass.
+- **What travels:** the `--config` file (up to 96 KiB once JSON-escaped; accented letters count 3×) and the flags you pass.
   This machine's `MSHIP_*` env doesn't; the head's own env fills in the rest. A
   local path in `--model` or `model:` names a file on the cluster's nodes:
   weights are never uploaded.
