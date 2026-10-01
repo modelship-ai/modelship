@@ -102,6 +102,14 @@ RayCluster object itself is named by modelship.fullname.
 {{- end -}}
 
 {{/*
+The path the gateway is mounted under: its name slugified as gateway_route_prefix
+(modelship.deploy.serve_utils) does it.
+*/}}
+{{- define "modelship.gatewayPath" -}}
+{{- printf "/%s" (regexReplaceAll "[^a-z0-9_-]+" (lower .Values.gateway.name) "-" | trimAll "-") -}}
+{{- end -}}
+
+{{/*
 envFrom for the HF token / API keys Secret. optional:true so pods start fine
 when no Secret was created (e.g. all-ungated models, no auth).
 */}}

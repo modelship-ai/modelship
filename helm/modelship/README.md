@@ -14,6 +14,11 @@ capacity keeps the RayJob running until the nodes arrive (cancel it with
 `mship deploy --cancel ID`, on the head or [from your
 machine](../../docs/install-helm.md#deploy-or-cancel-from-your-machine)).
 
+The head pod turns Ready only once `mship start` is done: its `startupProbe` waits
+for the gateway's `/<gateway>/health`, which start brings up last, after the deploy
+coordinator. So the RayJob, which waits for the head, never reaches one still
+starting, after a head restart included. Readiness and liveness are KubeRay's own.
+
 Each successful deploy commits this gateway's model set, keeping the one before it,
 to a **state store** (see [Head-node HA](#head-node-ha-redis)). Routing is
 recomputed from Ray Serve's own state and that committed set, so it comes back by

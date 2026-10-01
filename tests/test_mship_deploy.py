@@ -359,6 +359,14 @@ class TestDriverVerbs:
             patch.object(driver, "_send") as send,
             patch.object(driver.signal, "pause"),
         ):
+            calls = MagicMock()
+            for name, mock in [
+                ("gateway_coordinator", gateway_coordinator),
+                ("deploy_coordinator", deploy_coordinator),
+                ("gateway", gateway),
+                ("send", send),
+            ]:
+                calls.attach_mock(mock, name)
             driver._start(parse_args("start", []))
         return SimpleNamespace(
             gateway=gateway,
@@ -366,6 +374,7 @@ class TestDriverVerbs:
             deploy_coordinator=deploy_coordinator,
             gateway_coordinator=gateway_coordinator,
             send=send,
+            calls=calls,
         )
 
     def test_start_exports_its_engine_for_job_shells(self):
@@ -395,6 +404,10 @@ class TestDriverVerbs:
         started.deploy_coordinator.assert_called_once_with()
         started.gateway_coordinator.assert_called_once_with()
         assert started.send.call_args.args[2] == "deploy-coordinator"
+
+    def test_start_creates_the_gateway_after_both_coordinators_and_before_its_deploy(self):
+        calls = self._start().calls.mock_calls
+        assert [c[0] for c in calls] == ["gateway_coordinator", "deploy_coordinator", "gateway", "send"]
 
     def test_start_prepares_its_state_store_and_gives_the_gateway_its_settings(self):
         os.environ["MSHIP_STATE_STORE"] = "redis://head:6379/0"

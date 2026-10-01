@@ -19,7 +19,7 @@ models.yaml — KubeRay waits for the head, then runs `mship deploy` on it.
    It's mounted under its gateway name, so with gateway.name={{ .Values.gateway.name }}:
 
    kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "modelship.fullname" . }}-gateway {{ .Values.gateway.port }}:{{ .Values.gateway.port }}
-   curl http://localhost:{{ .Values.gateway.port }}/{{ .Values.gateway.name }}/v1/models
+   curl http://localhost:{{ .Values.gateway.port }}{{ include "modelship.gatewayPath" . }}/v1/models
 
 {{- if eq .Values.service.type "ClusterIP" }}
 

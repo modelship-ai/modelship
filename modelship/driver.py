@@ -100,12 +100,14 @@ def _start(args) -> None:
         _log_gpus()
         start_serve(serve_logging_config)
         _prepare_state_store()
-        # First, so /health and /readyz answer while models load.
+        get_or_create_gateway_coordinator()
+        coordinator = get_or_create_coordinator()
+        # After the coordinators, so its /health answering means start is done (the chart's head startupProbe);
+        # before the deploy, so /health and /readyz answer while models load.
         start_gateway(
             gateway_name, serve_logging_config, route_prefix, cluster_env_vars() | state_store_env_var(), sizing
         )
-        get_or_create_gateway_coordinator()
-        _send(args, gateway_name, get_or_create_coordinator())
+        _send(args, gateway_name, coordinator)
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise

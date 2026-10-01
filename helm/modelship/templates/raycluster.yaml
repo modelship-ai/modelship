@@ -90,6 +90,15 @@ spec:
               - { name: dashboard, containerPort: 8265 }
               - { name: serve, containerPort: {{ .Values.gateway.port }} }
               - { name: metrics, containerPort: {{ .Values.metrics.port }} }
+            # mship start brings the gateway up after both coordinators, so the head turns Ready (and
+            # the deploy RayJob starts) only once start is done. Readiness and liveness stay KubeRay's.
+            startupProbe:
+              httpGet:
+                path: {{ include "modelship.gatewayPath" . }}/health
+                port: serve
+              periodSeconds: 5
+              timeoutSeconds: 5
+              failureThreshold: 120
             env:
               {{- include "modelship.env" . | nindent 14 }}
               {{- with .Values.head.env }}
