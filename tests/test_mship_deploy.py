@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ray.exceptions import RayActorError
+from ray.exceptions import AuthenticationError, RayActorError
 
 from modelship.deploy.actor_options import (
     build_cache_env_vars,
@@ -1683,11 +1683,16 @@ class TestStartHead:
 
 
 class TestAttachCluster:
-    def test_a_refused_connection_names_the_token(self):
+    @pytest.mark.parametrize(
+        "error",
+        [ConnectionError("wrong token"), AuthenticationError("no authentication token was found")],
+        ids=["wrong_token", "missing_token"],
+    )
+    def test_a_refused_connection_names_the_token(self, error):
         from modelship.deploy import serve_utils
 
         with (
-            patch.object(serve_utils.ray, "init", side_effect=ConnectionError),
+            patch.object(serve_utils.ray, "init", side_effect=error),
             pytest.raises(SystemExit, match="set MSHIP_RAY_AUTH_TOKEN to its token"),
         ):
             serve_utils.attach_cluster(logging.INFO)

@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 import ray
 from ray import serve
 from ray._common.utils import get_ray_temp_dir
+from ray.exceptions import AuthenticationError
 from ray.serve.config import HTTPOptions, ProxyLocation
 from ray.serve.schema import ApplicationStatus, LoggingConfig
 
@@ -385,7 +386,8 @@ def attach_cluster(lib_level: int) -> None:
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     try:
         ray.init(address="auto", ignore_reinit_error=True, logging_level=lib_level)
-    except ConnectionError:
+    # A wrong token raises ConnectionError; a missing one in token mode, AuthenticationError.
+    except (ConnectionError, AuthenticationError):
         sys.exit(
             "error: can't connect to the Ray cluster on this machine. If it was started with --enable-ray-auth, "
             "set MSHIP_RAY_AUTH_TOKEN to its token."
