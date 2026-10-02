@@ -322,7 +322,11 @@ _HEAD_SETTINGS = {
 class TestDriverVerbs:
     @pytest.fixture(autouse=True)
     def _isolate(self):
-        with patch.dict(os.environ, {}, clear=False), patch("modelship.driver.signal.signal"):
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("modelship.driver.signal.signal"),
+            patch("modelship.remote.HEAD_WAIT_S", 0),
+        ):
             for key in ("MSHIP_GATEWAY_NAME", "MSHIP_STATE_STORE", *CLUSTER_ENV_DEFAULTS, *GATEWAY_SIZING_ENV_VARS):
                 os.environ.pop(key, None)
             yield
@@ -489,7 +493,46 @@ class TestDriverVerbs:
         with pytest.raises(SystemExit) as exc:
             self._deploy([], existing_apps={"modelship"}, found=False)
         assert exc.value.code == 4
-        assert "no deploy coordinator on this cluster; `mship start` creates it" in capsys.readouterr().err
+        assert "no deploy coordinator on this cluster after 0 min; `mship start` creates it" in capsys.readouterr().err
+
+    def test_waits_for_a_local_node_then_the_deploy_coordinator(self, caplog):
+        from modelship import driver, remote
+        from modelship.deploy import serve_utils
+
+        caplog.set_level(logging.INFO, logger="modelship")
+        coordinator = MagicMock()
+        with (
+            patch.object(remote, "HEAD_WAIT_S", 60),
+            patch.object(driver.time, "sleep") as sleep,
+            patch.object(serve_utils, "local_ray_clusters", side_effect=[set(), set(), {"10.0.0.1:6380"}]),
+            patch.object(serve_utils, "attach_cluster") as attach,
+            patch("modelship.infer.deploy_coordinator.find_coordinator", side_effect=[None, coordinator]),
+            patch.object(driver, "_serve_logging", return_value=(logging.INFO, None)),
+        ):
+            assert driver._attach_when_ready() is coordinator
+        attach.assert_called_once()
+        assert sleep.call_count == 3
+        assert caplog.messages == [
+            "Waiting for a Ray node on this machine.",
+            "Waiting for `mship start` to create the deploy coordinator.",
+        ]
+
+    def test_a_signal_stops_the_wait(self, caplog):
+        from modelship import driver
+        from modelship.deploy import serve_utils
+
+        caplog.set_level(logging.INFO, logger="modelship")
+
+        def interrupted():
+            driver.signal.signal.call_args_list[0].args[1](signal.SIGINT, None)
+
+        with (
+            patch.object(serve_utils, "local_ray_clusters", side_effect=interrupted),
+            pytest.raises(SystemExit) as exc,
+        ):
+            driver._attach_when_ready()
+        assert exc.value.code == 130
+        assert f"Stopped waiting (signal {signal.SIGINT})." in caplog.messages
 
     def test_deploy_sends_to_the_deploy_coordinator_it_found(self):
         deployed = self._deploy([], existing_apps={"modelship"})
@@ -682,6 +725,7 @@ class TestCancelCommand:
             patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator if actor else None),
             patch("ray.get", side_effect=waiting or (lambda value: rolled_back if value == "outcome-ref" else value)),
             patch.object(driver.signal, "signal"),
+            patch("modelship.remote.HEAD_WAIT_S", 0),
         ):
             driver._cancel(parse_args("deploy", ["--cancel", "r1", *argv]))
         return coordinator
@@ -777,9 +821,10 @@ class TestCancelCommand:
         with pytest.raises(SystemExit, match="no Ray cluster"):
             self._cancel({}, clusters=frozenset())
 
-    def test_a_cluster_without_a_deploy_coordinator_has_no_deploy(self):
-        with pytest.raises(SystemExit, match="no deploy r1"):
+    def test_a_cluster_without_a_deploy_coordinator_exits_4(self):
+        with pytest.raises(SystemExit) as exc:
             self._cancel({}, actor=False)
+        assert exc.value.code == 4
 
 
 class TestStopHead:

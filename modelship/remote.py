@@ -29,6 +29,8 @@ MAX_MODELS_YAML_JSON_BYTES = 96 * 1024
 EXIT_UNREACHABLE = 3
 # `mship deploy` on a cluster without one; a head inside `mship start` has none yet.
 EXIT_NO_DEPLOY_COORDINATOR = 4
+# How long `mship deploy` waits for the head: a local node, the dashboard, the deploy coordinator.
+HEAD_WAIT_S = 300
 
 _HEAD = {"node:__internal_head__": 0.001}
 _CLIENT_FLAGS = ("--ray-dashboard-url", "--config")
@@ -77,9 +79,10 @@ def run(url: str, argv: list[str], config_path: str | None) -> None:
     from ray.exceptions import AuthenticationError
     from ray.job_submission import JobSubmissionClient
 
+    deadline = time.monotonic() + HEAD_WAIT_S
     configure_logging()
     models_yaml = _read_models_yaml(config_path)
-    _check_dashboard(url, token)
+    _wait_for_dashboard(url, token, deadline)
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         client = JobSubmissionClient(url, headers=headers)
@@ -88,7 +91,7 @@ def run(url: str, argv: list[str], config_path: str | None) -> None:
     except (requests.HTTPError, RuntimeError, AuthenticationError) as e:
         _exit_http(url, e)
     try:
-        _submit_and_follow(client, url, argv, models_yaml)
+        _submit_and_follow(client, url, argv, models_yaml, deadline)
     except (RuntimeError, AuthenticationError) as e:
         _exit_http(url, e)
 
@@ -110,23 +113,48 @@ def _read_models_yaml(config_path: str | None) -> str | None:
     return text
 
 
-def _check_dashboard(url: str, token: str | None) -> None:
+def _wait_for_dashboard(url: str, token: str | None, deadline: float) -> None:
+    def _stop_waiting(sig, _frame) -> None:
+        logger.info("Stopped waiting (signal %s).", sig)
+        sys.exit(130)
+
+    signal.signal(signal.SIGINT, _stop_waiting)
+    signal.signal(signal.SIGTERM, _stop_waiting)
+    waiting = False
+    while (down := _dashboard_down(url, token)) is not None:
+        if time.monotonic() >= deadline:
+            _exit_unreachable(url, f"{down}; waited {HEAD_WAIT_S // 60} min")
+        if not waiting:
+            logger.info("Waiting for the Ray dashboard at %s (%s).", url, down)
+            waiting = True
+        time.sleep(_POLL_S)
+
+
+def _dashboard_down(url: str, token: str | None) -> str | None:
+    """Why the dashboard can't take a job yet, or None once it can; exits on what waiting won't fix."""
     try:
         with urllib.request.urlopen(f"{url}/api/authentication_mode", timeout=10) as resp:
             mode = json.load(resp).get("authentication_mode")
     except urllib.error.HTTPError as e:
-        _exit_unreachable(url, f"HTTP {e.code}")
+        if e.code < 500:
+            _exit_unreachable(url, f"HTTP {e.code}")
+        return f"HTTP {e.code}"
+    except http.client.RemoteDisconnected:
+        return "connection closed"
     except http.client.HTTPException:
         _exit_unreachable(url, "not an HTTP reply")
-    except (urllib.error.URLError, OSError, ValueError) as e:
-        _exit_unreachable(url, str(getattr(e, "reason", e)))
+    except (urllib.error.URLError, OSError) as e:
+        return str(getattr(e, "reason", e))
+    except ValueError as e:
+        _exit_unreachable(url, str(e))
     if mode == "token" and not token:
         sys.exit(f"error: the cluster at {url} requires its Ray auth token: set MSHIP_RAY_AUTH_TOKEN.")
+    return None
 
 
-def _submit_and_follow(client: JobSubmissionClient, url: str, argv: list[str], models_yaml: str | None) -> None:
-    import requests
-
+def _submit_and_follow(
+    client: JobSubmissionClient, url: str, argv: list[str], models_yaml: str | None, deadline: float
+) -> None:
     job_id: str | None = None
 
     def _stop_following(sig, _frame) -> None:
@@ -137,12 +165,7 @@ def _submit_and_follow(client: JobSubmissionClient, url: str, argv: list[str], m
     signal.signal(signal.SIGINT, _stop_following)
     signal.signal(signal.SIGTERM, _stop_following)
     metadata = {MODELS_YAML_KEY: models_yaml} if models_yaml is not None else None
-    try:
-        job_id = client.submit_job(
-            entrypoint=entrypoint(argv, models_yaml is not None), entrypoint_resources=_HEAD, metadata=metadata
-        )
-    except requests.RequestException as e:
-        _exit_unreachable(url, str(e))
+    job_id = _submit(client, url, entrypoint(argv, models_yaml is not None), metadata, deadline)
     logger.info("Submitted Ray job %s to %s.", job_id, url)
     info = _follow(client, url, job_id)
     if info.status == "SUCCEEDED":
@@ -150,6 +173,32 @@ def _submit_and_follow(client: JobSubmissionClient, url: str, argv: list[str], m
     if info.driver_exit_code is not None:
         sys.exit(info.driver_exit_code)
     sys.exit(f"error: Ray job {job_id} {info.status.lower()}: {info.message}")
+
+
+def _submit(client: JobSubmissionClient, url: str, command: str, metadata: dict | None, deadline: float) -> str:
+    """The new job's id; resubmits until *deadline* while the dashboard answers 5xx or not at all."""
+    import requests
+
+    waiting = False
+    while True:
+        try:
+            return client.submit_job(entrypoint=command, entrypoint_resources=_HEAD, metadata=metadata)
+        except requests.RequestException as e:
+            reason = str(e)
+        except RuntimeError as e:
+            if (_http_status(e) or 0) < 500:
+                raise
+            reason = str(e)
+        if time.monotonic() >= deadline:
+            print(
+                f"error: the Ray dashboard at {url} didn't take the job within {HEAD_WAIT_S // 60} min: {reason}",
+                file=sys.stderr,
+            )
+            sys.exit(EXIT_UNREACHABLE)
+        if not waiting:
+            logger.info("Waiting for the Ray dashboard at %s to take the job (%s).", url, reason)
+            waiting = True
+        time.sleep(_POLL_S)
 
 
 def _follow(client: JobSubmissionClient, url: str, job_id: str) -> JobDetails:

@@ -50,10 +50,11 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--responses-ttl-s` | start, deploy | `MSHIP_RESPONSES_TTL_S` | `2592000` | TTL in seconds for stored `/v1/responses` conversation state; `<=0` disables expiry |
 | `--state-sweep-interval-s` | start | `MSHIP_STATE_SWEEP_INTERVAL_S` | `300` | Interval in seconds between expired-key sweeps in the in-memory state store |
 
-`mship deploy` exits `0` on success, `1` when the deploy fails or is cancelled or the cluster refuses the Ray
-auth token, `2` on a usage error, `3` when no Ray dashboard answers at `--ray-dashboard-url` (or it stops
-answering), `4` when the cluster has no deploy coordinator (`mship start` creates it last, so a head still
-starting has none yet), and `130` when a signal stops the wait.
+`mship deploy` waits up to 5 minutes for the head: a Ray node on this machine (or the dashboard at
+`--ray-dashboard-url`) and the deploy coordinator `mship start` creates. It exits `0` on success, `1` when the
+deploy fails or is cancelled or the cluster refuses the Ray auth token, `2` on a usage error, `3` when no Ray
+dashboard answered at `--ray-dashboard-url` within the wait (or it stopped answering mid-deploy), `4` when the
+cluster still had no deploy coordinator, and `130` when a signal stops the wait.
 
 ### Single-model deploys (no config file)
 

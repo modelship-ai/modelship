@@ -126,9 +126,10 @@ docker run --rm --env-file mship.env \
 - **Following it:** `--wait` follows the deploy to its outcome. A signal stops
   following; the deploy carries on, and
   `mship deploy --ray-dashboard-url=… --cancel ID` cancels it.
-- **Failing fast:** it exits `3` when no dashboard answers at the URL, or when
-  the dashboard stops answering mid-deploy, and `4` when the head is still
-  inside `mship start`. Nothing is retried: run it again once the head is up.
+- **Waiting for the head:** it waits up to 5 minutes for the dashboard to
+  answer and for `mship start` to finish, then exits `3` (no dashboard) or `4`
+  (no deploy coordinator). It exits `3` at once when the dashboard stops
+  answering mid-deploy, or when the URL answers but isn't a dashboard.
 - **The URL** is the dashboard's (port `8265`), not the GCS address `mship join`
   takes.
 

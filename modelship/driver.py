@@ -2,6 +2,7 @@ import functools
 import os
 import signal
 import sys
+import time
 
 # Module scope stays Ray/HF-free: run() sets env vars those latch at import.
 from modelship.logging import (
@@ -20,6 +21,7 @@ propagate_lib_log_env()
 logger = get_logger("startup")
 _DEFAULT_GATEWAY_NAME = "modelship"
 _STOP_DELETE_TIMEOUT_S = 30.0
+_HEAD_POLL_S = 1.0
 
 
 def run(command: str, argv: list[str] | None = None) -> None:
@@ -173,31 +175,58 @@ def _join() -> None:
     supervise_join_node()
 
 
-def _deploy(args) -> None:
-    import ray
-
-    from modelship.deploy.serve_utils import (
-        attach_cluster,
-        get_existing_apps,
-        local_ray_clusters,
-        start_gateway,
-        start_serve,
-    )
+def _attach_when_ready():
+    """Attaches to this machine's cluster and returns its deploy coordinator, waiting up to
+    HEAD_WAIT_S (modelship.remote) for a local node and for the deploy coordinator."""
+    from modelship.deploy.serve_utils import attach_cluster, local_ray_clusters
     from modelship.infer.deploy_coordinator import find_coordinator
-    from modelship.remote import EXIT_NO_DEPLOY_COORDINATOR
+    from modelship.remote import EXIT_NO_DEPLOY_COORDINATOR, HEAD_WAIT_S
 
-    gateway_name, route_prefix, explicit_gateway = _gateway_from_env()
-    if not local_ray_clusters():
+    def _stop_waiting(sig, _frame) -> None:
+        logger.info("Stopped waiting (signal %s).", sig)
+        sys.exit(130)
+
+    deadline = time.monotonic() + HEAD_WAIT_S
+    minutes = HEAD_WAIT_S // 60
+    _on_signals(_stop_waiting)
+    if not _poll(local_ray_clusters, deadline, "Waiting for a Ray node on this machine."):
         sys.exit(
-            "error: no Ray cluster is running on this machine. Start one with `mship start`, "
+            f"error: no Ray cluster is running on this machine after {minutes} min. Start one with `mship start`, "
             "or run deploy on a node of a running cluster."
         )
     lib_level, _ = _serve_logging()
     attach_cluster(lib_level)
-    _log_cluster()
-    if (coordinator := find_coordinator()) is None:
-        print("error: no deploy coordinator on this cluster; `mship start` creates it.", file=sys.stderr)
+    # ray.init replaced the SIGTERM handler.
+    _on_signals(_stop_waiting)
+    coordinator = _poll(find_coordinator, deadline, "Waiting for `mship start` to create the deploy coordinator.")
+    if coordinator is None:
+        print(
+            f"error: no deploy coordinator on this cluster after {minutes} min; `mship start` creates it.",
+            file=sys.stderr,
+        )
         sys.exit(EXIT_NO_DEPLOY_COORDINATOR)
+    return coordinator
+
+
+def _poll(check, deadline: float, waiting: str):
+    """*check*'s first truthy result, polled until *deadline*; logs *waiting* once."""
+    logged = False
+    while not (result := check()) and time.monotonic() < deadline:
+        if not logged:
+            logger.info(waiting)
+            logged = True
+        time.sleep(_HEAD_POLL_S)
+    return result
+
+
+def _deploy(args) -> None:
+    import ray
+
+    from modelship.deploy.serve_utils import get_existing_apps, start_gateway, start_serve
+
+    gateway_name, route_prefix, explicit_gateway = _gateway_from_env()
+    coordinator = _attach_when_ready()
+    _log_cluster()
     head: dict = ray.get(coordinator.cluster_settings.remote())
     # A no-op when Serve already runs; the first call on a cluster sets it up.
     start_serve(head["serve_logging_config"])
@@ -288,16 +317,8 @@ def _log_outcome(outcome: dict) -> None:
 def _cancel(args) -> None:
     import ray
 
-    from modelship.deploy.serve_utils import attach_cluster, local_ray_clusters
-    from modelship.infer.deploy_coordinator import find_coordinator
-
-    if not local_ray_clusters():
-        sys.exit("error: no Ray cluster is running on this machine.")
-    lib_level, _ = _serve_logging()
-    attach_cluster(lib_level)
     deploy_id = args.cancel
-    if (coordinator := find_coordinator()) is None:
-        sys.exit(f"error: no deploy {deploy_id} on this cluster.")
+    coordinator = _attach_when_ready()
     result: dict = ray.get(coordinator.cancel.remote(deploy_id))
     if not result["cancelled"]:
         sys.exit(f"error: {result['message']}.")
