@@ -32,36 +32,36 @@ def main() -> int:
     docs = _render()
     hook = {k: d for k, d in docs.items() if d["metadata"].get("annotations", {}).get("helm.sh/hook") == "pre-delete"}
     assert sorted(hook) == [
-        "Job/rel-modelship-uninstall",
-        "Role/rel-modelship-uninstall",
-        "RoleBinding/rel-modelship-uninstall",
-        "ServiceAccount/rel-modelship-uninstall",
+        "Job/rel-uninstall",
+        "Role/rel-uninstall",
+        "RoleBinding/rel-uninstall",
+        "ServiceAccount/rel-uninstall",
     ], sorted(hook)
     for key, doc in hook.items():
         annotations = doc["metadata"]["annotations"]
         assert annotations.items() >= _HOOK_ANNOTATIONS.items(), (key, annotations)
         assert int(annotations["helm.sh/hook-weight"]) == (0 if key.startswith("Job/") else -10), (key, annotations)
 
-    assert hook["Role/rel-modelship-uninstall"]["rules"] == [
+    assert hook["Role/rel-uninstall"]["rules"] == [
         {
             "apiGroups": ["ray.io"],
             "resources": ["rayclusters"],
-            "resourceNames": ["rel-modelship"],
+            "resourceNames": ["rel"],
             "verbs": ["get", "delete"],
         },
         {
             "apiGroups": ["ray.io"],
             "resources": ["rayjobs"],
-            "resourceNames": ["rel-modelship-deploy"],
+            "resourceNames": ["rel-deploy"],
             "verbs": ["delete"],
         },
     ]
-    pod = hook["Job/rel-modelship-uninstall"]["spec"]["template"]["spec"]
+    pod = hook["Job/rel-uninstall"]["spec"]["template"]["spec"]
     job = pod["containers"][0]
-    assert pod["serviceAccountName"] == "rel-modelship-uninstall"
-    assert job["command"] == ["python", "-m", "modelship.uninstall", "rel-modelship", "rel-modelship-deploy"]
+    assert pod["serviceAccountName"] == "rel-uninstall"
+    assert job["command"] == ["python", "-m", "modelship.uninstall", "rel", "rel-deploy"]
 
-    cluster = docs["RayCluster/rel-modelship"]
+    cluster = docs["RayCluster/rel"]
     head = cluster["spec"]["headGroupSpec"]["template"]["spec"]["containers"][0]
     assert job["image"] == head["image"]
     assert _env(job)["MSHIP_STATE_STORE"] == _env(head)["MSHIP_STATE_STORE"]
@@ -69,9 +69,9 @@ def main() -> int:
     assert _env(job)["MSHIP_STATE_STORE"]["value"].endswith(f"?namespace={namespace}")
     assert "MSHIP_REDIS_PASSWORD" not in _env(job)
 
-    job = _render("--set", "redis.password=pw")["Job/rel-modelship-uninstall"]["spec"]["template"]["spec"]
+    job = _render("--set", "redis.password=pw")["Job/rel-uninstall"]["spec"]["template"]["spec"]
     secret_ref = _env(job["containers"][0])["MSHIP_REDIS_PASSWORD"]["valueFrom"]["secretKeyRef"]
-    assert secret_ref == {"name": "rel-modelship-secrets", "key": "REDIS_PASSWORD"}, secret_ref
+    assert secret_ref == {"name": "rel-secrets", "key": "REDIS_PASSWORD"}, secret_ref
 
     print("OK: the pre-delete hook deletes this release's RayCluster and RayJob, then its state namespace")
     return 0

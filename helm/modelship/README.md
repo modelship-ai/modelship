@@ -140,7 +140,7 @@ an external LB/Ingress health check). Port-forward for local access, or set
 `service.type=LoadBalancer`:
 
 ```bash
-kubectl port-forward svc/<release>-modelship-gateway 8000:8000
+kubectl port-forward svc/<release>-gateway 8000:8000
 curl http://localhost:8000/modelship/v1/models
 ```
 
@@ -215,7 +215,7 @@ run with `ENABLE_GCS_FT_REDIS_CLEANUP=false` never removes it: the Job waits its
 minutes, and the cluster stays up after uninstall until you run
 
 ```bash
-kubectl patch raycluster modelship --type=merge -p '{"metadata":{"finalizers":null}}'
+kubectl patch raycluster <release> --type=merge -p '{"metadata":{"finalizers":null}}'
 ```
 
 Ray's keys then stay in Redis, and a reinstall under the same
@@ -236,11 +236,11 @@ KubeRay generates the token once, in a Secret named after the RayCluster, and
 deletes it with the cluster. Read it with:
 
 ```bash
-kubectl get secret <release-fullname> -o jsonpath='{.data.auth_token}' | base64 -d
+kubectl get secret <release> -o jsonpath='{.data.auth_token}' | base64 -d
 ```
 
 `mship deploy --ray-dashboard-url` sends deploys and cancels from your machine with
-it, over a port-forward to `<release-fullname>-head-svc:8265`; see [Deploy or
+it, over a port-forward to `<release>-head-svc:8265`; see [Deploy or
 cancel from your machine](../../docs/install-helm.md#deploy-or-cancel-from-your-machine).
 
 To manage the token yourself, point `rayAuth.existingSecret` at a Secret holding

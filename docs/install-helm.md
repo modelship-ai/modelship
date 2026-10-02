@@ -72,8 +72,8 @@ it exactly with `deploy.reconcile=true`.
 dashboard, with the token KubeRay generated:
 
 ```bash
-kubectl port-forward svc/<release-fullname>-head-svc 8265:8265 &
-export MSHIP_RAY_AUTH_TOKEN=$(kubectl get secret <release-fullname> -o jsonpath='{.data.auth_token}' | base64 -d)
+kubectl port-forward svc/<release>-head-svc 8265:8265 &
+export MSHIP_RAY_AUTH_TOKEN=$(kubectl get secret <release> -o jsonpath='{.data.auth_token}' | base64 -d)
 mship deploy --ray-dashboard-url=http://localhost:8265 --cancel <ID> --wait
 ```
 
