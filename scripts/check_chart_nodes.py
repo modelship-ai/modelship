@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """CI check: the chart's Ray pods run `mship start`/`mship join` under KubeRay's
 overwrite-container-cmd, with worker sizing env derived from the pod's resources, a
-fixed metrics port, one Redis namespace for Ray and modelship, and a head that turns
-Ready only once its gateway answers."""
+fixed metrics port, one Redis namespace for Ray and modelship, a head that turns Ready
+only once its gateway answers, and workers that are Ready only while their Serve proxy answers."""
 
 from __future__ import annotations
 
@@ -109,7 +109,14 @@ def main() -> int:
     }, head["startupProbe"]
     # KubeRay injects only the probes left unset.
     assert not {"readinessProbe", "livenessProbe"} & head.keys()
-    assert all("startupProbe" not in w for w in (req, lim, own, bare))
+    for worker in (req, lim, own, bare):
+        assert worker["readinessProbe"] == {
+            "httpGet": {"path": "/-/healthz", "port": "serve"},
+            "periodSeconds": 2,
+            "timeoutSeconds": 2,
+            "failureThreshold": 2,
+        }, worker["readinessProbe"]
+        assert not {"startupProbe", "livenessProbe"} & worker.keys()
     slugged, _ = _containers(_cluster({"gateway": {"name": "Edge+API"}, "workerGroups": [_group("w")]}))
     assert slugged["startupProbe"]["httpGet"]["path"] == "/edge-api/health", slugged["startupProbe"]
     assert all("lifecycle" not in c for c in (head, req, lim, own, bare))
@@ -145,7 +152,8 @@ def main() -> int:
         assert "workerGroupSpecs" not in _cluster(values)["spec"]
 
     print(
-        "OK: head runs mship start and waits for its gateway, workers run mship join, sizing env follows pod resources"
+        "OK: head runs mship start and waits for its gateway, workers run mship join and are Ready only while "
+        "their Serve proxy answers, sizing env follows pod resources"
     )
     return 0
 

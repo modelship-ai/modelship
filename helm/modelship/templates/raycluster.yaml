@@ -172,11 +172,19 @@ spec:
                 - --metrics-port
                 - {{ $.Values.metrics.port | quote }}
                 {{- end }}
-              # `serve` is the node's Ray Serve HTTP proxy port, targeted by the gateway
-              # Service. Serve runs a proxy only on nodes hosting at least one replica.
+              # `serve` is the node's Ray Serve HTTP proxy port, targeted by the gateway Service.
               ports:
                 - { name: serve, containerPort: {{ $.Values.gateway.port }} }
                 - { name: metrics, containerPort: {{ $.Values.metrics.port }} }
+              # Serve runs a proxy only on nodes hosting a replica: the pod is Ready only while it
+              # answers, so the gateway Service skips the rest. Liveness stays KubeRay's.
+              readinessProbe:
+                httpGet:
+                  path: /-/healthz
+                  port: serve
+                periodSeconds: 2
+                timeoutSeconds: 2
+                failureThreshold: 2
               env:
                 {{- include "modelship.env" $ | nindent 16 }}
                 {{- include "modelship.nodeResourceEnv" (dict "resources" .resources "env" .env "container" "ray-worker") | nindent 16 }}

@@ -106,9 +106,12 @@ secrets:
   capacity on the head. The deploy and uninstall Jobs use the same (thin) image.
   KubeRay's `ray.io/overwrite-container-cmd` annotation keeps these commands
   instead of generating `ray start`.
-- **Serve HTTP proxies** — one runs on **every** Ray node (`proxy_location=EveryNode`),
-  not just the head, and the gateway Service load-balances across all of them so
-  ingress survives losing any single pod. Each proxy can route to any gateway
+- **Serve HTTP proxies** — Serve runs one on the head and on every worker hosting a
+  replica (`proxy_location=EveryNode`), and the gateway Service load-balances across
+  them so ingress survives losing any single pod. A worker is Ready only while its
+  proxy answers (a readiness probe on `/-/healthz`), so a worker hosting nothing shows
+  `0/1` and gets no traffic; `kubectl get raycluster` doesn't show `ready` while one
+  does, and nothing in the chart waits on it. Each proxy can route to any gateway
   replica wherever it's scheduled. The gateway autoscales between
   `gateway.autoscaling.minReplicas` and `maxReplicas`; set `minReplicas` to 2 or more
   (with ≥1 worker) for routing/ingress HA. Each replica copies its routing table from
@@ -136,8 +139,8 @@ secrets:
 
 ## Reaching the gateway
 
-The gateway Service load-balances across the `serve` port of every Ray pod. Serve
-runs a proxy only on nodes hosting at least one replica. Check `/readyz`
+The gateway Service load-balances across the `serve` port of every Ready Ray pod: the
+head, and each worker whose Serve proxy answers. Check `/readyz`
 for app-level readiness — it returns 503 until all models are loaded (use it for
 an external LB/Ingress health check). Port-forward for local access, or set
 `service.type=LoadBalancer`:

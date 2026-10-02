@@ -137,7 +137,7 @@ docker run --rm --env-file mship.env \
 
 | Port | What | Configurable via |
 |---|---|---|
-| `8000` | Gateway HTTP API (`ProxyLocation.EveryNode` — every node with ≥1 replica runs a proxy) | `--openai-api-port` |
+| `8000` | Gateway HTTP API (`ProxyLocation.EveryNode`: a node runs a proxy only while it hosts a replica, so a load balancer across nodes should health-check `/-/healthz`) | `--openai-api-port` |
 | `8079` | Prometheus metrics | `--metrics-port`; random on a joiner unless set, and listed in the head's service-discovery file either way |
 | `8265` | Ray dashboard (head only); what `mship deploy --ray-dashboard-url` points at | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1`; `start` warns when it's exposed without `--enable-ray-auth`) |
 | GCS (head control plane) | what `mship join --gcs-address` points at | `--gcs-port` (default `6380`) |
