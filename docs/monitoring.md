@@ -221,7 +221,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | `ModelshipModelLoadFailure` | Any increase in `model_load_failures_total` | 0m | A model failed to initialize |
 | `ModelshipKVCacheExhausted` | KV cache usage > 95% | 5m | Requests will queue or be preempted |
 | `ModelshipStateStoreErrors` | Any state-store op errors | 5m | Durable HA state failing — self-heal at risk |
-| `ModelshipDeployJobFailed` | `kube_job_status_failed` > 0 | 0m | Deploy RayJob failed; last upgrade may not be applied (needs kube-state-metrics) |
+| `ModelshipDeployJobFailed` | `kube_job_failed` (condition true) > 0 | 0m | Deploy Job failed; last upgrade may not be applied (needs kube-state-metrics) |
 
 #### Warning (investigate)
 

@@ -12,8 +12,8 @@ metadata:
     - ray.io/gcs-ft-redis-cleanup-finalizer
 spec:
   rayVersion: {{ .Values.rayVersion | quote }}
-  # KubeRay injects the token into every Ray pod and the RayJob submitter. Without
-  # secretName it generates one, in a Secret named after this RayCluster.
+  # KubeRay injects the token into every Ray pod; the deploy Job reads the same Secret.
+  # Without secretName it generates one, in a Secret named after this RayCluster.
   authOptions:
     mode: token
     {{- with .Values.rayAuth.existingSecret }}
@@ -56,7 +56,7 @@ spec:
           - name: ray-head
             image: {{ include "modelship.image" . }}
             imagePullPolicy: {{ .Values.image.pullPolicy }}
-            # RAY_PORT is KubeRay's GCS port (6379); its RayJob submitter reaches the
+            # RAY_PORT is KubeRay's GCS port (6379); the deploy Job reaches the
             # dashboard through the head Service.
             args:
               - start
@@ -83,15 +83,14 @@ spec:
               {{- else }}
               - --no-metrics
               {{- end }}
-            # The RayJob controller builds the job-submission URL from the named
-            # `dashboard` port (8265, mship start's default). KubeRay adds
-            # `metrics: 8080` to a Ray container that declares no `metrics` port.
+            # The deploy Job reaches the dashboard on 8265, mship start's default.
+            # KubeRay adds `metrics: 8080` to a Ray container that declares no `metrics` port.
             ports:
               - { name: dashboard, containerPort: 8265 }
               - { name: serve, containerPort: {{ .Values.gateway.port }} }
               - { name: metrics, containerPort: {{ .Values.metrics.port }} }
-            # mship start brings the gateway up after both coordinators, so the head turns Ready (and
-            # the deploy RayJob starts) only once start is done. Readiness and liveness stay KubeRay's.
+            # mship start brings the gateway up after both coordinators, so the head turns Ready only
+            # once start is done. Readiness and liveness stay KubeRay's.
             startupProbe:
               httpGet:
                 path: {{ include "modelship.gatewayPath" . }}/health

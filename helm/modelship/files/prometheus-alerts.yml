@@ -175,12 +175,12 @@ groups:
 
       - alert: ModelshipDeployJobFailed
         expr: |
-          kube_job_status_failed{job_name=~".*-deploy.*"} > 0
+          kube_job_failed{condition="true", job_name=~".*-deploy.*"} > 0
         for: 0m
         labels:
           severity: critical
         annotations:
-          summary: "Modelship deploy RayJob failed ({{ $labels.job_name }})"
+          summary: "Modelship deploy Job failed ({{ $labels.job_name }})"
           description: >-
-            The deploy RayJob failed — models from the last helm upgrade may not
+            The deploy Job failed — models from the last helm upgrade may not
             be deployed. Check the job logs.

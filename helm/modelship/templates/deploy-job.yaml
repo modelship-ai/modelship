@@ -1,0 +1,78 @@
+{{- $name := printf "%s-deploy-%d" (include "modelship.fullname" .) .Release.Revision }}
+{{- $args := list "deploy"
+  "--ray-dashboard-url" (printf "http://%s:8265" (include "modelship.headServiceName" .))
+  "--config" "/etc/mship/models.yaml"
+  "--gateway-name" .Values.gateway.name
+  "--replace-strategy" .Values.deploy.replaceStrategy
+  "--wait" -}}
+{{- if .Values.deploy.reconcile }}{{- $args = append $args "--reconcile" }}{{- end }}
+{{- range .Values.deploy.extraArgs }}{{- $args = append $args (toString .) }}{{- end }}
+# One Job and ConfigMap per revision (a Job's pod template is immutable); Helm deletes the previous ones.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "modelship.labels" . | nindent 4 }}
+    app.kubernetes.io/component: deploy
+data:
+  {{- dict "models.yaml" .Values.models.config | toYaml | nindent 2 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "modelship.labels" . | nindent 4 }}
+    app.kubernetes.io/component: deploy
+spec:
+  {{- with .Values.deploy.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ . }}
+  {{- end }}
+  backoffLimit: 3
+  # Exits 1 (the deploy failed, or the token was refused) and 2 (usage) fail the Job. Exits 3 and 4 (no
+  # head within mship deploy's wait, or the dashboard lost mid-deploy) and crashes retry; evictions are free.
+  podFailurePolicy:
+    rules:
+      - action: FailJob
+        onExitCodes:
+          operator: In
+          values: [1, 2]
+      - action: Ignore
+        onPodConditions:
+          - type: DisruptionTarget
+  template:
+    metadata:
+      labels:
+        {{- include "modelship.labels" . | nindent 8 }}
+        app.kubernetes.io/component: deploy
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: deploy
+          image: {{ include "modelship.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            {{- toYaml $args | nindent 12 }}
+          env:
+            - name: MSHIP_RAY_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "modelship.rayAuthSecretName" . }}
+                  key: auth_token
+          resources:
+            {{- toYaml .Values.deploy.resources | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /etc/mship
+              readOnly: true
+      volumes:
+        - name: models
+          configMap:
+            name: {{ $name }}

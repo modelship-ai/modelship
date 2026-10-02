@@ -1,11 +1,11 @@
 # Default values for the modelship chart.
 # Topology: a KubeRay RayCluster whose head runs `mship start` and whose workers run
-# `mship join`, plus a RayJob that runs `mship deploy` on the head to deploy the
-# models in models.yaml.
+# `mship join`, plus a Job per revision that sends `mship deploy` to the head through
+# its dashboard to deploy the models in models.yaml.
 
-# -- Container image. Used by every worker pod; the Ray head and the RayJob
-# submitter instead default to the `thin` variant regardless of this (see
-# head.image.variant) since neither ever schedules a model. All must be the
+# -- Container image. Used by every worker pod; the Ray head and the chart's Jobs
+# instead default to the `thin` variant regardless of this (see
+# head.image.variant) since none of them ever schedules a model. All must be the
 # same modelship release so the Ray/Python versions match across the cluster.
 image:
   repository: ghcr.io/modelship-ai/modelship
@@ -67,8 +67,8 @@ redis:
   # '.', '_' or '-'. Defaults to the release fullname.
   externalStorageNamespace: ""
 
-# -- models.yaml, carried inside the deploy RayJob. Replace with your real model
-# set; see config/examples/ in the repo.
+# -- models.yaml, mounted into each revision's deploy Job from its own ConfigMap.
+# Replace with your real model set; see config/examples/ in the repo.
 models:
   config: |
     models: []
@@ -80,9 +80,9 @@ secrets:
   huggingfaceToken: ""
 
 # -- Ray cluster authentication (RAY_AUTH_MODE=token), always on. KubeRay injects
-# the token into the head, every worker group and the RayJob submitter, and uses
-# it for its own job-status calls. Never gates the OpenAI API (gateway.port) or
-# Prometheus metrics (metrics.port).
+# the token into the head and every worker group; the deploy Job reads it from the
+# same Secret. Never gates the OpenAI API (gateway.port) or Prometheus metrics
+# (metrics.port).
 rayAuth:
   # An existing Secret you manage, holding the token under key `auth_token`.
   # Empty: KubeRay generates one, in a Secret named after the RayCluster.
@@ -194,9 +194,9 @@ workerGroups: []
   #   affinity: {}
   #   annotations: {}
 
-# -- The deploy RayJob: runs `mship deploy --wait` on the head, which waits for
-# the deploy to succeed or fail, then exits with the outcome. Re-run (helm upgrade)
-# to apply models.yaml changes.
+# -- The deploy Job, one per install, upgrade and rollback: runs `mship deploy
+# --ray-dashboard-url ... --wait` against the head, which waits for the deploy to
+# succeed or fail and exits with the outcome. A failed deploy fails the Job.
 deploy:
   # Diff models.yaml against what this gateway already owns and remove the
   # difference (vs. additive default). Maps to `mship deploy` --reconcile.
@@ -207,9 +207,9 @@ deploy:
   replaceStrategy: blue_green
   # Extra raw args appended to `mship deploy` (e.g. ["--gateway-name", "edge"]).
   extraArgs: []
-  # Clean up the finished RayJob automatically after N seconds (null = keep).
+  # Delete the finished deploy Job after N seconds (null = keep it until the next revision).
   ttlSecondsAfterFinished: null
-  # For the RayJob's submitter pod and the uninstall Job.
+  # For the deploy and uninstall Jobs.
   resources:
     requests:
       cpu: "500m"

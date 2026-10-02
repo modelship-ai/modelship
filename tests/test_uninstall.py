@@ -26,11 +26,10 @@ class _FakeApi:
 
 
 class TestDeleteCluster:
-    def test_deletes_the_rayjob_then_waits_out_the_raycluster(self):
+    def test_deletes_the_raycluster_then_waits_it_out(self):
         api = _FakeApi(gets_until_gone=2)
-        assert uninstall.delete_cluster(api, "rc", "rj", poll_seconds=0)
+        assert uninstall.delete_cluster(api, "rc", poll_seconds=0)
         assert api.calls == [
-            ("DELETE", f"{_BASE}/rayjobs/rj"),
             ("DELETE", f"{_BASE}/rayclusters/rc"),
             ("GET", f"{_BASE}/rayclusters/rc"),
             ("GET", f"{_BASE}/rayclusters/rc"),
@@ -38,12 +37,12 @@ class TestDeleteCluster:
 
     def test_a_missing_raycluster_needs_no_wait(self):
         api = _FakeApi(delete_status=404)
-        assert uninstall.delete_cluster(api, "rc", "rj", poll_seconds=0)
-        assert [m for m, _ in api.calls] == ["DELETE", "DELETE"]
+        assert uninstall.delete_cluster(api, "rc", poll_seconds=0)
+        assert [m for m, _ in api.calls] == ["DELETE"]
 
     def test_gives_up_after_the_wait(self):
         api = _FakeApi(gets_until_gone=10**9)
-        assert not uninstall.delete_cluster(api, "rc", "rj", wait_seconds=0.05, poll_seconds=0.01)
+        assert not uninstall.delete_cluster(api, "rc", wait_seconds=0.05, poll_seconds=0.01)
 
 
 def _store(uri, server):

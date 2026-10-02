@@ -69,7 +69,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 #### Deployment & Infrastructure
 
-- [x] **Kubernetes manifests** — KubeRay `RayCluster` + `RayJob`, gateway `Service`, cache `PVC`, secrets, optional `PodMonitor` (via the Helm chart in `helm/modelship`), with resource requests/limits, GPU scheduling, node affinity, and tolerations per worker group
+- [x] **Kubernetes manifests** — KubeRay `RayCluster`, a deploy `Job`, gateway `Service`, cache `PVC`, secrets, optional `PodMonitor` (via the Helm chart in `helm/modelship`), with resource requests/limits, GPU scheduling, node affinity, and tolerations per worker group
 - [x] **Helm chart** — parameterized deployment in `helm/modelship` (see its README)
 - [x] **Simpler non-K8s deployment** — reframed from "Docker Compose", which orchestrates a single host and can't form a cluster across VMs. Supported path is `mship start` / `mship join` in plain `docker run` containers (see [docs/multi-node-docker.md](multi-node-docker.md)): a few VMs, no orchestrator, joined into one Ray cluster via `mship join --gcs-address` with `MSHIP_RAY_AUTH_TOKEN`. Compose remains a possible single-host wrapper around single-container mode, not planned work.
 - [x] **Liveness/readiness probes in container spec** — KubeRay's health checks (`/api/healthz`) gate each Ray pod's readiness on its raylet (and GCS on the head); `/readyz` returns 503 until all models load, suitable for an external LB/Ingress health check

@@ -1,19 +1,19 @@
 modelship has been installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
 
-A RayCluster ({{ include "modelship.fullname" . }}) is starting and a RayJob
-({{ include "modelship.fullname" . }}-deploy) deploys the models from your
-models.yaml — KubeRay waits for the head, then runs `mship deploy` on it.
+A RayCluster ({{ include "modelship.fullname" . }}) is starting, and the Job {{ include "modelship.fullname" . }}-deploy-{{ .Release.Revision }}
+deploys the models from your models.yaml through the head's dashboard, once the
+head is up.
 
 1. Watch the cluster come up:
 
    kubectl get rayclusters -n {{ .Release.Namespace }} -w
    kubectl get pods -n {{ .Release.Namespace }} -l ray.io/cluster={{ include "modelship.fullname" . }}
 
-2. Track the deploy RayJob (model download + load can take a while). Note:
-   `helm --wait` does NOT track RayJob completion, so check it directly:
+2. Track the deploy (model download + load can take a while). Helm waits for it
+   only with `--wait --wait-for-jobs`:
 
-   kubectl get rayjob -n {{ .Release.Namespace }} {{ include "modelship.fullname" . }}-deploy
-   kubectl logs -n {{ .Release.Namespace }} -l job-name={{ include "modelship.fullname" . }}-deploy -f
+   kubectl get job -n {{ .Release.Namespace }} {{ include "modelship.fullname" . }}-deploy-{{ .Release.Revision }}
+   kubectl logs -n {{ .Release.Namespace }} job/{{ include "modelship.fullname" . }}-deploy-{{ .Release.Revision }} -f
 
 3. Reach the OpenAI-compatible gateway (/readyz returns 503 until models load).
    It's mounted under its gateway name, so with gateway.name={{ .Values.gateway.name }}:
