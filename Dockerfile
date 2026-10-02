@@ -200,7 +200,7 @@ COPY --from=builder --chown=$UID:$GID /opt/uv /opt/uv
 COPY --from=builder --chown=$UID:$GID /opt/mship /opt/mship
 
 ADD --chown=$UID:$GID ./scripts scripts
-# Examples only: config/models.yaml is gitignored, and mounted over at runtime.
+# Example configs, for --config.
 ADD --chown=$UID:$GID ./config/examples config/examples
 
 USER root

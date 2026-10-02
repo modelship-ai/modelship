@@ -1,4 +1,4 @@
-"""Same-box integration test for `mship join --cluster/--token` and for `mship start`
+"""Same-box integration test for `mship join --gcs-address` with MSHIP_RAY_AUTH_TOKEN and for `mship start`
 refusing to run beside another node.
 
 Its own throwaway head — a bare ray.init(address="local") with token auth, on distinct
@@ -54,8 +54,7 @@ def _poll(predicate, deadline_s: float) -> bool:
 
 
 def _empty_config_path(dir_path) -> str:
-    """Write an empty models.yaml under dir_path and return its path, for an
-    explicit --config that never falls back to the repo's real config/models.yaml."""
+    """Write an empty models.yaml under dir_path and return its path."""
     path = str(Path(dir_path) / "empty-models.yaml")
     Path(path).write_text("models: []\n")
     return path
@@ -158,6 +157,7 @@ class TestClusterJoin:
         env = {**os.environ, "HOME": str(join_home), "RAY_TMPDIR": join_ray_tmp, "PYTHONUNBUFFERED": "1"}
         env.pop("RAY_AUTH_MODE", None)
         env.pop("RAY_AUTH_TOKEN", None)
+        env.pop("MSHIP_RAY_AUTH_TOKEN", None)
         return env, join_ray_tmp, _empty_config_path(join_home)
 
     def _run_joiner(self, tmp_path, head_port, token, suffix="join_home") -> subprocess.CompletedProcess:
@@ -165,7 +165,7 @@ class TestClusterJoin:
         args = [
             *_MSHIP,
             "join",
-            "--cluster",
+            "--gcs-address",
             f"127.0.0.1:{head_port}",
             "--node-num-cpus",
             "0",
@@ -175,7 +175,7 @@ class TestClusterJoin:
             "false",
         ]
         if token is not None:
-            args += ["--token", token]
+            env["MSHIP_RAY_AUTH_TOKEN"] = token
         try:
             return subprocess.run(args, env=env, capture_output=True, text=True, timeout=90)
         finally:
@@ -194,6 +194,7 @@ class TestClusterJoin:
     def test_join_with_correct_token_adds_node_then_leaves_cleanly(self, tmp_path, throwaway_head):
         head_port, token, head_env = throwaway_head
         env, join_ray_tmp, _ = self._joiner_env(tmp_path, "join_home")
+        env["MSHIP_RAY_AUTH_TOKEN"] = token
 
         log_path = tmp_path / "joiner.log"
         try:
@@ -202,10 +203,8 @@ class TestClusterJoin:
                     [
                         *_MSHIP,
                         "join",
-                        "--cluster",
+                        "--gcs-address",
                         f"127.0.0.1:{head_port}",
-                        "--token",
-                        token,
                         "--node-num-cpus",
                         "0",
                         "--node-num-gpus",

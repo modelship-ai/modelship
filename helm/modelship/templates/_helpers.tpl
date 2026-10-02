@@ -6,19 +6,10 @@ Chart name, optionally overridden by nameOverride.
 {{- end -}}
 
 {{/*
-Fully qualified app name. Honors fullnameOverride; otherwise release-name based.
+Base name of every resource: fullnameOverride, else the release name.
 */}}
 {{- define "modelship.fullname" -}}
-{{- if .Values.fullnameOverride -}}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
-{{- else -}}
-{{- $name := default .Chart.Name .Values.nameOverride -}}
-{{- if contains $name .Release.Name -}}
-{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
-{{- else -}}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
-{{- end -}}
-{{- end -}}
+{{- .Values.fullnameOverride | default .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{/*
@@ -72,7 +63,7 @@ both are coordination-only (no models scheduled there), so both default to `thin
 {{- end -}}
 
 {{/*
-Name of the Secret holding the HF token / API keys (existing or templated).
+Name of the Secret holding the HF token (existing or templated).
 */}}
 {{- define "modelship.secretName" -}}
 {{- if .Values.secrets.existingSecret -}}
@@ -102,8 +93,16 @@ RayCluster object itself is named by modelship.fullname.
 {{- end -}}
 
 {{/*
-envFrom for the HF token / API keys Secret. optional:true so pods start fine
-when no Secret was created (e.g. all-ungated models, no auth).
+The path the gateway is mounted under: its name slugified as gateway_route_prefix
+(modelship.deploy.serve_utils) does it.
+*/}}
+{{- define "modelship.gatewayPath" -}}
+{{- printf "/%s" (regexReplaceAll "[^a-z0-9_-]+" (lower .Values.gateway.name) "-" | trimAll "-") -}}
+{{- end -}}
+
+{{/*
+envFrom for the HF token Secret. optional:true so pods start fine when no
+Secret was created (e.g. all-ungated models).
 */}}
 {{- define "modelship.envFrom" -}}
 - secretRef:
@@ -119,11 +118,11 @@ Name of the Secret holding the Redis password (existing or the chart's own).
 {{- end -}}
 
 {{/*
-Name of the Secret holding the Ray auth token under key `auth_token` (existing or
-the chart's own).
+Name of the Secret holding the Ray auth token under key `auth_token`: an existing
+one, or the one KubeRay generates, named after the RayCluster.
 */}}
 {{- define "modelship.rayAuthSecretName" -}}
-{{- .Values.rayAuth.existingSecret | default (printf "%s-ray-auth" (include "modelship.fullname" .)) -}}
+{{- .Values.rayAuth.existingSecret | default (include "modelship.fullname" .) -}}
 {{- end -}}
 
 {{/*

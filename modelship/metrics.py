@@ -86,7 +86,6 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "gateway_watch_errors_total",
         "gateway_routing_generation",
         "models_loaded",
-        "auth_failures_total",
         "model_load_duration_seconds",
         "model_load_failures_total",
         "generation_duration_seconds",
@@ -165,7 +164,6 @@ def _build_metrics():
             "embedding_duration_seconds": _NoOpHistogram(),
             # Resource cleanup
             "resource_cleanup_errors_total": _NoOpCounter(),
-            "auth_failures_total": _NoOpCounter(),
         }
 
     from ray.serve.metrics import Counter, Gauge, Histogram
@@ -271,12 +269,6 @@ def _build_metrics():
             boundaries=_REQUEST_LATENCY_BOUNDARIES,
             tag_keys=("model", "gateway"),  # type: ignore[arg-type]
         ),
-        # -- Authentication --
-        "auth_failures_total": Counter(
-            "modelship_auth_failures_total",
-            description="Total rejected requests due to invalid/missing API key.",
-            tag_keys=("reason", "gateway"),  # type: ignore[arg-type]
-        ),
         # -- Resource cleanup --
         "resource_cleanup_errors_total": Counter(
             "modelship_resource_cleanup_errors_total",
@@ -371,9 +363,6 @@ TTS_GENERATION_DURATION_SECONDS = _metrics["tts_generation_duration_seconds"]
 IMAGE_GENERATION_DURATION_SECONDS = _metrics["image_generation_duration_seconds"]
 TRANSCRIPTION_DURATION_SECONDS = _metrics["transcription_duration_seconds"]
 EMBEDDING_DURATION_SECONDS = _metrics["embedding_duration_seconds"]
-
-# -- Authentication --
-AUTH_FAILURES_TOTAL = _metrics["auth_failures_total"]
 
 # -- Resource cleanup --
 RESOURCE_CLEANUP_ERRORS_TOTAL = _metrics["resource_cleanup_errors_total"]

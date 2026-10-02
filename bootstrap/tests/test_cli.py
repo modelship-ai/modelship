@@ -34,9 +34,10 @@ class TestUsage:
             cli.main([])
         assert exc.value.code == 2
 
-    def test_unknown_command_exits_2(self):
+    @pytest.mark.parametrize("command", ["serve", "stop"])
+    def test_unknown_command_exits_2(self, command):
         with pytest.raises(SystemExit) as exc:
-            cli.main(["serve"])
+            cli.main([command])
         assert exc.value.code == 2
 
 
@@ -53,7 +54,7 @@ class TestVariantRequired:
 
 
 class TestExec:
-    @pytest.mark.parametrize("command", ["start", "join", "deploy", "stop"])
+    @pytest.mark.parametrize("command", ["start", "join", "deploy"])
     def test_execs_the_engine_via_module(self, provisioned, command):
         cli.main([command, "--cpu", "--log-format", "json"])
         python, args, _env = provisioned.call_args[0]

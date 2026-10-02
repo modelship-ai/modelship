@@ -1,13 +1,15 @@
 """Tests for the start/join/deploy/stop CLI parsing and driver helpers."""
 
+import json
 import logging
 import os
 import signal
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ray.exceptions import RayActorError
+from ray.exceptions import AuthenticationError, RayActorError
 
 from modelship.deploy.actor_options import (
     build_cache_env_vars,
@@ -69,7 +71,7 @@ class TestParseArgs:
     def test_reconcile_flag(self):
         args = parse_args("deploy", ["--reconcile"])
         assert args.reconcile is True
-        assert args.replace_strategy == "blue_green"
+        assert args.replace_strategy is None
 
     def test_reconcile_with_stop_start_strategy(self):
         args = parse_args("deploy", ["--reconcile", "--replace-strategy", "stop_start"])
@@ -85,28 +87,23 @@ class TestParseArgs:
             ("start", ["--gateway-target-ongoing-requests", "32"], "gateway_target_ongoing_requests", 32.0),
             ("start", ["--gateway-max-ongoing-requests", "256"], "gateway_max_ongoing_requests", 256),
             ("deploy", ["--gateway-name", "my-gateway"], "gateway_name", "my-gateway"),
-            ("start", ["--ray-auth", "token"], "ray_auth", "token"),
-            ("deploy", ["--ray-auth", "token"], "ray_auth", "token"),
-            ("start", ["--ray-port", "6380"], "ray_port", 6380),
+            ("start", ["--enable-ray-auth"], "enable_ray_auth", True),
+            ("start", ["--gcs-port", "6380"], "gcs_port", 6380),
             ("start", ["--ray-dashboard-port", "8266"], "ray_dashboard_port", 8266),
             ("start", ["--ray-dashboard-host", "0.0.0.0"], "ray_dashboard_host", "0.0.0.0"),
             ("start", ["--metrics-port", "9090"], "metrics_port", 9090),
-            ("join", ["--cluster", "h:1", "--metrics-port", "9090"], "metrics_port", 9090),
-            ("join", ["--cluster", "mship-head:6380"], "cluster", "mship-head:6380"),
-            ("join", ["--cluster", "h:1", "--token", "secret"], "token", "secret"),
-            ("deploy", ["--token", "secret"], "token", "secret"),
+            ("join", ["--gcs-address", "h:1", "--metrics-port", "9090"], "metrics_port", 9090),
+            ("join", ["--gcs-address", "mship-head:6380"], "gcs_address", "mship-head:6380"),
             ("start", ["--node-num-cpus", "4"], "node_num_cpus", 4),
-            ("join", ["--cluster", "h:1", "--node-num-gpus", "2"], "node_num_gpus", 2),
-            ("join", ["--cluster", "h:1", "--node-memory", "8Gi"], "node_memory", 8 * 1024**3),
-            ("join", ["--cluster", "h:1", "--api-keys", "k1"], "api_keys", "k1"),
+            ("join", ["--gcs-address", "h:1", "--node-num-gpus", "2"], "node_num_gpus", 2),
+            ("join", ["--gcs-address", "h:1", "--node-memory", "8Gi"], "node_memory", 8 * 1024**3),
             ("deploy", ["--responses-ttl-s", "60"], "responses_ttl_s", 60.0),
             ("start", ["--state-sweep-interval-s", "30"], "state_sweep_interval_s", 30.0),
             ("start", ["--log-format", "json"], "log_format", "json"),
             ("start", ["--otel-endpoint", "http://c:4317"], "otel_endpoint", "http://c:4317"),
-            ("join", ["--cluster", "h:1", "--log-level", "debug"], "log_level", "DEBUG"),
-            ("join", ["--cluster", "h:1", "--log-target", "syslog://h:514"], "log_target", "syslog://h:514"),
-            ("stop", ["--deploy-id", "abc123"], "deploy_id", "abc123"),
-            ("stop", ["--deploy-id", "abc123", "--token", "secret"], "token", "secret"),
+            ("join", ["--gcs-address", "h:1", "--log-level", "debug"], "log_level", "DEBUG"),
+            ("join", ["--gcs-address", "h:1", "--log-target", "syslog://h:514"], "log_target", "syslog://h:514"),
+            ("deploy", ["--cancel", "abc123"], "cancel", "abc123"),
         ],
     )
     def test_flag_parses(self, command, argv, attr, expected):
@@ -115,32 +112,31 @@ class TestParseArgs:
     @pytest.mark.parametrize(
         ("command", "argv"),
         [
-            ("deploy", ["--ray-port", "6380"]),
+            ("deploy", ["--gcs-port", "6380"]),
             ("deploy", ["--gateway-max-replicas", "8"]),
-            ("join", ["--cluster", "h:1", "--gateway-min-replicas", "2"]),
+            ("join", ["--gcs-address", "h:1", "--gateway-min-replicas", "2"]),
             ("deploy", ["--node-num-cpus", "4"]),
             ("deploy", ["--prune-ray-sessions", "false"]),
-            ("deploy", ["--api-keys", "k1"]),
-            ("deploy", ["--cluster", "h:1"]),
-            ("start", ["--cluster", "h:1"]),
+            ("deploy", ["--gcs-address", "h:1"]),
+            ("start", ["--gcs-address", "h:1"]),
             ("start", ["--token", "secret"]),
             ("start", ["--replace-strategy", "stop_start"]),
-            ("join", ["--cluster", "h:1", "--config", "models.yaml"]),
-            ("join", ["--cluster", "h:1", "--model", "org/repo"]),
-            ("join", ["--cluster", "h:1", "--ray-port", "6380"]),
-            ("join", ["--cluster", "h:1", "--ray-dashboard-host", "0.0.0.0"]),
+            ("join", ["--gcs-address", "h:1", "--config", "models.yaml"]),
+            ("join", ["--gcs-address", "h:1", "--model", "org/repo"]),
+            ("join", ["--gcs-address", "h:1", "--gcs-port", "6380"]),
+            ("join", ["--gcs-address", "h:1", "--ray-dashboard-host", "0.0.0.0"]),
             ("deploy", ["--metrics-port", "9090"]),
-            ("join", ["--cluster", "h:1", "--state-store", "redis://h:6379/0"]),
+            ("join", ["--gcs-address", "h:1", "--state-store", "redis://h:6379/0"]),
             ("deploy", ["--state-store", "redis://h:6379/0"]),
             ("deploy", ["--state-sweep-interval-s", "30"]),
             ("deploy", ["--no-metrics"]),
             ("deploy", ["--log-format", "json"]),
-            ("join", ["--cluster", "h:1", "--log-format", "json"]),
+            ("join", ["--gcs-address", "h:1", "--log-format", "json"]),
             ("deploy", ["--log-level", "DEBUG"]),
-            ("stop", ["--deploy-id", "a", "--otel-endpoint", "http://c:4317"]),
-            ("stop", ["--deploy-id", "a", "--config", "models.yaml"]),
-            ("stop", ["--deploy-id", "a", "--gateway-name", "gw"]),
             ("deploy", ["--deploy-id", "a"]),
+            ("start", ["--cancel", "a"]),
+            ("deploy", ["--enable-ray-auth"]),
+            ("join", ["--gcs-address", "h:1", "--enable-ray-auth"]),
         ],
     )
     def test_flag_owned_by_another_command_is_rejected(self, command, argv):
@@ -149,24 +145,70 @@ class TestParseArgs:
 
     @pytest.mark.parametrize("command", ["start", "join", "deploy"])
     @pytest.mark.parametrize(
-        "flag", ["--use-existing-ray-cluster", "--address=h:1", "--deploy-timeout=5", "--gateway-replicas=2"]
+        "flag",
+        [
+            "--use-existing-ray-cluster",
+            "--address=h:1",
+            "--deploy-timeout=5",
+            "--gateway-replicas=2",
+            "--api-keys=k1",
+            "--cluster=h:1",
+            "--ray-port=6380",
+            "--ray-auth=token",
+            "--token=secret",
+        ],
     )
     def test_removed_flags_are_rejected(self, command, flag):
         with pytest.raises(SystemExit):
             parse_args(command, [flag])
 
-    def test_stop_requires_a_deploy_id(self):
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--config", "models.yaml"],
+            ["--model", "org/repo"],
+            ["--name", "qwen"],
+            ["--reconcile"],
+            ["--replace-strategy", "stop_start"],
+            ["--no-preflight"],
+            ["--llama-server-config.n-ctx", "8192"],
+        ],
+    )
+    def test_cancel_takes_no_model_options(self, argv, capsys):
         with pytest.raises(SystemExit):
-            parse_args("stop", [])
+            parse_args("deploy", ["--cancel", "r1", *argv])
+        assert f"--cancel takes no model options: {argv[0]}." in capsys.readouterr().err
 
-    def test_join_requires_a_cluster(self, monkeypatch):
-        monkeypatch.delenv("MSHIP_CLUSTER", raising=False)
+    def test_ray_dashboard_url_takes_a_url(self, capsys):
+        assert parse_args("deploy", ["--ray-dashboard-url", "https://ray.internal"]).ray_dashboard_url == (
+            "https://ray.internal"
+        )
+        with pytest.raises(SystemExit):
+            parse_args("deploy", ["--ray-dashboard-url", "head:8265"])
+        assert "--ray-dashboard-url takes a URL, e.g. http://head:8265" in capsys.readouterr().err
+
+    def test_ray_dashboard_url_env_takes_a_url(self, capsys):
+        with patch.dict(os.environ, {"MSHIP_RAY_DASHBOARD_URL": "head:8265"}), pytest.raises(SystemExit):
+            parse_args("deploy", [])
+        assert "--ray-dashboard-url takes a URL, e.g. http://head:8265" in capsys.readouterr().err
+
+    def test_flags_are_never_abbreviated(self):
+        with pytest.raises(SystemExit):
+            parse_args("deploy", ["--conf", "models.yaml"])
+
+    @pytest.mark.parametrize("argv", [["--config", "m.yaml"], ["--model", "org/repo"]])
+    def test_config_from_job_takes_no_other_config(self, argv):
+        with pytest.raises(SystemExit):
+            parse_args("deploy", ["--config-from-job", *argv])
+
+    def test_join_requires_a_gcs_address(self, monkeypatch):
+        monkeypatch.delenv("MSHIP_GCS_ADDRESS", raising=False)
         with pytest.raises(SystemExit):
             parse_args("join", [])
 
-    def test_join_takes_the_cluster_from_env(self, monkeypatch):
-        monkeypatch.setenv("MSHIP_CLUSTER", "mship-head:6380")
-        assert parse_args("join", []).cluster is None
+    def test_join_takes_the_gcs_address_from_env(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_GCS_ADDRESS", "mship-head:6380")
+        assert parse_args("join", []).gcs_address is None
 
 
 class TestApplyArgsToEnv:
@@ -178,20 +220,19 @@ class TestApplyArgsToEnv:
             ("start", ["--gateway-max-replicas", "8"], "MSHIP_GATEWAY_MAX_REPLICAS", "8"),
             ("start", ["--gateway-target-ongoing-requests", "32"], "MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS", "32.0"),
             ("start", ["--gateway-max-ongoing-requests", "256"], "MSHIP_GATEWAY_MAX_ONGOING_REQUESTS", "256"),
-            ("deploy", ["--ray-auth", "token"], "MSHIP_RAY_AUTH", "token"),
-            ("start", ["--ray-port", "6380"], "MSHIP_RAY_PORT", "6380"),
+            ("start", ["--enable-ray-auth"], "MSHIP_RAY_AUTH", "true"),
+            ("start", ["--gcs-port", "6380"], "MSHIP_GCS_PORT", "6380"),
             ("start", ["--ray-dashboard-port", "8266"], "MSHIP_RAY_DASHBOARD_PORT", "8266"),
             ("start", ["--ray-dashboard-host", "0.0.0.0"], "MSHIP_RAY_DASHBOARD_HOST", "0.0.0.0"),
-            ("join", ["--cluster", "h:1", "--metrics-port", "9090"], "MSHIP_METRICS_PORT", "9090"),
-            ("join", ["--cluster", "mship-head:6380"], "MSHIP_CLUSTER", "mship-head:6380"),
-            ("deploy", ["--token", "secret"], "MSHIP_RAY_AUTH_TOKEN", "secret"),
-            ("join", ["--cluster", "h:1", "--node-num-cpus", "4"], "MSHIP_NODE_NUM_CPUS", "4"),
+            ("join", ["--gcs-address", "h:1", "--metrics-port", "9090"], "MSHIP_METRICS_PORT", "9090"),
+            ("join", ["--gcs-address", "mship-head:6380"], "MSHIP_GCS_ADDRESS", "mship-head:6380"),
+            ("join", ["--gcs-address", "h:1", "--node-num-cpus", "4"], "MSHIP_NODE_NUM_CPUS", "4"),
             ("start", ["--node-num-gpus", "2"], "MSHIP_NODE_NUM_GPUS", "2"),
             ("start", ["--node-memory", "8Gi"], "MSHIP_NODE_MEMORY", str(8 * 1024**3)),
-            ("join", ["--cluster", "h:1", "--prune-ray-sessions", "false"], "MSHIP_PRUNE_RAY_SESSIONS", "false"),
+            ("join", ["--gcs-address", "h:1", "--prune-ray-sessions", "false"], "MSHIP_PRUNE_RAY_SESSIONS", "false"),
             ("start", ["--no-preflight"], "MSHIP_PREFLIGHT", "false"),
             ("start", ["--no-metrics"], "MSHIP_METRICS", "false"),
-            ("join", ["--cluster", "h:1", "--log-level", "TRACE"], "MSHIP_LOG_LEVEL", "TRACE"),
+            ("join", ["--gcs-address", "h:1", "--log-level", "TRACE"], "MSHIP_LOG_LEVEL", "TRACE"),
             ("deploy", ["--responses-ttl-s", "60"], "MSHIP_RESPONSES_TTL_S", "60.0"),
             ("start", ["--state-sweep-interval-s", "30"], "MSHIP_STATE_SWEEP_INTERVAL_S", "30.0"),
         ],
@@ -209,7 +250,7 @@ class TestApplyArgsToEnv:
         with patch.dict(os.environ, {}, clear=False):
             for name in ("MSHIP_LOG_LEVEL", "VLLM_LOGGING_LEVEL", "TRANSFORMERS_VERBOSITY"):
                 os.environ.pop(name, None)
-            apply_args_to_env(parse_args("join", ["--cluster", "h:1", "--log-level", "debug"]))
+            apply_args_to_env(parse_args("join", ["--gcs-address", "h:1", "--log-level", "debug"]))
             propagate_lib_log_env()
             assert (os.environ["VLLM_LOGGING_LEVEL"], os.environ["TRANSFORMERS_VERBOSITY"]) == ("DEBUG", "debug")
 
@@ -318,6 +359,14 @@ class TestDriverVerbs:
             patch.object(driver, "_send") as send,
             patch.object(driver.signal, "pause"),
         ):
+            calls = MagicMock()
+            for name, mock in [
+                ("gateway_coordinator", gateway_coordinator),
+                ("deploy_coordinator", deploy_coordinator),
+                ("gateway", gateway),
+                ("send", send),
+            ]:
+                calls.attach_mock(mock, name)
             driver._start(parse_args("start", []))
         return SimpleNamespace(
             gateway=gateway,
@@ -325,13 +374,40 @@ class TestDriverVerbs:
             deploy_coordinator=deploy_coordinator,
             gateway_coordinator=gateway_coordinator,
             send=send,
+            calls=calls,
         )
+
+    def test_start_exports_its_engine_for_job_shells(self):
+        self._start()
+        assert os.environ["MSHIP_ENGINE_PYTHON"] == sys.executable
+
+    @pytest.mark.parametrize(
+        ("env", "warns"),
+        [
+            ({"MSHIP_RAY_DASHBOARD_HOST": "0.0.0.0"}, True),
+            ({"MSHIP_RAY_DASHBOARD_HOST": "10.0.0.5"}, True),
+            ({"MSHIP_RAY_DASHBOARD_HOST": "0.0.0.0", "MSHIP_RAY_AUTH": "true"}, False),
+            ({"MSHIP_RAY_DASHBOARD_HOST": "127.0.0.1"}, False),
+            ({"MSHIP_RAY_DASHBOARD_HOST": "localhost"}, False),
+            ({}, False),
+        ],
+    )
+    def test_start_warns_about_a_dashboard_beyond_loopback_without_auth(self, env, warns, caplog):
+        os.environ.pop("MSHIP_RAY_DASHBOARD_HOST", None)
+        os.environ.pop("MSHIP_RAY_AUTH", None)
+        os.environ.update(env)
+        self._start()
+        assert any("without token auth" in m for m in caplog.messages) is warns
 
     def test_start_creates_both_coordinators_and_sends_to_the_deploy_coordinator(self):
         started = self._start()
         started.deploy_coordinator.assert_called_once_with()
         started.gateway_coordinator.assert_called_once_with()
         assert started.send.call_args.args[2] == "deploy-coordinator"
+
+    def test_start_creates_the_gateway_after_both_coordinators_and_before_its_deploy(self):
+        calls = self._start().calls.mock_calls
+        assert [c[0] for c in calls] == ["gateway_coordinator", "deploy_coordinator", "gateway", "send"]
 
     def test_start_prepares_its_state_store_and_gives_the_gateway_its_settings(self):
         os.environ["MSHIP_STATE_STORE"] = "redis://head:6379/0"
@@ -409,9 +485,11 @@ class TestDriverVerbs:
         with pytest.raises(SystemExit, match="no gateway 'modelship'"):
             self._deploy([], existing_apps=set())
 
-    def test_deploy_refuses_without_a_deploy_coordinator(self):
-        with pytest.raises(SystemExit, match="no deploy coordinator on this cluster; `mship start` creates it"):
+    def test_deploy_without_a_deploy_coordinator_exits_4(self, capsys):
+        with pytest.raises(SystemExit) as exc:
             self._deploy([], existing_apps={"modelship"}, found=False)
+        assert exc.value.code == 4
+        assert "no deploy coordinator on this cluster; `mship start` creates it" in capsys.readouterr().err
 
     def test_deploy_sends_to_the_deploy_coordinator_it_found(self):
         deployed = self._deploy([], existing_apps={"modelship"})
@@ -443,7 +521,7 @@ class TestDriverVerbs:
         deployed = self._deploy([], existing_apps={"modelship"})
         deployed.send.assert_called_once()
         assert [c.args[0] for c in deployed.get.call_args_list] == ["settings-ref"]
-        assert "Follow it in the head's log; cancel it with `mship stop --deploy-id r1`." in caplog.messages
+        assert "Follow it in the head's log; cancel it with `mship deploy --cancel r1`." in caplog.messages
 
     def test_deploy_with_wait_waits_for_the_outcome(self, caplog):
         caplog.set_level(logging.INFO, logger="modelship")
@@ -507,6 +585,15 @@ class TestSend:
 
         return SimpleNamespace(run=run, submitted=submitted)
 
+    def test_a_config_from_the_job_is_sent_even_with_reconcile(self, send):
+        from modelship import remote
+
+        config = {"metadata": {remote.MODELS_YAML_KEY: "models:\n  - name: a\n"}}
+        with patch.dict(os.environ, {remote.RAY_JOB_CONFIG_ENV_VAR: json.dumps(config)}):
+            send.run(["--config-from-job", "--reconcile"])
+        (request,) = send.submitted
+        assert (request.mode, request.models) == ("reconcile", [{"name": "a"}])
+
     def test_models_given_are_sent_additively(self, send):
         receipt = send.run(["--model", "org/qwen-gguf:qwen.gguf", "--loader", "llama_server", "--usecase", "generate"])
         (request,) = send.submitted
@@ -558,6 +645,29 @@ class TestPrepareStateStore:
         assert any("non-durable" in message for message in caplog.messages) is warns
 
 
+class TestRemoteDeploy:
+    def _run(self, argv):
+        from modelship import driver
+
+        with (
+            patch.dict(os.environ),
+            patch("modelship.remote.run") as run_remote,
+            patch.object(driver, "_deploy") as deploy,
+        ):
+            os.environ.pop("MSHIP_RAY_DASHBOARD_URL", None)
+            driver.run("deploy", argv)
+        deploy.assert_not_called()
+        return run_remote.call_args.args
+
+    def test_goes_to_the_dashboard_with_the_config(self):
+        argv = ["--ray-dashboard-url", "http://head:8265", "--config", "m.yaml", "--wait"]
+        assert self._run(argv) == ("http://head:8265", argv, "m.yaml")
+
+    @pytest.mark.parametrize("extra", [[], ["--cancel", "r1"], ["--model", "org/repo"]])
+    def test_ships_no_config_without_one(self, extra):
+        assert self._run(["--ray-dashboard-url", "http://head:8265", *extra])[2] is None
+
+
 class TestCancelCommand:
     def _cancel(self, result, *, clusters=frozenset({"10.0.0.1:6380"}), actor=True, argv=(), waiting=None):
         from modelship import driver
@@ -573,8 +683,21 @@ class TestCancelCommand:
             patch("ray.get", side_effect=waiting or (lambda value: rolled_back if value == "outcome-ref" else value)),
             patch.object(driver.signal, "signal"),
         ):
-            driver._cancel(parse_args("stop", ["--deploy-id", "r1", *argv]))
+            driver._cancel(parse_args("deploy", ["--cancel", "r1", *argv]))
         return coordinator
+
+    def test_deploy_with_cancel_runs_the_cancel(self):
+        from modelship import driver
+
+        with (
+            patch.dict(os.environ),
+            patch.object(driver, "configure_logging"),
+            patch.object(driver, "_cancel") as cancel,
+            patch.object(driver, "_deploy") as deploy,
+        ):
+            driver.run("deploy", ["--cancel", "r1"])
+        assert cancel.call_args.args[0].cancel == "r1"
+        deploy.assert_not_called()
 
     def test_cancels_the_deploy(self, caplog):
         caplog.set_level(logging.INFO, logger="modelship")
@@ -715,7 +838,7 @@ class TestSignalHandlersOutliveRay:
     @pytest.fixture(autouse=True)
     def _restore(self):
         saved = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
-        with patch.dict(os.environ, {"MSHIP_CLUSTER": "head:6380"}, clear=False):
+        with patch.dict(os.environ, {"MSHIP_GCS_ADDRESS": "head:6380"}, clear=False):
             os.environ.pop("MSHIP_GATEWAY_NAME", None)
             os.environ.pop("MSHIP_STATE_STORE", None)
             yield
@@ -1501,11 +1624,11 @@ class TestStartHead:
         assert '"_redis_password"' in source
         assert '"_redis_username"' in source
 
-    def test_ray_port_sets_gcs_server_port(self):
+    def test_gcs_port_sets_gcs_server_port(self):
         from modelship.deploy import serve_utils
 
         with (
-            patch.dict(os.environ, {"MSHIP_RAY_PORT": "6390"}, clear=False),
+            patch.dict(os.environ, {"MSHIP_GCS_PORT": "6390"}, clear=False),
             patch.object(serve_utils.ray, "init"),
             patch.object(serve_utils, "prune_ray_sessions"),
         ):
@@ -1513,7 +1636,7 @@ class TestStartHead:
             serve_utils.start_head(20)
             assert os.environ.get("RAY_GCS_SERVER_PORT") == "6390"
 
-    def test_ray_port_absent_defaults_gcs_server_port_to_6380(self):
+    def test_gcs_port_absent_defaults_gcs_server_port_to_6380(self):
         from modelship.deploy import serve_utils
 
         with (
@@ -1521,21 +1644,21 @@ class TestStartHead:
             patch.object(serve_utils.ray, "init"),
             patch.object(serve_utils, "prune_ray_sessions"),
         ):
-            os.environ.pop("MSHIP_RAY_PORT", None)
+            os.environ.pop("MSHIP_GCS_PORT", None)
             os.environ.pop("RAY_GCS_SERVER_PORT", None)
             serve_utils.start_head(20)
             # Not Ray's own 6379 default — that collides with the recommended
             # same-host Redis state store under --network=host.
             assert os.environ.get("RAY_GCS_SERVER_PORT") == "6380"
 
-    def test_ray_port_respects_explicit_gcs_server_port(self):
+    def test_gcs_port_respects_explicit_gcs_server_port(self):
         from modelship.deploy import serve_utils
 
         with (
             patch.dict(
                 os.environ,
                 {
-                    "MSHIP_RAY_PORT": "6380",
+                    "MSHIP_GCS_PORT": "6380",
                     "RAY_GCS_SERVER_PORT": "6381",
                 },
                 clear=False,
@@ -1560,11 +1683,25 @@ class TestStartHead:
 
 
 class TestAttachCluster:
+    @pytest.mark.parametrize(
+        "error",
+        [ConnectionError("wrong token"), AuthenticationError("no authentication token was found")],
+        ids=["wrong_token", "missing_token"],
+    )
+    def test_a_refused_connection_names_the_token(self, error):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.object(serve_utils.ray, "init", side_effect=error),
+            pytest.raises(SystemExit, match="set MSHIP_RAY_AUTH_TOKEN to its token"),
+        ):
+            serve_utils.attach_cluster(logging.INFO)
+
     def test_connects_via_auto_without_starting_a_node(self):
         from modelship.deploy import serve_utils
 
         with (
-            patch.dict(os.environ, {"MSHIP_RAY_PORT": "6380", "MSHIP_RAY_DASHBOARD_PORT": "8266"}, clear=False),
+            patch.dict(os.environ, {"MSHIP_GCS_PORT": "6380", "MSHIP_RAY_DASHBOARD_PORT": "8266"}, clear=False),
             patch.object(serve_utils.ray, "init") as mock_init,
             patch.object(serve_utils, "prune_ray_sessions") as mock_prune,
         ):
@@ -1785,6 +1922,26 @@ class TestJoinCluster:
         mock_prune.assert_called_once()
         mock_init.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("address", "expected"),
+        [
+            ("head", "head:6380"),
+            ("head:6390", "head:6390"),
+            ("10.0.0.5", "10.0.0.5:6380"),
+            ("[fd00::5]", "[fd00::5]:6380"),
+            ("[fd00::5]:6390", "[fd00::5]:6390"),
+        ],
+    )
+    def test_the_gcs_port_defaults_to_6380(self, address, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.object(serve_utils, "_join_ray_cluster") as mock_join,
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            serve_utils.join_cluster(address)
+        mock_join.assert_called_once_with(expected)
+
 
 class TestLeaveRayCluster:
     @pytest.fixture(autouse=True)
@@ -1851,6 +2008,71 @@ class TestSuperviseJoinNode:
         node.kill_all_processes.assert_not_called()
 
 
+class TestStartAuthEnv:
+    @pytest.mark.parametrize(
+        ("env", "stray"),
+        [
+            ({"MSHIP_RAY_AUTH_TOKEN": "t"}, ["MSHIP_RAY_AUTH_TOKEN"]),
+            ({"RAY_AUTH_TOKEN": "t"}, ["RAY_AUTH_TOKEN"]),
+            ({"RAY_AUTH_MODE": "token"}, ["RAY_AUTH_MODE=token"]),
+            ({"MSHIP_RAY_AUTH_TOKEN": "t", "MSHIP_RAY_AUTH": "true"}, []),
+            ({}, []),
+        ],
+    )
+    def test_token_env_without_auth(self, env, stray):
+        from modelship.utils import ray_auth
+
+        with patch.dict(os.environ, env):
+            for key in ("MSHIP_RAY_AUTH", "MSHIP_RAY_AUTH_TOKEN", "RAY_AUTH_TOKEN", "RAY_AUTH_MODE"):
+                if key not in env:
+                    os.environ.pop(key, None)
+            assert ray_auth.token_env_without_auth() == stray
+
+    def test_start_refuses_a_token_without_auth(self):
+        from modelship import driver
+
+        with patch.dict(os.environ, {"MSHIP_RAY_AUTH_TOKEN": "t"}), patch.object(driver, "_start") as start:
+            os.environ.pop("MSHIP_RAY_AUTH", None)
+            with pytest.raises(SystemExit, match="MSHIP_RAY_AUTH_TOKEN is set but Ray auth is off"):
+                driver.run("start", [])
+        start.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("host", "loopback"),
+        [("127.0.0.1", True), ("127.0.0.2", True), ("::1", True), ("localhost", True), ("0.0.0.0", False)],
+    )
+    def test_is_loopback(self, host, loopback):
+        from modelship.utils import ray_auth
+
+        assert ray_auth.is_loopback(host) is loopback
+
+
+class TestJoinHint:
+    @pytest.mark.parametrize(
+        ("env", "hint"),
+        [
+            ({}, "(see docs"),
+            ({"RAY_AUTH_MODE": "token", "MSHIP_RAY_AUTH_TOKEN": "t"}, "(the one this head was started with)"),
+            ({"RAY_AUTH_MODE": "token", "RAY_AUTH_TOKEN": "t"}, "(RAY_AUTH_TOKEN in this head's environment)"),
+            ({"RAY_AUTH_MODE": "token"}, "(~/.ray/auth_token on this machine)"),
+        ],
+    )
+    def test_names_where_the_token_is(self, env, hint, caplog):
+        from modelship import driver
+
+        caplog.set_level(logging.INFO, logger="modelship")
+        with patch.dict(os.environ, env), patch("ray.get_runtime_context") as context:
+            for key in ("RAY_AUTH_MODE", "MSHIP_RAY_AUTH_TOKEN", "RAY_AUTH_TOKEN", "RAY_GCS_SERVER_PORT"):
+                if key not in env:
+                    os.environ.pop(key, None)
+            context.return_value.gcs_address = "10.0.0.1:6380"
+            driver._log_join_hint()
+        (message,) = [m for m in caplog.messages if m.startswith("To add a machine")]
+        assert "mship join --gcs-address=10.0.0.1:6380" in message
+        assert hint in message
+        assert ("MSHIP_RAY_AUTH_TOKEN set" in message) is bool(env)
+
+
 class TestResolveRayAuthEnv:
     """resolve_ray_auth_env front-runs Ray's import-time RAY_AUTH_MODE latch,
     translating MSHIP_RAY_AUTH/MSHIP_RAY_AUTH_TOKEN into RAY_AUTH_MODE/RAY_AUTH_TOKEN
@@ -1866,8 +2088,8 @@ class TestResolveRayAuthEnv:
             ray_auth.resolve_ray_auth_env()
             return os.environ.get("RAY_AUTH_MODE"), os.environ.get("RAY_AUTH_TOKEN")
 
-    def test_ray_auth_token_sets_mode(self):
-        mode, token = self._resolve({"MSHIP_RAY_AUTH": "token"})
+    def test_enabled_auth_sets_mode(self):
+        mode, token = self._resolve({"MSHIP_RAY_AUTH": "true"})
         assert mode == "token"
         assert token is None
 
@@ -1879,11 +2101,11 @@ class TestResolveRayAuthEnv:
     def test_neither_leaves_auth_unset(self):
         assert self._resolve({}) == (None, None)
 
-    def test_ray_auth_none_leaves_auth_unset(self):
-        assert self._resolve({"MSHIP_RAY_AUTH": "none"}) == (None, None)
+    def test_disabled_auth_leaves_auth_unset(self):
+        assert self._resolve({"MSHIP_RAY_AUTH": "false"}) == (None, None)
 
     def test_explicit_ray_auth_mode_wins(self):
-        mode, _ = self._resolve({"MSHIP_RAY_AUTH": "token", "RAY_AUTH_MODE": "disabled"})
+        mode, _ = self._resolve({"MSHIP_RAY_AUTH": "true", "RAY_AUTH_MODE": "disabled"})
         # setdefault: an operator's explicit RAY_AUTH_MODE always wins.
         assert mode == "disabled"
 

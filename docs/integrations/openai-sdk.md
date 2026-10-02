@@ -10,7 +10,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:8000/modelship/v1",
-    api_key="not-needed",  # or a real key if MSHIP_API_KEYS is set
+    api_key="not-needed",  # or a key your auth layer in front of Modelship accepts
 )
 
 # Chat Completions
@@ -43,7 +43,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   baseURL: "http://localhost:8000/modelship/v1",
-  apiKey: "not-needed", // or a real key if MSHIP_API_KEYS is set
+  apiKey: "not-needed", // or a key your auth layer in front of Modelship accepts
 });
 
 const resp = await client.responses.create({

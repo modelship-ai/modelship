@@ -35,13 +35,11 @@ _ARG_TO_ENV: dict[str, str] = {
     "log_format": "MSHIP_LOG_FORMAT",
     "log_target": "MSHIP_LOG_TARGET",
     "otel_endpoint": "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "api_keys": "MSHIP_API_KEYS",
     "trusted_identity_header": "MSHIP_TRUSTED_IDENTITY_HEADER",
     "gateway_name": "MSHIP_GATEWAY_NAME",
-    "cluster": "MSHIP_CLUSTER",
-    "token": "MSHIP_RAY_AUTH_TOKEN",
-    "ray_auth": "MSHIP_RAY_AUTH",
-    "ray_port": "MSHIP_RAY_PORT",
+    "gcs_address": "MSHIP_GCS_ADDRESS",
+    "gcs_port": "MSHIP_GCS_PORT",
+    "ray_dashboard_url": "MSHIP_RAY_DASHBOARD_URL",
     "ray_dashboard_host": "MSHIP_RAY_DASHBOARD_HOST",
     "ray_dashboard_port": "MSHIP_RAY_DASHBOARD_PORT",
     "metrics_port": "MSHIP_METRICS_PORT",
@@ -63,29 +61,31 @@ _ARG_TO_ENV: dict[str, str] = {
 _SWITCH_TO_ENV: dict[str, tuple[str, str]] = {
     "no_metrics": ("MSHIP_METRICS", "false"),
     "no_preflight": ("MSHIP_PREFLIGHT", "false"),
+    "enable_ray_auth": ("MSHIP_RAY_AUTH", "true"),
 }
 
 _MODEL_USAGE = "[options] [--model REF [--<block>.<key> VALUE ...]]"
 _USAGE = {
     "start": f"mship start {_MODEL_USAGE}",
-    "join": "mship join --cluster HOST:PORT [options]",
-    "deploy": f"mship deploy {_MODEL_USAGE}",
-    "stop": "mship stop --deploy-id ID [options]",
+    "join": "mship join --gcs-address HOST[:PORT] [options]",
+    "deploy": f"mship deploy [--ray-dashboard-url URL] {_MODEL_USAGE}\n"
+    "       mship deploy [--ray-dashboard-url URL] --cancel ID [--wait]",
 }
 _DESCRIPTION = {
     "start": "Start a cluster on this machine: its head node, the API gateway and any models given. Stays running.",
     "join": "Add this machine to a running cluster as a worker node. Stays running.",
-    "deploy": "Change the models of the cluster running on this machine: sends the change and exits, or with --wait, "
-    "waits for it to succeed or fail.",
-    "stop": "Cancel a deploy on the cluster running on this machine, rolling back what it has done so far: sends the "
-    "cancel and exits, or with --wait, waits for the rollback.",
+    "deploy": "Change the models of the cluster running on this machine, or with --ray-dashboard-url, of the cluster "
+    "whose Ray dashboard that is: sends the change and exits, or with --wait, waits for it to succeed or fail. With "
+    "--cancel ID, cancels a deploy instead, rolling back what it has done so far.",
 }
 
 
 def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespace:
     # Explicit usage: the generated model flags make argparse's own usage line
     # ~90 lines, which it reprints on every error.
-    parser = argparse.ArgumentParser(prog=f"mship {command}", usage=_USAGE[command], description=_DESCRIPTION[command])
+    parser = argparse.ArgumentParser(
+        prog=f"mship {command}", usage=_USAGE[command], description=_DESCRIPTION[command], allow_abbrev=False
+    )
     if command == "join":
         _add_join_args(parser)
     if command in ("start", "join"):
@@ -94,29 +94,35 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
     if command == "start":
         _add_head_args(parser)
         _add_logging_metrics_args(parser)
+        _add_auth_arg(parser)
     if command in ("start", "deploy"):
-        _add_auth_arg(parser)
         _add_cluster_args(parser)
-    if command == "stop":
-        _add_auth_arg(parser)
-        _add_token_arg(parser)
-        parser.add_argument("--deploy-id", required=True, help="The deploy to cancel, as `mship deploy` printed it")
-        parser.add_argument(
-            "--wait",
-            action="store_true",
-            help="Wait for the deploy to be rolled back, and exit with its outcome. A signal only stops the wait.",
-        )
     if command == "deploy":
-        _add_token_arg(parser)
+        parser.add_argument(
+            "--ray-dashboard-url",
+            metavar="URL",
+            help=(
+                "Deploy to the cluster whose Ray dashboard is at URL, e.g. http://head:8265, instead of the one on "
+                "this machine; sends MSHIP_RAY_AUTH_TOKEN (env: MSHIP_RAY_DASHBOARD_URL)"
+            ),
+        )
+        parser.add_argument("--config-from-job", action="store_true", help=argparse.SUPPRESS)
+        parser.add_argument(
+            "--cancel",
+            metavar="ID",
+            help="Cancel this deploy instead, rolling back what it has done so far (the id `mship deploy` printed)",
+        )
         parser.add_argument(
             "--wait",
             action="store_true",
-            help="Wait for the deploy to succeed or fail, and exit with its outcome. A signal only stops the wait.",
+            help=(
+                "Wait for the deploy to succeed or fail, or with --cancel, to be rolled back, and exit with its "
+                "outcome. A signal only stops the wait."
+            ),
         )
         parser.add_argument(
             "--replace-strategy",
             choices=["blue_green", "stop_start"],
-            default="blue_green",
             help=(
                 "How to replace a model whose config changed. blue_green (default): deploy "
                 "new alongside old, then drop old (no request loss, peak resource = old+new). "
@@ -127,11 +133,35 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
         _add_model_args(parser)
 
     args = parser.parse_args(argv)
-    if command == "join" and not (args.cluster or os.environ.get("MSHIP_CLUSTER")):
-        parser.error("--cluster is required: the head's address as HOST:PORT (env: MSHIP_CLUSTER)")
-    if command in ("start", "deploy"):
+    if command == "join" and not (args.gcs_address or os.environ.get("MSHIP_GCS_ADDRESS")):
+        parser.error("--gcs-address is required: the head's GCS address as HOST[:PORT] (env: MSHIP_GCS_ADDRESS)")
+    url = args.ray_dashboard_url or os.environ.get("MSHIP_RAY_DASHBOARD_URL") if command == "deploy" else None
+    if url and not re.match(r"https?://", url):
+        parser.error(f"--ray-dashboard-url takes a URL, e.g. http://{url}; got {url!r}.")
+    if command == "deploy" and args.config_from_job and (args.config is not None or args.model is not None):
+        parser.error("--config-from-job takes no --config or --model.")
+    if command == "deploy" and args.cancel is not None:
+        _check_cancel_args(parser, args)
+    elif command in ("start", "deploy"):
         _check_model_args(parser, args)
     return args
+
+
+def _check_cancel_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    given = [
+        flag
+        for flag, value in (
+            ("--config", args.config),
+            ("--reconcile", args.reconcile),
+            ("--replace-strategy", args.replace_strategy),
+            ("--no-preflight", args.no_preflight),
+        )
+        if value
+    ]
+    given += [f"--{key.replace('_', '-')}" for key in MODEL_ARG_KEYS if getattr(args, key) is not None]
+    given += set_generated_options(args)
+    if given:
+        parser.error(f"--cancel takes no model options: {', '.join(given)}.")
 
 
 def _check_model_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
@@ -155,33 +185,22 @@ def _check_model_args(parser: argparse.ArgumentParser, args: argparse.Namespace)
 
 def _add_join_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--cluster",
+        "--gcs-address",
         help=(
-            "The head node's address as HOST:PORT, e.g. mship-head:6380 — the head's --ray-port "
-            "(env: MSHIP_CLUSTER). Reachable only from inside the cluster's private network."
-        ),
-    )
-    _add_token_arg(parser)
-
-
-def _add_token_arg(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--token",
-        help=(
-            "Ray auth token of a cluster started with --ray-auth=token (env: MSHIP_RAY_AUTH_TOKEN); "
-            "read it on the head with `cat ~/.ray/auth_token`."
+            "The head's GCS address as HOST[:PORT], e.g. mship-head:6380; PORT is the head's --gcs-port "
+            "(env: MSHIP_GCS_ADDRESS, default port: 6380). Reachable only from inside the cluster's private network."
         ),
     )
 
 
 def _add_auth_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--ray-auth",
-        choices=["token", "none"],
+        "--enable-ray-auth",
+        action="store_true",
+        default=None,
         help=(
-            "Ray cluster authentication (env: MSHIP_RAY_AUTH, default: none). With 'token', start "
-            "makes the cluster require the bearer token Ray generates at ~/.ray/auth_token, for the "
-            "dashboard and cluster-internal RPC, and deploy sends it."
+            "Require Ray's token auth for the dashboard and cluster-internal RPC (env: MSHIP_RAY_AUTH=true). "
+            "The token is MSHIP_RAY_AUTH_TOKEN when set; otherwise Ray generates it at ~/.ray/auth_token."
         ),
     )
 
@@ -224,10 +243,6 @@ def _add_node_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
-        "--api-keys",
-        help="Comma-separated API keys gateway replicas on this node accept (env: MSHIP_API_KEYS)",
-    )
-    parser.add_argument(
         "--metrics-port",
         type=int,
         help=(
@@ -239,11 +254,11 @@ def _add_node_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_head_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--ray-port",
+        "--gcs-port",
         type=int,
         help=(
-            "Port for Ray's GCS server, the address `mship join --cluster` takes "
-            "(env: MSHIP_RAY_PORT, default: 6380). Change this if 6380 is already taken on "
+            "Port for Ray's GCS server, the address `mship join --gcs-address` takes "
+            "(env: MSHIP_GCS_PORT, default: 6380). Change this if 6380 is already taken on "
             "the host — e.g. avoid 6379, which the docs-recommended same-host Redis state "
             "store (MSHIP_STATE_STORE=redis://) may also want under --network=host."
         ),
@@ -252,7 +267,7 @@ def _add_head_args(parser: argparse.ArgumentParser) -> None:
         "--ray-dashboard-host",
         help=(
             "Bind address for Ray's dashboard (env: MSHIP_RAY_DASHBOARD_HOST, default: 127.0.0.1). Its job API "
-            "runs arbitrary code: bind beyond loopback only on a private network, with --ray-auth=token."
+            "runs arbitrary code: bind beyond loopback only on a private network, with --enable-ray-auth."
         ),
     )
     parser.add_argument(
@@ -379,7 +394,7 @@ def _add_node_logging_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_model_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", help="Path to models.yaml config file (default: config/models.yaml)")
+    parser.add_argument("--config", help="Path to a models.yaml config file")
     parser.add_argument(
         "--no-preflight",
         action="store_true",

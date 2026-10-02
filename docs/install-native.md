@@ -138,5 +138,5 @@ shared storage. To reset a variant, delete
 ## Scaling beyond one node
 
 To join multiple hosts into one Ray cluster, see
-[Multi-node without Kubernetes](multi-node-docker.md) — `mship join --cluster`/`--token`
+[Multi-node without Kubernetes](multi-node-docker.md) — `mship join --gcs-address` with `MSHIP_RAY_AUTH_TOKEN`
 work the same for a native node as for a container.

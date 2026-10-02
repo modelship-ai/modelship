@@ -4,6 +4,7 @@ infrastructure shared by every `@pytest.mark.integration` file."""
 import json
 import os
 import re
+import secrets
 import signal
 import subprocess
 import sys
@@ -46,10 +47,17 @@ SERVE_STATUS_URL = "http://localhost:8265/api/serve/applications/"
 
 MSHIP = ["uv", "run", "python", "-m", "modelship.launcher"]
 
+# The session cluster runs with token auth; only processes aimed at it get the token.
+CLUSTER_TOKEN = secrets.token_hex(16)
+
+
+def cluster_env(**extra: str) -> dict[str, str]:
+    return {**os.environ, "MSHIP_RAY_AUTH_TOKEN": CLUSTER_TOKEN, **extra}
+
 
 def serve_apps() -> dict[str, dict]:
     """Serve's applications by name, from the dashboard's REST status API."""
-    resp = httpx.get(SERVE_STATUS_URL, timeout=10)
+    resp = httpx.get(SERVE_STATUS_URL, headers={"Authorization": f"Bearer {CLUSTER_TOKEN}"}, timeout=10)
     resp.raise_for_status()
     return resp.json().get("applications", {})
 
@@ -59,7 +67,7 @@ def run_on_cluster(code: str) -> str:
     script = "import ray\nray.init(address='auto', log_to_driver=False)\n" + textwrap.dedent(code)
     result = subprocess.run(
         [sys.executable, "-c", script],
-        env={**os.environ, "RAY_ENABLE_UV_RUN_RUNTIME_ENV": "0"},
+        env=cluster_env(RAY_ENABLE_UV_RUN_RUNTIME_ENV="0", RAY_AUTH_MODE="token", RAY_AUTH_TOKEN=CLUSTER_TOKEN),
         capture_output=True,
         text=True,
         timeout=180,
@@ -308,7 +316,11 @@ class _DeployProcess:
         self._log_path = log_path
         self._log_file = open(log_path, "w")  # noqa: SIM115 — closed in wait()
         self._proc = subprocess.Popen(
-            [*MSHIP, "deploy", "--wait", *args], stdout=self._log_file, stderr=subprocess.STDOUT, start_new_session=True
+            [*MSHIP, "deploy", "--wait", *args],
+            env=cluster_env(),
+            stdout=self._log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
 
     def log(self) -> str:
@@ -364,18 +376,24 @@ class _Deployer:
         log_path = self._tmp / f"{log_name}.log"
         with open(log_path, "w") as log_file:
             result = subprocess.run(
-                [*MSHIP, "deploy", "--wait", *args], stdout=log_file, stderr=subprocess.STDOUT, check=False, timeout=900
+                [*MSHIP, "deploy", "--wait", *args],
+                env=cluster_env(),
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                check=False,
+                timeout=900,
             )
         if result.returncode != expect_code:
             _fail_deploy(log_path, result.returncode, expect_code)
         return log_path.read_text()
 
-    def stop(self, request_id: str, *args: str, log_name: str, expect_code: int = 0) -> str:
-        """Runs `mship stop --deploy-id` with *args*; returns its log."""
+    def cancel(self, request_id: str, *args: str, log_name: str, expect_code: int = 0) -> str:
+        """Runs `mship deploy --cancel` with *args*; returns its log."""
         log_path = self._tmp / f"{log_name}.log"
         with open(log_path, "w") as log_file:
             result = subprocess.run(
-                [*MSHIP, "stop", "--deploy-id", request_id, *args],
+                [*MSHIP, "deploy", "--cancel", request_id, *args],
+                env=cluster_env(),
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 check=False,
@@ -383,7 +401,8 @@ class _Deployer:
             )
         if result.returncode != expect_code:
             pytest.fail(
-                f"mship stop exited {result.returncode}, expected {expect_code}.\n{log_path.read_text()[-4000:]}"
+                f"mship deploy --cancel exited {result.returncode}, expected {expect_code}.\n"
+                f"{log_path.read_text()[-4000:]}"
             )
         return log_path.read_text()
 
@@ -464,17 +483,17 @@ def mship_cluster(tmp_path_factory):
             "2",
             "--prune-ray-sessions",
             "false",
+            "--enable-ray-auth",
         ],
         # MSHIP_TRUSTED_IDENTITY_HEADER lets tests simulate distinct identities via
         # extra_headers; MSHIP_RAY_DASHBOARD_HOST binds the dashboard to 0.0.0.0.
-        env={
-            **os.environ,
-            "MSHIP_TRUSTED_IDENTITY_HEADER": "X-Mship-Test-Identity",
-            "MSHIP_RAY_DASHBOARD_HOST": "0.0.0.0",
+        env=cluster_env(
+            MSHIP_TRUSTED_IDENTITY_HEADER="X-Mship-Test-Identity",
+            MSHIP_RAY_DASHBOARD_HOST="0.0.0.0",
             # One visible card, so Ray has nowhere to spread fractional deploys.
             # No fixture uses tensor/pipeline parallelism, so nothing needs a second.
-            "CUDA_VISIBLE_DEVICES": "0",
-        },
+            CUDA_VISIBLE_DEVICES="0",
+        ),
         stdout=log_file,
         stderr=subprocess.STDOUT,
         text=True,

@@ -12,15 +12,13 @@ metadata:
     - ray.io/gcs-ft-redis-cleanup-finalizer
 spec:
   rayVersion: {{ .Values.rayVersion | quote }}
-  {{- if .Values.rayAuth.enabled }}
-  {{- if not (or .Values.rayAuth.token .Values.rayAuth.existingSecret) }}
-  {{- fail "rayAuth.enabled is true but neither rayAuth.token nor rayAuth.existingSecret is set — Ray token auth needs an actual token (see the chart README)." }}
-  {{- end }}
-  # KubeRay injects the token into every Ray pod and the RayJob submitter.
+  # KubeRay injects the token into every Ray pod and the RayJob submitter. Without
+  # secretName it generates one, in a Secret named after this RayCluster.
   authOptions:
     mode: token
-    secretName: {{ include "modelship.rayAuthSecretName" . }}
-  {{- end }}
+    {{- with .Values.rayAuth.existingSecret }}
+    secretName: {{ . }}
+    {{- end }}
   # GCS fault tolerance: back the head's GCS with Redis so a restarted head pod
   # recovers cluster state (workers + model actors survive) instead of taking the
   # cluster down. externalStorageNamespace is pinned so a recreated cluster (same
@@ -62,10 +60,11 @@ spec:
             # dashboard through the head Service.
             args:
               - start
-              - --ray-port
+              - --gcs-port
               - "$(RAY_PORT)"
               - --ray-dashboard-host
               - "0.0.0.0"
+              - --enable-ray-auth
               - --gateway-name
               - {{ .Values.gateway.name | quote }}
               - --gateway-min-replicas
@@ -91,6 +90,15 @@ spec:
               - { name: dashboard, containerPort: 8265 }
               - { name: serve, containerPort: {{ .Values.gateway.port }} }
               - { name: metrics, containerPort: {{ .Values.metrics.port }} }
+            # mship start brings the gateway up after both coordinators, so the head turns Ready (and
+            # the deploy RayJob starts) only once start is done. Readiness and liveness stay KubeRay's.
+            startupProbe:
+              httpGet:
+                path: {{ include "modelship.gatewayPath" . }}/health
+                port: serve
+              periodSeconds: 5
+              timeoutSeconds: 5
+              failureThreshold: 120
             env:
               {{- include "modelship.env" . | nindent 14 }}
               {{- with .Values.head.env }}
@@ -159,7 +167,7 @@ spec:
               # RAY_ADDRESS is KubeRay's head Service address and GCS port.
               args:
                 - join
-                - --cluster
+                - --gcs-address
                 - "$(RAY_ADDRESS)"
                 {{- if $.Values.metrics.enabled }}
                 - --metrics-port

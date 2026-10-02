@@ -129,7 +129,7 @@ Fourteen cluster guarantees — zero-downtime model cutover, load-driven autosca
 - **Per-model isolated deployments** — independent lifecycle, health checks, failure isolation, and replica count per model
 - **Streaming** — SSE for chat completions, responses, and TTS audio
 - **Client disconnect detection** — cancels in-flight inference when the client goes away, freeing the GPU immediately
-- **Security** — gateway API-key auth (`MSHIP_API_KEYS`), Ray cluster token auth (`--ray-auth=token`), payload and concurrency limits
+- **Security** — Ray cluster token auth (`--enable-ray-auth`), caller identity from your auth layer (`MSHIP_TRUSTED_IDENTITY_HEADER`), payload and concurrency limits
 - **Built-in observability** — Prometheus metrics, custom `modelship:*` metrics, vLLM engine stats, structured JSON logging, OpenTelemetry export, plus a pre-built Grafana dashboard and alerting rules
 
 </details>
@@ -174,11 +174,9 @@ A model name maps to exactly one deployment — swapping GPU/CPU or backend repl
 
 ```bash
 docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
-  -v ./models.yaml:/modelship/config/models.yaml \
-  ghcr.io/modelship-ai/modelship:latest-cpu start
+  -v ./models.yaml:/models.yaml \
+  ghcr.io/modelship-ai/modelship:latest-cpu start --config /models.yaml
 ```
-
-`deploy` reads `config/models.yaml` by default; `--config <path>` picks another.
 
 See [Model Configuration](docs/model-configuration.md) for the full reference, and [config/examples/](config/examples/) for working files per backend.
 

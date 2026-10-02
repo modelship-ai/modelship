@@ -7,8 +7,8 @@ qualifies without any special support on either side.
 1. In Open WebUI, go to **Settings → Admin Settings → Connections → OpenAI
    API**.
 2. Set the **API Base URL** to `http://<modelship-host>:8000/modelship/v1`.
-3. Set the **API Key** to a real key if `MSHIP_API_KEYS` is configured, or any
-   non-empty placeholder if not.
+3. Set the **API Key** to any non-empty placeholder, or to a key your auth layer
+   in front of Modelship accepts.
 4. Save — Open WebUI queries `GET /v1/models` to populate the model picker
    with whatever is in your `models.yaml`.
 

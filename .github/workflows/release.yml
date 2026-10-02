@@ -223,12 +223,12 @@ jobs:
 
             ```bash
             docker run --rm --shm-size=8g \
-              -v ./models.yaml:/modelship/config/models.yaml \
+              -v ./models.yaml:/models.yaml \
               -v ./models-cache:/.cache \
               -p 8000:8000 \
-              ghcr.io/${{ github.repository }}:${{ needs.version.outputs.version }}-cpu start
+              ghcr.io/${{ github.repository }}:${{ needs.version.outputs.version }}-cpu start --config /models.yaml
             ```
 
             ## Configuration
 
-            Create a `models.yaml` file and mount it at `/modelship/config/models.yaml`. Example configs for various GPU sizes are included in the image under `/modelship/config/examples/` — use them as a reference for structure and available options, then tailor the models and GPU fractions to your hardware.
+            Create a `models.yaml` file, mount it and pass it with `--config`. Example configs for various GPU sizes are included in the image under `/modelship/config/examples/` — use them as a reference for structure and available options, then tailor the models and GPU fractions to your hardware.

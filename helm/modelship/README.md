@@ -11,7 +11,13 @@ declared in your `models.yaml`. Re-running (`helm upgrade`) re-applies the confi
 additively, or reconciles it when `deploy.reconcile=true`. The RayJob succeeds only
 when the deploy does: a failed deploy is rolled back, and a model waiting for
 capacity keeps the RayJob running until the nodes arrive (cancel it with
-`mship stop --deploy-id ID` on the head).
+`mship deploy --cancel ID`, on the head or [from your
+machine](../../docs/install-helm.md#deploy-or-cancel-from-your-machine)).
+
+The head pod turns Ready only once `mship start` is done: its `startupProbe` waits
+for the gateway's `/<gateway>/health`, which start brings up last, after the deploy
+coordinator. So the RayJob, which waits for the head, never reaches one still
+starting, after a head restart included. Readiness and liveness are KubeRay's own.
 
 Each successful deploy commits this gateway's model set, keeping the one before it,
 to a **state store** (see [Head-node HA](#head-node-ha-redis)). Routing is
@@ -78,15 +84,14 @@ models:
         num_gpus: 1
 ```
 
-Gated/private weights need a Hugging Face token; gateway auth needs API keys:
+Gated/private weights need a Hugging Face token:
 
 ```yaml
 secrets:
   huggingfaceToken: "hf_..."   # mounted as HF_TOKEN
-  apiKeys: "sk-local-1,sk-local-2"
 ```
 
-(Or reference an existing Secret with keys `HF_TOKEN` / `MSHIP_API_KEYS` via
+(Or reference an existing Secret with key `HF_TOKEN` via
 `secrets.existingSecret`.)
 
 ## Topology
@@ -135,7 +140,7 @@ an external LB/Ingress health check). Port-forward for local access, or set
 `service.type=LoadBalancer`:
 
 ```bash
-kubectl port-forward svc/<release>-modelship-gateway 8000:8000
+kubectl port-forward svc/<release>-gateway 8000:8000
 curl http://localhost:8000/modelship/v1/models
 ```
 
@@ -210,35 +215,37 @@ run with `ENABLE_GCS_FT_REDIS_CLEANUP=false` never removes it: the Job waits its
 minutes, and the cluster stays up after uninstall until you run
 
 ```bash
-kubectl patch raycluster modelship --type=merge -p '{"metadata":{"finalizers":null}}'
+kubectl patch raycluster <release> --type=merge -p '{"metadata":{"finalizers":null}}'
 ```
 
 Ray's keys then stay in Redis, and a reinstall under the same
 `redis.externalStorageNamespace` starts from the old cluster's state. Delete
 `RAY<namespace>@*` too for a clean start.
 
-## Ray cluster authentication (optional)
+## Ray cluster authentication
 
-Off by default — the same posture as a single-node deploy, and consistent with
-Ray's own insecure-by-default stance (see the ShadowRay/CVE-2023-48022
-background in the main [multi-node docs](../../docs/multi-node-docker.md)).
-Enabling it sets the RayCluster's `authOptions`. KubeRay then gives the same
-token to the head, every worker group **and** the RayJob submitter (the pod that
-runs `ray job submit` to deploy your `models.yaml`), and uses it for its own
-job-status calls.
+Always on: the head's dashboard listens on the pod network, and its job API runs
+arbitrary code (see the ShadowRay/CVE-2023-48022 background in the main
+[multi-node docs](../../docs/multi-node-docker.md)). The chart sets the
+RayCluster's `authOptions` and passes `--enable-ray-auth` to `mship start`.
+KubeRay gives the same token to the head, every worker group **and** the RayJob
+submitter (the pod that runs `ray job submit` to deploy your `models.yaml`), and
+uses it for its own job-status calls.
 
-```yaml
-rayAuth:
-  enabled: true
-  token: "s0me-long-random-string"   # or existingSecret, holding key auth_token
+KubeRay generates the token once, in a Secret named after the RayCluster, and
+deletes it with the cluster. Read it with:
+
+```bash
+kubectl get secret <release> -o jsonpath='{.data.auth_token}' | base64 -d
 ```
 
-Unlike `mship start` on Docker — where Ray generates and owns the
-token at `~/.ray/auth_token` because there's no "before the head exists" moment
-— the chart has no such moment either way, so **you** supply the token. Any
-string works: Ray's own check is a shared-secret equality comparison, not an
-issued credential. Generate one with `ray get-auth-token --generate` (run
-anywhere with Ray installed) or `openssl rand -hex 32`.
+`mship deploy --ray-dashboard-url` sends deploys and cancels from your machine with
+it, over a port-forward to `<release>-head-svc:8265`; see [Deploy or
+cancel from your machine](../../docs/install-helm.md#deploy-or-cancel-from-your-machine).
+
+To manage the token yourself, point `rayAuth.existingSecret` at a Secret holding
+it under key `auth_token`. Any string works: Ray's own check is a shared-secret
+equality comparison, not an issued credential (e.g. `openssl rand -hex 32`).
 
 This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 (`metrics.port`) — only Ray's own dashboard and cluster-internal RPC.
@@ -255,7 +262,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `gateway.autoscaling.minReplicas` / `maxReplicas` | `1` / `4` | Range the API gateway autoscales in; a `minReplicas` of 2 or more (with ≥1 worker) gives routing/ingress HA |
 | `gateway.autoscaling.targetOngoingRequests` | `64` | Ongoing requests per gateway replica that autoscaling aims for |
 | `gateway.maxOngoingRequests` | `1024` | Most requests one gateway replica handles at once |
-| `secrets.huggingfaceToken` / `secrets.apiKeys` | `""` | HF token / gateway API keys |
+| `secrets.huggingfaceToken` | `""` | HF token |
 | `cache.size` / `cache.accessModes` | `100Gi` / `[ReadWriteOnce]` | Shared weight cache |
 | `nodeCache.sizeLimit` | `""` (uncapped) | Per-pod compile-cache emptyDir; a pod over the cap is evicted |
 | `workerGroups` | `[]` | Worker pool layout (a list — set the full set; copy the example in `values.yaml`) |
@@ -264,8 +271,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `deploy.replaceStrategy` | `blue_green` | How changed models are replaced |
 | `redis.address` | `""` | **Required.** `host:port` of your Redis — backs GCS-FT + the state store (see [Redis](#redis-required)) |
 | `redis.password` / `redis.existingSecret` | `""` | Redis password inline, or reference an existing Secret (`passwordKey`) |
-| `rayAuth.enabled` | `false` | Ray cluster authentication (`RAY_AUTH_MODE=token`) through KubeRay's `authOptions` (see [Ray cluster authentication](#ray-cluster-authentication-optional)) |
-| `rayAuth.token` / `rayAuth.existingSecret` | `""` | Auth token inline, or an existing Secret holding it under key `auth_token`. Required when `rayAuth.enabled` |
+| `rayAuth.existingSecret` | `""` | An existing Secret holding the Ray auth token under key `auth_token`; empty, KubeRay generates it (see [Ray cluster authentication](#ray-cluster-authentication)) |
 | `service.type` | `ClusterIP` | Set `LoadBalancer` to expose externally |
 | `podMonitor.enabled` | `false` | Prometheus Operator scraping; needs `metrics.enabled` |
 | `prometheusRule.enabled` | `false` | Ship the modelship alert rules as a PrometheusRule |

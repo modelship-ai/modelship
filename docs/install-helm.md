@@ -66,6 +66,23 @@ redis:
 `helm upgrade` re-applies the config additively, or reconciles the cluster to match
 it exactly with `deploy.reconcile=true`.
 
+## Deploy or cancel from your machine
+
+`mship deploy --ray-dashboard-url` reaches the cluster through its head's Ray
+dashboard, with the token KubeRay generated:
+
+```bash
+kubectl port-forward svc/<release>-head-svc 8265:8265 &
+export MSHIP_RAY_AUTH_TOKEN=$(kubectl get secret <release> -o jsonpath='{.data.auth_token}' | base64 -d)
+mship deploy --ray-dashboard-url=http://localhost:8265 --cancel <ID> --wait
+```
+
+The secret is `rayAuth.existingSecret` instead when you set it. A deploy sent this
+way isn't in your values: the next `helm upgrade` applies `models.config` again,
+and with `deploy.reconcile=true` removes what it doesn't list. See [Deploy from
+another machine](multi-node-docker.md#deploy-from-another-machine) for what
+travels with a deploy.
+
 ## Image variant
 
 The chart selects the image variant for you from the worker group's resources; see

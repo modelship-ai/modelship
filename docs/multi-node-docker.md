@@ -39,40 +39,45 @@ joins it as a GPU worker on the `-cuda` tag. Every node in a multi-node cluster
 must share the same version, even across variants — pin all of them to the
 identical `X.Y.Z` release.
 
+Generate the cluster's Ray auth token once, into an env file that every
+container gets. A token never goes on a command line, where `ps` and shell
+history would show it:
+
+```bash
+echo "MSHIP_RAY_AUTH_TOKEN=$(openssl rand -hex 32)" > mship.env
+```
+
 **VM A — head, with cluster auth enabled:**
 
 ```bash
 docker run -d --network=host --shm-size=8g \
-  -v ./models.yaml:/modelship/config/models.yaml \
+  --env-file mship.env \
+  -v ./models.yaml:/models.yaml \
   -v ./models-cache:/.cache \
   -e MSHIP_STATE_STORE=redis://your-redis-host:6379/0 \
   -e HF_TOKEN=your_token_here \
   ghcr.io/modelship-ai/modelship:0.6.5 start \
-  --ray-auth=token --ray-port=6380
+  --config=/models.yaml --enable-ray-auth --gcs-port=6380
 ```
 
-`--ray-port` defaults to `6380` already (deliberately not Ray's own `6379`
+`--gcs-port` defaults to `6380` already (deliberately not Ray's own `6379`
 default, which collides with the Redis state store above under host
 networking) — passed explicitly here only for clarity.
 
-Retrieve the token a joiner needs (Ray generates and owns it; modelship never
-writes or logs it):
-
-```bash
-docker exec <head-container> cat ~/.ray/auth_token
-```
-
-`mship deploy` against this cluster needs it too: `--ray-auth=token` on VM A,
-where the token file is, `--token=<token>` on any other node.
+Without `MSHIP_RAY_AUTH_TOKEN`, `--enable-ray-auth` has Ray generate a token
+inside the container (`docker exec <head-container> cat ~/.ray/auth_token`),
+and a new head container gets a new one. `mship deploy` against this cluster
+needs `MSHIP_RAY_AUTH_TOKEN` in its environment too, on whichever node it runs.
 
 **VM B — joins VM A as a GPU worker:**
 
 ```bash
 docker run -d --network=host --shm-size=8g --gpus all \
+  --env-file mship.env \
   -v ./models-cache:/.cache \
   -e HF_TOKEN=your_token_here \
   ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
-  --cluster=<vm-a-private-ip>:6380 --token=<token-from-above>
+  --gcs-address=<vm-a-private-ip>:6380
 ```
 
 `HF_TOKEN` goes on every node: the head checks model sources with it, and each
@@ -80,10 +85,12 @@ replica reads it from its own node's environment — the driver never forwards i
 
 A joiner only adds capacity: replicas waiting for room schedule onto it on
 their own. To change the model set, run `mship deploy` on any node of the
-cluster. A failed deploy is rolled back and leaves the last committed model set in
-place; fix the config and deploy again.
+cluster, or [from another machine](#deploy-from-another-machine). A failed
+deploy is rolled back and leaves the last committed model set in place; fix the
+config and deploy again.
 
-**`--token` only means anything if the head runs `--ray-auth=token`.** Joining
+**`MSHIP_RAY_AUTH_TOKEN` only means anything if the head runs `--enable-ray-auth`**
+(`start` refuses the token without it). Joining
 with a token against a head that has auth disabled doesn't fail — the joiner's
 own node starts demanding bearer tokens on *inbound* RPC while the head never
 sends them, so the join looks like it succeeded and then cluster↔worker traffic
@@ -91,14 +98,48 @@ fails confusingly. There's no reliable way to detect this from the joining side;
 treat "auth enabled on the head" and "token passed on the join" as a matched
 pair you set deliberately, not independent toggles.
 
+## Deploy from another machine
+
+`mship deploy --ray-dashboard-url` deploys to a cluster through its head's Ray
+dashboard instead of the cluster on this machine. The deploy runs on the head as
+a Ray job, with the head's own environment, and this machine streams its log.
+That machine needs a modelship install of the cluster's release (the thin image
+is enough) and a route to the dashboard on the private network.
+
+The head's dashboard has to listen beyond loopback: add
+`--ray-dashboard-host=0.0.0.0` to VM A's `start`, next to `--enable-ray-auth`.
+Then, from any machine on that network:
+
+```bash
+docker run --rm --env-file mship.env \
+  -v ./models.yaml:/models.yaml \
+  ghcr.io/modelship-ai/modelship:0.6.5 deploy \
+  --ray-dashboard-url=http://<vm-a-private-ip>:8265 --config=/models.yaml --wait
+```
+
+- **What travels:** the `--config` file (up to 96 KiB once JSON-escaped; accented letters count 3×) and the flags you pass.
+  This machine's `MSHIP_*` env doesn't; the head's own env fills in the rest. A
+  local path in `--model` or `model:` names a file on the cluster's nodes:
+  weights are never uploaded.
+- **The token:** the cluster's `MSHIP_RAY_AUTH_TOKEN`, in this machine's env
+  (the `--env-file` above). A cluster without `--enable-ray-auth` needs none.
+- **Following it:** `--wait` follows the deploy to its outcome. A signal stops
+  following; the deploy carries on, and
+  `mship deploy --ray-dashboard-url=… --cancel ID` cancels it.
+- **Failing fast:** it exits `3` when no dashboard answers at the URL, or when
+  the dashboard stops answering mid-deploy, and `4` when the head is still
+  inside `mship start`. Nothing is retried: run it again once the head is up.
+- **The URL** is the dashboard's (port `8265`), not the GCS address `mship join`
+  takes.
+
 ## Ports and firewall
 
 | Port | What | Configurable via |
 |---|---|---|
 | `8000` | Gateway HTTP API (`ProxyLocation.EveryNode` — every node with ≥1 replica runs a proxy) | `--openai-api-port` |
 | `8079` | Prometheus metrics | `--metrics-port`; random on a joiner unless set, and listed in the head's service-discovery file either way |
-| `8265` | Ray dashboard (head only) | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1` — keep it there unless you have a specific reason to expose it) |
-| GCS (head control plane) | what `mship join --cluster` points at | `--ray-port` (default `6380`) |
+| `8265` | Ray dashboard (head only); what `mship deploy --ray-dashboard-url` points at | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1`; `start` warns when it's exposed without `--enable-ray-auth`) |
+| GCS (head control plane) | what `mship join --gcs-address` points at | `--gcs-port` (default `6380`) |
 | `10002–19999` + node/object manager | Ray's dynamic worker range | not configurable; open the range between fleet nodes |
 
 Open cluster ports **only between fleet nodes** on the private network. From
@@ -184,22 +225,22 @@ another Ray node.
 
 ```bash
 docker run -d --network=host --shm-size=8g \
-  -v ./cluster-a/models.yaml:/modelship/config/models.yaml \
+  -v ./cluster-a/models.yaml:/models.yaml \
   -v ./cluster-a/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 start \
-  --ray-port=6380 --openai-api-port=8000 --ray-dashboard-port=8265 --metrics-port=8079
+  ghcr.io/modelship-ai/modelship:0.6.5 start --config=/models.yaml \
+  --gcs-port=6380 --openai-api-port=8000 --ray-dashboard-port=8265 --metrics-port=8079
 
 docker run -d --network=host --shm-size=8g \
-  -v ./cluster-b/models.yaml:/modelship/config/models.yaml \
+  -v ./cluster-b/models.yaml:/models.yaml \
   -v ./cluster-b/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 start \
-  --ray-port=6381 --openai-api-port=8001 --ray-dashboard-port=8266 --metrics-port=8089
+  ghcr.io/modelship-ai/modelship:0.6.5 start --config=/models.yaml \
+  --gcs-port=6381 --openai-api-port=8001 --ray-dashboard-port=8266 --metrics-port=8089
 ```
 
-Each head needs a distinct `--ray-port`, `--openai-api-port`, `--ray-dashboard-port`,
+Each head needs a distinct `--gcs-port`, `--openai-api-port`, `--ray-dashboard-port`,
 and `--metrics-port` — see the port table above for what each one
 gates. Workers on other machines join whichever cluster they're meant to serve,
-by pointing `mship join --cluster` at that head's GCS port.
+by pointing `mship join --gcs-address` at that head's GCS port.
 
 ### One GPU, shared across two clusters
 
@@ -212,12 +253,12 @@ cluster's resource ledger is independent and has no visibility into the other's:
 # Joins cluster A
 docker run -d --network=host --gpus device=0 \
   ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
-  --cluster=<cluster-a-head>:6380 --node-num-gpus=1
+  --gcs-address=<cluster-a-head>:6380 --node-num-gpus=1
 
 # Joins cluster B — same physical GPU, different cluster
 docker run -d --network=host --gpus device=0 \
   ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
-  --cluster=<cluster-b-head>:6380 --node-num-gpus=1
+  --gcs-address=<cluster-b-head>:6380 --node-num-gpus=1
 ```
 
 Ray does not arbitrate VRAM across independent clusters — that budget is
@@ -230,8 +271,8 @@ sides' footprints actually fit together on the card.
 
 - [helm/modelship/README.md](https://github.com/modelship-ai/modelship/blob/main/helm/modelship/README.md) — the Kubernetes rung:
   same image variants and version-pinning rule, but autoscaling, self-healing
-  pod scheduling, and Ray cluster auth set with one value (`rayAuth`) instead
-  of this page's manual token setup.
+  pod scheduling, and Ray cluster auth always on, with a token KubeRay generates,
+  instead of this page's manual token setup.
 - [development.md](development.md) — the full CLI/env var reference table,
   image variants, and dev-container setup.
 - [model-configuration.md](model-configuration.md) — `models.yaml` reference,

@@ -3,7 +3,7 @@
 import pytest
 from ray.serve.schema import ApplicationStatus
 
-from modelship.deploy.config import default_config_path, load_raw_models, resolve_config_path
+from modelship.deploy.config import load_raw_models
 from modelship.deploy.ledger import Version, commit_version, merge, read_versions, to_config
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
@@ -179,27 +179,6 @@ class TestLoadRawModels:
         with pytest.raises(ValueError, match="'models' must be a list"):
             load_raw_models(self._write(tmp_path, "models:\n  a: 1\n"))
 
-
-class TestDefaultConfigPath:
-    def test_points_at_models_yaml_under_config_dir(self, tmp_path):
-        assert default_config_path(tmp_path) == tmp_path / "models.yaml"
-
-
-class TestResolveConfigPath:
-    def test_explicit_path_wins_even_if_default_exists(self, tmp_path):
-        (tmp_path / "models.yaml").write_text("models: []\n")
-        explicit = tmp_path / "other.yaml"
-        explicit.write_text("models: []\n")
-        assert resolve_config_path(str(explicit), tmp_path) == str(explicit)
-
-    def test_explicit_missing_path_raises(self, tmp_path):
+    def test_missing_file_names_the_flag(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="--config"):
-            resolve_config_path(str(tmp_path / "missing.yaml"), tmp_path)
-
-    def test_default_path_used_when_no_explicit_arg(self, tmp_path):
-        (tmp_path / "models.yaml").write_text("models: []\n")
-        assert resolve_config_path(None, tmp_path) == str(tmp_path / "models.yaml")
-
-    def test_default_missing_raises_with_pointer_to_examples(self, tmp_path):
-        with pytest.raises(FileNotFoundError, match="config/examples"):
-            resolve_config_path(None, tmp_path)
+            load_raw_models(str(tmp_path / "missing.yaml"))

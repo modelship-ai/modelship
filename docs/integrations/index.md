@@ -7,10 +7,9 @@ point at Modelship instead by changing its base URL.
 
 All of these guides assume a running Modelship gateway reachable at
 `http://<host>:8000` (see [Quick start](../index.md#quick-start) if you don't
-have one yet), and use `Authorization: Bearer <key>` for auth if `MSHIP_API_KEYS`
-is set — otherwise any non-empty string works as the API key, since most
-OpenAI-compatible clients require *some* value in that field even when the
-server doesn't check it.
+have one yet). Modelship doesn't check the API key, so any non-empty string
+works, unless an auth layer in front of it expects a real one; most
+OpenAI-compatible clients require *some* value in that field.
 
 - [OpenAI SDK](openai-sdk.md) — Python and JS/TS, the direct integration path
 - [Open WebUI](open-webui.md) — a self-hosted chat UI

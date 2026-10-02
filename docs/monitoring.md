@@ -128,13 +128,13 @@ Metrics are enabled by default. Set `MSHIP_METRICS=false` to disable:
 ```bash
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token \
-  -v ./models.yaml:/modelship/config/models.yaml \
+  -v ./models.yaml:/models.yaml \
   -v ./models-cache:/.cache \
   -p 8000:8000 -p 8079:8079 -p 8265:8265 \
-  ghcr.io/modelship-ai/modelship:latest-cuda start --ray-dashboard-host 0.0.0.0
+  ghcr.io/modelship-ai/modelship:latest-cuda start --config /models.yaml --ray-dashboard-host 0.0.0.0 --enable-ray-auth
 ```
 
-> The dashboard always starts and binds `127.0.0.1` by default — `--ray-dashboard-host 0.0.0.0` above is what makes the published `8265` port actually reachable. Only do this on a trusted/private network (see [troubleshooting.md](troubleshooting.md)). Pair it with `--ray-auth=token` to require a bearer token for the now-reachable dashboard — retrieve it with `docker exec <container> cat /home/modelship/.ray/auth_token`.
+> The dashboard always starts and binds `127.0.0.1` by default — `--ray-dashboard-host 0.0.0.0` above is what makes the published `8265` port actually reachable. Only do this on a trusted/private network (see [troubleshooting.md](troubleshooting.md)). `--enable-ray-auth` makes the now-reachable dashboard require a bearer token — retrieve it with `docker exec <container> cat /home/modelship/.ray/auth_token`, or set your own with `-e MSHIP_RAY_AUTH_TOKEN`.
 
 | Env Var | Default | Description |
 |---|---|---|
@@ -299,7 +299,6 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 | `ray_modelship_request_in_progress` | Gauge | `model`, `endpoint`, `gateway` | Currently processing requests |
 | `ray_modelship_client_disconnects_total` | Counter | `model`, `endpoint`, `gateway` | Client disconnected before response completed |
 | `ray_modelship_stream_chunks_total` | Counter | `model`, `gateway` | Streaming chunks emitted |
-| `ray_modelship_auth_failures_total` | Counter | `reason`, `gateway` | Requests rejected for invalid/missing API key (`reason`: `missing`, `invalid`) |
 
 ### Model Deployment
 

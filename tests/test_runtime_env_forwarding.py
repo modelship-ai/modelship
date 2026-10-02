@@ -28,7 +28,6 @@ from modelship.utils.runtime_env import (
 class TestForwardedEnvVars:
     def test_secrets_are_never_forwarded(self):
         for group in (GATEWAY_ENV_VARS, MODEL_ENV_VARS):
-            assert "MSHIP_API_KEYS" not in group
             assert REDIS_PASSWORD_ENV not in group
 
     def test_gateway_gets_its_own_settings_and_the_model_path_does_not(self):

@@ -132,7 +132,7 @@ jobs:
             "--set image.variant=cpu" \
             "--set redis.password=pw" \
             "--set podMonitor.enabled=true" \
-            "--set rayAuth.enabled=true --set rayAuth.token=t" \
+            "--set rayAuth.existingSecret=ray-token" \
             "--set workerGroups[0].name=cuda --set workerGroups[0].replicas=1 --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1"; do
             echo "== helm template $args =="
             helm template modelship helm/modelship --set redis.address=cache:6379 $args \
@@ -183,7 +183,7 @@ jobs:
           # the version the chart declares. Already fetched by the lint step; a no-op here.
           helm dependency build helm/modelship
           helm install kuberay-operator helm/modelship/charts/kuberay-operator-*.tgz --wait --timeout 5m
-          for args in "" "--set redis.password=pw" "--set rayAuth.enabled=true --set rayAuth.token=t"; do
+          for args in "" "--set redis.password=pw" "--set rayAuth.existingSecret=ray-token"; do
             echo "== dry-run ${args:-defaults} =="
             helm template modelship helm/modelship \
               --set kuberay-operator.enabled=false \

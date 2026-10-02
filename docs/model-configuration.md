@@ -1,32 +1,30 @@
 # Model Configuration
 
-Reference for `models.yaml` (default: `config/models.yaml`). Each entry under `models:` defines one deployment. Unknown keys are rejected: a typo like `n_ctxx` is a validation error, not a silently ignored setting — in the file and in the [CLI flags](#single-model-deploys-no-config-file) alike.
+Reference for `models.yaml`, the file `--config` takes. Each entry under `models:` defines one deployment. Unknown keys are rejected: a typo like `n_ctxx` is a validation error, not a silently ignored setting — in the file and in the [CLI flags](#single-model-deploys-no-config-file) alike.
 
 ## CLI Options
 
 `mship start` starts a cluster on this machine — its head node, the API gateway and any models
 given — and stays running. `mship join` adds this machine to a running cluster as a worker node
-and stays running. `mship deploy` changes the models of the cluster running on this machine: it
-sends a deploy request and exits; with `--wait` it waits for the request to succeed or fail and exits with
-the outcome. `mship stop
---deploy-id ID` cancels a deploy request, rolling back what it submitted; with `--wait` it waits for the
-rollback. Each takes the arguments
+and stays running. `mship deploy` changes the models of the cluster running on this machine, or with
+`--ray-dashboard-url` of a cluster elsewhere: it sends a deploy request and exits; with `--wait` it waits for
+the request to succeed or fail and exits with the outcome; `mship deploy --cancel ID` cancels a deploy request
+instead, rolling back what it submitted, and with `--wait` waits for the rollback. Each takes the arguments
 marked for it (env vars work as fallbacks; CLI wins over env):
 
 | Argument | Commands | Env Var | Default | Description |
 |---|---|---|---|---|
-| `--config` | start, deploy | — | `config/models.yaml` | Path to models config file. An explicit path that doesn't exist is a hard error |
+| `--config` | start, deploy | — | — | Path to a models.yaml; one that doesn't exist is a hard error. Without it (or `--model`), `start` comes up with no models and `deploy` redeploys the gateway's committed models that are missing |
 | `--gateway-name` | start, deploy | `MSHIP_GATEWAY_NAME` | `modelship` | Name for the API gateway app. Multiple gateways can coexist on one cluster, each mounted at `/<slugified-name>` (e.g. `modelship` → `/modelship/v1/...`) |
 | `--gateway-min-replicas` | start | `MSHIP_GATEWAY_MIN_REPLICAS` | `1` | Fewest replicas each API gateway autoscales down to; 2 or more gives routing/ingress HA |
 | `--gateway-max-replicas` | start | `MSHIP_GATEWAY_MAX_REPLICAS` | `4` | Most replicas each API gateway autoscales up to |
 | `--gateway-target-ongoing-requests` | start | `MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS` | `64` | Ongoing requests per gateway replica that autoscaling aims for; a streamed response counts until it ends |
 | `--gateway-max-ongoing-requests` | start | `MSHIP_GATEWAY_MAX_ONGOING_REQUESTS` | `1024` | Most requests one gateway replica handles at once; more wait in the proxy |
 | `--openai-api-port` | start, deploy | `MSHIP_OPENAI_API_PORT` | `8000` | Port for the OpenAI-compatible API |
-| `--cluster` | join | `MSHIP_CLUSTER` | — | The head's GCS address as `host:port` (e.g. `mship-head:6380`) — its `--ray-port`. Reachable only from inside the cluster's private network. See [Multi-node without Kubernetes](multi-node-docker.md) |
-| `--token` | join, deploy, stop | `MSHIP_RAY_AUTH_TOKEN` | — | Auth token of a cluster started with `--ray-auth=token`; read it on the head with `cat ~/.ray/auth_token` |
-| `--ray-auth` | start, deploy, stop | `MSHIP_RAY_AUTH` | `none` | With `token`, `start` makes the cluster require the bearer token Ray generates at `~/.ray/auth_token` for the dashboard and cluster-internal RPC, and `deploy`/`stop` send it from that file |
-| `--ray-port` | start | `MSHIP_RAY_PORT` | `6380` | Ray GCS server port — what `mship join --cluster` points at |
-| `--ray-dashboard-host` | start | `MSHIP_RAY_DASHBOARD_HOST` | `127.0.0.1` | Ray dashboard bind address. The dashboard's job API runs arbitrary code, so bind beyond loopback only on a private network and with `--ray-auth=token` |
+| `--gcs-address` | join | `MSHIP_GCS_ADDRESS` | — | The head's GCS address as `host[:port]` (e.g. `mship-head:6380`) — its `--gcs-port`, `6380` when omitted. Reachable only from inside the cluster's private network. See [Multi-node without Kubernetes](multi-node-docker.md) |
+| `--enable-ray-auth` | start | `MSHIP_RAY_AUTH` | `false` | Require Ray's token auth for the dashboard and cluster-internal RPC. The token is `MSHIP_RAY_AUTH_TOKEN` when set; otherwise Ray generates it at `~/.ray/auth_token` |
+| `--gcs-port` | start | `MSHIP_GCS_PORT` | `6380` | Ray GCS server port — what `mship join --gcs-address` points at |
+| `--ray-dashboard-host` | start | `MSHIP_RAY_DASHBOARD_HOST` | `127.0.0.1` | Ray dashboard bind address. The dashboard's job API runs arbitrary code, so bind beyond loopback only on a private network and with `--enable-ray-auth`; `start` warns without it |
 | `--ray-dashboard-port` | start | `MSHIP_RAY_DASHBOARD_PORT` | `8265` | Ray dashboard port. Only needed to run multiple modelship heads on one host under `--network=host` |
 | `--node-num-cpus` | start, join | `MSHIP_NODE_NUM_CPUS` | auto-detect | CPUs this node reserves |
 | `--node-num-gpus` | start, join | `MSHIP_NODE_NUM_GPUS` | auto-detect | GPUs this node reserves. Refused at startup if it exceeds what the container can actually see |
@@ -34,8 +32,9 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--prune-ray-sessions` | start, join | `MSHIP_PRUNE_RAY_SESSIONS` | `true` | At node startup, delete stale `session_*` dirs left under the Ray temp root by previous, no-longer-running nodes. A live node's session is always kept |
 | `--reconcile` | start, deploy | — | `false` | Make the cluster match the config: add new models, remove dropped ones, replace changed ones (vs. the default additive union). With no `--config`, redeploys this gateway's committed models that are missing (self-heal) |
 | `--replace-strategy` | deploy | — | `blue_green` | How to replace a changed model: `blue_green` (deploy new before dropping old, no request loss) or `stop_start` (drop old first, brief unavailability) |
-| `--wait` | deploy, stop | — | `false` | Wait for the deploy request's outcome and exit with it. `deploy` waits for the request to succeed or fail (`0` succeeded, `1` failed or cancelled); without it, `deploy` exits once the request is queued, and the outcome shows in the head's log. `stop` waits for the rollback (`0` once cancelled, `1` if the request ends otherwise). A signal only stops the wait; `mship stop --deploy-id` cancels |
-| `--deploy-id` | stop | — | — | The deploy request to cancel, as `mship deploy` printed it. A queued request is dropped; a running one is rolled back, models already up included. A request that has committed, or that failed and is already rolling back, can't be cancelled |
+| `--wait` | deploy | — | `false` | Wait for the deploy request's outcome and exit with it. `deploy` waits for the request to succeed or fail (`0` succeeded, `1` failed or cancelled); without it, `deploy` exits once the request is queued, and the outcome shows in the head's log. With `--cancel`, it waits for the rollback (`0` once cancelled, `1` if the request ends otherwise). A signal only stops the wait; `mship deploy --cancel` cancels |
+| `--cancel` | deploy | — | — | Cancel the deploy request with this id, as `mship deploy` printed it, instead of sending one; takes no model options. A queued request is dropped; a running one is rolled back, models already up included. A request that has committed, or that failed and is already rolling back, can't be cancelled |
+| `--ray-dashboard-url` | deploy | `MSHIP_RAY_DASHBOARD_URL` | — | Send the deploy (or `--cancel`) to the cluster whose Ray dashboard answers at this URL, e.g. `http://head:8265`, instead of the one on this machine. It runs as a Ray job on that cluster's head, with the head's env. Needs `MSHIP_RAY_AUTH_TOKEN` when the cluster runs with `--enable-ray-auth`. See [Deploy from another machine](multi-node-docker.md#deploy-from-another-machine) |
 | `--cache-dir` | start, join | `MSHIP_CACHE_DIR` | `/.cache` | Base cache directory for model weights; may be shared storage |
 | `--node-cache-dir` | start, join | `MSHIP_NODE_CACHE_DIR` | `$MSHIP_HOME/node-cache` | Node-local compile/JIT cache directory (vLLM, Triton, FlashInfer). Must not be shared storage |
 | `--state-store` | start | `MSHIP_STATE_STORE` | `memory://` | Connection URI for the gateways' deploy versions + `/v1/responses` state (see [State store](#state-store-mship_state_store)) |
@@ -46,11 +45,15 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--no-metrics` | start | `MSHIP_METRICS` | enabled | Disable modelship's own Prometheus metrics on the whole cluster. Ray's node exporter has no off switch and falls back to a random port |
 | `--metrics-port` | start, join | `MSHIP_METRICS_PORT` | `8079` on start, random on join | This node's Prometheus metrics port. A joiner's random port is listed in the head's service-discovery file; pin it where the scraper targets a fixed port, e.g. a Kubernetes PodMonitor |
 | `--no-preflight` | start, deploy | `MSHIP_PREFLIGHT` | enabled | Disable preflight hardware auto-sizing; models run on loader/library defaults plus explicit config. Useful for benchmarking |
-| `--api-keys` | start, join | `MSHIP_API_KEYS` | — | Comma-separated API keys that gateway replicas on this node accept. A replica reads them from its own node, so set them on every node |
 | `--trusted-identity-header` | start, deploy | `MSHIP_TRUSTED_IDENTITY_HEADER` | — | Header name (e.g. `X-Consumer-Id`) a fronting credentials layer sets with a caller identity it already resolved and authorized. See [Trusted identity header](#trusted-identity-header) |
 | `--max-request-body-bytes` | start, deploy | `MSHIP_MAX_REQUEST_BODY_BYTES` | `52428800` | Max request body size in bytes |
 | `--responses-ttl-s` | start, deploy | `MSHIP_RESPONSES_TTL_S` | `2592000` | TTL in seconds for stored `/v1/responses` conversation state; `<=0` disables expiry |
 | `--state-sweep-interval-s` | start | `MSHIP_STATE_SWEEP_INTERVAL_S` | `300` | Interval in seconds between expired-key sweeps in the in-memory state store |
+
+`mship deploy` exits `0` on success, `1` when the deploy fails or is cancelled or the cluster refuses the Ray
+auth token, `2` on a usage error, `3` when no Ray dashboard answers at `--ray-dashboard-url` (or it stops
+answering), `4` when the cluster has no deploy coordinator (`mship start` creates it last, so a head still
+starting has none yet), and `130` when a signal stops the wait.
 
 ### Single-model deploys (no config file)
 
@@ -103,7 +106,7 @@ That includes YAML's own quirks: bare `on`, `off`, `yes` and `no` are booleans, 
 Limits:
 
 - **One model per invocation.** Use `--config` for several. A second `mship deploy --model ...` against a running cluster adds to it (the default additive merge), so models can also be added one at a time.
-- **`--model` and `--config` are mutually exclusive.** With `--model`, the default `config/models.yaml` is ignored entirely. The tuning flags configure the model `--model` deploys, so they need it too.
+- **`--model` and `--config` are mutually exclusive.** The tuning flags configure the model `--model` deploys, so they need it too.
 - **A flag can set a key, not unset one.** Omitting it leaves the schema default; pass `null` for the fields that accept it.
 
 #### Inferred names
@@ -147,12 +150,12 @@ By default, deploys add models to a running cluster without touching existing de
 ```bash
 mship start --config config/llm.yaml             # start the cluster with the LLMs
 mship deploy --config config/tts.yaml             # add, doesn't touch the LLMs
-mship deploy --config config/models.yaml --reconcile   # make the cluster match exactly
+mship deploy --config config/all.yaml --reconcile      # make the cluster match exactly
 ```
 
 ## Trusted Identity Header
 
-modelship never authenticates callers itself — that's `MSHIP_API_KEYS`' job, and it stops at "is this caller allowed at all." There is no login, permissions, or per-model access control, and none is planned; that belongs to whatever sits in front (nginx, Kong, LiteLLM, a custom credentials layer). `MSHIP_TRUSTED_IDENTITY_HEADER` lets that layer forward a caller identity it already resolved (a consumer/tenant id), used for log correlation and for scoping server-side state (see [Stateful responses](#stateful-responses)) — never for authorization.
+modelship never authenticates callers. There is no login, API keys, permissions, or per-model access control, and none is planned; that belongs to whatever sits in front (nginx, Kong, LiteLLM, a custom credentials layer). `MSHIP_TRUSTED_IDENTITY_HEADER` lets that layer forward a caller identity it already resolved (a consumer/tenant id), used for log correlation and for scoping server-side state (see [Stateful responses](#stateful-responses)) — never for authorization.
 
 The header's value is trusted **unconditionally** — no signature check. Safe only if both hold:
 
@@ -161,7 +164,7 @@ The header's value is trusted **unconditionally** — no signature check. Safe o
 
 For stronger guarantees than network isolation, add mTLS on that internal hop (service-mesh sidecar, Kong, a local proxy) so the peer's certificate — not just placement — proves the request's origin. modelship does not implement or verify certificates itself.
 
-If unset (the default), modelship falls back to hashing the matched `MSHIP_API_KEYS` entry, and further to a single shared bucket if no key matches (or auth is disabled).
+If it's unset (the default), or a request doesn't carry the header, the caller lands in a single shared identity bucket.
 
 ## Fields
 
@@ -591,11 +594,11 @@ Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded 
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry OTLP endpoint for log export. Requires `uv sync --extra otel` | — |
 | `CUDA_DEVICE_ORDER` | GPU enumeration order; set to `PCI_BUS_ID` for deterministic ordering in multi-GPU systems | `PCI_BUS_ID` |
 | `MSHIP_RAY_DASHBOARD_HOST` | Ray dashboard bind host (`--ray-dashboard-host`), `start` only. Dashboard always starts; this sets *where* it binds — `0.0.0.0` exposes it beyond the container (the ShadowRay/CVE-2023-48022 exposure vector), so only do this on a trusted network | `127.0.0.1` |
-| `MSHIP_RAY_AUTH` | Ray cluster authentication (`--ray-auth`). `token` makes `start` require a bearer token (generated by Ray at `~/.ray/auth_token`) for the dashboard and all cluster-internal RPC, and makes `deploy` send it. The OpenAI API and Prometheus metrics are never gated either way | `none` |
-| `MSHIP_RAY_PORT` | Ray GCS server port, `start` only. Pinned so `mship join --cluster` has a stable target; not `6379` since that collides with the recommended same-host Redis state store under `--network=host` | `6380` |
+| `MSHIP_RAY_AUTH` | Ray cluster authentication (`--enable-ray-auth`), `start` only. `true` makes `start` require a bearer token for the dashboard and all cluster-internal RPC: `MSHIP_RAY_AUTH_TOKEN`, or one Ray generates at `~/.ray/auth_token`. The OpenAI API and Prometheus metrics are never gated either way | `false` |
+| `MSHIP_GCS_PORT` | Ray GCS server port, `start` only. Pinned so `mship join --gcs-address` has a stable target; not `6379` since that collides with the recommended same-host Redis state store under `--network=host` | `6380` |
 | `MSHIP_RAY_DASHBOARD_PORT` | Ray dashboard port, `start` only. Needed only when running multiple modelship heads on one host under `--network=host` | `8265` |
-| `MSHIP_CLUSTER` | The head's GCS address as `host:port` that `mship join` joins (`--cluster`) | — |
-| `MSHIP_RAY_AUTH_TOKEN` | Auth token for `join`/`deploy` against a cluster started with `--ray-auth=token` (`--token`) | — |
+| `MSHIP_GCS_ADDRESS` | The head's GCS address as `host[:port]` (port `6380` by default) that `mship join` joins (`--gcs-address`) | — |
+| `MSHIP_RAY_AUTH_TOKEN` | The Ray auth token, never a flag. `join`/`deploy` send it to a cluster started with `--enable-ray-auth`; `start --enable-ray-auth` uses it instead of generating one, and refuses it without the flag | — |
 | `MSHIP_NODE_NUM_CPUS` | Override: CPUs this node reserves | auto-detect |
 | `MSHIP_NODE_NUM_GPUS` | Override: GPUs this node reserves. Refused at startup if it exceeds what the container can actually see | auto-detect |
 | `MSHIP_NODE_MEMORY` | Override: this node's total memory budget, e.g. `8Gi`. Split into Ray's `object_store_memory` (30%) and schedulable `memory` (70%), matching Ray's own auto-detect proportion. Set when co-locating multiple modelship containers on one host without per-container cgroup memory limits | auto-detect |
@@ -651,7 +654,7 @@ Send `"store": false` to opt out of storage — no id to continue from. An unkno
 
 `"background": true` returns `status: "queued"` immediately instead of blocking; poll `GET` until `status` reaches a terminal value (`completed`/`incomplete`/`failed`/`cancelled`). Requires `store`. Combined with `"stream": true`, the initial call instead streams live, and a disconnected client can resume with `GET /v1/responses/{id}?stream=true&starting_after=<last sequence_number seen>` — the replay buffer is short-lived (`MSHIP_RESPONSES_STREAM_BUFFER_TTL_S`, default 600s). Use `redis://` for production background use, since a background response must outlive the request that created it.
 
-Conversations are scoped to the caller's identity, so one caller can never read or continue another's. **With no auth configured, every caller shares the single `unscoped` identity** — one conversation pool. Set `MSHIP_API_KEYS` or `MSHIP_TRUSTED_IDENTITY_HEADER` (see [Trusted identity header](#trusted-identity-header)) before serving more than one user.
+Conversations are scoped to the caller's identity, so one caller can never read or continue another's. **Without a trusted identity header, every caller shares the single `unscoped` identity** — one conversation pool. Set `MSHIP_TRUSTED_IDENTITY_HEADER` (see [Trusted identity header](#trusted-identity-header)) before serving more than one user.
 
 | Variable | Description | Default |
 |---|---|---|

@@ -44,7 +44,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 #### Security
 
-- [x] **API authentication layer** — API key auth at the gateway level via `MSHIP_API_KEYS` env var; OpenAI-compatible `Authorization: Bearer <key>` header
+- [x] **API authentication layer** — delegated to the layer in front of the gateway (nginx, Kong, LiteLLM); modelship takes the caller identity it resolved from `MSHIP_TRUSTED_IDENTITY_HEADER`
 - [ ] **Rate limiting** — per-user/IP/model throttling to prevent GPU resource monopolization
 - [x] **Input size limits** — coarse payload size limit at the gateway (`MSHIP_MAX_REQUEST_BODY_BYTES`, default 50 MB)
 - [ ] **Per-model context validation** — no loader validates a request's prompt length against the model's context before inference
@@ -71,7 +71,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 - [x] **Kubernetes manifests** — KubeRay `RayCluster` + `RayJob`, gateway `Service`, cache `PVC`, secrets, optional `PodMonitor` (via the Helm chart in `helm/modelship`), with resource requests/limits, GPU scheduling, node affinity, and tolerations per worker group
 - [x] **Helm chart** — parameterized deployment in `helm/modelship` (see its README)
-- [x] **Simpler non-K8s deployment** — reframed from "Docker Compose", which orchestrates a single host and can't form a cluster across VMs. Supported path is `mship start` / `mship join` in plain `docker run` containers (see [docs/multi-node-docker.md](multi-node-docker.md)): a few VMs, no orchestrator, joined into one Ray cluster via `mship join --cluster`/`--token`. Compose remains a possible single-host wrapper around single-container mode, not planned work.
+- [x] **Simpler non-K8s deployment** — reframed from "Docker Compose", which orchestrates a single host and can't form a cluster across VMs. Supported path is `mship start` / `mship join` in plain `docker run` containers (see [docs/multi-node-docker.md](multi-node-docker.md)): a few VMs, no orchestrator, joined into one Ray cluster via `mship join --gcs-address` with `MSHIP_RAY_AUTH_TOKEN`. Compose remains a possible single-host wrapper around single-container mode, not planned work.
 - [x] **Liveness/readiness probes in container spec** — KubeRay's health checks (`/api/healthz`) gate each Ray pod's readiness on its raylet (and GCS on the head); `/readyz` returns 503 until all models load, suitable for an external LB/Ingress health check
 
 #### Alerting & Observability
@@ -116,7 +116,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 #### Operations
 
-- [ ] **Secrets management integration** — document Vault / K8s Secrets / sealed-secrets usage for `HF_TOKEN` and future API keys
+- [ ] **Secrets management integration** — document Vault / K8s Secrets / sealed-secrets usage for `HF_TOKEN`, the Ray auth token and the Redis password
 - [ ] **Troubleshooting runbook** — common failure modes and resolution steps for on-call
 - [ ] **Capacity planning guide** — estimate concurrent users per GPU setup per model mix
 - [ ] **GPU memory budgeting guide** — model co-location recommendations to avoid fragmentation

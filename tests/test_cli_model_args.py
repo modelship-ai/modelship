@@ -4,7 +4,6 @@ hand-written one."""
 import subprocess
 import sys
 from typing import get_args
-from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -120,23 +119,14 @@ class TestInferModelName:
 
 
 class TestResolveInputModels:
-    def test_model_flag_wins_over_the_default_config_file(self, tmp_path):
-        default = tmp_path / "models.yaml"
-        default.write_text("models:\n  - name: from-file\n    model: x.gguf\n    loader: llama_server\n")
-        with patch("modelship.deploy.config.default_config_path", return_value=default):
-            raw = resolve_input_models(_args("--model", "Qwen/Qwen3-8B", "--loader", "vllm", "--usecase", "generate"))
-        assert raw is not None
-        assert [m["name"] for m in raw] == ["qwen3-8b"]
-
     def test_config_file_is_read_when_no_model_flag(self, tmp_path):
         config = tmp_path / "models.yaml"
         config.write_text("models:\n  - name: m\n    model: x.gguf\n    loader: llama_server\n    usecase: generate\n")
         raw = resolve_input_models(_args("--config", str(config)))
         assert raw == [{"name": "m", "model": "x.gguf", "loader": "llama_server", "usecase": "generate"}]
 
-    def test_neither_returns_none(self, tmp_path):
-        with patch("modelship.deploy.config.default_config_path", return_value=tmp_path / "nope.yaml"):
-            assert resolve_input_models(_args()) is None
+    def test_neither_returns_none(self):
+        assert resolve_input_models(_args()) is None
 
     def test_both_is_rejected_at_parse_time(self, tmp_path, capsys):
         config = tmp_path / "models.yaml"

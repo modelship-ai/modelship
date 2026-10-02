@@ -53,9 +53,8 @@ class TestValidateConfig:
     def _args(self, *argv):
         return parse_args("deploy", list(argv))
 
-    def test_absent_config_returns_none(self, tmp_path):
-        with patch("modelship.deploy.config.default_config_path", return_value=tmp_path / "nope.yaml"):
-            assert launcher._validate_config(self._args()) is None
+    def test_absent_config_returns_none(self):
+        assert launcher._validate_config(self._args()) is None
 
     def test_missing_explicit_config_exits(self, tmp_path):
         with pytest.raises(SystemExit) as exc:
@@ -195,9 +194,20 @@ class TestCmdRun:
         mock_run.assert_called_once_with("deploy", ["--reconcile"])
 
     def test_join_validates_no_config(self):
-        mock_validate, mock_gate, _, _ = self._run("join", ["--cluster", "10.0.0.1:6380"])
+        mock_validate, mock_gate, _, _ = self._run("join", ["--gcs-address", "10.0.0.1:6380"])
         mock_validate.assert_not_called()
         mock_gate.assert_not_called()
+
+    def test_a_remote_deploy_validates_no_config_here(self):
+        argv = ["--ray-dashboard-url", "http://head:8265", "--config", "models.yaml"]
+        mock_validate, _, _, mock_run = self._run("deploy", argv)
+        mock_validate.assert_not_called()
+        mock_run.assert_called_once_with("deploy", argv)
+
+    def test_cancel_validates_no_config(self):
+        mock_validate, _, _, mock_run = self._run("deploy", ["--cancel", "r1"])
+        mock_validate.assert_not_called()
+        mock_run.assert_called_once_with("deploy", ["--cancel", "r1"])
 
     def test_gate_skipped_on_a_zero_capacity_start(self):
         _, mock_gate, _, _ = self._run("start", ["--node-num-cpus", "0", "--node-num-gpus", "0"])
@@ -220,7 +230,7 @@ class TestMain:
             launcher.main([])
         assert exc.value.code == 2
 
-    @pytest.mark.parametrize("command", ["bogus", "bootstrap"])
+    @pytest.mark.parametrize("command", ["bogus", "bootstrap", "stop"])
     def test_unknown_command_exits_2(self, command):
         with pytest.raises(SystemExit) as exc:
             launcher.main([command])

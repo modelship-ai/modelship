@@ -19,7 +19,7 @@ models.yaml — KubeRay waits for the head, then runs `mship deploy` on it.
    It's mounted under its gateway name, so with gateway.name={{ .Values.gateway.name }}:
 
    kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "modelship.fullname" . }}-gateway {{ .Values.gateway.port }}:{{ .Values.gateway.port }}
-   curl http://localhost:{{ .Values.gateway.port }}/{{ .Values.gateway.name }}/v1/models
+   curl http://localhost:{{ .Values.gateway.port }}{{ include "modelship.gatewayPath" . }}/v1/models
 
 {{- if eq .Values.service.type "ClusterIP" }}
 
@@ -27,7 +27,11 @@ models.yaml — KubeRay waits for the head, then runs `mship deploy` on it.
    LoadBalancer/NodePort to expose it outside the cluster.)
 {{- end }}
 
-4. Apply models.yaml changes later by re-running with your updated values:
+4. Ray's dashboard and cluster RPC require the cluster's auth token:
+
+   kubectl get secret -n {{ .Release.Namespace }} {{ include "modelship.rayAuthSecretName" . }} -o jsonpath='{.data.auth_token}' | base64 -d
+
+5. Apply models.yaml changes later by re-running with your updated values:
 
    helm upgrade {{ .Release.Name }} <chart> -n {{ .Release.Namespace }} -f your-values.yaml
 

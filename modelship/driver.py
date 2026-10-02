@@ -13,7 +13,7 @@ from modelship.logging import (
 )
 from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
 from modelship.utils.cli import apply_args_to_env, parse_args
-from modelship.utils.ray_auth import resolve_ray_auth_env
+from modelship.utils.ray_auth import auth_enabled, is_loopback, resolve_ray_auth_env, token_env_without_auth
 
 propagate_lib_log_env()
 
@@ -25,6 +25,11 @@ _STOP_DELETE_TIMEOUT_S = 30.0
 def run(command: str, argv: list[str] | None = None) -> None:
     args = parse_args(command, argv)
     apply_args_to_env(args)
+    if command == "deploy" and (url := os.environ.get("MSHIP_RAY_DASHBOARD_URL")):
+        from modelship.remote import run as run_remote
+
+        run_remote(url, list(argv or []), args.config)
+        return
     # After argv, before Ray starts: raylets inherit the roots replicas expand cache paths from.
     base_cache = os.environ.setdefault("MSHIP_CACHE_DIR", resolve_cache_root())
     node_cache = os.environ.setdefault("MSHIP_NODE_CACHE_DIR", resolve_node_cache_root())
@@ -33,6 +38,8 @@ def run(command: str, argv: list[str] | None = None) -> None:
     os.environ.setdefault("VLLM_CACHE_ROOT", f"{node_cache}/vllm")
     os.environ.setdefault("FLASHINFER_WORKSPACE_BASE", f"{node_cache}/flashinfer")
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    if command == "start" and (stray := token_env_without_auth()):
+        sys.exit(f"error: {', '.join(stray)} is set but Ray auth is off; pass --enable-ray-auth, or unset it.")
     # Before `import ray`: RAY_AUTH_MODE latches at import.
     resolve_ray_auth_env()
 
@@ -43,7 +50,7 @@ def run(command: str, argv: list[str] | None = None) -> None:
         _start(args)
     elif command == "join":
         _join()
-    elif command == "stop":
+    elif args.cancel is not None:
         _cancel(args)
     else:
         _deploy(args)
@@ -66,6 +73,15 @@ def _start(args) -> None:
             "Change its models with `mship deploy`, or stop it before starting a new one."
         )
     lib_level, serve_logging_config = _serve_logging()
+    # Inherited by job shells on this head, which run `mship deploy` for a remote one.
+    os.environ["MSHIP_ENGINE_PYTHON"] = sys.executable
+    dashboard_host = os.environ.get("MSHIP_RAY_DASHBOARD_HOST", "127.0.0.1")
+    if not auth_enabled() and not is_loopback(dashboard_host):
+        logger.warning(
+            "Ray's dashboard listens on %s without token auth: anyone who can reach it can run code on this "
+            "cluster. Pass --enable-ray-auth.",
+            dashboard_host,
+        )
 
     def _cleanup(sig, _frame) -> None:
         logger.info("Shutting down (signal %s)...", sig)
@@ -84,12 +100,14 @@ def _start(args) -> None:
         _log_gpus()
         start_serve(serve_logging_config)
         _prepare_state_store()
-        # First, so /health and /readyz answer while models load.
+        get_or_create_gateway_coordinator()
+        coordinator = get_or_create_coordinator()
+        # After the coordinators, so its /health answering means start is done (the chart's head startupProbe);
+        # before the deploy, so /health and /readyz answer while models load.
         start_gateway(
             gateway_name, serve_logging_config, route_prefix, cluster_env_vars() | state_store_env_var(), sizing
         )
-        get_or_create_gateway_coordinator()
-        _send(args, gateway_name, get_or_create_coordinator())
+        _send(args, gateway_name, coordinator)
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
@@ -142,7 +160,7 @@ def _join() -> None:
     _on_signals(_leave)
 
     try:
-        join_cluster(os.environ["MSHIP_CLUSTER"])
+        join_cluster(os.environ["MSHIP_GCS_ADDRESS"])
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
@@ -166,6 +184,7 @@ def _deploy(args) -> None:
         start_serve,
     )
     from modelship.infer.deploy_coordinator import find_coordinator
+    from modelship.remote import EXIT_NO_DEPLOY_COORDINATOR
 
     gateway_name, route_prefix, explicit_gateway = _gateway_from_env()
     if not local_ray_clusters():
@@ -177,7 +196,8 @@ def _deploy(args) -> None:
     attach_cluster(lib_level)
     _log_cluster()
     if (coordinator := find_coordinator()) is None:
-        sys.exit("error: no deploy coordinator on this cluster; `mship start` creates it.")
+        print("error: no deploy coordinator on this cluster; `mship start` creates it.", file=sys.stderr)
+        sys.exit(EXIT_NO_DEPLOY_COORDINATOR)
     head: dict = ray.get(coordinator.cluster_settings.remote())
     # A no-op when Serve already runs; the first call on a cluster sets it up.
     start_serve(head["serve_logging_config"])
@@ -193,12 +213,12 @@ def _deploy(args) -> None:
     receipt = _send(args, gateway_name, coordinator)
     request_id = receipt["id"]
     if not args.wait:
-        logger.info("Follow it in the head's log; cancel it with `mship stop --deploy-id %s`.", request_id)
+        logger.info("Follow it in the head's log; cancel it with `mship deploy --cancel %s`.", request_id)
         return
 
     outcome = _wait_for_outcome(
         receipt["outcome"],
-        stopped=f"deploy {request_id} keeps running. Cancel it with `mship stop --deploy-id {request_id}`.",
+        stopped=f"deploy {request_id} keeps running. Cancel it with `mship deploy --cancel {request_id}`.",
         lost=f"Deploy {request_id} was lost: the deploy coordinator restarted. Run the deploy again.",
     )
     if outcome["state"] != "succeeded":
@@ -213,14 +233,16 @@ def _send(args, gateway_name: str, coordinator) -> dict:
     from modelship.deploy.config import resolve_input_models
     from modelship.deploy.ledger import DeployRequest
 
-    models = None if args.config is None and args.model is None and args.reconcile else resolve_input_models(args)
+    from_job = getattr(args, "config_from_job", False)
+    bare = args.config is None and args.model is None and not from_job and args.reconcile
+    models = None if bare else resolve_input_models(args)
     if models is None:
         logger.info("No models given: redeploying gateway %r's committed models that are missing.", gateway_name)
     mode = "bare" if models is None else ("reconcile" if args.reconcile else "additive")
     request = DeployRequest(
         gateway=gateway_name,
         mode=mode,
-        strategy=getattr(args, "replace_strategy", "blue_green"),
+        strategy=getattr(args, "replace_strategy", None) or "blue_green",
         models=models,
         env=deploy_env_vars(),
     )
@@ -273,9 +295,10 @@ def _cancel(args) -> None:
         sys.exit("error: no Ray cluster is running on this machine.")
     lib_level, _ = _serve_logging()
     attach_cluster(lib_level)
+    deploy_id = args.cancel
     if (coordinator := find_coordinator()) is None:
-        sys.exit(f"error: no deploy {args.deploy_id} on this cluster.")
-    result: dict = ray.get(coordinator.cancel.remote(args.deploy_id))
+        sys.exit(f"error: no deploy {deploy_id} on this cluster.")
+    result: dict = ray.get(coordinator.cancel.remote(deploy_id))
     if not result["cancelled"]:
         sys.exit(f"error: {result['message']}.")
     logger.info("%s.", result["message"].capitalize())
@@ -283,8 +306,8 @@ def _cancel(args) -> None:
         return
     outcome = _wait_for_outcome(
         result["outcome"],
-        stopped=f"deploy {args.deploy_id} keeps rolling back.",
-        lost=f"Deploy {args.deploy_id} was lost: the deploy coordinator restarted, which rolls back what wasn't committed.",
+        stopped=f"deploy {deploy_id} keeps rolling back.",
+        lost=f"Deploy {deploy_id} was lost: the deploy coordinator restarted, which rolls back what wasn't committed.",
     )
     if outcome["state"] != "cancelled":
         sys.exit(1)
@@ -345,17 +368,23 @@ def _log_join_hint() -> None:
     actual_port = gcs_address.rsplit(":", 1)[-1]
     if intended_port and actual_port != intended_port:
         logger.warning(
-            "Ray's GCS bound port %s, not the intended %s (RAY_GCS_SERVER_PORT) — pin --ray-port to a "
-            "free port so the address `mship join --cluster` takes stays stable across restarts.",
+            "Ray's GCS bound port %s, not the intended %s (RAY_GCS_SERVER_PORT) — pin --gcs-port to a "
+            "free port so the address `mship join --gcs-address` takes stays stable across restarts.",
             actual_port,
             intended_port,
         )
-    token = " --token=<token>" if os.environ.get("RAY_AUTH_MODE") == "token" else ""
-    token_hint = "the token is in ~/.ray/auth_token on this machine; " if token else ""
+    token_hint = ""
+    if os.environ.get("RAY_AUTH_MODE") == "token":
+        if os.environ.get("MSHIP_RAY_AUTH_TOKEN"):
+            where = "the one this head was started with"
+        elif os.environ.get("RAY_AUTH_TOKEN"):
+            where = "RAY_AUTH_TOKEN in this head's environment"
+        else:
+            where = "~/.ray/auth_token on this machine"
+        token_hint = f", with MSHIP_RAY_AUTH_TOKEN set to the cluster's token ({where})"
     logger.info(
-        "To add a machine to this cluster, run on it: mship join --cluster=%s%s (%ssee docs/multi-node-docker.md).",
+        "To add a machine to this cluster, run on it: mship join --gcs-address=%s%s (see docs/multi-node-docker.md).",
         gcs_address,
-        token,
         token_hint,
     )
 

@@ -95,7 +95,7 @@ def autoscaling_cluster(tmp_path):
         "2",
         "--gateway-target-ongoing-requests",
         "1",
-        "--ray-port",
+        "--gcs-port",
         str(_GCS_PORT),
         "--ray-dashboard-port",
         str(_DASHBOARD_PORT),

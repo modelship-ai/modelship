@@ -23,16 +23,16 @@ versions.
 ## Running a single node
 
 The image takes the same subcommands as the `mship` CLI, so the first argument is
-`deploy`:
+`start`:
 
 CPU, no GPU required:
 
 ```bash
 docker run --rm --shm-size=8g \
-  -v ./models.yaml:/modelship/config/models.yaml \
+  -v ./models.yaml:/models.yaml \
   -v modelship-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cpu start
+  ghcr.io/modelship-ai/modelship:latest-cpu start --config /models.yaml
 ```
 
 GPU, with the NVIDIA Container Toolkit installed:
@@ -40,16 +40,14 @@ GPU, with the NVIDIA Container Toolkit installed:
 ```bash
 docker run --rm --shm-size=8g --gpus all \
   -e HF_TOKEN=your_token_here \
-  -v ./models.yaml:/modelship/config/models.yaml \
+  -v ./models.yaml:/models.yaml \
   -v modelship-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cuda start
+  ghcr.io/modelship-ai/modelship:latest-cuda start --config /models.yaml
 ```
 
-`deploy` reads `/modelship/config/models.yaml` by default; pass `--config` for
-another path, and any other [CLI flag](model-configuration.md) after it. A
-single model needs no config file at all — see
-[Quick start](index.md#quick-start).
+Any other [CLI flag](model-configuration.md) goes after `start` too. A single
+model needs no config file at all — see [Quick start](index.md#quick-start).
 
 !!! note "Named volume vs. bind mount for the cache"
     `-v modelship-cache:/.cache` lets Docker create the volume and inherit the
@@ -86,7 +84,7 @@ directory, Ray version, and the `llama-server` binary in use.
 /.cache                           model weights (MSHIP_CACHE_DIR)
 ```
 
-Mount your own config over `/modelship/config/models.yaml` and a volume at
+Mount your config anywhere and pass it with `--config`, and mount a volume at
 `/.cache` so weights survive container restarts. Compiled kernels live outside
 that volume, so a new container compiles them again once; add
 `-v modelship-node-cache:/opt/mship/node-cache` to keep them as well, but never
