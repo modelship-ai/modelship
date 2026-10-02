@@ -31,7 +31,8 @@ spec:
   {{- end }}
   backoffLimit: 3
   # Exits 1 (the deploy failed, or the token was refused) and 2 (usage) fail the Job. Exits 3 and 4 (no
-  # head within mship deploy's wait, or the dashboard lost mid-deploy) and crashes retry; evictions are free.
+  # head within mship deploy's wait, or the dashboard lost mid-deploy) and crashes retry; an eviction
+  # doesn't count toward backoffLimit.
   podFailurePolicy:
     rules:
       - action: FailJob
