@@ -4,10 +4,10 @@ A RayCluster ({{ include "modelship.fullname" . }}) is starting, and the Job {{ 
 deploys the models from your models.yaml through the head's dashboard, once the
 head is up.
 
-1. Watch the cluster come up:
+1. Watch the cluster come up. A worker hosting no replica stays 0/1 Ready, so the
+   RayCluster doesn't report ready while one does:
 
-   kubectl get rayclusters -n {{ .Release.Namespace }} -w
-   kubectl get pods -n {{ .Release.Namespace }} -l ray.io/cluster={{ include "modelship.fullname" . }}
+   kubectl get pods -n {{ .Release.Namespace }} -l ray.io/cluster={{ include "modelship.fullname" . }} -w
 
 2. Track the deploy (model download + load can take a while). Helm waits for it
    only with `--wait --wait-for-jobs`:
