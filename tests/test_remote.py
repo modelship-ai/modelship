@@ -47,10 +47,17 @@ class _FakeClient:
         return self._last_logs
 
 
-def _run(client, argv=("--wait",), config_path=None, env=None):
+def _run(client, argv=("--wait",), config_path=None, env=None, connect_errors=()):
+    errors = list(connect_errors)
+
+    def connect(*args, **kwargs):
+        if errors:
+            raise errors.pop(0)
+        return client
+
     with (
         patch.dict(os.environ, env or {}),
-        patch("ray.job_submission.JobSubmissionClient", return_value=client) as make_client,
+        patch("ray.job_submission.JobSubmissionClient", side_effect=connect) as make_client,
         patch.object(remote, "_wait_for_dashboard"),
         patch.object(remote, "configure_logging"),
         patch.object(remote.time, "sleep"),
@@ -183,13 +190,36 @@ class TestRun:
     def test_a_5xx_on_submit_is_retried_until_the_dashboard_takes_the_job(self, caplog):
         caplog.set_level(logging.INFO, logger="modelship")
         no_agent = RuntimeError("Request failed with status code 500: No available agent to submit job.")
-        client = _FakeClient([(_info("SUCCEEDED", 0), "")], submit_errors=[no_agent, requests.ConnectionError()])
+        unavailable = requests.HTTPError(response=MagicMock(status_code=503))
+        client = _FakeClient(
+            [(_info("SUCCEEDED", 0), "")], submit_errors=[no_agent, unavailable, requests.ConnectionError()]
+        )
         code, _ = _run(client)
         assert code == 0
         assert len(client.submitted) == 1
         assert [m for m in caplog.messages if m.startswith("Waiting for the Ray dashboard")] == [
             f"Waiting for the Ray dashboard at {URL} to take the job ({no_agent})."
         ]
+
+    # Ray's version check, run by the client's constructor and by submit_job, raises the builtin ConnectionError.
+    def test_a_dashboard_down_at_connect_or_submit_is_waited_on(self, caplog):
+        caplog.set_level(logging.INFO, logger="modelship")
+        refused = ConnectionError(f"Failed to connect to Ray at address: {URL}.")
+        client = _FakeClient([(_info("SUCCEEDED", 0), "")], submit_errors=[refused])
+        code, make_client = _run(client, connect_errors=[refused])
+        assert code == 0
+        assert make_client.call_count == 3
+        assert len(client.submitted) == 1
+        assert [m for m in caplog.messages if m.startswith("Waiting for the Ray dashboard")] == [
+            f"Waiting for the Ray dashboard at {URL} to take the job (connection failed)."
+        ]
+
+    def test_a_dashboard_still_down_at_the_deadline_exits_3(self, capsys):
+        refused = ConnectionError(f"Failed to connect to Ray at address: {URL}.")
+        with patch.object(remote, "HEAD_WAIT_S", 0):
+            code, _ = _run(_FakeClient(), connect_errors=[refused])
+        assert code == remote.EXIT_UNREACHABLE
+        assert "didn't take the job within 0 min: connection failed" in capsys.readouterr().err
 
     def test_a_4xx_on_submit_is_not_retried(self):
         client = _FakeClient(submit_errors=[RuntimeError("Request failed with status code 400: bad entrypoint")])
@@ -198,6 +228,14 @@ class TestRun:
             code
             == f"error: the Ray dashboard at {URL} failed the request: Request failed with status code 400: bad entrypoint"
         )
+
+    def test_a_4xx_on_the_version_check_is_not_retried(self):
+        client = _FakeClient(
+            submit_errors=[requests.HTTPError("400 Client Error", response=MagicMock(status_code=400))]
+        )
+        code, _ = _run(client)
+        assert code == f"error: the Ray dashboard at {URL} failed the request: 400 Client Error"
+        assert client.submitted == []
 
     def test_submit_gives_up_at_the_deadline(self, capsys):
         client = _FakeClient(submit_errors=[RuntimeError("Request failed with status code 500: No available agent.")])

@@ -77,7 +77,6 @@ def run(url: str, argv: list[str], config_path: str | None) -> None:
     os.environ.pop("RAY_AUTH_MODE", None)
     import requests
     from ray.exceptions import AuthenticationError
-    from ray.job_submission import JobSubmissionClient
 
     deadline = time.monotonic() + HEAD_WAIT_S
     configure_logging()
@@ -85,14 +84,8 @@ def run(url: str, argv: list[str], config_path: str | None) -> None:
     _wait_for_dashboard(url, token, deadline)
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
-        client = JobSubmissionClient(url, headers=headers)
-    except ConnectionError:
-        _exit_unreachable(url, "connection refused")
+        _submit_and_follow(url, headers, argv, models_yaml, deadline)
     except (requests.HTTPError, RuntimeError, AuthenticationError) as e:
-        _exit_http(url, e)
-    try:
-        _submit_and_follow(client, url, argv, models_yaml, deadline)
-    except (RuntimeError, AuthenticationError) as e:
         _exit_http(url, e)
 
 
@@ -153,7 +146,7 @@ def _dashboard_down(url: str, token: str | None) -> str | None:
 
 
 def _submit_and_follow(
-    client: JobSubmissionClient, url: str, argv: list[str], models_yaml: str | None, deadline: float
+    url: str, headers: dict[str, str], argv: list[str], models_yaml: str | None, deadline: float
 ) -> None:
     job_id: str | None = None
 
@@ -165,7 +158,7 @@ def _submit_and_follow(
     signal.signal(signal.SIGINT, _stop_following)
     signal.signal(signal.SIGTERM, _stop_following)
     metadata = {MODELS_YAML_KEY: models_yaml} if models_yaml is not None else None
-    job_id = _submit(client, url, entrypoint(argv, models_yaml is not None), metadata, deadline)
+    client, job_id = _submit(url, headers, entrypoint(argv, models_yaml is not None), metadata, deadline)
     logger.info("Submitted Ray job %s to %s.", job_id, url)
     info = _follow(client, url, job_id)
     if info.status == "SUCCEEDED":
@@ -175,19 +168,26 @@ def _submit_and_follow(
     sys.exit(f"error: Ray job {job_id} {info.status.lower()}: {info.message}")
 
 
-def _submit(client: JobSubmissionClient, url: str, command: str, metadata: dict | None, deadline: float) -> str:
-    """The new job's id; resubmits until *deadline* while the dashboard answers 5xx or not at all."""
+def _submit(
+    url: str, headers: dict[str, str], command: str, metadata: dict | None, deadline: float
+) -> tuple[JobSubmissionClient, str]:
+    """A client and the new job's id; retries until *deadline* while the dashboard answers 5xx or not at all."""
     import requests
+    from ray.job_submission import JobSubmissionClient
 
     waiting = False
     while True:
         try:
-            return client.submit_job(entrypoint=command, entrypoint_resources=_HEAD, metadata=metadata)
-        except requests.RequestException as e:
-            reason = str(e)
-        except RuntimeError as e:
+            # Both check the dashboard's version first, which raises the builtin ConnectionError when it's down.
+            client = JobSubmissionClient(url, headers=headers)
+            return client, client.submit_job(entrypoint=command, entrypoint_resources=_HEAD, metadata=metadata)
+        except ConnectionError:
+            reason = "connection failed"
+        except (requests.HTTPError, RuntimeError) as e:
             if (_http_status(e) or 0) < 500:
                 raise
+            reason = str(e)
+        except requests.RequestException as e:
             reason = str(e)
         if time.monotonic() >= deadline:
             print(
