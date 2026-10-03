@@ -1543,7 +1543,6 @@ class TestStartHead:
     def test_starts_head_with_metrics_port(self):
         kwargs = self._init_call({"MSHIP_METRICS": "true", "MSHIP_NODE_NUM_CPUS": "4"}, pop=("MSHIP_METRICS_PORT",))
         assert kwargs["num_cpus"] == 4
-        # Guards the private ray.init kwarg that pins Ray's metrics agent port.
         assert kwargs["_metrics_export_port"] == 8079
 
     def test_metrics_port_overridable(self):
@@ -1660,14 +1659,14 @@ class TestStartHead:
         assert "_redis_password" not in kwargs
         assert "_redis_username" not in kwargs
 
-    def test_ray_init_still_takes_the_private_redis_kwargs(self):
+    def test_ray_init_still_takes_the_private_kwargs(self):
         import inspect
 
         import ray
 
         source = inspect.getsource(ray.init)
-        assert '"_redis_password"' in source
-        assert '"_redis_username"' in source
+        for kwarg in ("_memory", "_metrics_export_port", "_redis_password", "_redis_username"):
+            assert f'"{kwarg}"' in source
 
     def test_gcs_port_sets_gcs_server_port(self):
         from modelship.deploy import serve_utils
