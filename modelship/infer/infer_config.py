@@ -138,6 +138,8 @@ def get_disconnect_registry():
             get_if_exists=True,
             lifetime="detached",
             namespace="modelship",
+            # Restarts with the same actor id, so handles cached across a head restart keep working.
+            max_restarts=-1,
             **head_node_options(),
         ).remote()
     return _disconnect_registry
