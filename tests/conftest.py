@@ -160,6 +160,8 @@ MODEL_CONFIGS: dict[str, dict] = {
             "upscale_delay_s": 2,
             "downscale_delay_s": 10,
         },
+        # Unset, preflight sizes every replica to the full context from the same free RAM.
+        "llama_server_config": {"n_ctx": 4096},
     },
     "chat-llama-server": {
         "name": "chat-llama-server",
