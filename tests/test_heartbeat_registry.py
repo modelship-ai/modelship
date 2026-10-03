@@ -6,11 +6,9 @@ wrapper functions are tested against a fake registry handle mimicking Ray's
 ``.remote()`` dispatch, same pattern as `test_disconnect_registry.py`.
 """
 
-import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ray.exceptions import RayActorError
 
 from modelship.openai.state import responses as responses_state
 from modelship.openai.state.responses import HeartbeatRegistry, _HeartbeatStore
@@ -96,24 +94,13 @@ class TestHeartbeatRegistryActor:
 
 
 class TestGetHeartbeatRegistry:
-    def test_creates_the_registry_on_the_head(self, monkeypatch):
+    def test_creates_a_restartable_registry_on_the_head(self, monkeypatch):
         monkeypatch.setattr(responses_state, "_heartbeat_registry", None)
         options = MagicMock()
         with patch.object(HeartbeatRegistry, "options", options):
             responses_state.get_heartbeat_registry()
         assert options.call_args.kwargs["resources"] == {"node:__internal_head__": 0.001}
-
-    @pytest.mark.asyncio
-    async def test_a_dead_registry_drops_the_cached_handle(self, monkeypatch):
-        dead = MagicMock()
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
-        fut.set_exception(RayActorError())
-        dead.is_alive.remote.return_value = fut
-        monkeypatch.setattr(responses_state, "_heartbeat_registry", dead)
-
-        with pytest.raises(RayActorError):
-            await responses_state.is_alive("u1", "resp_1")
-        assert responses_state._heartbeat_registry is None
+        assert options.call_args.kwargs["max_restarts"] == -1
 
 
 class _FakeHeartbeatRegistry:
