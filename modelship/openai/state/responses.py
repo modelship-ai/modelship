@@ -32,6 +32,7 @@ import ray
 
 from modelship.logging import get_logger
 from modelship.state import StateStore
+from modelship.utils import head_node_options
 
 logger = get_logger("api")
 
@@ -141,12 +142,15 @@ class HeartbeatRegistry:
 
     def __init__(self, ttl_seconds: float):
         self._store = _HeartbeatStore(ttl_seconds)
+        self._ttl = ttl_seconds
+        self._started = time.monotonic()
 
     async def heartbeat(self, key: str, req_id: str) -> None:
         self._store.heartbeat(key, req_id)
 
     async def is_alive(self, key: str) -> bool:
-        return self._store.is_alive(key)
+        # Younger than the TTL, this registry may have restarted since the key's last heartbeat.
+        return self._store.is_alive(key) or time.monotonic() - self._started < self._ttl
 
     async def req_id(self, key: str) -> str | None:
         return self._store.req_id(key)
@@ -165,6 +169,9 @@ def get_heartbeat_registry():
             get_if_exists=True,
             lifetime="detached",
             namespace="modelship",
+            # Restarts with the same actor id, so handles cached across a head restart keep working.
+            max_restarts=-1,
+            **head_node_options(),
         ).remote(stale_seconds())
     return _heartbeat_registry
 

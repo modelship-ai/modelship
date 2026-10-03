@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from ray.exceptions import RayActorError
 
-from modelship.infer.infer_config import RawRequestProxy, RequestWatcher, _DisconnectStore
+from modelship.infer import infer_config
+from modelship.infer.infer_config import DisconnectRegistry, RawRequestProxy, RequestWatcher, _DisconnectStore
 
 
 @pytest.fixture(autouse=True)
@@ -176,3 +177,12 @@ async def test_watch_reresolves_and_retries_set_on_actor_death():
         await watcher._task
 
     assert "req-2" in healthy.disconnected
+
+
+def test_creates_a_restartable_registry_on_the_head(monkeypatch):
+    monkeypatch.setattr(infer_config, "_disconnect_registry", None)
+    options = MagicMock()
+    with patch.object(DisconnectRegistry, "options", options):
+        infer_config.get_disconnect_registry()
+    assert options.call_args.kwargs["resources"] == {"node:__internal_head__": 0.001}
+    assert options.call_args.kwargs["max_restarts"] == -1
