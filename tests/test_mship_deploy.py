@@ -2062,6 +2062,7 @@ class TestStartAuthEnv:
             ({"MSHIP_RAY_AUTH_TOKEN": "t"}, ["MSHIP_RAY_AUTH_TOKEN"]),
             ({"RAY_AUTH_TOKEN": "t"}, ["RAY_AUTH_TOKEN"]),
             ({"RAY_AUTH_MODE": "token"}, ["RAY_AUTH_MODE=token"]),
+            ({"RAY_AUTH_MODE": "disabled"}, []),
             ({"MSHIP_RAY_AUTH_TOKEN": "t", "MSHIP_RAY_AUTH": "true"}, []),
             ({}, []),
         ],
@@ -2145,11 +2146,11 @@ class TestResolveRayAuthEnv:
         assert mode == "token"
         assert token == "secret"
 
-    def test_neither_leaves_auth_unset(self):
-        assert self._resolve({}) == (None, None)
+    def test_neither_disables_auth(self):
+        assert self._resolve({}) == ("disabled", None)
 
-    def test_disabled_auth_leaves_auth_unset(self):
-        assert self._resolve({"MSHIP_RAY_AUTH": "false"}) == (None, None)
+    def test_disabled_auth_disables_auth(self):
+        assert self._resolve({"MSHIP_RAY_AUTH": "false"}) == ("disabled", None)
 
     def test_explicit_ray_auth_mode_wins(self):
         mode, _ = self._resolve({"MSHIP_RAY_AUTH": "true", "RAY_AUTH_MODE": "disabled"})
