@@ -69,7 +69,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 #### Deployment & Infrastructure
 
-- [x] **Kubernetes manifests** — KubeRay `RayCluster` + `RayJob`, gateway `Service`, cache `PVC`, secrets, optional `PodMonitor` (via the Helm chart in `helm/modelship`), with resource requests/limits, GPU scheduling, node affinity, and tolerations per worker group
+- [x] **Kubernetes manifests** — KubeRay `RayCluster`, a deploy `Job`, gateway `Service`, cache `PVC`, secrets, optional `PodMonitor` (via the Helm chart in `helm/modelship`), with resource requests/limits, GPU scheduling, node affinity, and tolerations per worker group
 - [x] **Helm chart** — parameterized deployment in `helm/modelship` (see its README)
 - [x] **Simpler non-K8s deployment** — reframed from "Docker Compose", which orchestrates a single host and can't form a cluster across VMs. Supported path is `mship start` / `mship join` in plain `docker run` containers (see [docs/multi-node-docker.md](multi-node-docker.md)): a few VMs, no orchestrator, joined into one Ray cluster via `mship join --gcs-address` with `MSHIP_RAY_AUTH_TOKEN`. Compose remains a possible single-host wrapper around single-container mode, not planned work.
 - [x] **Liveness/readiness probes in container spec** — KubeRay's health checks (`/api/healthz`) gate each Ray pod's readiness on its raylet (and GCS on the head); `/readyz` returns 503 until all models load, suitable for an external LB/Ingress health check
@@ -97,7 +97,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 - [ ] **Rolling update support** — configure Ray Serve's built-in rolling updates for zero-downtime deploys
 - [x] **Per-model autoscaling** — `autoscaling_config` (min/max replicas, target ongoing requests, up/downscale delays; scale-to-zero supported) scales replica count with load instead of a fixed `num_replicas`
-- [x] **Gateway HA and autoscaling** — every gateway autoscales between `--gateway-min-replicas` and `--gateway-max-replicas` on its ongoing requests per replica; a minimum of 2 or more keeps it HA. Every replica copies its routing table from the gateway coordinator, long-polling for changes, and a Serve proxy on every node lets the gateway Service survive single-pod loss
+- [x] **Gateway HA and autoscaling** — every gateway autoscales between `--gateway-min-replicas` and `--gateway-max-replicas` on its ongoing requests per replica; a minimum of 2 or more keeps it HA. Every replica copies its routing table from the gateway coordinator, long-polling for changes, and a Serve proxy on the head and on every worker hosting a replica, each in the gateway Service only while it answers, lets the Service survive single-pod loss
 - [x] **Self-heal after cluster loss** — each successful deploy commits this gateway's model set to the configured state store (`MSHIP_STATE_STORE`: `redis://`, which the chart always sets; the `memory://` default is cluster-scoped but dies with the cluster). With Redis the gateway self-heals automatically on a head restart; after a full cluster loss `mship deploy --reconcile` (no `--config`, run via `helm upgrade`) redeploys the committed set
 - [x] **Model hot-reload** — allow `models.yaml` changes without full server restart (via `mship deploy --reconcile`)
 - [x] **Changelog** — track breaking changes between versions

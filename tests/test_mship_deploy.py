@@ -322,7 +322,11 @@ _HEAD_SETTINGS = {
 class TestDriverVerbs:
     @pytest.fixture(autouse=True)
     def _isolate(self):
-        with patch.dict(os.environ, {}, clear=False), patch("modelship.driver.signal.signal"):
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("modelship.driver.signal.signal"),
+            patch("modelship.remote.HEAD_WAIT_S", 0),
+        ):
             for key in ("MSHIP_GATEWAY_NAME", "MSHIP_STATE_STORE", *CLUSTER_ENV_DEFAULTS, *GATEWAY_SIZING_ENV_VARS):
                 os.environ.pop(key, None)
             yield
@@ -489,7 +493,46 @@ class TestDriverVerbs:
         with pytest.raises(SystemExit) as exc:
             self._deploy([], existing_apps={"modelship"}, found=False)
         assert exc.value.code == 4
-        assert "no deploy coordinator on this cluster; `mship start` creates it" in capsys.readouterr().err
+        assert "no deploy coordinator on this cluster after 0 min; `mship start` creates it" in capsys.readouterr().err
+
+    def test_waits_for_a_local_node_then_the_deploy_coordinator(self, caplog):
+        from modelship import driver, remote
+        from modelship.deploy import serve_utils
+
+        caplog.set_level(logging.INFO, logger="modelship")
+        coordinator = MagicMock()
+        with (
+            patch.object(remote, "HEAD_WAIT_S", 60),
+            patch.object(driver.time, "sleep") as sleep,
+            patch.object(serve_utils, "local_ray_clusters", side_effect=[set(), set(), {"10.0.0.1:6380"}]),
+            patch.object(serve_utils, "attach_cluster") as attach,
+            patch("modelship.infer.deploy_coordinator.find_coordinator", side_effect=[None, coordinator]),
+            patch.object(driver, "_serve_logging", return_value=(logging.INFO, None)),
+        ):
+            assert driver._attach_when_ready() is coordinator
+        attach.assert_called_once()
+        assert sleep.call_count == 3
+        assert caplog.messages == [
+            "Waiting for a Ray node on this machine.",
+            "Waiting for `mship start` to create the deploy coordinator.",
+        ]
+
+    def test_a_signal_stops_the_wait(self, caplog):
+        from modelship import driver
+        from modelship.deploy import serve_utils
+
+        caplog.set_level(logging.INFO, logger="modelship")
+
+        def interrupted():
+            driver.signal.signal.call_args_list[0].args[1](signal.SIGINT, None)
+
+        with (
+            patch.object(serve_utils, "local_ray_clusters", side_effect=interrupted),
+            pytest.raises(SystemExit) as exc,
+        ):
+            driver._attach_when_ready()
+        assert exc.value.code == 130
+        assert f"Stopped waiting (signal {signal.SIGINT})." in caplog.messages
 
     def test_deploy_sends_to_the_deploy_coordinator_it_found(self):
         deployed = self._deploy([], existing_apps={"modelship"})
@@ -682,6 +725,7 @@ class TestCancelCommand:
             patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator if actor else None),
             patch("ray.get", side_effect=waiting or (lambda value: rolled_back if value == "outcome-ref" else value)),
             patch.object(driver.signal, "signal"),
+            patch("modelship.remote.HEAD_WAIT_S", 0),
         ):
             driver._cancel(parse_args("deploy", ["--cancel", "r1", *argv]))
         return coordinator
@@ -777,9 +821,10 @@ class TestCancelCommand:
         with pytest.raises(SystemExit, match="no Ray cluster"):
             self._cancel({}, clusters=frozenset())
 
-    def test_a_cluster_without_a_deploy_coordinator_has_no_deploy(self):
-        with pytest.raises(SystemExit, match="no deploy r1"):
+    def test_a_cluster_without_a_deploy_coordinator_exits_4(self):
+        with pytest.raises(SystemExit) as exc:
             self._cancel({}, actor=False)
+        assert exc.value.code == 4
 
 
 class TestStopHead:
@@ -1393,11 +1438,12 @@ class TestGatewayRoutePrefix:
 
 
 class TestGatewayFromEnv:
-    def test_a_name_with_a_dot_is_rejected(self, monkeypatch):
+    @pytest.mark.parametrize("name", ["edge.eu", "edge#eu"])
+    def test_a_name_with_a_dot_or_hash_is_rejected(self, monkeypatch, name):
         from modelship import driver
 
-        monkeypatch.setenv("MSHIP_GATEWAY_NAME", "edge.eu")
-        with pytest.raises(SystemExit, match=r"must not contain '\.'"):
+        monkeypatch.setenv("MSHIP_GATEWAY_NAME", name)
+        with pytest.raises(SystemExit, match=r"must not contain '\.' or '#'"):
             driver._gateway_from_env()
 
 
@@ -1498,7 +1544,6 @@ class TestStartHead:
     def test_starts_head_with_metrics_port(self):
         kwargs = self._init_call({"MSHIP_METRICS": "true", "MSHIP_NODE_NUM_CPUS": "4"}, pop=("MSHIP_METRICS_PORT",))
         assert kwargs["num_cpus"] == 4
-        # Guards the private ray.init kwarg that pins Ray's metrics agent port.
         assert kwargs["_metrics_export_port"] == 8079
 
     def test_metrics_port_overridable(self):
@@ -1615,14 +1660,14 @@ class TestStartHead:
         assert "_redis_password" not in kwargs
         assert "_redis_username" not in kwargs
 
-    def test_ray_init_still_takes_the_private_redis_kwargs(self):
+    def test_ray_init_still_takes_the_private_kwargs(self):
         import inspect
 
         import ray
 
         source = inspect.getsource(ray.init)
-        assert '"_redis_password"' in source
-        assert '"_redis_username"' in source
+        for kwarg in ("_memory", "_metrics_export_port", "_redis_password", "_redis_username"):
+            assert f'"{kwarg}"' in source
 
     def test_gcs_port_sets_gcs_server_port(self):
         from modelship.deploy import serve_utils
@@ -1716,17 +1761,19 @@ class TestAttachCluster:
 
 
 class TestLocalRayClusters:
-    def test_reads_the_raylet_scan(self):
+    def test_reads_a_fresh_raylet_scan_each_call(self):
         from modelship.deploy import serve_utils
 
-        with patch("ray._private.services.find_gcs_addresses", return_value={"10.0.0.1:6380"}):
+        with patch("ray._private.services._find_address_from_flag", side_effect=[{"10.0.0.1:6380"}, set()]):
             assert serve_utils.local_ray_clusters() == {"10.0.0.1:6380"}
+            assert serve_utils.local_ray_clusters() == set()
 
     def test_private_ray_scan_still_exists(self):
         # Canary: fails on a Ray bump that moves or reshapes this private helper.
         from ray._private.services import find_gcs_addresses
 
-        assert isinstance(find_gcs_addresses(), set)
+        find_gcs_addresses.cache_clear()
+        assert isinstance(find_gcs_addresses(), frozenset)
 
 
 @pytest.fixture
@@ -2015,6 +2062,7 @@ class TestStartAuthEnv:
             ({"MSHIP_RAY_AUTH_TOKEN": "t"}, ["MSHIP_RAY_AUTH_TOKEN"]),
             ({"RAY_AUTH_TOKEN": "t"}, ["RAY_AUTH_TOKEN"]),
             ({"RAY_AUTH_MODE": "token"}, ["RAY_AUTH_MODE=token"]),
+            ({"RAY_AUTH_MODE": "disabled"}, []),
             ({"MSHIP_RAY_AUTH_TOKEN": "t", "MSHIP_RAY_AUTH": "true"}, []),
             ({}, []),
         ],
@@ -2098,11 +2146,11 @@ class TestResolveRayAuthEnv:
         assert mode == "token"
         assert token == "secret"
 
-    def test_neither_leaves_auth_unset(self):
-        assert self._resolve({}) == (None, None)
+    def test_neither_disables_auth(self):
+        assert self._resolve({}) == ("disabled", None)
 
-    def test_disabled_auth_leaves_auth_unset(self):
-        assert self._resolve({"MSHIP_RAY_AUTH": "false"}) == (None, None)
+    def test_disabled_auth_disables_auth(self):
+        assert self._resolve({"MSHIP_RAY_AUTH": "false"}) == ("disabled", None)
 
     def test_explicit_ray_auth_mode_wins(self):
         mode, _ = self._resolve({"MSHIP_RAY_AUTH": "true", "RAY_AUTH_MODE": "disabled"})
@@ -2111,7 +2159,7 @@ class TestResolveRayAuthEnv:
 
 
 class TestPruneRaySessions:
-    """`prune_ray_sessions` resolves the temp root via Ray's own `get_ray_temp_dir()`
+    """`prune_ray_sessions` resolves the temp root via Ray's own `get_default_ray_temp_dir()`
     (`<RAY_TMPDIR>/ray`), so pointing RAY_TMPDIR at a tmp dir isolates these tests."""
 
     def _temp_root(self, tmp_path):

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """CI check: the chart's pre-delete hook runs `modelship.uninstall` on the release's own
-RayCluster and RayJob, with the same Redis namespace and credentials as the Ray pods."""
+RayCluster, with the same Redis namespace and credentials as the Ray pods."""
 
 from __future__ import annotations
 
@@ -49,17 +49,11 @@ def main() -> int:
             "resourceNames": ["rel"],
             "verbs": ["get", "delete"],
         },
-        {
-            "apiGroups": ["ray.io"],
-            "resources": ["rayjobs"],
-            "resourceNames": ["rel-deploy"],
-            "verbs": ["delete"],
-        },
     ]
     pod = hook["Job/rel-uninstall"]["spec"]["template"]["spec"]
     job = pod["containers"][0]
     assert pod["serviceAccountName"] == "rel-uninstall"
-    assert job["command"] == ["python", "-m", "modelship.uninstall", "rel", "rel-deploy"]
+    assert job["command"] == ["python", "-m", "modelship.uninstall", "rel"]
 
     cluster = docs["RayCluster/rel"]
     head = cluster["spec"]["headGroupSpec"]["template"]["spec"]["containers"][0]
@@ -73,7 +67,7 @@ def main() -> int:
     secret_ref = _env(job["containers"][0])["MSHIP_REDIS_PASSWORD"]["valueFrom"]["secretKeyRef"]
     assert secret_ref == {"name": "rel-secrets", "key": "REDIS_PASSWORD"}, secret_ref
 
-    print("OK: the pre-delete hook deletes this release's RayCluster and RayJob, then its state namespace")
+    print("OK: the pre-delete hook deletes this release's RayCluster, then its state namespace")
     return 0
 
 

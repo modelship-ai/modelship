@@ -1,7 +1,7 @@
-"""Same-box integration test for `mship join --gcs-address` with MSHIP_RAY_AUTH_TOKEN and for `mship start`
-refusing to run beside another node.
+"""Same-box integration test for `mship join --gcs-address` with and without MSHIP_RAY_AUTH_TOKEN and for
+`mship start` refusing to run beside another node.
 
-Its own throwaway head — a bare ray.init(address="local") with token auth, on distinct
+Its own throwaway head — a bare ray.init(address="local"), with token auth or without, on distinct
 ports + RAY_TMPDIR — and only ever signals its own processes, never `ray stop`.
 """
 
@@ -23,6 +23,17 @@ _THROWAWAY_DASHBOARD_PORT = 6481
 _HEAD_SCRIPT = f"""
 import signal, ray
 ray.init(address="local", num_cpus=1, num_gpus=0, dashboard_port={_THROWAWAY_DASHBOARD_PORT})
+signal.pause()
+"""
+
+# Auth as `mship start` resolves it without --enable-ray-auth.
+_NO_AUTH_HEAD_SCRIPT = f"""
+import signal
+from modelship.utils.ray_auth import resolve_ray_auth_env
+resolve_ray_auth_env()
+import ray
+ray.init(address="local", num_cpus=1, num_gpus=0, dashboard_port={_THROWAWAY_DASHBOARD_PORT})
+print("head up", flush=True)
 signal.pause()
 """
 
@@ -127,6 +138,40 @@ def throwaway_head(tmp_path):
                 _terminate_process_group(proc)
         finally:
             shutil.rmtree(head_ray_tmp, ignore_errors=True)
+
+
+@pytest.fixture
+def no_auth_head(tmp_path):
+    """A throwaway head with modelship's auth env unset. Yields (env, its HOME)."""
+    head_home = tmp_path / "head_home"
+    head_home.mkdir()
+    head_ray_tmp = tempfile.mkdtemp(prefix="mship-join-test-head-")
+    env = {
+        **os.environ,
+        "HOME": str(head_home),
+        "RAY_TMPDIR": head_ray_tmp,
+        "PYTHONUNBUFFERED": "1",
+        "RAY_GCS_SERVER_PORT": str(_THROWAWAY_HEAD_PORT),
+    }
+    for key in ("RAY_AUTH_MODE", "RAY_AUTH_TOKEN", "MSHIP_RAY_AUTH", "MSHIP_RAY_AUTH_TOKEN"):
+        env.pop(key, None)
+    log_path = tmp_path / "head.log"
+    with open(log_path, "w") as log_file:
+        proc = subprocess.Popen(
+            ["uv", "run", "python", "-c", _NO_AUTH_HEAD_SCRIPT],
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    try:
+        up = _poll(lambda: proc.poll() is not None or "head up" in log_path.read_text(), deadline_s=60)
+        if not up or proc.poll() is not None:
+            pytest.fail(f"The throwaway head didn't start. Log:\n{log_path.read_text()}")
+        yield env, head_home
+    finally:
+        _terminate_process_group(proc)
+        shutil.rmtree(head_ray_tmp, ignore_errors=True)
 
 
 def _throwaway_head_node_count(env: dict) -> int:
@@ -243,6 +288,38 @@ class TestClusterJoin:
                             proc.wait(timeout=10)
         finally:
             shutil.rmtree(join_ray_tmp, ignore_errors=True)
+
+    def test_a_tokenless_join_to_a_head_without_auth_adds_a_node(self, tmp_path, no_auth_head):
+        head_env, head_home = no_auth_head
+        env, join_ray_tmp, _ = self._joiner_env(tmp_path, "join_home")
+        log_path = tmp_path / "joiner.log"
+        with open(log_path, "w") as log_file:
+            proc = subprocess.Popen(
+                [
+                    *_MSHIP,
+                    "join",
+                    "--gcs-address",
+                    f"127.0.0.1:{_THROWAWAY_HEAD_PORT}",
+                    "--node-num-cpus",
+                    "0",
+                    "--node-num-gpus",
+                    "0",
+                    "--prune-ray-sessions",
+                    "false",
+                ],
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        try:
+            assert _poll(lambda: _throwaway_head_node_count(head_env) == 2, deadline_s=60), (
+                f"joiner did not appear as a second node within timeout. Log:\n{log_path.read_text()}"
+            )
+        finally:
+            _terminate_process_group(proc)
+            shutil.rmtree(join_ray_tmp, ignore_errors=True)
+        assert not (head_home / ".ray" / "auth_token").exists()
 
     def test_start_refuses_while_a_node_runs_here(self, tmp_path, throwaway_head):
         env, start_ray_tmp, config_path = self._joiner_env(tmp_path, "start_home")

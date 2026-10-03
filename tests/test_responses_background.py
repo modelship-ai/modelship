@@ -15,6 +15,7 @@ from modelship.openai.state import responses as responses_state
 from modelship.openai.state.responses import _HeartbeatStore
 from modelship.openai.utils.responses import _StreamBuffer
 from modelship.state import MemoryStoreActor, StateStoreUnavailableError
+from tests.conftest import build_gateway
 
 _ModelshipAPI = ModelshipAPI.func_or_class
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
@@ -80,7 +81,7 @@ def api():
         patch.dict(_ModelshipAPI._handle_response.__globals__, {"configure_logging": lambda: None}),
     ):
         mock_ctx.return_value.app_name = "test-gateway"
-        inst = _ModelshipAPI("test-gateway")
+        inst = build_gateway("test-gateway")
         inst._watch_task = MagicMock()
         inst._state_store = _MemoryStore()
         return inst

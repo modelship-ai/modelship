@@ -5,19 +5,21 @@ multi-model inference server — on Kubernetes via [KubeRay](https://github.com/
 
 The chart brings up a **RayCluster** whose head runs `mship start` and whose
 worker groups run `mship join` — the same commands as a Docker or native install —
-and a **RayJob** that runs `mship deploy` **on** the cluster (KubeRay's
-supported way to run a driver against a RayCluster) and deploy the models
-declared in your `models.yaml`. Re-running (`helm upgrade`) re-applies the config
-additively, or reconciles it when `deploy.reconcile=true`. The RayJob succeeds only
-when the deploy does: a failed deploy is rolled back, and a model waiting for
-capacity keeps the RayJob running until the nodes arrive (cancel it with
+and, for every install, upgrade and rollback, a **Job** that runs
+`mship deploy --ray-dashboard-url` against the head to deploy the models declared in
+your `models.yaml`. Re-running (`helm upgrade`) re-applies the config additively, or
+reconciles it when `deploy.reconcile=true`. The Job succeeds only when the deploy
+does: a failed deploy is rolled back and fails the Job, and a model waiting for
+capacity keeps it running until the nodes arrive (cancel it with
 `mship deploy --cancel ID`, on the head or [from your
 machine](../../docs/install-helm.md#deploy-or-cancel-from-your-machine)).
 
-The head pod turns Ready only once `mship start` is done: its `startupProbe` waits
-for the gateway's `/<gateway>/health`, which start brings up last, after the deploy
-coordinator. So the RayJob, which waits for the head, never reaches one still
-starting, after a head restart included. Readiness and liveness are KubeRay's own.
+The deploy waits up to 5 minutes for the head to finish `mship start`. A deploy that
+finds no head in that time, or loses it mid-deploy, exits 3 or 4 and the Job runs it
+again, up to 3 times; exits 1 and 2 (the deploy failed, a usage error) fail the Job at
+once. The head pod turns Ready only once `mship start` is done: its `startupProbe`
+waits for the gateway's `/<gateway>/health`, which start brings up after the deploy
+coordinator. Readiness and liveness are KubeRay's own.
 
 Each successful deploy commits this gateway's model set, keeping the one before it,
 to a **state store** (see [Head-node HA](#head-node-ha-redis)). Routing is
@@ -65,14 +67,15 @@ helm install mship oci://ghcr.io/modelship-ai/charts/modelship --version <X.Y.Z>
 ```
 
 Because images and model weights take time to pull, raise Helm's timeout:
-`--timeout 20m --wait`. Note that `--wait` does **not** track the RayJob to
-completion — watch `kubectl get rayjob` and the gateway `/readyz` for readiness.
+`--timeout 20m --wait --wait-for-jobs` waits for the deploy Job too. Without
+`--wait-for-jobs`, watch `kubectl get jobs -l app.kubernetes.io/component=deploy` and
+the gateway `/readyz` for readiness.
 
 ## Configure your models
 
 Set `models.config` to your `models.yaml` contents (see `config/examples/` in the
-repo). The deploy RayJob carries its own copy, so each `helm upgrade` applies
-exactly the config it was given.
+repo). Each revision's deploy Job mounts its own copy, from a ConfigMap of the same
+name, so each `helm upgrade` applies exactly the config it was given.
 
 ```yaml
 models:
@@ -100,12 +103,15 @@ secrets:
   and the gateway. Always runs the `thin` image (no torch/vllm, and it advertises
   no CPUs or GPUs) regardless of the cluster-wide `image.variant`, so no model can
   schedule there — override with `head.image.variant` if you genuinely want
-  capacity on the head. The RayJob submitter pod uses the same (thin) image.
+  capacity on the head. The deploy and uninstall Jobs use the same (thin) image.
   KubeRay's `ray.io/overwrite-container-cmd` annotation keeps these commands
   instead of generating `ray start`.
-- **Serve HTTP proxies** — one runs on **every** Ray node (`proxy_location=EveryNode`),
-  not just the head, and the gateway Service load-balances across all of them so
-  ingress survives losing any single pod. Each proxy can route to any gateway
+- **Serve HTTP proxies** — Serve runs one on the head and on every worker hosting a
+  replica (`proxy_location=EveryNode`), and the gateway Service load-balances across
+  them so ingress survives losing any single pod. A worker is Ready only while its
+  proxy answers (a readiness probe on `/-/healthz`), so a worker hosting nothing shows
+  `0/1` and gets no traffic; `kubectl get raycluster` doesn't show `ready` while one
+  does, and nothing in the chart waits on it. Each proxy can route to any gateway
   replica wherever it's scheduled. The gateway autoscales between
   `gateway.autoscaling.minReplicas` and `maxReplicas`; set `minReplicas` to 2 or more
   (with ≥1 worker) for routing/ingress HA. Each replica copies its routing table from
@@ -133,8 +139,8 @@ secrets:
 
 ## Reaching the gateway
 
-The gateway Service load-balances across the `serve` port of every Ray pod. Serve
-runs a proxy only on nodes hosting at least one replica. Check `/readyz`
+The gateway Service load-balances across the `serve` port of every Ready Ray pod: the
+head, and each worker whose Serve proxy answers. Check `/readyz`
 for app-level readiness — it returns 503 until all models are loaded (use it for
 an external LB/Ingress health check). Port-forward for local access, or set
 `service.type=LoadBalancer`:
@@ -198,7 +204,7 @@ helm uninstall modelship
 ```
 
 Uninstall first runs a Job (a pre-delete hook) that:
-1. deletes the deploy RayJob and the RayCluster;
+1. deletes the RayCluster;
 2. waits up to 3 minutes for the RayCluster to go, while KubeRay deletes Ray's keys
    from Redis;
 3. deletes modelship's keys (`modelship/state/<namespace>/*`: deploy versions,
@@ -206,7 +212,7 @@ Uninstall first runs a Job (a pre-delete hook) that:
 
 Nothing of the release stays in Redis; back it up first to keep conversations. If the
 Job fails, Helm stops the uninstall there, and `kubectl logs job/modelship-uninstall`
-says why. `helm uninstall --no-hooks` skips it: the RayJob and modelship's keys stay,
+says why. `helm uninstall --no-hooks` skips it: modelship's keys stay,
 and with a chart-created Secret KubeRay's cleanup can't start, so the RayCluster takes
 5 minutes to go and leaves Ray's keys.
 
@@ -228,9 +234,8 @@ Always on: the head's dashboard listens on the pod network, and its job API runs
 arbitrary code (see the ShadowRay/CVE-2023-48022 background in the main
 [multi-node docs](../../docs/multi-node-docker.md)). The chart sets the
 RayCluster's `authOptions` and passes `--enable-ray-auth` to `mship start`.
-KubeRay gives the same token to the head, every worker group **and** the RayJob
-submitter (the pod that runs `ray job submit` to deploy your `models.yaml`), and
-uses it for its own job-status calls.
+KubeRay gives the same token to the head and every worker group; the deploy Job
+reads it from the same Secret to send `mship deploy` through the dashboard.
 
 KubeRay generates the token once, in a Secret named after the RayCluster, and
 deletes it with the cluster. Read it with:
@@ -256,8 +261,8 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 |-----|---------|---------|
 | `image.repository` / `image.tag` | `ghcr.io/modelship-ai/modelship` / `<app version>` | Stamped to the release version |
 | `image.variant` | `cuda` | `cuda`\|`cpu`\|`thin`. Worker default — appends `-cuda`/`-cpu` to the tag (`thin` is bare). Set `cpu` on CPU-only clusters, or per worker group for a mixed cluster. Does **not** affect the head (see below) |
-| `head.image.variant` | `thin` | The head/RayJob submitter always default to `thin` regardless of `image.variant` above — override only if you genuinely want model capacity on the head |
-| `rayVersion` | `2.54.1` | Must match the Ray in the image |
+| `head.image.variant` | `thin` | The head and the chart's Jobs always default to `thin` regardless of `image.variant` above — override only if you genuinely want model capacity on the head |
+| `rayVersion` | `2.59.0` | Must match the Ray in the image |
 | `models.config` | `models: []` | Your model set |
 | `gateway.autoscaling.minReplicas` / `maxReplicas` | `1` / `4` | Range the API gateway autoscales in; a `minReplicas` of 2 or more (with ≥1 worker) gives routing/ingress HA |
 | `gateway.autoscaling.targetOngoingRequests` | `64` | Ongoing requests per gateway replica that autoscaling aims for |

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from modelship.openai.api import ModelshipAPI
+from tests.conftest import build_gateway
 
 # Access the underlying class, bypassing the @serve.deployment wrapper.
 _ModelshipAPI = ModelshipAPI.func_or_class
@@ -29,7 +30,7 @@ def api():
         patch.dict(_ModelshipAPI._handle_response.__globals__, {"configure_logging": lambda: None}),
     ):
         mock_ctx.return_value.app_name = "test-gateway"
-        inst = _ModelshipAPI("test-gateway")
+        inst = build_gateway("test-gateway")
         inst._watch_task = MagicMock()
         return inst
 

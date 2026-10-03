@@ -38,5 +38,8 @@ def resolve_ray_auth_env() -> None:
     token = os.environ.get("MSHIP_RAY_AUTH_TOKEN")
     if token or auth_enabled():
         os.environ.setdefault("RAY_AUTH_MODE", "token")
+    else:
+        # Unset, Ray enables token auth on a new local cluster, and on an attach that finds a token file.
+        os.environ.setdefault("RAY_AUTH_MODE", "disabled")
     if token:
         os.environ.setdefault("RAY_AUTH_TOKEN", token)

@@ -29,7 +29,7 @@ dependencies = [
     "pydantic>=2.12.0",
     "pydantic-yaml>=1.6.0",
     "python-multipart>=0.0.20",
-    "ray[data,default,serve-grpc]>=2.54.0,<2.55.0",
+    "ray[data,default,serve-grpc]>=2.59.0,<2.60.0",
     "requests>=2.32.5",
     "psutil>=5.9",
     "redis>=8.0.0",
@@ -220,7 +220,7 @@ markers = [
     "gateway_autoscaling: integration test that exercises the gateway scaling out under load",
     "blue_green: integration test that exercises the blue_green replace-strategy cutover",
     "deploy: integration tests that exercise mship deploy end to end (additive, still coming up, two gateways, remote)",
-    "cluster_join: integration test that exercises the --gcs-address multi-node cluster join with a token",
+    "cluster_join: integration test that exercises the --gcs-address multi-node cluster join with and without a token",
     "fractional_gpu_sharing: integration test that exercises two loaders sharing one physical GPU via fractional num_gpus",
     "node_logging: integration test that exercises per-node logging on a replica scheduled on a joined node",
 ]

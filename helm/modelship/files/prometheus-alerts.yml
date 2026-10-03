@@ -161,26 +161,28 @@ groups:
   # your namespace/release. Left here as ready-to-enable starting points.
   - name: modelship-kuberay
     rules:
-      - alert: ModelshipRayWorkerNotReady
+      - alert: ModelshipRayWorkerDown
         expr: |
-          kube_pod_status_ready{condition="true", pod=~".*-worker-.*"} == 0
+          kube_pod_status_phase{phase=~"Pending|Failed|Unknown", pod=~".*-worker-.*"} == 1
+          or kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff", pod=~".*-worker-.*"} == 1
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Ray worker pod not ready ({{ $labels.pod }})"
+          summary: "Ray worker pod down ({{ $labels.pod }})"
           description: >-
-            Ray worker {{ $labels.pod }} has been not-ready for 5m — cluster
-            capacity is degraded.
+            Ray worker {{ $labels.pod }} hasn't been running for 5m — cluster
+            capacity is degraded. A worker hosting no replica is NotReady by
+            design and doesn't count.
 
       - alert: ModelshipDeployJobFailed
         expr: |
-          kube_job_status_failed{job_name=~".*-deploy.*"} > 0
+          kube_job_failed{condition="true", job_name=~".*-deploy.*"} > 0
         for: 0m
         labels:
           severity: critical
         annotations:
-          summary: "Modelship deploy RayJob failed ({{ $labels.job_name }})"
+          summary: "Modelship deploy Job failed ({{ $labels.job_name }})"
           description: >-
-            The deploy RayJob failed — models from the last helm upgrade may not
+            The deploy Job failed — models from the last helm upgrade may not
             be deployed. Check the job logs.

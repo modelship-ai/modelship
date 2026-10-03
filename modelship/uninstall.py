@@ -1,5 +1,5 @@
-"""The chart's pre-delete hook: deletes the release's RayJob and RayCluster, waits for the
-RayCluster to go, then deletes every modelship state key in the release's namespace."""
+"""The chart's pre-delete hook: deletes the release's RayCluster, waits for it to go, then
+deletes every modelship state key in the release's namespace."""
 
 from __future__ import annotations
 
@@ -45,12 +45,10 @@ class KubeApi:
 
 
 def delete_cluster(
-    api: KubeApi, cluster: str, job: str, wait_seconds: float = WAIT_SECONDS, poll_seconds: float = _POLL_SECONDS
+    api: KubeApi, cluster: str, wait_seconds: float = WAIT_SECONDS, poll_seconds: float = _POLL_SECONDS
 ) -> bool:
-    """Deletes the RayJob, then the RayCluster; False if the RayCluster outlives *wait_seconds*."""
-    base = f"/apis/ray.io/v1/namespaces/{api.namespace}"
-    api.status("DELETE", f"{base}/rayjobs/{job}")
-    cluster_path = f"{base}/rayclusters/{cluster}"
+    """Deletes the RayCluster; False if it outlives *wait_seconds*."""
+    cluster_path = f"/apis/ray.io/v1/namespaces/{api.namespace}/rayclusters/{cluster}"
     if api.status("DELETE", cluster_path) == 404:
         return True
     deadline = time.monotonic() + wait_seconds
@@ -75,10 +73,9 @@ def purge_state(store: StateStore) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m modelship.uninstall")
     parser.add_argument("raycluster")
-    parser.add_argument("rayjob")
     args = parser.parse_args(argv)
     configure_logging()
-    if delete_cluster(KubeApi(), args.raycluster, args.rayjob):
+    if delete_cluster(KubeApi(), args.raycluster):
         logger.info("RayCluster %s deleted", args.raycluster)
     else:
         logger.warning("RayCluster %s still present after %ds; deleting state anyway", args.raycluster, WAIT_SECONDS)

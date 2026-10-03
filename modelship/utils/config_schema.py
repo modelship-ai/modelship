@@ -271,6 +271,13 @@ class ModelshipModelConfig(_StrictModel):
         return self
 
     @model_validator(mode="after")
+    def check_name_has_no_hash(self):
+        # Serve rejects '#' in a deployment name, which embeds the model name.
+        if "#" in self.name:
+            raise ValueError(f"name {self.name!r} must not contain '#'")
+        return self
+
+    @model_validator(mode="after")
     def check_model_required(self):
         if not self.model:
             raise ValueError(f"`model:` is required for loader={self.loader!r}")

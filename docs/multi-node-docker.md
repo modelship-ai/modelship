@@ -126,9 +126,10 @@ docker run --rm --env-file mship.env \
 - **Following it:** `--wait` follows the deploy to its outcome. A signal stops
   following; the deploy carries on, and
   `mship deploy --ray-dashboard-url=… --cancel ID` cancels it.
-- **Failing fast:** it exits `3` when no dashboard answers at the URL, or when
-  the dashboard stops answering mid-deploy, and `4` when the head is still
-  inside `mship start`. Nothing is retried: run it again once the head is up.
+- **Waiting for the head:** it waits up to 5 minutes for the dashboard to
+  answer and for `mship start` to finish, then exits `3` (no dashboard) or `4`
+  (no deploy coordinator). It exits `3` at once when the dashboard stops
+  answering mid-deploy, or when the URL answers but isn't a dashboard.
 - **The URL** is the dashboard's (port `8265`), not the GCS address `mship join`
   takes.
 
@@ -136,7 +137,7 @@ docker run --rm --env-file mship.env \
 
 | Port | What | Configurable via |
 |---|---|---|
-| `8000` | Gateway HTTP API (`ProxyLocation.EveryNode` — every node with ≥1 replica runs a proxy) | `--openai-api-port` |
+| `8000` | Gateway HTTP API (`ProxyLocation.EveryNode`: a node runs a proxy only while it hosts a replica, so a load balancer across nodes should health-check `/-/healthz`) | `--openai-api-port` |
 | `8079` | Prometheus metrics | `--metrics-port`; random on a joiner unless set, and listed in the head's service-discovery file either way |
 | `8265` | Ray dashboard (head only); what `mship deploy --ray-dashboard-url` points at | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1`; `start` warns when it's exposed without `--enable-ray-auth`) |
 | GCS (head control plane) | what `mship join --gcs-address` points at | `--gcs-port` (default `6380`) |

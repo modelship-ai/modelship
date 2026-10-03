@@ -37,6 +37,21 @@ def neutralize_request_watcher():
         yield
 
 
+def build_gateway(gateway_name: str):
+    """A ModelshipAPI instance outside Serve, whose ingress wrapper makes __init__ a coroutine."""
+    from modelship.openai.api import ModelshipAPI
+
+    cls = ModelshipAPI.func_or_class
+    inst = cls.__new__(cls)
+    init = inst.__init__(gateway_name)
+    try:
+        init.send(None)
+    except StopIteration:
+        return inst
+    init.close()
+    raise RuntimeError("ModelshipAPI.__init__ awaited; build it in an event loop")
+
+
 # ---------------------------------------------------------------------------
 # Integration suite: real Ray cluster + real models, `@pytest.mark.integration`.
 # ---------------------------------------------------------------------------
@@ -145,6 +160,8 @@ MODEL_CONFIGS: dict[str, dict] = {
             "upscale_delay_s": 2,
             "downscale_delay_s": 10,
         },
+        # Unset, preflight sizes every replica to the full context from the same free RAM.
+        "llama_server_config": {"n_ctx": 4096},
     },
     "chat-llama-server": {
         "name": "chat-llama-server",

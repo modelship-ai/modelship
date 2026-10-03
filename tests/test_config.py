@@ -177,6 +177,12 @@ class TestModelshipModelConfig:
         )
         assert config.chat_template_kwargs == {"enable_thinking": False}
 
+    def test_a_hash_in_the_name_is_rejected(self):
+        with pytest.raises(ValidationError, match="name 'qwen#2' must not contain '#'"):
+            ModelshipModelConfig(
+                name="qwen#2", model="some-org/qwen", usecase=ModelUsecase.generate, loader=ModelLoader.vllm
+            )
+
     def test_model_required(self):
         with pytest.raises(ValidationError, match="`model:` is required for loader"):
             ModelshipModelConfig(

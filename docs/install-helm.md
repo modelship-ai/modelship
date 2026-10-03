@@ -1,9 +1,9 @@
 # Helm / Kubernetes install
 
 The chart brings up a **RayCluster** whose head runs `mship start` and whose
-worker groups run `mship join`, and a **RayJob** that runs `mship deploy` **on**
-the cluster — KubeRay's supported way to run a driver against a RayCluster —
-deploying the models declared in your `models.yaml`.
+worker groups run `mship join`, and, for every install, upgrade and rollback, a
+**Job** that runs `mship deploy --ray-dashboard-url` against the head, deploying the
+models declared in your `models.yaml`.
 
 The [chart README](https://github.com/modelship-ai/modelship/tree/main/helm/modelship)
 is the full values reference; this page covers getting one installed.
@@ -44,12 +44,13 @@ Or from a checkout, after fetching the vendored operator subchart with
 above): `helm install modelship ./helm/modelship -f my-values.yaml`.
 
 Images and model weights take time to pull, so raise Helm's timeout:
-`--timeout 20m --wait`. Note `--wait` does **not** track the RayJob to completion —
-watch `kubectl get rayjob` and the gateway's `/readyz` for readiness.
+`--timeout 20m --wait --wait-for-jobs` waits for the deploy Job too. Without
+`--wait-for-jobs`, watch `kubectl get jobs -l app.kubernetes.io/component=deploy` and
+the gateway's `/readyz` for readiness.
 
 ## Configure your models
 
-Set `models.config` to your `models.yaml` contents; the deploy RayJob carries it:
+Set `models.config` to your `models.yaml` contents; each revision's deploy Job mounts it:
 
 ```yaml
 models:

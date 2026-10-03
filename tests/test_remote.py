@@ -1,6 +1,9 @@
+import http.client
 import inspect
 import json
+import logging
 import os
+import time
 import urllib.error
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -20,12 +23,15 @@ def _info(status, exit_code=None, message=""):
 class _FakeClient:
     """Plays back (info, logs) per poll, per submitted job; an exception entry is raised instead."""
 
-    def __init__(self, *jobs):
+    def __init__(self, *jobs, submit_errors=()):
         self.jobs = [list(polls) for polls in jobs]
+        self.submit_errors = list(submit_errors)
         self.submitted: list[dict] = []
         self._current: list = []
 
     def submit_job(self, **kwargs):
+        if self.submit_errors:
+            raise self.submit_errors.pop(0)
         self.submitted.append(kwargs)
         self._current = self.jobs[len(self.submitted) - 1]
         return f"raysubmit_{len(self.submitted)}"
@@ -41,11 +47,18 @@ class _FakeClient:
         return self._last_logs
 
 
-def _run(client, argv=("--wait",), config_path=None, env=None):
+def _run(client, argv=("--wait",), config_path=None, env=None, connect_errors=()):
+    errors = list(connect_errors)
+
+    def connect(*args, **kwargs):
+        if errors:
+            raise errors.pop(0)
+        return client
+
     with (
         patch.dict(os.environ, env or {}),
-        patch("ray.job_submission.JobSubmissionClient", return_value=client) as make_client,
-        patch.object(remote, "_check_dashboard"),
+        patch("ray.job_submission.JobSubmissionClient", side_effect=connect) as make_client,
+        patch.object(remote, "_wait_for_dashboard"),
         patch.object(remote, "configure_logging"),
         patch.object(remote.time, "sleep"),
         patch.object(remote.signal, "signal"),
@@ -168,11 +181,68 @@ class TestRun:
         with (
             patch.dict(os.environ, {"MSHIP_RAY_AUTH_TOKEN": "wrong"}),
             patch("ray.job_submission.JobSubmissionClient", side_effect=rejected),
-            patch.object(remote, "_check_dashboard"),
+            patch.object(remote, "_wait_for_dashboard"),
             patch.object(remote, "configure_logging"),
             pytest.raises(SystemExit, match="rejected the Ray auth token: check MSHIP_RAY_AUTH_TOKEN"),
         ):
             remote.run(URL, [], None)
+
+    def test_a_5xx_on_submit_is_retried_until_the_dashboard_takes_the_job(self, caplog):
+        caplog.set_level(logging.INFO, logger="modelship")
+        no_agent = RuntimeError("Request failed with status code 500: No available agent to submit job.")
+        unavailable = requests.HTTPError(response=MagicMock(status_code=503))
+        client = _FakeClient(
+            [(_info("SUCCEEDED", 0), "")], submit_errors=[no_agent, unavailable, requests.ConnectionError()]
+        )
+        code, _ = _run(client)
+        assert code == 0
+        assert len(client.submitted) == 1
+        assert [m for m in caplog.messages if m.startswith("Waiting for the Ray dashboard")] == [
+            f"Waiting for the Ray dashboard at {URL} to take the job ({no_agent})."
+        ]
+
+    # Ray's version check, run by the client's constructor and by submit_job, raises the builtin ConnectionError.
+    def test_a_dashboard_down_at_connect_or_submit_is_waited_on(self, caplog):
+        caplog.set_level(logging.INFO, logger="modelship")
+        refused = ConnectionError(f"Failed to connect to Ray at address: {URL}.")
+        client = _FakeClient([(_info("SUCCEEDED", 0), "")], submit_errors=[refused])
+        code, make_client = _run(client, connect_errors=[refused])
+        assert code == 0
+        assert make_client.call_count == 3
+        assert len(client.submitted) == 1
+        assert [m for m in caplog.messages if m.startswith("Waiting for the Ray dashboard")] == [
+            f"Waiting for the Ray dashboard at {URL} to take the job (connection failed)."
+        ]
+
+    def test_a_dashboard_still_down_at_the_deadline_exits_3(self, capsys):
+        refused = ConnectionError(f"Failed to connect to Ray at address: {URL}.")
+        with patch.object(remote, "HEAD_WAIT_S", 0):
+            code, _ = _run(_FakeClient(), connect_errors=[refused])
+        assert code == remote.EXIT_UNREACHABLE
+        assert "didn't take the job within 0 min: connection failed" in capsys.readouterr().err
+
+    def test_a_4xx_on_submit_is_not_retried(self):
+        client = _FakeClient(submit_errors=[RuntimeError("Request failed with status code 400: bad entrypoint")])
+        code, _ = _run(client)
+        assert (
+            code
+            == f"error: the Ray dashboard at {URL} failed the request: Request failed with status code 400: bad entrypoint"
+        )
+
+    def test_a_4xx_on_the_version_check_is_not_retried(self):
+        client = _FakeClient(
+            submit_errors=[requests.HTTPError("400 Client Error", response=MagicMock(status_code=400))]
+        )
+        code, _ = _run(client)
+        assert code == f"error: the Ray dashboard at {URL} failed the request: 400 Client Error"
+        assert client.submitted == []
+
+    def test_submit_gives_up_at_the_deadline(self, capsys):
+        client = _FakeClient(submit_errors=[RuntimeError("Request failed with status code 500: No available agent.")])
+        with patch.object(remote, "HEAD_WAIT_S", 0):
+            code, _ = _run(client)
+        assert code == remote.EXIT_UNREACHABLE
+        assert f"the Ray dashboard at {URL} didn't take the job within 0 min" in capsys.readouterr().err
 
     def test_a_config_over_the_cap_is_refused(self, tmp_path):
         config = tmp_path / "models.yaml"
@@ -196,26 +266,71 @@ class TestRun:
         assert len(client.submitted[0]["metadata"][remote.MODELS_YAML_KEY]) == remote.MAX_MODELS_YAML_JSON_BYTES - 2
 
 
-class TestCheckDashboard:
-    def _check(self, token, body=None, error=None):
+class TestDashboardDown:
+    def _down(self, token=None, body=None, error=None):
         response = MagicMock()
         response.__enter__.return_value = response
         response.read.return_value = json.dumps(body or {}).encode()
         with patch.object(remote.urllib.request, "urlopen", side_effect=error, return_value=response):
-            remote._check_dashboard(URL, token)
+            return remote._dashboard_down(URL, token)
 
     def test_a_token_cluster_without_a_token_is_refused(self):
         with pytest.raises(SystemExit, match="requires its Ray auth token: set MSHIP_RAY_AUTH_TOKEN"):
-            self._check(None, {"authentication_mode": "token"})
+            self._down(None, {"authentication_mode": "token"})
 
-    def test_a_token_cluster_with_a_token_passes(self):
-        self._check("t0k", {"authentication_mode": "token"})
+    def test_a_token_cluster_with_a_token_is_up(self):
+        assert self._down("t0k", {"authentication_mode": "token"}) is None
 
-    def test_a_cluster_without_auth_passes(self):
-        self._check(None, {"authentication_mode": "disabled"})
+    def test_a_cluster_without_auth_is_up(self):
+        assert self._down(None, {"authentication_mode": "disabled"}) is None
 
-    def test_no_dashboard_exits_3_naming_the_gcs_mixup(self, capsys):
+    @pytest.mark.parametrize(
+        ("error", "reason"),
+        [
+            (urllib.error.URLError("Connection refused"), "Connection refused"),
+            (urllib.error.HTTPError(URL, 503, "unavailable", {}, None), "HTTP 503"),
+            (http.client.RemoteDisconnected(), "connection closed"),
+        ],
+        ids=["refused", "5xx", "closed"],
+    )
+    def test_what_may_pass_is_waited_on(self, error, reason):
+        assert self._down(error=error) == reason
+
+    @pytest.mark.parametrize(
+        ("error", "reason"),
+        [
+            (http.client.BadStatusLine("\x00\x00"), "not an HTTP reply"),
+            (urllib.error.HTTPError(URL, 404, "not found", {}, None), "HTTP 404"),
+        ],
+        ids=["gcs_port", "4xx"],
+    )
+    def test_what_wont_pass_exits_3_at_once(self, error, reason, capsys):
         with pytest.raises(SystemExit) as exc:
-            self._check(None, error=urllib.error.URLError("Connection refused"))
+            self._down(error=error)
         assert exc.value.code == remote.EXIT_UNREACHABLE
-        assert "not the GCS address `mship join` takes" in capsys.readouterr().err
+        assert f"({reason})" in capsys.readouterr().err
+
+
+class TestWaitForDashboard:
+    def _wait(self, downs, deadline):
+        with (
+            patch.object(remote, "_dashboard_down", side_effect=downs),
+            patch.object(remote.time, "sleep") as sleep,
+            patch.object(remote.signal, "signal"),
+        ):
+            remote._wait_for_dashboard(URL, None, deadline)
+        return sleep
+
+    def test_waits_until_the_dashboard_answers(self, caplog):
+        caplog.set_level(logging.INFO, logger="modelship")
+        sleep = self._wait(["Connection refused", "Connection refused", None], time.monotonic() + 60)
+        assert sleep.call_count == 2
+        assert caplog.messages == [f"Waiting for the Ray dashboard at {URL} (Connection refused)."]
+
+    def test_gives_up_at_the_deadline_naming_the_gcs_mixup(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            self._wait(["Connection refused"], time.monotonic())
+        assert exc.value.code == remote.EXIT_UNREACHABLE
+        err = capsys.readouterr().err
+        assert "(Connection refused; waited 5 min)" in err
+        assert "not the GCS address `mship join` takes" in err

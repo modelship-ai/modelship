@@ -55,8 +55,8 @@ with a dict: (dict "root" $ "isHead" true) or
 {{- end -}}
 
 {{/*
-The container image reference shared by the Ray head and the RayJob submitter —
-both are coordination-only (no models scheduled there), so both default to `thin`.
+The container image reference shared by the Ray head and the chart's Jobs — none of
+them schedules a model, so all default to `thin`.
 */}}
 {{- define "modelship.image" -}}
 {{- printf "%s:%s" .Values.image.repository (include "modelship.imageTag" (dict "root" . "isHead" true)) -}}

@@ -5,6 +5,7 @@ import asyncio
 import threading
 import time
 from types import SimpleNamespace
+from unittest.mock import create_autospec
 
 import pytest
 from ray.exceptions import RayActorError
@@ -177,8 +178,13 @@ class TestReplicaStates:
                 "g": {"deployments": {"ModelshipAPI": {"replicas": []}}},
             }
         }
+        from ray.serve.context import _get_global_client
+
         client = SimpleNamespace(get_serve_details=lambda: details)
-        monkeypatch.setattr("ray.serve.context._get_global_client", lambda **kwargs: client)
+        # Autospec: a call the real signature rejects fails here too.
+        monkeypatch.setattr(
+            "ray.serve.context._get_global_client", create_autospec(_get_global_client, return_value=client)
+        )
         assert deploy_coordinator._replica_states() == {
             ("g.a-1", "ModelDeployment", "r1"): "RUNNING",
             ("g.a-1", "ModelDeployment", "r2"): "STARTING",
@@ -191,7 +197,7 @@ class TestReplicaStates:
 
         assert hasattr(ServeControllerClient, "get_serve_details")
         assert hasattr(ServeController, "get_serve_instance_details")
-        assert {"replica_id", "state"} <= set(ReplicaDetails.__fields__)
+        assert {"replica_id", "state"} <= set(ReplicaDetails.model_fields)
 
 
 @pytest.mark.asyncio

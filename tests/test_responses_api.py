@@ -22,6 +22,7 @@ from modelship.openai.protocol import ResponsesRequest, create_error_response
 from modelship.openai.protocol.responses import ResponseObject, ResponseOutputMessage, ResponseOutputText, ResponseUsage
 from modelship.openai.utils.responses import ResponsesApiError
 from modelship.state import MemoryStoreActor, StateStoreUnavailableError
+from tests.conftest import build_gateway
 
 _ModelshipAPI = ModelshipAPI.func_or_class
 
@@ -39,7 +40,7 @@ def api():
         patch.dict(_ModelshipAPI._handle_response.__globals__, {"configure_logging": lambda: None}),
     ):
         mock_ctx.return_value.app_name = "test-gateway"
-        inst = _ModelshipAPI("test-gateway")
+        inst = build_gateway("test-gateway")
         # Tests set api.models directly; mark the watch loop started so the routing
         # accessors (_get_handle) don't try to reconcile from a coordinator.
         inst._watch_task = MagicMock()
