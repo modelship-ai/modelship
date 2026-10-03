@@ -63,12 +63,15 @@ def _start(args) -> None:
     from modelship.deploy.serve_utils import local_ray_clusters, start_gateway, start_head, start_serve
     from modelship.infer.deploy_coordinator import get_or_create_coordinator
     from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
-    from modelship.state import reject_inline_password, state_store_env_var
+    from modelship.state import check_state_store_uri, state_store_env_var
     from modelship.utils.runtime_env import cluster_env_vars
 
     gateway_name, route_prefix, _ = _gateway_from_env()
-    reject_inline_password(os.environ.get("MSHIP_STATE_STORE", ""))
-    sizing = gateway_sizing()
+    try:
+        check_state_store_uri()
+        sizing = gateway_sizing()
+    except ValueError as e:
+        sys.exit(f"error: {e}")
     if running := local_ray_clusters():
         sys.exit(
             f"error: a Ray cluster is already running on this machine (GCS at {', '.join(sorted(running))}). "
