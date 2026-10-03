@@ -1438,11 +1438,12 @@ class TestGatewayRoutePrefix:
 
 
 class TestGatewayFromEnv:
-    def test_a_name_with_a_dot_is_rejected(self, monkeypatch):
+    @pytest.mark.parametrize("name", ["edge.eu", "edge#eu"])
+    def test_a_name_with_a_dot_or_hash_is_rejected(self, monkeypatch, name):
         from modelship import driver
 
-        monkeypatch.setenv("MSHIP_GATEWAY_NAME", "edge.eu")
-        with pytest.raises(SystemExit, match=r"must not contain '\.'"):
+        monkeypatch.setenv("MSHIP_GATEWAY_NAME", name)
+        with pytest.raises(SystemExit, match=r"must not contain '\.' or '#'"):
             driver._gateway_from_env()
 
 

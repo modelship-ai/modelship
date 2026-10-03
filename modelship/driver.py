@@ -353,8 +353,8 @@ def _gateway_from_env() -> tuple[str, str, bool]:
 
     explicit = "MSHIP_GATEWAY_NAME" in os.environ
     name = os.environ.get("MSHIP_GATEWAY_NAME", _DEFAULT_GATEWAY_NAME)
-    if "." in name:
-        sys.exit(f"error: --gateway-name {name!r} must not contain '.'")
+    if "." in name or "#" in name:
+        sys.exit(f"error: --gateway-name {name!r} must not contain '.' or '#'")
     os.environ["MSHIP_GATEWAY_NAME"] = name
     return name, gateway_route_prefix(name), explicit
 
