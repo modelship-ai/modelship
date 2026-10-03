@@ -13,6 +13,7 @@ from ray.exceptions import RayActorError
 from starlette.datastructures import Headers, State
 
 from modelship.logging import get_logger
+from modelship.utils import head_node_options
 from modelship.utils.config_schema import (
     AutoscalingConfig,
     ChatTemplateContentFormatOption,
@@ -137,6 +138,7 @@ def get_disconnect_registry():
             get_if_exists=True,
             lifetime="detached",
             namespace="modelship",
+            **head_node_options(),
         ).remote()
     return _disconnect_registry
 
