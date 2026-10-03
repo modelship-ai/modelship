@@ -3,11 +3,13 @@ retype, verbose response shapes, required `model` fields, and
 ImageGenerationRequest without its Diffusers-only knobs."""
 
 from http import HTTPStatus
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
 
 from modelship.openai.protocol import (
+    ChatCompletionRequest,
     EmbeddingCompletionRequest,
     ErrorInfo,
     ErrorResponse,
@@ -156,3 +158,19 @@ def test_image_generation_request_drops_diffusers_knobs():
     dumped = req.model_dump()
     assert "num_inference_steps" not in dumped
     assert "guidance_scale" not in dumped
+
+
+def _literal_values(annotation) -> set:
+    return {value for arg in get_args(annotation) for value in get_args(arg)}
+
+
+def test_chat_request_reasoning_effort_matches_openai():
+    from openai.types.shared import ReasoningEffort
+
+    ours = ChatCompletionRequest.model_fields["reasoning_effort"].annotation
+    assert _literal_values(ours) == _literal_values(ReasoningEffort)
+
+
+def test_chat_request_rejects_an_unknown_reasoning_effort():
+    with pytest.raises(ValidationError):
+        ChatCompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}], reasoning_effort="turbo")

@@ -90,7 +90,7 @@ class ChatCompletionRequest(OpenAIBaseModel):
     top_p: float | None = None
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
-    reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     parallel_tool_calls: bool | None = True
     user: str | None = None
 
