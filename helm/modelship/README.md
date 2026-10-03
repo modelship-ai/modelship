@@ -262,7 +262,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `image.repository` / `image.tag` | `ghcr.io/modelship-ai/modelship` / `<app version>` | Stamped to the release version |
 | `image.variant` | `cuda` | `cuda`\|`cpu`\|`thin`. Worker default — appends `-cuda`/`-cpu` to the tag (`thin` is bare). Set `cpu` on CPU-only clusters, or per worker group for a mixed cluster. Does **not** affect the head (see below) |
 | `head.image.variant` | `thin` | The head and the chart's Jobs always default to `thin` regardless of `image.variant` above — override only if you genuinely want model capacity on the head |
-| `rayVersion` | `2.54.1` | Must match the Ray in the image |
+| `rayVersion` | `2.59.0` | Must match the Ray in the image |
 | `models.config` | `models: []` | Your model set |
 | `gateway.autoscaling.minReplicas` / `maxReplicas` | `1` / `4` | Range the API gateway autoscales in; a `minReplicas` of 2 or more (with ≥1 worker) gives routing/ingress HA |
 | `gateway.autoscaling.targetOngoingRequests` | `64` | Ongoing requests per gateway replica that autoscaling aims for |

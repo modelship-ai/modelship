@@ -118,7 +118,7 @@ def _replica_states() -> dict[tuple[str, str, str], str]:
     """(app, deployment, replica id) -> state, for every replica Serve lists."""
     from ray.serve.context import _get_global_client
 
-    client = _get_global_client(_health_check_controller=True)
+    client = _get_global_client()
     assert client is not None
     details = client.get_serve_details()
     return {
@@ -501,7 +501,7 @@ class DeployCoordinator:
         return self._fatal_errors.pop(deployment_name, None)
 
 
-def find_coordinator():
+def find_coordinator() -> Any:
     """The deploy coordinator's handle, or None when nothing has created it yet."""
     try:
         return ray.get_actor(COORDINATOR_ACTOR_NAME, namespace=COORDINATOR_NAMESPACE)

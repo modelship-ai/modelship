@@ -24,9 +24,9 @@ image:
 # Secrets needed to pull the image (GHCR is public for this project, so usually empty).
 imagePullSecrets: []
 
-# Ray version baked into the image above. KubeRay compares this against the
-# cluster and refuses mismatches — keep it in lockstep with the image.
-rayVersion: "2.54.1"
+# Ray version baked into the image above. KubeRay gates its features on it and never checks the image,
+# so keep it in lockstep with the image.
+rayVersion: "2.59.0"
 
 # -- Optional bootstrap of the KubeRay operator + CRDs as a subchart.
 # OFF by default: cluster-scoped, install-once, needs cluster-admin. Turn on for

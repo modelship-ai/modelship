@@ -37,6 +37,21 @@ def neutralize_request_watcher():
         yield
 
 
+def build_gateway(gateway_name: str):
+    """A ModelshipAPI instance outside Serve, whose ingress wrapper makes __init__ a coroutine."""
+    from modelship.openai.api import ModelshipAPI
+
+    cls = ModelshipAPI.func_or_class
+    inst = cls.__new__(cls)
+    init = inst.__init__(gateway_name)
+    try:
+        init.send(None)
+    except StopIteration:
+        return inst
+    init.close()
+    raise RuntimeError("ModelshipAPI.__init__ awaited; build it in an event loop")
+
+
 # ---------------------------------------------------------------------------
 # Integration suite: real Ray cluster + real models, `@pytest.mark.integration`.
 # ---------------------------------------------------------------------------

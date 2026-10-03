@@ -8,12 +8,12 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import ray
 from ray import serve
-from ray._common.utils import get_ray_temp_dir
+from ray._common.utils import get_default_ray_temp_dir
 from ray.exceptions import AuthenticationError
 from ray.serve.config import HTTPOptions, ProxyLocation
 from ray.serve.schema import ApplicationStatus, LoggingConfig
@@ -133,10 +133,10 @@ def _resolve_node_num_gpus() -> int | None:
     return None
 
 
-def _own_cluster_init_kwargs() -> dict[str, object]:
+def _own_cluster_init_kwargs() -> dict[str, Any]:
     """ray.init kwargs to start our own head. Resources auto-detect when
     MSHIP_NODE_NUM_*/MSHIP_NODE_MEMORY are unset."""
-    kwargs: dict[str, object] = {
+    kwargs: dict[str, Any] = {
         "include_dashboard": True,
         "dashboard_host": os.environ.get("MSHIP_RAY_DASHBOARD_HOST", "127.0.0.1"),
         "resources": node_capability_resources(),
@@ -195,7 +195,7 @@ def prune_ray_sessions() -> None:
     if os.environ.get("MSHIP_PRUNE_RAY_SESSIONS", "true").lower() != "true":
         return
     try:
-        temp_root = Path(get_ray_temp_dir())
+        temp_root = Path(get_default_ray_temp_dir())
         if not temp_root.is_dir():
             return
         removed = 0
@@ -351,7 +351,9 @@ def local_ray_clusters() -> set[str]:
     """GCS addresses of this machine's live Ray nodes, heads and workers, from their raylets' command lines."""
     from ray._private.services import find_gcs_addresses
 
-    return find_gcs_addresses()
+    # Ray caches a non-empty scan for the life of the process.
+    find_gcs_addresses.cache_clear()
+    return set(find_gcs_addresses())
 
 
 def start_head(lib_level: int) -> None:

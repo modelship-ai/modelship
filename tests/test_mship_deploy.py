@@ -1761,17 +1761,19 @@ class TestAttachCluster:
 
 
 class TestLocalRayClusters:
-    def test_reads_the_raylet_scan(self):
+    def test_reads_a_fresh_raylet_scan_each_call(self):
         from modelship.deploy import serve_utils
 
-        with patch("ray._private.services.find_gcs_addresses", return_value={"10.0.0.1:6380"}):
+        with patch("ray._private.services._find_address_from_flag", side_effect=[{"10.0.0.1:6380"}, set()]):
             assert serve_utils.local_ray_clusters() == {"10.0.0.1:6380"}
+            assert serve_utils.local_ray_clusters() == set()
 
     def test_private_ray_scan_still_exists(self):
         # Canary: fails on a Ray bump that moves or reshapes this private helper.
         from ray._private.services import find_gcs_addresses
 
-        assert isinstance(find_gcs_addresses(), set)
+        find_gcs_addresses.cache_clear()
+        assert isinstance(find_gcs_addresses(), frozenset)
 
 
 @pytest.fixture
@@ -2156,7 +2158,7 @@ class TestResolveRayAuthEnv:
 
 
 class TestPruneRaySessions:
-    """`prune_ray_sessions` resolves the temp root via Ray's own `get_ray_temp_dir()`
+    """`prune_ray_sessions` resolves the temp root via Ray's own `get_default_ray_temp_dir()`
     (`<RAY_TMPDIR>/ray`), so pointing RAY_TMPDIR at a tmp dir isolates these tests."""
 
     def _temp_root(self, tmp_path):

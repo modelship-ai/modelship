@@ -24,6 +24,7 @@ from modelship.openai.protocol.chat import ChatCompletionResponseChoice, ChatMes
 from modelship.openai.protocol.responses.schemas import CompactionItem, CompactRequest, CompactResource, ResponseUsage
 from modelship.openai.utils.responses import build_compaction, build_summarization_request
 from modelship.state import MemoryStoreActor
+from tests.conftest import build_gateway
 
 _ModelshipAPI = ModelshipAPI.func_or_class
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
@@ -223,7 +224,7 @@ def api(compaction_key):
         patch.dict(_ModelshipAPI._handle_response.__globals__, {"configure_logging": lambda: None}),
     ):
         mock_ctx.return_value.app_name = "test-gateway"
-        inst = _ModelshipAPI("test-gateway")
+        inst = build_gateway("test-gateway")
         inst._watch_task = MagicMock()
         inst._state_store = _MemoryStore()
         return inst
