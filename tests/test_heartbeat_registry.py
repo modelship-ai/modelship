@@ -6,15 +6,18 @@ wrapper functions are tested against a fake registry handle mimicking Ray's
 ``.remote()`` dispatch, same pattern as `test_disconnect_registry.py`.
 """
 
-from unittest.mock import patch
+import asyncio
+from unittest.mock import MagicMock, patch
 
 import pytest
+from ray.exceptions import RayActorError
 
 from modelship.openai.state import responses as responses_state
-from modelship.openai.state.responses import _HeartbeatStore
+from modelship.openai.state.responses import HeartbeatRegistry, _HeartbeatStore
 from modelship.state import MemoryStoreActor
 
 _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
+_Registry = HeartbeatRegistry.__ray_metadata__.modified_class
 
 
 class TestHeartbeatStore:
@@ -70,6 +73,47 @@ class TestHeartbeatStore:
 
         assert "stale" not in store._entries
         assert store.is_alive("fresh") is True
+
+
+class TestHeartbeatRegistryActor:
+    @pytest.mark.asyncio
+    async def test_an_unknown_key_is_alive_while_the_registry_is_younger_than_its_ttl(self):
+        reg = _Registry(30.0)
+        assert await reg.is_alive("never-seen") is True
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_key_is_stale_once_the_registry_outlives_its_ttl(self):
+        reg = _Registry(30.0)
+        reg._started -= 31.0
+        assert await reg.is_alive("never-seen") is False
+
+    @pytest.mark.asyncio
+    async def test_a_live_key_is_alive_on_an_old_registry(self):
+        reg = _Registry(30.0)
+        reg._started -= 31.0
+        await reg.heartbeat("k1", "req-1")
+        assert await reg.is_alive("k1") is True
+
+
+class TestGetHeartbeatRegistry:
+    def test_creates_the_registry_on_the_head(self, monkeypatch):
+        monkeypatch.setattr(responses_state, "_heartbeat_registry", None)
+        options = MagicMock()
+        with patch.object(HeartbeatRegistry, "options", options):
+            responses_state.get_heartbeat_registry()
+        assert options.call_args.kwargs["resources"] == {"node:__internal_head__": 0.001}
+
+    @pytest.mark.asyncio
+    async def test_a_dead_registry_drops_the_cached_handle(self, monkeypatch):
+        dead = MagicMock()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        fut.set_exception(RayActorError())
+        dead.is_alive.remote.return_value = fut
+        monkeypatch.setattr(responses_state, "_heartbeat_registry", dead)
+
+        with pytest.raises(RayActorError):
+            await responses_state.is_alive("u1", "resp_1")
+        assert responses_state._heartbeat_registry is None
 
 
 class _FakeHeartbeatRegistry:

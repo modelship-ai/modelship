@@ -29,9 +29,11 @@ from collections.abc import Callable
 from typing import cast
 
 import ray
+from ray.exceptions import RayActorError
 
 from modelship.logging import get_logger
 from modelship.state import StateStore
+from modelship.utils import head_node_options
 
 logger = get_logger("api")
 
@@ -141,12 +143,15 @@ class HeartbeatRegistry:
 
     def __init__(self, ttl_seconds: float):
         self._store = _HeartbeatStore(ttl_seconds)
+        self._ttl = ttl_seconds
+        self._started = time.monotonic()
 
     async def heartbeat(self, key: str, req_id: str) -> None:
         self._store.heartbeat(key, req_id)
 
     async def is_alive(self, key: str) -> bool:
-        return self._store.is_alive(key)
+        # Younger than the TTL, this registry may have replaced one that held the key.
+        return self._store.is_alive(key) or time.monotonic() - self._started < self._ttl
 
     async def req_id(self, key: str) -> str | None:
         return self._store.req_id(key)
@@ -165,24 +170,40 @@ def get_heartbeat_registry():
             get_if_exists=True,
             lifetime="detached",
             namespace="modelship",
+            **head_node_options(),
         ).remote(stale_seconds())
     return _heartbeat_registry
 
 
+def reset_heartbeat_registry() -> None:
+    """Drop the cached handle so the next get_heartbeat_registry() re-resolves the named actor."""
+    global _heartbeat_registry
+    _heartbeat_registry = None
+
+
+async def _call_registry(method: str, *args):
+    try:
+        return await getattr(get_heartbeat_registry(), method).remote(*args)
+    except RayActorError:
+        # The next call resolves (or creates) its replacement.
+        reset_heartbeat_registry()
+        raise
+
+
 async def heartbeat(identity: str, response_id: str, req_id: str) -> None:
     """Refresh (or create) the liveness entry for this background run."""
-    await get_heartbeat_registry().heartbeat.remote(_key(identity, response_id), req_id)
+    await _call_registry("heartbeat", _key(identity, response_id), req_id)
 
 
 async def is_alive(identity: str, response_id: str) -> bool:
     """Whether this background run has refreshed its heartbeat within ``stale_seconds()``."""
-    return await get_heartbeat_registry().is_alive.remote(_key(identity, response_id))
+    return await _call_registry("is_alive", _key(identity, response_id))
 
 
 async def req_id_for(identity: str, response_id: str) -> str | None:
     """The request id to signal in ``DisconnectRegistry`` to cancel this run's
     in-flight inference, or ``None`` if it has no live heartbeat entry."""
-    return await get_heartbeat_registry().req_id.remote(_key(identity, response_id))
+    return await _call_registry("req_id", _key(identity, response_id))
 
 
 def _key(identity: str, response_id: str) -> str:
