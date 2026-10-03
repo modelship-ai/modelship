@@ -29,6 +29,7 @@ __all__ = [
     "MemoryStoreActor",
     "StateStore",
     "StateStoreUnavailableError",
+    "check_state_store_uri",
     "get_state_store",
     "reject_inline_password",
     "resolve_state_store_uri",
@@ -176,7 +177,7 @@ def state_store_from_uri(uri: str) -> StateStore:
     scheme = parsed.scheme or parsed.path
     builder = _BUILDERS.get(scheme)
     if builder is None:
-        raise ValueError(f"unknown state-store scheme {scheme!r}; known: {sorted(_BUILDERS)}")
+        raise ValueError(f"{_STATE_STORE_ENV} has an unknown scheme {scheme!r}; use one of: {', '.join(_BUILDERS)}")
     return _InstrumentedStateStore(builder(parsed), backend=scheme)
 
 
@@ -219,6 +220,12 @@ def resolve_state_store_uri() -> str:
     expanded = os.path.expandvars(uri)
     password = os.environ.get(REDIS_PASSWORD_ENV)
     return _with_password(expanded, password) if password else expanded
+
+
+def check_state_store_uri() -> None:
+    """Raise ValueError for a MSHIP_STATE_STORE this node can't use. Builds the store, connects to nothing."""
+    reject_inline_password(os.environ.get(_STATE_STORE_ENV, ""))
+    get_state_store()
 
 
 def get_state_store() -> StateStore:
