@@ -448,6 +448,7 @@ class TestDriverVerbs:
         [
             ("bogus://x", "unknown scheme 'bogus'"),
             ("redis://:pw@cache:6379/0", "must not contain a password"),
+            ("redis://cache:not-a-port/0", "not a valid Redis URL: Port could not be cast"),
             ("redis://${MSHIP_TEST_UNSET_HOST}:6379/0", "MSHIP_TEST_UNSET_HOST"),
         ],
     )

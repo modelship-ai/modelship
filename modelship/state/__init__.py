@@ -151,6 +151,8 @@ def _build_memory(parsed: ParseResult) -> StateStore:
 
 def _build_redis(parsed: ParseResult) -> StateStore:
     # Hand the URL minus `namespace` back to redis-py (it parses host/port/db/user/password/TLS).
+    from redis.connection import parse_url
+
     from modelship.state.redis import RedisStateStore
 
     query = parse_qs(parsed.query, keep_blank_values=True)
@@ -158,6 +160,11 @@ def _build_redis(parsed: ParseResult) -> StateStore:
     if len(namespaces) > 1:
         raise ValueError(f"state-store URI sets namespace more than once: {namespaces}")
     url = parsed._replace(query=urlencode(query, doseq=True)).geturl()
+    try:
+        # The clients parse it only on their first operation.
+        parse_url(url)
+    except ValueError as e:
+        raise ValueError(f"{_STATE_STORE_ENV} is not a valid Redis URL: {e}") from None
     return RedisStateStore(url, namespace=namespaces[0] if namespaces else None)
 
 
