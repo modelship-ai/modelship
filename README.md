@@ -48,7 +48,7 @@ mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
   --usecase generate --num-gpus 1
 ```
 
-Wait for `Deployed app 'modelship' successfully`, then talk to it — this hits the **Responses API** and streams the model's reasoning as it thinks:
+Wait for the `Deploy … succeeded` log line, then talk to it — this hits the **Responses API** and streams the model's reasoning as it thinks:
 
 ```bash
 uvx --with httpx llm openai endpoint http://localhost:8000/modelship/v1 \

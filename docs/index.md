@@ -48,7 +48,7 @@ One command, one model. Pick your hardware.
       --usecase generate --num-gpus 1
     ```
 
-Wait for `Deployed app 'modelship' successfully`, then talk to it — this hits
+Wait for the `Deploy … succeeded` log line, then talk to it — this hits
 the **Responses API** and streams the model's reasoning as it thinks:
 
 ```bash

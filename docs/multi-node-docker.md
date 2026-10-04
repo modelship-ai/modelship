@@ -37,7 +37,9 @@ VM A becomes the head (control plane + gateway; no models scheduled there) and
 uses the **thin** (bare-tag) image — no torch/vllm needed for that role. VM B
 joins it as a GPU worker on the `-cuda` tag. Every node in a multi-node cluster
 must share the same version, even across variants — pin all of them to the
-identical `X.Y.Z` release.
+identical `X.Y.Z` release. Replace `X.Y.Z` in every command below with the
+release you are installing (see the
+[releases](https://github.com/modelship-ai/modelship/releases)).
 
 Generate the cluster's Ray auth token once, into an env file that every
 container gets. A token never goes on a command line, where `ps` and shell
@@ -56,7 +58,7 @@ docker run -d --network=host --shm-size=8g \
   -v ./models-cache:/.cache \
   -e MSHIP_STATE_STORE=redis://your-redis-host:6379/0 \
   -e HF_TOKEN=your_token_here \
-  ghcr.io/modelship-ai/modelship:0.6.5 start \
+  ghcr.io/modelship-ai/modelship:X.Y.Z start \
   --config=/models.yaml --enable-ray-auth --gcs-port=6380
 ```
 
@@ -76,7 +78,7 @@ docker run -d --network=host --shm-size=8g --gpus all \
   --env-file mship.env \
   -v ./models-cache:/.cache \
   -e HF_TOKEN=your_token_here \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
+  ghcr.io/modelship-ai/modelship:X.Y.Z-cuda join \
   --gcs-address=<vm-a-private-ip>:6380
 ```
 
@@ -113,7 +115,7 @@ Then, from any machine on that network:
 ```bash
 docker run --rm --env-file mship.env \
   -v ./models.yaml:/models.yaml \
-  ghcr.io/modelship-ai/modelship:0.6.5 deploy \
+  ghcr.io/modelship-ai/modelship:X.Y.Z deploy \
   --ray-dashboard-url=http://<vm-a-private-ip>:8265 --config=/models.yaml --wait
 ```
 
@@ -228,13 +230,13 @@ another Ray node.
 docker run -d --network=host --shm-size=8g \
   -v ./cluster-a/models.yaml:/models.yaml \
   -v ./cluster-a/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 start --config=/models.yaml \
+  ghcr.io/modelship-ai/modelship:X.Y.Z start --config=/models.yaml \
   --gcs-port=6380 --openai-api-port=8000 --ray-dashboard-port=8265 --metrics-port=8079
 
 docker run -d --network=host --shm-size=8g \
   -v ./cluster-b/models.yaml:/models.yaml \
   -v ./cluster-b/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 start --config=/models.yaml \
+  ghcr.io/modelship-ai/modelship:X.Y.Z start --config=/models.yaml \
   --gcs-port=6381 --openai-api-port=8001 --ray-dashboard-port=8266 --metrics-port=8089
 ```
 
@@ -253,12 +255,12 @@ cluster's resource ledger is independent and has no visibility into the other's:
 ```bash
 # Joins cluster A
 docker run -d --network=host --gpus device=0 \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
+  ghcr.io/modelship-ai/modelship:X.Y.Z-cuda join \
   --gcs-address=<cluster-a-head>:6380 --node-num-gpus=1
 
 # Joins cluster B — same physical GPU, different cluster
 docker run -d --network=host --gpus device=0 \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
+  ghcr.io/modelship-ai/modelship:X.Y.Z-cuda join \
   --gcs-address=<cluster-b-head>:6380 --node-num-gpus=1
 ```
 
