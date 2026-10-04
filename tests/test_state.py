@@ -352,7 +352,7 @@ class TestStateStoreFromUri:
             state_store_from_uri("memory:///foo")
 
     def test_file_scheme_no_longer_supported(self):
-        with pytest.raises(ValueError, match="unknown state-store scheme"):
+        with pytest.raises(ValueError, match="MSHIP_STATE_STORE has an unknown scheme 'file'"):
             state_store_from_uri("file:///tmp/mship-state-test")
 
     def test_redis_scheme_builds_redis_store(self):
@@ -376,7 +376,7 @@ class TestStateStoreFromUri:
             state_store_from_uri("redis://cache:6379/0?namespace=")
 
     def test_unknown_scheme_raises(self):
-        with pytest.raises(ValueError, match="unknown state-store scheme"):
+        with pytest.raises(ValueError, match="unknown scheme 'postgres'; use one of: memory, redis, rediss"):
             state_store_from_uri("postgres://host/db")
 
     def test_get_state_store_defaults_to_memory(self, monkeypatch):

@@ -29,6 +29,7 @@ __all__ = [
     "MemoryStoreActor",
     "StateStore",
     "StateStoreUnavailableError",
+    "check_state_store_uri",
     "get_state_store",
     "reject_inline_password",
     "resolve_state_store_uri",
@@ -150,6 +151,8 @@ def _build_memory(parsed: ParseResult) -> StateStore:
 
 def _build_redis(parsed: ParseResult) -> StateStore:
     # Hand the URL minus `namespace` back to redis-py (it parses host/port/db/user/password/TLS).
+    from redis.connection import parse_url
+
     from modelship.state.redis import RedisStateStore
 
     query = parse_qs(parsed.query, keep_blank_values=True)
@@ -157,6 +160,11 @@ def _build_redis(parsed: ParseResult) -> StateStore:
     if len(namespaces) > 1:
         raise ValueError(f"state-store URI sets namespace more than once: {namespaces}")
     url = parsed._replace(query=urlencode(query, doseq=True)).geturl()
+    try:
+        # The clients parse it only on their first operation.
+        parse_url(url)
+    except ValueError as e:
+        raise ValueError(f"{_STATE_STORE_ENV} is not a valid Redis URL: {e}") from None
     return RedisStateStore(url, namespace=namespaces[0] if namespaces else None)
 
 
@@ -176,7 +184,7 @@ def state_store_from_uri(uri: str) -> StateStore:
     scheme = parsed.scheme or parsed.path
     builder = _BUILDERS.get(scheme)
     if builder is None:
-        raise ValueError(f"unknown state-store scheme {scheme!r}; known: {sorted(_BUILDERS)}")
+        raise ValueError(f"{_STATE_STORE_ENV} has an unknown scheme {scheme!r}; use one of: {', '.join(_BUILDERS)}")
     return _InstrumentedStateStore(builder(parsed), backend=scheme)
 
 
@@ -219,6 +227,12 @@ def resolve_state_store_uri() -> str:
     expanded = os.path.expandvars(uri)
     password = os.environ.get(REDIS_PASSWORD_ENV)
     return _with_password(expanded, password) if password else expanded
+
+
+def check_state_store_uri() -> None:
+    """Raise ValueError for a MSHIP_STATE_STORE this node can't use. Builds the store, connects to nothing."""
+    reject_inline_password(os.environ.get(_STATE_STORE_ENV, ""))
+    get_state_store()
 
 
 def get_state_store() -> StateStore:

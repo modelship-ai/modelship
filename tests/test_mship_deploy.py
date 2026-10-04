@@ -438,7 +438,28 @@ class TestDriverVerbs:
         os.environ["MSHIP_GATEWAY_MIN_REPLICAS"] = "0"
         with (
             patch.object(serve_utils, "start_head") as mock_start_head,
-            pytest.raises(ValueError, match="MSHIP_GATEWAY_MIN_REPLICAS"),
+            pytest.raises(SystemExit, match=r"^error: MSHIP_GATEWAY_MIN_REPLICAS"),
+        ):
+            driver._start(parse_args("start", []))
+        mock_start_head.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "uri, match",
+        [
+            ("bogus://x", "unknown scheme 'bogus'"),
+            ("redis://:pw@cache:6379/0", "must not contain a password"),
+            ("redis://cache:not-a-port/0", "not a valid Redis URL: Port could not be cast"),
+            ("redis://${MSHIP_TEST_UNSET_HOST}:6379/0", "MSHIP_TEST_UNSET_HOST"),
+        ],
+    )
+    def test_start_refuses_a_bad_state_store_before_starting_its_head(self, uri, match):
+        from modelship import driver
+        from modelship.deploy import serve_utils
+
+        os.environ["MSHIP_STATE_STORE"] = uri
+        with (
+            patch.object(serve_utils, "start_head") as mock_start_head,
+            pytest.raises(SystemExit, match=f"^error: .*{match}"),
         ):
             driver._start(parse_args("start", []))
         mock_start_head.assert_not_called()
