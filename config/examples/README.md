@@ -1,6 +1,6 @@
 # Example configs
 
-Ready-to-run `models.yaml` configs for common scenarios. Pass one with `--config`; the images also carry them under `/modelship/config/examples/`.
+Example `models.yaml` configs; the images also carry them under `/modelship/config/examples/`. The files named after a loader show the different ways to declare a model for it (a Hub reference, a single file, a local path), so take the entries you need instead of deploying the file whole. `full-stack.yaml` and `mini-pc.yaml` are complete stacks: pass either with `--config` as it is.
 
 | File | What it runs | Hardware |
 |---|---|---|
@@ -21,7 +21,7 @@ Example:
 docker run --rm --shm-size=8g \
   -v ./models-cache:/.cache \
   -p 8000:8000 \
-  ghcr.io/modelship-ai/modelship:latest-cpu start --config /modelship/config/examples/llama-server.yaml
+  ghcr.io/modelship-ai/modelship:latest-cpu start --config /modelship/config/examples/mini-pc.yaml
 ```
 
 See [../../docs/model-configuration.md](../../docs/model-configuration.md) for the full field reference.
