@@ -98,12 +98,15 @@ class TestBackendDied:
 
     def test_a_fixed_replica_count_is_the_ceiling(self, harness):
         with pytest.raises(_ExitError):
-            _infer(num_replicas=3).backend_died("engine core died")
+            _infer(num_replicas=3, vllm_engine_kwargs={"max_model_len": 4096}).backend_died("engine core died")
         assert _report(harness).args[1] == 3
 
     def test_autoscaling_reports_its_max(self, harness):
         with pytest.raises(_ExitError):
-            _infer(autoscaling_config={"min_replicas": 1, "max_replicas": 6}).backend_died("engine core died")
+            _infer(
+                autoscaling_config={"min_replicas": 1, "max_replicas": 6},
+                vllm_engine_kwargs={"max_model_len": 4096},
+            ).backend_died("engine core died")
         assert _report(harness).args[1] == 6
 
 

@@ -526,7 +526,8 @@ class TestFingerprint:
 
     def test_unaffected_by_num_replicas(self):
         # Replica count is a Ray Serve in-place rebind, not a config drift.
-        assert self._cfg(num_replicas=1).fingerprint() == self._cfg(num_replicas=4).fingerprint()
+        fixed = {"vllm_engine_kwargs": {"max_model_len": 4096}}
+        assert self._cfg(num_replicas=1, **fixed).fingerprint() == self._cfg(num_replicas=4, **fixed).fingerprint()
 
     def test_changes_when_loader_differs(self):
         assert (
@@ -577,6 +578,7 @@ class TestNumReplicas:
             usecase=ModelUsecase.generate,
             loader=ModelLoader.vllm,
             num_replicas=3,
+            vllm_engine_kwargs={"max_model_len": 4096},
         )
         assert config.num_replicas == 3
 
@@ -588,6 +590,7 @@ class TestAutoscalingConfig:
             model="some-model",
             usecase=ModelUsecase.generate,
             loader=ModelLoader.vllm,
+            vllm_engine_kwargs={"max_model_len": 4096},
         )
         base.update(overrides)
         return ModelshipModelConfig(**base)
@@ -653,6 +656,47 @@ class TestAutoscalingConfig:
         b = self._model(autoscaling_config={"min_replicas": 3, "max_replicas": 9})
         plain = self._model()
         assert a.fingerprint() == b.fingerprint() == plain.fingerprint()
+
+
+class TestReplicasShareAContextLength:
+    def _model(self, loader=ModelLoader.vllm, **overrides):
+        base = dict(name="test", model="some-model", usecase=ModelUsecase.generate, loader=loader)
+        base.update(overrides)
+        return ModelshipModelConfig(**base)
+
+    @pytest.mark.parametrize(
+        "scaling",
+        [
+            {"num_replicas": 2},
+            {"autoscaling_config": {"min_replicas": 1, "max_replicas": 4}},
+            {"autoscaling_config": {"min_replicas": 0, "max_replicas": 1}},
+        ],
+    )
+    def test_vllm_without_max_model_len_rejected(self, scaling):
+        with pytest.raises(ValidationError, match=r"needs vllm_engine_kwargs\.max_model_len set"):
+            self._model(**scaling)
+
+    def test_vllm_with_max_model_len_accepted(self):
+        assert self._model(num_replicas=2, vllm_engine_kwargs={"max_model_len": 8192}).num_replicas == 2
+
+    @pytest.mark.parametrize("llama_server_config", [None, {}, {"parallel": 2}, {"n_ctx": 0}])
+    def test_llama_server_without_n_ctx_rejected(self, llama_server_config):
+        with pytest.raises(ValidationError, match=r"needs llama_server_config\.n_ctx \(above 0\) set"):
+            self._model(loader=ModelLoader.llama_server, num_replicas=2, llama_server_config=llama_server_config)
+
+    def test_llama_server_with_n_ctx_accepted(self):
+        config = self._model(loader=ModelLoader.llama_server, num_replicas=2, llama_server_config={"n_ctx": 4096})
+        assert config.num_replicas == 2
+
+    def test_a_single_replica_needs_no_context_length(self):
+        self._model()
+        self._model(loader=ModelLoader.llama_server)
+
+    def test_loaders_without_a_context_length_are_exempt(self):
+        config = self._model(
+            loader=ModelLoader.sherpa_onnx, model="kokoro-en-v0_19", usecase=ModelUsecase.tts, num_replicas=2
+        )
+        assert config.num_replicas == 2
 
 
 def _repo_yaml_configs() -> list[Path]:
