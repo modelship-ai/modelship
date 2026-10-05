@@ -63,7 +63,7 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
     # *-zh.fst rule files are unused optional extras, left out on purpose.
     "kokoro-multi-lang-v1_0": SherpaOnnxRegistryEntry(
         tarball_url=f"{_RELEASE_BASE}/kokoro-multi-lang-v1_0.tar.bz2",
-        sha256="c133d26353d776da730870dac7da07dbfc9a5e3bc80cc5e8e83ab6e823be7046",
+        sha256="c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298",
         family="kokoro",
         usecase="tts",
         files={
@@ -132,6 +132,8 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
             "zm_yunxi",
             "zm_yunxia",
             "zm_yunyang",
+            # sid 53 in the bundle, out of alphabetical order
+            "em_santa",
         ),
     ),
 }

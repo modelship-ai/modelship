@@ -516,7 +516,7 @@ Runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Pyt
 | Name | Speakers | Notes |
 |---|---|---|
 | `kokoro-en-v0_19` | 11 | English only. Includes `af_bella` |
-| `kokoro-multi-lang-v1_0` | 53 | English, Mandarin, Japanese, and more. Includes `af_bella` and `af_heart` |
+| `kokoro-multi-lang-v1_0` | 54 | English, Mandarin, Japanese, and more. Includes `af_bella` and `af_heart` |
 
 ```yaml
 models:
