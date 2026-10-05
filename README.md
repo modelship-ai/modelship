@@ -78,7 +78,7 @@ The response carries both `output_text` and a first-class `reasoning` output ite
 
 `/v1/responses` is tested against the independent [Open Responses](https://github.com/openresponses/openresponses) compliance suite (`bun run test:compliance`), which drives the endpoint over real HTTP against a live deployment rather than mocks.
 
-**Latest result: 17/17** — every core, compaction, vision, and WebSocket test (`gemma-4-12B-it` QAT w4a16, vLLM, 2026-08-24).
+**Latest result: 17/17** — every core, compaction, vision, and WebSocket test (`Qwen3-VL-8B-Instruct` AWQ 4-bit, vLLM, 2026-10-04).
 
 **Loader parity, 2026-09-10** (suite `92c12d9`): the `vllm` and `llama_server` loaders return the same verdict on all 17 tests, across a text pair (`Qwen2.5-7B-Instruct` AWQ vs. its Q4_K_M GGUF) and a vision pair (`Qwen2.5-VL-3B-Instruct` safetensors vs. GGUF + mmproj) — four runs, no divergence. Each loader passes all 17 across the pair; neither model passes all 17 alone, since `image-input` needs a vision model and `tool-calling` needs a stronger one than the 3B.
 

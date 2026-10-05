@@ -1,6 +1,6 @@
 # Example configs
 
-Ready-to-run `models.yaml` configs for common scenarios. Pass one with `--config`; the images also carry them under `/modelship/config/examples/`.
+Ready-to-run `models.yaml` configs for common scenarios. Pass one with `--config`; the images also carry them under `/modelship/config/examples/`. Entries that need a model file of your own, or a GPU and a very large download, are commented out.
 
 | File | What it runs | Hardware |
 |---|---|---|

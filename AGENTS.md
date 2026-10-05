@@ -115,7 +115,8 @@ Commit messages matter: use Conventional Commits prefixes so the changelog gener
 
   Floating tags (`:latest*`) are single-node only — Ray refuses to form a cluster across mismatched
   versions, so any multi-node deployment pins every node to the same `X.Y.Z` (or `-cuda`/`-cpu`) tag.
-  A thin container bakes `MSHIP_NODE_NUM_CPUS=0`/`MSHIP_NODE_NUM_GPUS=0` so it never advertises
+  For the thin variant the bootstrapper sets `MSHIP_NODE_NUM_CPUS=0`/`MSHIP_NODE_NUM_GPUS=0` when it
+  launches the engine (they are not image `ENV`), so a thin container never advertises
   capacity it can't serve — it's a driver/coordinator role, not a compute node.
 
 ## Further reading

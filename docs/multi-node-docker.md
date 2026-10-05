@@ -67,7 +67,8 @@ default, which collides with the Redis state store above under host
 networking) — passed explicitly here only for clarity.
 
 Without `MSHIP_RAY_AUTH_TOKEN`, `--enable-ray-auth` has Ray generate a token
-inside the container (`docker exec <head-container> cat ~/.ray/auth_token`),
+inside the container
+(`docker exec <head-container> cat /home/modelship/.ray/auth_token`),
 and a new head container gets a new one. `mship deploy` against this cluster
 needs `MSHIP_RAY_AUTH_TOKEN` in its environment too, on whichever node it runs.
 
@@ -90,6 +91,10 @@ their own. To change the model set, run `mship deploy` on any node of the
 cluster, or [from another machine](#deploy-from-another-machine). A failed
 deploy is rolled back and leaves the last committed model set in place; fix the
 config and deploy again.
+
+To take a node out, stop its container with a longer timeout than Docker's
+default 10 seconds (`docker stop -t 60 <container>`), so it has time to leave
+the cluster before Docker kills it.
 
 **`MSHIP_RAY_AUTH_TOKEN` only means anything if the head runs `--enable-ray-auth`**
 (`start` refuses the token without it). Joining
@@ -143,7 +148,7 @@ docker run --rm --env-file mship.env \
 | `8079` | Prometheus metrics | `--metrics-port`; random on a joiner unless set, and listed in the head's service-discovery file either way |
 | `8265` | Ray dashboard (head only); what `mship deploy --ray-dashboard-url` points at | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1`; `start` warns when it's exposed without `--enable-ray-auth`) |
 | GCS (head control plane) | what `mship join --gcs-address` points at | `--gcs-port` (default `6380`) |
-| `10002–19999` + node/object manager | Ray's dynamic worker range | not configurable; open the range between fleet nodes |
+| OS-assigned (Linux default `32768–60999`) | Ray's node manager, object manager, per-node agents and every worker process | not configurable; open the nodes' ephemeral range (`net.ipv4.ip_local_port_range`) between fleet nodes |
 
 Open cluster ports **only between fleet nodes** on the private network. From
 outside that network, only `8000` (the gateway) should be reachable at all,

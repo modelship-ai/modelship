@@ -11,8 +11,9 @@ models:
     loader: "sherpa_onnx"
     num_cpus: 2
 
-  - name: "kokoro-local"
-    model: "/models/kokoro-en-v0_19"
-    usecase: "tts"
-    loader: "sherpa_onnx"
-    num_cpus: 2
+  # A bundle on local disk: uncomment and point `model` at its directory.
+  # - name: "kokoro-local"
+  #   model: "/models/kokoro-en-v0_19"
+  #   usecase: "tts"
+  #   loader: "sherpa_onnx"
+  #   num_cpus: 2

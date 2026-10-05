@@ -62,6 +62,13 @@ model needs no config file at all — see [Quick start](index.md#quick-start).
     disk-backed storage instead of `/dev/shm` if the container's shared
     memory is too small for the object store.
 
+!!! note "Stopping a node"
+    `docker stop` sends `SIGTERM`, waits 10 seconds, then kills the container.
+    A node serving a vLLM model takes longer than that to shut down (around 15
+    seconds with one small model), so stop it with `docker stop -t 60
+    <container>`, or start it with `--stop-timeout 60`. A container killed
+    mid-shutdown exits `137`.
+
 ## Inspecting an image
 
 ```bash

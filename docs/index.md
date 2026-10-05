@@ -94,7 +94,7 @@ suite (`bun run test:compliance`), which drives the endpoint over real HTTP
 against a live deployment rather than mocks.
 
 **Latest result: 17/17** — every core, compaction, vision, and WebSocket test
-(`gemma-4-12B-it` QAT w4a16, vLLM, 2026-08-24).
+(`Qwen3-VL-8B-Instruct` AWQ 4-bit, vLLM, 2026-10-04).
 
 **Loader parity, 2026-09-10** (suite `92c12d9`): the `vllm` and `llama_server`
 loaders return the same verdict on all 17 tests, across a text pair
