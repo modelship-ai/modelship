@@ -8,12 +8,11 @@ models:
       sample_steps: 4
       cfg_scale: 1.0
 
-  # A model file on local disk: uncomment and point `model` at it.
-  # - name: "flux-schnell"
-  #   model: "/.cache/models/flux1-schnell-q4_k.gguf"
-  #   usecase: "image"
-  #   loader: "stable_diffusion_cpp"
-  #   num_cpus: 6
-  #   stable_diffusion_cpp_config:
-  #     sample_steps: 4
-  #     cfg_scale: 1.0
+  - name: "flux-schnell"
+    model: "/.cache/models/flux1-schnell-q4_k.gguf"
+    usecase: "image"
+    loader: "stable_diffusion_cpp"
+    num_cpus: 6
+    stable_diffusion_cpp_config:
+      sample_steps: 4
+      cfg_scale: 1.0

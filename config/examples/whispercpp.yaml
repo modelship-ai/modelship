@@ -13,12 +13,11 @@ models:
     whispercpp_config:
       n_threads: 2
 
-  # A model file on local disk: uncomment and point `model` at it.
-  # - name: "whisper-cpp-local"
-  #   model: "/.cache/huggingface/ggml-base.en.bin"
-  #   usecase: "transcription"
-  #   loader: "whispercpp"
-  #   num_cpus: 2
+  - name: "whisper-cpp-local"
+    model: "/.cache/huggingface/ggml-base.en.bin"
+    usecase: "transcription"
+    loader: "whispercpp"
+    num_cpus: 2
 
   - name: "whisper-cpp-metal"
     model: "base.en"

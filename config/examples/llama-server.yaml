@@ -7,14 +7,13 @@ models:
     llama_server_config:
       parallel: 4
 
-  # A model file on local disk: uncomment and point `model` at it.
-  # - name: "qwen-local"
-  #   model: "/.cache/huggingface/qwen3-8b-instruct.Q4_K_M.gguf"
-  #   usecase: "generate"
-  #   loader: "llama_server"
-  #   num_cpus: 4
-  #   llama_server_config:
-  #     parallel: 2
+  - name: "qwen-local"
+    model: "/.cache/huggingface/qwen3-8b-instruct.Q4_K_M.gguf"
+    usecase: "generate"
+    loader: "llama_server"
+    num_cpus: 4
+    llama_server_config:
+      parallel: 2
 
   - name: "qwen-vl"
     model: "lmstudio-community/Qwen3-VL-8B-Instruct-GGUF:*Q4_K_M.gguf"
@@ -24,14 +23,13 @@ models:
     llama_server_config:
       mmproj: "lmstudio-community/Qwen3-VL-8B-Instruct-GGUF:mmproj-Qwen3-VL-8B-Instruct-F16.gguf"
 
-  # A sharded GGUF (~75 GB download) on a GPU: uncomment on a node that has one.
-  # - name: "llama-70b-q8"
-  #   model: "bartowski/Llama-3.3-70B-Instruct-GGUF:*Q8_0*-of-*.gguf"
-  #   usecase: "generate"
-  #   loader: "llama_server"
-  #   num_gpus: 1
-  #   llama_server_config:
-  #     parallel: 2
+  - name: "llama-70b-q8"
+    model: "bartowski/Llama-3.3-70B-Instruct-GGUF:*Q8_0*-of-*.gguf"
+    usecase: "generate"
+    loader: "llama_server"
+    num_gpus: 1
+    llama_server_config:
+      parallel: 2
 
   - name: "nomic-embed"
     model: "nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q4_K_M.gguf"
