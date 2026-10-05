@@ -177,8 +177,8 @@ If it's unset (the default), or a request doesn't carry the header, the caller l
 | `loader` | string | `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
 | `num_gpus` | float \| int | Default `0`. Fractional `< 1` shares one GPU — supported by `vllm`, `diffusers`, `llama_server`, and (Metal-only) `whispercpp`; forced to `0` for `sherpa_onnx` and off-Darwin `stable_diffusion_cpp`/`whispercpp`. Integer `≥ 1` requests that many whole GPUs (for `vllm`, auto-sets `tensor_parallel_size = num_gpus` unless tp/pp is already specified). `llama_server`/`whispercpp` reject a non-integer `≥ 1`. See [Sharing one GPU](#sharing-one-gpu) |
 | `num_cpus` | float | CPU units to allocate. Default `0.1` |
-| `num_replicas` | int | Fixed Ray Serve replica count. Default `1`. Mutually exclusive with `autoscaling_config` |
-| `autoscaling_config` | object | Autoscale replicas with load instead of a fixed `num_replicas` (see [Autoscaling](#autoscaling)) |
+| `num_replicas` | int | Fixed Ray Serve replica count. Default `1`. Mutually exclusive with `autoscaling_config`. Above `1`, a `vllm` or `llama_server` model must [set its context length](#scaling-a-deployment) |
+| `autoscaling_config` | object | Autoscale replicas with load instead of a fixed `num_replicas` (see [Autoscaling](#autoscaling)). A `vllm` or `llama_server` model with it must [set its context length](#scaling-a-deployment) |
 | `max_ongoing_requests` | int | Per-replica Ray Serve concurrency cap (default: Ray Serve's own default). Streaming requests hold a slot for the whole generation, so a low cap throttles upstream of the engine |
 | `vllm_engine_kwargs` | object | vLLM engine options (see [vLLM Loader](#vllm-loader)) |
 | `diffusers_config` | object | Diffusers pipeline options (see [Diffusers Loader](#diffusers-loader)) |
@@ -261,7 +261,7 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 |---|---|---|---|
 | `tensor_parallel_size` | int | `1` | GPUs for tensor parallelism |
 | `pipeline_parallel_size` | int | `1` | GPUs for pipeline parallelism |
-| `max_model_len` | int | auto | Max sequence length; must be positive if set. Left unset on GPU, vLLM fits the largest context its own post-profiling memory allows (the min across workers, so TP/PP are covered). On `num_gpus: 0`, preflight sizes it from host RAM instead, falling back to that same auto-fit when it declines (missing `config.json`, unreadable KV-cache geometry, etc.). Setting it explicitly overrides both |
+| `max_model_len` | int | auto | Max sequence length; must be positive if set. Left unset on GPU, vLLM fits the largest context its own post-profiling memory allows (the min across workers, so TP/PP are covered). On `num_gpus: 0`, preflight sizes it from host RAM instead, falling back to that same auto-fit when it declines (missing `config.json`, unreadable KV-cache geometry, etc.). Setting it explicitly overrides both, and is required with `num_replicas` above `1` or `autoscaling_config` ([Scaling a Deployment](#scaling-a-deployment)) |
 | `dtype` | string | `auto` | `auto`, `float16`, `bfloat16` |
 | `tokenizer` | string | model default | Custom tokenizer path |
 | `trust_remote_code` | bool | `false` | Allow remote code execution |
@@ -383,7 +383,7 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `n_ctx` | int | auto (preflight); `2048` when preflight declines | Per-slot context length. The launch command multiplies this by `parallel` for llama-server's total `-c`. A `0` here is a real recommendation, not an absent one — it means the full context fit, and llama-server resolves the model's own maximum from the literal `-c 0`. Preflight shells out to `llama fit-params`, which builds the real KV cache and compute buffers to solve `n_ctx`/`n_gpu_layers`/`tensor_split` together |
+| `n_ctx` | int | auto (preflight); `2048` when preflight declines | Per-slot context length. The launch command multiplies this by `parallel` for llama-server's total `-c`. A `0` here is a real recommendation, not an absent one — it means the full context fit, and llama-server resolves the model's own maximum from the literal `-c 0`. Preflight shells out to `llama fit-params`, which builds the real KV cache and compute buffers to solve `n_ctx`/`n_gpu_layers`/`tensor_split` together. A value above `0` is required with `num_replicas` above `1` or `autoscaling_config` ([Scaling a Deployment](#scaling-a-deployment)) |
 | `n_batch` | int | `512` | Batch size for prompt processing |
 | `n_gpu_layers` | int | auto (preflight); `-1` when preflight declines or answers negatively | Layers offloaded to GPU when `num_gpus > 0`; forced to `0` when `num_gpus` is `0`. Preflight records a count only when `fit-params` returns a non-negative one, so a `-ngl -1` answer leaves this default in place while its `-c` answer still applies. `-1` hits llama-server's own auto-fit-to-free-memory path — verified for any negative value against b9859, unconfirmed on the current b10375 pin (`--help`'s documented `'auto'`/`'all'` string tokens aren't reachable through this int field) |
 | `threads` | int | `None` (llama-server default: all cores) | Compute thread count (`--threads`). Preflight recommends `num_cpus` when the deploy reserves ≥1 whole CPU and it wouldn't undercut `parallel` |
@@ -543,6 +543,20 @@ models:
     num_replicas: 2
 ```
 
+A `vllm` or `llama_server` model with `num_replicas` above `1` or an `autoscaling_config` must set its context length: `vllm_engine_kwargs.max_model_len`, or `llama_server_config.n_ctx` above `0`. The config is rejected without it. Left unset, each replica would fit its own context to the node it lands on, so the same request could succeed on one replica and overflow the context on another. To pick a value, deploy the model with one replica and read the context from its `deployed` log line.
+
+```yaml
+models:
+  - name: "qwen"
+    model: "lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf"
+    usecase: "generate"
+    loader: "llama_server"
+    num_cpus: 2
+    num_replicas: 2
+    llama_server_config:
+      n_ctx: 8192
+```
+
 ## Autoscaling
 
 Set `autoscaling_config` instead of a fixed `num_replicas` to let Ray Serve grow/shrink replica count with load. The two are mutually exclusive — setting both is a config error.
@@ -554,6 +568,8 @@ models:
     usecase: "generate"
     loader: "vllm"
     num_gpus: 0.3
+    vllm_engine_kwargs:
+      max_model_len: 8192        # required with autoscaling_config
     autoscaling_config:
       min_replicas: 1            # floor; 0 enables scale-to-zero (cold-start on first request)
       max_replicas: 4            # ceiling

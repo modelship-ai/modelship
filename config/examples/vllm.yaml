@@ -26,6 +26,9 @@ models:
     usecase: "generate"
     loader: "vllm"
     num_gpus: 0.5
+    # required with autoscaling_config
+    vllm_engine_kwargs:
+      max_model_len: 8192
     autoscaling_config:
       min_replicas: 1
       max_replicas: 4

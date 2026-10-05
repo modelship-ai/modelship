@@ -59,7 +59,11 @@ class TestParityWithYaml:
         """The check rejects num_replicas alongside autoscaling_config via
         model_fields_set — a materialized CLI default would trip it."""
         raw = _raw("--model", "Qwen/Qwen3-8B", "--usecase", "generate", "--loader", "vllm")
-        merged = {**raw, "autoscaling_config": {"min_replicas": 1, "max_replicas": 3}}
+        merged = {
+            **raw,
+            "autoscaling_config": {"min_replicas": 1, "max_replicas": 3},
+            "vllm_engine_kwargs": {"max_model_len": 4096},
+        }
         validate_models([merged])  # no raise
 
     def test_image_loader_still_defaults_usecase(self):

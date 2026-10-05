@@ -260,6 +260,28 @@ class ModelshipModelConfig(_StrictModel):
         return self
 
     @model_validator(mode="after")
+    def check_replicas_share_a_context_length(self):
+        # Unset, each replica fits its own context length to the node it lands on.
+        if self.num_replicas == 1 and self.autoscaling_config is None:
+            return self
+        if self.loader == ModelLoader.vllm:
+            key = "vllm_engine_kwargs.max_model_len"
+            fixed = self.vllm_engine_kwargs.max_model_len is not None
+        elif self.loader == ModelLoader.llama_server:
+            key = "llama_server_config.n_ctx (above 0)"
+            server = self.llama_server_config
+            # n_ctx 0 is the model's own maximum, which llama-server shrinks to fit.
+            fixed = server is not None and "n_ctx" in server.model_fields_set and server.n_ctx > 0
+        else:
+            return self
+        if not fixed:
+            raise ValueError(
+                f"model '{self.name}': num_replicas above 1 or autoscaling_config needs {key} set, "
+                f"so every replica serves the same context length."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_whole_gpu_only_loaders_num_gpus(self):
         # sherpa_onnx is exempt: it never touches CUDA.
         whole_gpu_loaders = (ModelLoader.llama_server, ModelLoader.whispercpp)
