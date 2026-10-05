@@ -37,7 +37,9 @@ VM A becomes the head (control plane + gateway; no models scheduled there) and
 uses the **thin** (bare-tag) image — no torch/vllm needed for that role. VM B
 joins it as a GPU worker on the `-cuda` tag. Every node in a multi-node cluster
 must share the same version, even across variants — pin all of them to the
-identical `X.Y.Z` release.
+identical `X.Y.Z` release. Replace `X.Y.Z` in every command below with the
+release you are installing (see the
+[releases](https://github.com/modelship-ai/modelship/releases)).
 
 Generate the cluster's Ray auth token once, into an env file that every
 container gets. A token never goes on a command line, where `ps` and shell
@@ -56,7 +58,7 @@ docker run -d --network=host --shm-size=8g \
   -v ./models-cache:/.cache \
   -e MSHIP_STATE_STORE=redis://your-redis-host:6379/0 \
   -e HF_TOKEN=your_token_here \
-  ghcr.io/modelship-ai/modelship:0.6.5 start \
+  ghcr.io/modelship-ai/modelship:X.Y.Z start \
   --config=/models.yaml --enable-ray-auth --gcs-port=6380
 ```
 
@@ -65,7 +67,8 @@ default, which collides with the Redis state store above under host
 networking) — passed explicitly here only for clarity.
 
 Without `MSHIP_RAY_AUTH_TOKEN`, `--enable-ray-auth` has Ray generate a token
-inside the container (`docker exec <head-container> cat ~/.ray/auth_token`),
+inside the container
+(`docker exec <head-container> cat /home/modelship/.ray/auth_token`),
 and a new head container gets a new one. `mship deploy` against this cluster
 needs `MSHIP_RAY_AUTH_TOKEN` in its environment too, on whichever node it runs.
 
@@ -76,7 +79,7 @@ docker run -d --network=host --shm-size=8g --gpus all \
   --env-file mship.env \
   -v ./models-cache:/.cache \
   -e HF_TOKEN=your_token_here \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
+  ghcr.io/modelship-ai/modelship:X.Y.Z-cuda join \
   --gcs-address=<vm-a-private-ip>:6380
 ```
 
@@ -88,6 +91,10 @@ their own. To change the model set, run `mship deploy` on any node of the
 cluster, or [from another machine](#deploy-from-another-machine). A failed
 deploy is rolled back and leaves the last committed model set in place; fix the
 config and deploy again.
+
+To take a node out, stop its container with a longer timeout than Docker's
+default 10 seconds (`docker stop -t 60 <container>`), so it has time to leave
+the cluster before Docker kills it.
 
 **`MSHIP_RAY_AUTH_TOKEN` only means anything if the head runs `--enable-ray-auth`**
 (`start` refuses the token without it). Joining
@@ -113,7 +120,7 @@ Then, from any machine on that network:
 ```bash
 docker run --rm --env-file mship.env \
   -v ./models.yaml:/models.yaml \
-  ghcr.io/modelship-ai/modelship:0.6.5 deploy \
+  ghcr.io/modelship-ai/modelship:X.Y.Z deploy \
   --ray-dashboard-url=http://<vm-a-private-ip>:8265 --config=/models.yaml --wait
 ```
 
@@ -141,7 +148,7 @@ docker run --rm --env-file mship.env \
 | `8079` | Prometheus metrics | `--metrics-port`; random on a joiner unless set, and listed in the head's service-discovery file either way |
 | `8265` | Ray dashboard (head only); what `mship deploy --ray-dashboard-url` points at | `--ray-dashboard-port` (bind host separately via `--ray-dashboard-host`, default `127.0.0.1`; `start` warns when it's exposed without `--enable-ray-auth`) |
 | GCS (head control plane) | what `mship join --gcs-address` points at | `--gcs-port` (default `6380`) |
-| `10002–19999` + node/object manager | Ray's dynamic worker range | not configurable; open the range between fleet nodes |
+| OS-assigned (Linux default `32768–60999`) | Ray's node manager, object manager, per-node agents and every worker process | not configurable; open the nodes' ephemeral range (`net.ipv4.ip_local_port_range`) between fleet nodes |
 
 Open cluster ports **only between fleet nodes** on the private network. From
 outside that network, only `8000` (the gateway) should be reachable at all,
@@ -228,13 +235,13 @@ another Ray node.
 docker run -d --network=host --shm-size=8g \
   -v ./cluster-a/models.yaml:/models.yaml \
   -v ./cluster-a/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 start --config=/models.yaml \
+  ghcr.io/modelship-ai/modelship:X.Y.Z start --config=/models.yaml \
   --gcs-port=6380 --openai-api-port=8000 --ray-dashboard-port=8265 --metrics-port=8079
 
 docker run -d --network=host --shm-size=8g \
   -v ./cluster-b/models.yaml:/models.yaml \
   -v ./cluster-b/cache:/.cache \
-  ghcr.io/modelship-ai/modelship:0.6.5 start --config=/models.yaml \
+  ghcr.io/modelship-ai/modelship:X.Y.Z start --config=/models.yaml \
   --gcs-port=6381 --openai-api-port=8001 --ray-dashboard-port=8266 --metrics-port=8089
 ```
 
@@ -253,12 +260,12 @@ cluster's resource ledger is independent and has no visibility into the other's:
 ```bash
 # Joins cluster A
 docker run -d --network=host --gpus device=0 \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
+  ghcr.io/modelship-ai/modelship:X.Y.Z-cuda join \
   --gcs-address=<cluster-a-head>:6380 --node-num-gpus=1
 
 # Joins cluster B — same physical GPU, different cluster
 docker run -d --network=host --gpus device=0 \
-  ghcr.io/modelship-ai/modelship:0.6.5-cuda join \
+  ghcr.io/modelship-ai/modelship:X.Y.Z-cuda join \
   --gcs-address=<cluster-b-head>:6380 --node-num-gpus=1
 ```
 
