@@ -1,6 +1,6 @@
 """Every curated sherpa_onnx registry entry must be internally consistent:
-well-formed paths, a speaker count matching voice_names, and a provenance URL
-under the k2-fsa org."""
+well-formed paths, a speaker count matching voice_names, and a tarball URL in
+modelship's model-bundles releases."""
 
 from modelship.infer.sherpa_onnx.registry import REGISTRY, registry_names
 
@@ -12,11 +12,15 @@ def test_registry_names_are_unique_and_nonempty():
 
 
 class TestEntries:
-    def test_tarball_url_is_k2_fsa_release(self):
+    def test_tarball_url_is_a_model_bundles_release(self):
         for name, entry in REGISTRY.items():
-            assert entry.tarball_url.startswith("https://github.com/k2-fsa/sherpa-onnx/releases/download/"), (
+            assert entry.tarball_url.startswith("https://github.com/modelship-ai/model-bundles/releases/download/"), (
                 f"{name}: {entry.tarball_url}"
             )
+
+    def test_tarball_file_name_carries_the_sha256_prefix(self):
+        for name, entry in REGISTRY.items():
+            assert entry.tarball_url.endswith(f"/{name}-{entry.sha256[:8]}.tar.bz2"), f"{name}: {entry.tarball_url}"
 
     def test_sha256_is_a_valid_hex_digest(self):
         for name, entry in REGISTRY.items():
