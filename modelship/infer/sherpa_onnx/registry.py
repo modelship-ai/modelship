@@ -27,11 +27,12 @@ class SherpaOnnxRegistryEntry(NamedTuple):
     voice_names: tuple[str, ...]
 
 
-_RELEASE_BASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
+# copies of k2-fsa/sherpa-onnx's tts-models assets; a file name ends in its sha256 prefix
+_RELEASE_BASE = "https://github.com/modelship-ai/model-bundles/releases/download/tts/kokoro"
 
 REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
     "kokoro-en-v0_19": SherpaOnnxRegistryEntry(
-        tarball_url=f"{_RELEASE_BASE}/kokoro-en-v0_19.tar.bz2",
+        tarball_url=f"{_RELEASE_BASE}/kokoro-en-v0_19-91280485.tar.bz2",
         sha256="912804855a04745fa77a30be545b3f9a5d15c4d66db00b88cbcd4921df605ac7",
         family="kokoro",
         usecase="tts",
@@ -62,7 +63,7 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
     # us-en + zh; gb-en is an alternative to us-en, not additive). dict/ and the
     # *-zh.fst rule files are unused optional extras, left out on purpose.
     "kokoro-multi-lang-v1_0": SherpaOnnxRegistryEntry(
-        tarball_url=f"{_RELEASE_BASE}/kokoro-multi-lang-v1_0.tar.bz2",
+        tarball_url=f"{_RELEASE_BASE}/kokoro-multi-lang-v1_0-c5f7e2d2.tar.bz2",
         sha256="c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298",
         family="kokoro",
         usecase="tts",
