@@ -73,7 +73,9 @@ class LlamaServerPreflight:
         pinned_ngl = "n_gpu_layers" in fields_set
         pinned_ts = "tensor_split" in fields_set
 
-        if pinned_ctx and pinned_ngl and pinned_ts:
+        budget_mib = _cpu_ram_budget_mib(hw) if config.num_gpus == 0 else None
+        # With a RAM budget the fit still runs: it is the check that the set n_ctx fits.
+        if pinned_ctx and pinned_ngl and pinned_ts and budget_mib is None:
             logger.info("preflight '%s': n_ctx, n_gpu_layers and tensor_split all pinned — nothing to fit", config.name)
             return threads_rec
 
@@ -104,7 +106,6 @@ class LlamaServerPreflight:
         if pinned_ts and server_config.tensor_split:
             args += ["-ts", ",".join(str(v) for v in server_config.tensor_split)]
 
-        budget_mib = _cpu_ram_budget_mib(hw) if config.num_gpus == 0 else None
         try:
             if budget_mib is None:
                 margin_mib = _fit_margin_mib(config, hw)

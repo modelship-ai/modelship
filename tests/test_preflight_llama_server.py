@@ -261,6 +261,7 @@ _CPU_HW = HardwareProfile(ram_bytes=16 * 1024**3, available_ram_bytes=12 * 1024*
 _CPU_BUDGET_MIB = 10444
 _PHYSICAL_MIB = 32768
 _FIT_STDOUT = "-c 4096 -ngl -1\n"
+_ALL_PINNED = {"n_ctx": 4096, "n_gpu_layers": 20, "tensor_split": [1.0, 1.0]}
 _ESTIMATE = _fit_result("Host 0 100 10\n")
 _CANNOT_FIT = _fit_result(
     returncode=1,
@@ -376,6 +377,18 @@ class TestLlamaServerPreflightCpuBudget:
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), llama_server_kwargs={"parallel": parallel})
         with patch("subprocess.run", side_effect=[_ESTIMATE, fit]), pytest.raises(ModelNotSizedError):
             LlamaServerPreflight().recommend(cfg, _CPU_HW)
+
+    def test_a_deploy_with_all_three_fields_set_is_still_checked(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), llama_server_kwargs=_ALL_PINNED)
+        with patch("subprocess.run", side_effect=[_ESTIMATE, _CANNOT_FIT]), pytest.raises(ModelNotSizedError):
+            LlamaServerPreflight().recommend(cfg, _CPU_HW)
+
+    def test_all_three_fields_set_and_unprobed_ram_skips_the_subprocess(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), llama_server_kwargs=_ALL_PINNED)
+        with patch("subprocess.run") as run:
+            rec = LlamaServerPreflight().recommend(cfg, HardwareProfile())
+        run.assert_not_called()
+        assert rec == {}
 
     def test_a_failed_fit_on_a_gpu_deploy_keeps_the_defaults(self, tmp_path):
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
