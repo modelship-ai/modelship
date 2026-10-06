@@ -118,7 +118,8 @@ class LlamaServerPreflight:
                 return threads_rec
             raise ModelNotSizedError(
                 f"could not be sized for this node, where {budget_mib} MiB of RAM is available to it: {e}. "
-                "Pass --no-preflight to load it without this check."
+                "Give the node more free memory or lower n_ctx on its models, "
+                "or pass --no-preflight to load it without this check."
             ) from None
         return {**threads_rec, **rec}
 

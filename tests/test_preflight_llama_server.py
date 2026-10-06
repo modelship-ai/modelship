@@ -359,7 +359,8 @@ class TestLlamaServerPreflightCpuBudget:
         assert str(failure.value) == (
             f"could not be sized for this node, where {_CPU_BUDGET_MIB} MiB of RAM is available to it: "
             "fit-params exited 1: llama_fit_params: failed to fit CLI arguments to free memory, exiting. "
-            "Pass --no-preflight to load it without this check."
+            "Give the node more free memory or lower n_ctx on its models, "
+            "or pass --no-preflight to load it without this check."
         )
 
     @pytest.mark.parametrize(
