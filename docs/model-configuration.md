@@ -392,13 +392,13 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 | `mmproj` | string | — | Multimodal projector file/repo ref for vision models — see [Vision](#vision-gguf) |
 | `cache_reuse` | int | `0` | Min chunk size (tokens) for fuzzy KV-cache reuse via position-shifting (`--cache-reuse`). `0` means exact-prefix reuse only; raise it to also reuse chunks after a mid-prompt divergence (changed system prompt, swapped RAG doc) |
 | `context_shift` | bool | `false` | Evict oldest tokens and keep generating when a slot's context fills, instead of erroring (`--context-shift`) |
-| `cache_ram_mib` | int | `None` (llama-server default: `8192`) | In-RAM prompt-cache cap in MiB (`-cram`). `-1` = no limit, `0` disables the cache |
+| `cache_ram_mib` | int | `0` | Cap in MiB on llama-server's host-RAM cache of saved conversations (`--cache-ram`). `0` disables it, `-1` removes the cap |
 | `ubatch_size` | int | `512` | Physical max batch size (`-ub`) — the largest single memory lever after context itself |
 | `flash_attn` | `on`/`off`/`auto` | `auto` | Flash Attention use (`-fa`) |
 | `cache_type_k` / `cache_type_v` | string | `f16` | KV cache quantization (`-ctk`/`-ctv`); also `f32`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1` |
 | `tensor_split` | list[float] | `None` | Proportional offload split across GPUs (`-ts`). Preflight recommends an uneven split on heterogeneous cards |
 
-llama-server caches prompts in RAM by default (`--cache-prompt`, always on, 8 GiB idle-slot cache) — exact-prefix reuse works out of the box for ordinary append-only chat. There is no persistent **on-disk** prompt cache; caching is in-memory only and doesn't survive a process restart, unlike modelship's disk cache for other loaders.
+Each slot keeps the prompt it last processed (`--cache-prompt`, always on), so a follow-up turn, or another chat with the same system prompt, only processes the new tokens. llama-server can also save a conversation to host RAM when an unrelated one takes its slot and restore it when it returns; `cache_ram_mib` caps that cache and defaults to `0` (off), because it grows after load, outside the memory `n_ctx` was sized against. Saved conversations take about as much RAM per token as the context itself. There is no persistent **on-disk** prompt cache; caching is in-memory only and doesn't survive a process restart, unlike modelship's disk cache for other loaders.
 
 #### MLA models (DeepSeek, MiniCPM3)
 

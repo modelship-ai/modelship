@@ -260,6 +260,8 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             "--reasoning-format",
             "auto",
             "--no-webui",
+            "--cache-ram",
+            str(self.config.cache_ram_mib),
             "--api-key",
             self._api_key,
         ]
@@ -287,8 +289,6 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             args += ["--cache-reuse", str(self.config.cache_reuse)]
         if self.config.context_shift:
             args += ["--context-shift"]
-        if self.config.cache_ram_mib is not None:
-            args += ["--cache-ram", str(self.config.cache_ram_mib)]
 
         logger.info("llama-server launch args for '%s': %s", self.model_config.name, _redact(args))
         self._proc = await loop.run_in_executor(

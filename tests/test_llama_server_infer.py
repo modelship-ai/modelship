@@ -178,7 +178,7 @@ class TestSubprocessLifecycle:
             infer_set.shutdown()
 
     @pytest.mark.asyncio
-    async def test_cache_flags_absent_at_defaults(self, tmp_path, monkeypatch):
+    async def test_cache_flags_at_defaults(self, tmp_path, monkeypatch):
         binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
 
@@ -188,7 +188,7 @@ class TestSubprocessLifecycle:
             args = list(infer._proc.args)
             assert "--cache-reuse" not in args
             assert "--context-shift" not in args
-            assert "--cache-ram" not in args
+            assert args[args.index("--cache-ram") + 1] == "0"
         finally:
             infer.shutdown()
 
@@ -208,16 +208,15 @@ class TestSubprocessLifecycle:
             infer.shutdown()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("cache_ram_mib", [0, -1])
-    async def test_cache_ram_flag_appears_for_zero_and_no_limit(self, tmp_path, monkeypatch, cache_ram_mib):
+    async def test_cache_ram_no_limit_is_forwarded(self, tmp_path, monkeypatch):
         binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
 
-        infer = LlamaServerInfer(_make_config(cache_ram_mib=cache_ram_mib))
+        infer = LlamaServerInfer(_make_config(cache_ram_mib=-1))
         await infer.start()
         try:
             args = list(infer._proc.args)
-            assert args[args.index("--cache-ram") + 1] == str(cache_ram_mib)
+            assert args[args.index("--cache-ram") + 1] == "-1"
         finally:
             infer.shutdown()
 

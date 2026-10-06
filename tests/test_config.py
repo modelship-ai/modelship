@@ -32,7 +32,7 @@ class TestLlamaServerConfig:
         assert config.chat_template is None
         assert config.cache_reuse == 0
         assert config.context_shift is False
-        assert config.cache_ram_mib is None
+        assert config.cache_ram_mib == 0
         assert config.ubatch_size == 512
         assert config.flash_attn == "auto"
         assert config.cache_type_k == "f16"
