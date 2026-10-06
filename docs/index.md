@@ -60,11 +60,9 @@ Add `--chat` for an interactive session, `-T` to hand it a tool, or `--models`
 to list what's deployed.
 
 The model serves as `qwen3-8b`, inferred from the reference. It pulls ~5 GB and
-needs ~7 GB of free RAM: from ~13 GB it gets its full 40K context, and in
-between the context is sized to what is free. `--num-cpus 4` reserves four cores
-for it, so lower it if the container has fewer (the deploy waits for resources
-it can't get). On a small box, swap in
-`lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf`.
+wants ~8 GB of free RAM; `--num-cpus 4` reserves four cores for it, so lower it
+if the container has fewer (the deploy waits for resources it can't get). On a
+small box, swap in `lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf`.
 
 Deploying several models at once uses a `models.yaml` instead; one model's
 tuning blocks have flags too (`--llama-server-config.n-ctx 8192`) — see
@@ -98,13 +96,8 @@ against a live deployment rather than mocks.
 **Latest result: 17/17** — every core, compaction, vision, and WebSocket test
 (`Qwen3-VL-8B-Instruct` AWQ 4-bit, vLLM, 2026-10-04).
 
-**Loader parity, 2026-09-10** (suite `92c12d9`): the `vllm` and `llama_server`
-loaders return the same verdict on all 17 tests, across a text pair
-(`Qwen2.5-7B-Instruct` AWQ vs. its Q4_K_M GGUF) and a vision pair
-(`Qwen2.5-VL-3B-Instruct` safetensors vs. GGUF + mmproj) — four runs, no
-divergence. Each loader passes all 17 across the pair; neither model passes all
-17 alone, since `image-input` needs a vision model and `tool-calling` needs a
-stronger one than the 3B.
+**Loader parity:** the `vllm` and `llama_server` loaders return the same result
+on all 17 tests.
 
 Fourteen cluster guarantees — zero-downtime model cutover, load-driven
 autoscaling, engine crash recovery, fractional-GPU multi-tenancy, server-side
