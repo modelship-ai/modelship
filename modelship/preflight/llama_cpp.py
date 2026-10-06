@@ -22,11 +22,20 @@ _MIN_NCTX = 512
 _FIT_TIMEOUT_S = 30
 
 # Per-device MiB left free by `-fitt`. Broadcasts to every device on a whole-GPU
-# deploy; a fractional deploy replaces this with its declared share of the GPU.
+# deploy; a fractional deploy and a CPU deploy each compute their own margin.
 _FIT_MARGIN_MIB = 1024
+
+# Share of the node's RAM a CPU deploy's budget leaves free, on top of `_FIT_MARGIN_MIB`.
+_RAM_RESERVE_FRACTION = 0.05
 
 # `llama fit-params`' one stdout line: `-c N -ngl M [-ts a,b,...]`.
 _FIT_ARGS_RE = re.compile(r"^-c\s+(-?\d+)\s+-ngl\s+(-?\d+)(?:\s+-ts\s+([\d.,]+))?\s*$")
+
+# `-fitp on` prints one `<device> <model> <context> <compute>` row in MiB per device.
+_FIT_HOST_ROW_RE = re.compile(r"^Host\s+(\d+)\s+\d+\s+\d+\s*$", re.MULTILINE)
+
+# llama.cpp's split-file naming: `<prefix>-00001-of-00003.gguf`.
+_SPLIT_GGUF_RE = re.compile(r"^(.*)-\d{5}-of-(\d{5})\.gguf$")
 
 
 class LlamaServerPreflight:
@@ -78,10 +87,6 @@ class LlamaServerPreflight:
             server_config.cache_type_k,
             "-ctv",
             server_config.cache_type_v,
-            "-fitc",
-            str(_MIN_NCTX),
-            "-fitt",
-            str(_fit_margin_mib(config, hw)),
         ]
         if config.num_gpus == 0:
             args += ["-dev", "none"]
@@ -92,7 +97,14 @@ class LlamaServerPreflight:
         if pinned_ts and server_config.tensor_split:
             args += ["-ts", ",".join(str(v) for v in server_config.tensor_split)]
 
-        rec = _run_fit(config, args, server_config.parallel)
+        budget_mib = _cpu_ram_budget_mib(hw) if config.num_gpus == 0 else None
+        if budget_mib is None:
+            margin_mib = _fit_margin_mib(config, hw)
+        else:
+            margin_mib = _cpu_fit_margin_mib(config, args, model_path, budget_mib)
+        args += ["-fitc", str(_MIN_NCTX), "-fitt", str(margin_mib)]
+
+        rec = _run_fit(config, args, server_config.parallel, budget_mib)
         return {**threads_rec, **rec}
 
 
@@ -107,18 +119,81 @@ def _fit_margin_mib(config: ModelshipModelConfig, hw: HardwareProfile) -> int:
     return max(_FIT_MARGIN_MIB, int(free_mib - share_mib + _FIT_MARGIN_MIB))
 
 
-def _run_fit(config: ModelshipModelConfig, args: list[str], parallel: int) -> dict[str, Any]:
+def _cpu_ram_budget_mib(hw: HardwareProfile) -> int | None:
+    """Free RAM less the reserve, in MiB. None when the RAM probe read nothing."""
+    free_bytes = hw.sizing_ram_bytes
+    if not free_bytes:
+        return None
+    reserve_bytes = hw.ram_bytes * _RAM_RESERVE_FRACTION + _FIT_MARGIN_MIB * 1024**2
+    return max(0, int((free_bytes - reserve_bytes) / 1024**2))
+
+
+def _cpu_fit_margin_mib(config: ModelshipModelConfig, args: list[str], model_path: str, budget_mib: int) -> int:
+    """`-fitt` for a CPU deploy. fit-params fits against all physical RAM, so the
+    margin is the RAM outside `budget_mib` plus the weights its estimate leaves out."""
+    uncounted_mib = 0
+    counted_mib = _estimated_host_weights_mib(config, args)
+    if counted_mib is not None:
+        uncounted_mib = max(0, _weights_mib(model_path) - counted_mib)
+    logger.info(
+        "preflight llama_server '%s': RAM budget %d MiB, %d MiB of weights outside the fit-params estimate",
+        config.name,
+        budget_mib,
+        uncounted_mib,
+    )
+    return max(_FIT_MARGIN_MIB, _physical_ram_mib() - budget_mib + uncounted_mib)
+
+
+def _physical_ram_mib() -> int:
+    """The figure llama.cpp's CPU device reports as free: all physical RAM."""
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=_FIT_TIMEOUT_S, check=False)
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") // 1024**2
+    except (ValueError, OSError):
+        return 0
+
+
+def _weights_mib(model_path: str) -> int:
+    """Size on disk in MiB, summed over every part of a split GGUF."""
+    match = _SPLIT_GGUF_RE.match(model_path)
+    if match is None:
+        paths = [model_path]
+    else:
+        prefix, count = match.groups()
+        paths = [f"{prefix}-{part:05d}-of-{count}.gguf" for part in range(1, int(count) + 1)]
+    return sum(os.path.getsize(path) for path in paths if os.path.isfile(path)) // 1024**2
+
+
+def _estimated_host_weights_mib(config: ModelshipModelConfig, args: list[str]) -> int | None:
+    """Host weights in fit-params' own memory estimate, in MiB. None when it can't be read."""
+    result = _invoke(config, [*args, "-fitp", "on"])
+    if result is None:
+        return None
+    match = _FIT_HOST_ROW_RE.search(result.stdout)
+    if result.returncode != 0 or match is None:
+        logger.warning("preflight '%s': could not read fit-params memory estimate", config.name)
+        return None
+    return int(match[1])
+
+
+def _invoke(config: ModelshipModelConfig, args: list[str]) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=_FIT_TIMEOUT_S, check=False)
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("preflight '%s': fit-params invocation failed: %s", config.name, e)
+        return None
+
+
+def _run_fit(config: ModelshipModelConfig, args: list[str], parallel: int, budget_mib: int | None) -> dict[str, Any]:
+    result = _invoke(config, args)
+    if result is None:
         return {}
 
     if result.returncode != 0:
         logger.warning(
-            "preflight '%s': fit-params exited %d: %s",
+            "preflight '%s': fit-params exited %d%s: %s",
             config.name,
             result.returncode,
+            f" against a RAM budget of {budget_mib} MiB" if budget_mib is not None else "",
             result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "",
         )
         return {}

@@ -59,6 +59,7 @@ _FIT_PARAMS_FLAGS = [
     "-ctv",
     "-fitc",
     "-fitt",
+    "-fitp",
     "-dev",
     "-c",
     "-ngl",
