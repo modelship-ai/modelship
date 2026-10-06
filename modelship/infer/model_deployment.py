@@ -37,6 +37,7 @@ from modelship.openai.protocol import (
     TranscriptionRequest,
     TranslationRequest,
 )
+from modelship.preflight import ModelNotSizedError
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.cache import reject_unset_cache_roots
 
@@ -241,9 +242,14 @@ class ModelDeployment:
             MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})
             self._graceful_teardown()
 
-            logger.exception("Engine init failed for '%s'", config.name)
-            tb = traceback.format_exc()
-            err_msg = f"{config.loader.value} engine init failed for '{config.name}': {e}"
+            if isinstance(e, ModelNotSizedError):
+                logger.error("Model '%s' %s", config.name, e)
+                err_msg = f"model '{config.name}' {e}"
+                reason = str(e)
+            else:
+                logger.exception("Engine init failed for '%s'", config.name)
+                err_msg = f"{config.loader.value} engine init failed for '{config.name}': {e}"
+                reason = f"{err_msg}\n{traceback.format_exc()}"
             try:
                 from modelship.infer.deploy_coordinator import find_coordinator
 
@@ -251,7 +257,7 @@ class ModelDeployment:
                     logger.error("No deploy coordinator to report the fatal error of '%s' to", config.name)
                 else:
                     app_name = serve.get_replica_context().app_name
-                    await coordinator.report_fatal_error.remote(app_name, f"{err_msg}\n{tb}")
+                    await coordinator.report_fatal_error.remote(app_name, reason)
             except Exception:
                 logger.exception("Failed to report fatal error to the deploy coordinator for %s", config.name)
 

@@ -7,7 +7,7 @@ from typing import Any
 
 from modelship.infer.infer_config import LlamaServerConfig, ModelshipModelConfig
 from modelship.logging import get_logger
-from modelship.preflight.base import HardwareProfile, gpu_share_bytes
+from modelship.preflight.base import HardwareProfile, ModelNotSizedError, gpu_share_bytes
 
 logger = get_logger("preflight.llama_cpp")
 
@@ -15,8 +15,8 @@ logger = get_logger("preflight.llama_cpp")
 # convention.
 _NCTX_ALIGNMENT = 256
 
-# Below this n_ctx, decline the recommendation instead of shipping it. Doubles
-# as fit-params' own `-fitc` floor, so it never solves below what we'd accept.
+# A fit below this n_ctx per slot is not used. Doubles as fit-params' own
+# `-fitc` floor, so it never solves below what we'd accept.
 _MIN_NCTX = 512
 
 _FIT_TIMEOUT_S = 30
@@ -36,6 +36,13 @@ _FIT_HOST_ROW_RE = re.compile(r"^Host\s+(\d+)\s+\d+\s+\d+\s*$", re.MULTILINE)
 
 # llama.cpp's split-file naming: `<prefix>-00001-of-00003.gguf`.
 _SPLIT_GGUF_RE = re.compile(r"^(.*)-\d{5}-of-(\d{5})\.gguf$")
+
+# The `<elapsed> <level> ` prefix llama.cpp puts on each stderr line.
+_LOG_PREFIX_RE = re.compile(r"^[\d.]+\s+[A-Z]\s+")
+
+
+class _FitError(Exception):
+    """fit-params gave no usable answer; the message says why."""
 
 
 class LlamaServerPreflight:
@@ -98,13 +105,21 @@ class LlamaServerPreflight:
             args += ["-ts", ",".join(str(v) for v in server_config.tensor_split)]
 
         budget_mib = _cpu_ram_budget_mib(hw) if config.num_gpus == 0 else None
-        if budget_mib is None:
-            margin_mib = _fit_margin_mib(config, hw)
-        else:
-            margin_mib = _cpu_fit_margin_mib(config, args, model_path, budget_mib)
-        args += ["-fitc", str(_MIN_NCTX), "-fitt", str(margin_mib)]
-
-        rec = _run_fit(config, args, server_config.parallel, budget_mib)
+        try:
+            if budget_mib is None:
+                margin_mib = _fit_margin_mib(config, hw)
+            else:
+                margin_mib = _cpu_fit_margin_mib(config, args, model_path, budget_mib)
+            args += ["-fitc", str(_MIN_NCTX), "-fitt", str(margin_mib)]
+            rec = _run_fit(config, args, server_config.parallel)
+        except _FitError as e:
+            if budget_mib is None:
+                logger.warning("preflight '%s': %s", config.name, e)
+                return threads_rec
+            raise ModelNotSizedError(
+                f"could not be sized for this node, where {budget_mib} MiB of RAM is available to it: {e}. "
+                "Pass --no-preflight to load it without this check."
+            ) from None
         return {**threads_rec, **rec}
 
 
@@ -131,10 +146,7 @@ def _cpu_ram_budget_mib(hw: HardwareProfile) -> int | None:
 def _cpu_fit_margin_mib(config: ModelshipModelConfig, args: list[str], model_path: str, budget_mib: int) -> int:
     """`-fitt` for a CPU deploy. fit-params fits against all physical RAM, so the
     margin is the RAM outside `budget_mib` plus the weights its estimate leaves out."""
-    uncounted_mib = 0
-    counted_mib = _estimated_host_weights_mib(config, args)
-    if counted_mib is not None:
-        uncounted_mib = max(0, _weights_mib(model_path) - counted_mib)
+    uncounted_mib = max(0, _weights_mib(model_path) - _estimated_host_weights_mib(args))
     logger.info(
         "preflight llama_server '%s': RAM budget %d MiB, %d MiB of weights outside the fit-params estimate",
         config.name,
@@ -163,47 +175,33 @@ def _weights_mib(model_path: str) -> int:
     return sum(os.path.getsize(path) for path in paths if os.path.isfile(path)) // 1024**2
 
 
-def _estimated_host_weights_mib(config: ModelshipModelConfig, args: list[str]) -> int | None:
-    """Host weights in fit-params' own memory estimate, in MiB. None when it can't be read."""
-    result = _invoke(config, [*args, "-fitp", "on"])
-    if result is None:
-        return None
-    match = _FIT_HOST_ROW_RE.search(result.stdout)
-    if result.returncode != 0 or match is None:
-        logger.warning("preflight '%s': could not read fit-params memory estimate", config.name)
-        return None
+def _estimated_host_weights_mib(args: list[str]) -> int:
+    """Host weights in fit-params' own memory estimate, in MiB."""
+    match = _FIT_HOST_ROW_RE.search(_invoke([*args, "-fitp", "on"]).stdout)
+    if match is None:
+        raise _FitError("could not read fit-params memory estimate")
     return int(match[1])
 
 
-def _invoke(config: ModelshipModelConfig, args: list[str]) -> subprocess.CompletedProcess[str] | None:
+def _invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Runs fit-params. `_FitError` when it can't be run, times out or exits non-zero."""
     try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=_FIT_TIMEOUT_S, check=False)
+        result = subprocess.run(args, capture_output=True, text=True, timeout=_FIT_TIMEOUT_S, check=False)
     except (OSError, subprocess.SubprocessError) as e:
-        logger.warning("preflight '%s': fit-params invocation failed: %s", config.name, e)
-        return None
-
-
-def _run_fit(config: ModelshipModelConfig, args: list[str], parallel: int, budget_mib: int | None) -> dict[str, Any]:
-    result = _invoke(config, args)
-    if result is None:
-        return {}
-
+        raise _FitError(f"fit-params invocation failed: {e}") from None
     if result.returncode != 0:
-        logger.warning(
-            "preflight '%s': fit-params exited %d%s: %s",
-            config.name,
-            result.returncode,
-            f" against a RAM budget of {budget_mib} MiB" if budget_mib is not None else "",
-            result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "",
-        )
-        return {}
+        lines = result.stderr.strip().splitlines()
+        detail = " ".join(_LOG_PREFIX_RE.sub("", lines[-1].strip()).split()).rstrip(".") if lines else ""
+        raise _FitError(f"fit-params exited {result.returncode}" + (f": {detail}" if detail else ""))
+    return result
 
-    stdout = result.stdout.strip()
+
+def _run_fit(config: ModelshipModelConfig, args: list[str], parallel: int) -> dict[str, Any]:
+    stdout = _invoke(args).stdout.strip()
     line = stdout.splitlines()[-1] if stdout else ""
     match = _FIT_ARGS_RE.match(line)
     if match is None:
-        logger.warning("preflight '%s': could not parse fit-params output: %r", config.name, line)
-        return {}
+        raise _FitError(f"could not parse fit-params output: {line!r}")
 
     ctx_total_raw, ngl_raw, ts_raw = match.groups()
     ctx_total = int(ctx_total_raw)
@@ -217,16 +215,9 @@ def _run_fit(config: ModelshipModelConfig, args: list[str], parallel: int, budge
     else:
         per_slot = (ctx_total // parallel // _NCTX_ALIGNMENT) * _NCTX_ALIGNMENT
         if per_slot < _MIN_NCTX:
-            logger.warning(
-                "preflight '%s': fit-params context %d across parallel=%d yields n_ctx=%d (< %d); "
-                "skipping recommendation",
-                config.name,
-                ctx_total,
-                parallel,
-                per_slot,
-                _MIN_NCTX,
+            raise _FitError(
+                f"fit-params context {ctx_total} across parallel={parallel} yields n_ctx={per_slot} (< {_MIN_NCTX})"
             )
-            return {}
         rec["n_ctx"] = per_slot
     if ngl >= 0:
         rec["n_gpu_layers"] = ngl

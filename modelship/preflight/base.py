@@ -13,6 +13,10 @@ from modelship.logging import get_logger
 logger = get_logger("preflight")
 
 
+class ModelNotSizedError(Exception):
+    """Preflight could not fit the model into the memory its node has left for it. Fails the load."""
+
+
 @dataclass(frozen=True)
 class GPUInfo:
     index: int
@@ -470,8 +474,8 @@ def gpu_share_bytes(config: ModelshipModelConfig, gpu: GPUInfo) -> float:
 
 def run_preflight(config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
     """Look up the loader's estimator and run it. Returns `{}` if no estimator
-    is registered or the estimator declines (no resolved path, missing config,
-    etc.). Never raises — preflight failures must not block a deploy."""
+    is registered, the estimator declines (no resolved path, missing config,
+    etc.) or it fails. Raises only `ModelNotSizedError`."""
     if os.environ.get("MSHIP_PREFLIGHT", "true").lower() == "false":
         logger.info(
             "preflight disabled via MSHIP_PREFLIGHT=false for '%s'; using loader defaults + user config",
@@ -487,6 +491,8 @@ def run_preflight(config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str
         return {}
     try:
         return impl.recommend(config, hw)
+    except ModelNotSizedError:
+        raise
     except Exception:
         logger.exception("preflight estimator raised for '%s'; ignoring recommendation", config.name)
         return {}

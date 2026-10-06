@@ -12,6 +12,7 @@ from modelship.infer.model_deployment import (
     _reject_unsupported_darwin_loader,
 )
 from modelship.infer.sources import ModelDownloadError
+from modelship.preflight import ModelNotSizedError
 
 # Bypass the @serve.deployment wrapper (see test_model_deployment_metrics.py).
 _ModelDeployment = ModelDeployment.func_or_class
@@ -151,6 +152,36 @@ async def test_generic_init_failure_reports_fatal():
         await _ModelDeployment.__init__(inst, config)
 
     coordinator.report_fatal_error.remote.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_could_not_be_sized_is_reported_without_a_traceback():
+    inst = _ModelDeployment.__new__(_ModelDeployment)
+    config = _make_config()
+
+    mock_base_infer = MagicMock()
+    mock_base_infer.ensure_downloaded = AsyncMock(side_effect=ModelNotSizedError("could not be sized for this node"))
+
+    coordinator = MagicMock()
+    coordinator.report_fatal_error.remote = AsyncMock()
+
+    with (
+        _patch_init_globals(
+            configure_logging=MagicMock(),
+            stamp_gateway=MagicMock(),
+            _spawn_orphan_reaper=MagicMock(return_value=None),
+            reject_unset_cache_roots=MagicMock(),
+            BaseInfer=mock_base_infer,
+            MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
+            MODEL_LOAD_DURATION_SECONDS=MagicMock(),
+            serve=MagicMock(get_replica_context=MagicMock(return_value=MagicMock(app_name="app"))),
+        ),
+        patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
+        pytest.raises(RuntimeError, match=r"^model 'test-model' could not be sized for this node$"),
+    ):
+        await _ModelDeployment.__init__(inst, config)
+
+    coordinator.report_fatal_error.remote.assert_called_once_with("app", "could not be sized for this node")
 
 
 @pytest.mark.asyncio

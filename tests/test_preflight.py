@@ -25,6 +25,7 @@ from modelship.infer.infer_config import (
 from modelship.preflight import (
     GPUInfo,
     HardwareProfile,
+    ModelNotSizedError,
     merge_with_user_overrides,
     run_preflight,
 )
@@ -509,6 +510,12 @@ class TestRunPreflightDispatch:
         with patch.object(VllmPreflight, "recommend", side_effect=RuntimeError("boom")):
             result = run_preflight(cfg, HardwareProfile(gpus=[GPUInfo(0, 24 * 1024**3, "test")]))
         assert result == {}
+
+    def test_lets_a_model_not_sized_error_through(self):
+        cfg = _make_config()
+        failure = ModelNotSizedError("could not be sized for this node")
+        with patch.object(VllmPreflight, "recommend", side_effect=failure), pytest.raises(ModelNotSizedError):
+            run_preflight(cfg, HardwareProfile())
 
     def test_disabled_via_env_returns_empty_even_with_recommendation(self, monkeypatch):
         monkeypatch.setenv("MSHIP_PREFLIGHT", "false")
