@@ -134,7 +134,7 @@ class LlamaServerConfig(_StrictModel):
     _pinned_mmproj: "PinnedSource | None" = PrivateAttr(default=None)
     cache_reuse: int = Field(default=0, ge=0)
     context_shift: bool = False
-    cache_ram_mib: int | None = Field(default=None, ge=-1)
+    cache_ram_mib: int = Field(default=0, ge=-1)
     ubatch_size: int = Field(default=512, ge=1)
     flash_attn: Literal["on", "off", "auto"] = "auto"
     cache_type_k: Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"

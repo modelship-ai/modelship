@@ -587,6 +587,8 @@ class TestResponsesBackground:
             model="chat-capable",
             input="Say hi.",
             max_output_tokens=20,
+            # Greedy: a sampled answer can run into the cap and end `incomplete`.
+            temperature=0,
             background=True,
         )
         completed = _poll_until_terminal(client, resp.id)

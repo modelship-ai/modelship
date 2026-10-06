@@ -50,6 +50,10 @@ flashinfer JIT-compiles its kernels when vLLM loads a model, so `mship bootstrap
 
 vLLM reserves VRAM based on `num_gpus` — a whole number of GPUs, or a fraction of one when sharing a card — and fits the context to what's left. If a single model uses more than its budget, lower `num_gpus` for other deployments, or set `vllm_engine_kwargs.max_model_len` to cap KV cache size; an explicit value replaces the auto-fit.
 
+## `could not be sized for this node`
+
+A `llama_server` model on `num_gpus: 0` is sized against the RAM its node has free. When preflight cannot fit it into that RAM, at its smallest context or at the `n_ctx` you set, the model is not loaded and its deploy fails. The message gives the RAM that was available and `fit-params`' own reason; `failed to fit CLI arguments to free memory` means the model needs more than that. Free memory on the node, use a smaller model or quantization, or set a smaller `llama_server_config.n_ctx` on the models already loaded there: a model without one takes its full context when it loads first. `--no-preflight` loads the model without the check. A replica that fails this on a restart or a scale-up is retried until it fits, and the model answers 503 while none of its replicas is up.
+
 ## Deploy stuck pending, never schedules
 
 Every deploy requests an `mship_<loader>` Ray resource; nodes only advertise the loaders they can run. A node missing the right extras (e.g. `-cpu` given a `loader: vllm` config) pends the deploy instead of failing it. Check `ray status`/dashboard for the missing `mship_*` resource, and override a bad probe with `MSHIP_NODE_CAPABILITIES` (JSON). A pending deploy has no timeout and holds its gateway's deploy queue, so later deploys to that gateway wait behind it; `mship deploy --cancel ID` cancels it and rolls back what it submitted.
