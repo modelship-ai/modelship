@@ -557,6 +557,8 @@ models:
       n_ctx: 8192
 ```
 
+Changing `num_replicas` on a deployed model replaces its deployment, like any other config change. With the default `--replace-strategy blue_green` the new replicas load beside the old ones, so the cluster needs room for both until the switch; `stop_start` drops the old ones first.
+
 ## Autoscaling
 
 Set `autoscaling_config` instead of a fixed `num_replicas` to let Ray Serve grow/shrink replica count with load. The two are mutually exclusive — setting both is a config error.
@@ -588,7 +590,7 @@ models:
 | `upscale_delay_s` | float | Seconds of sustained over-load before adding replicas. Default: Ray Serve's own |
 | `downscale_delay_s` | float | Seconds of sustained under-load before removing replicas. Default: Ray Serve's own. Raise it to avoid thrashing on models with slow GPU warm-up |
 
-Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded from the config fingerprint) — tuning them doesn't tear down and rebuild the deployment.
+Changing `autoscaling_config` on a deployed model replaces its deployment the same way as changing `num_replicas`. The new deployment starts at `initial_replicas` (default `min_replicas`), whatever the old one had scaled out to.
 
 ## Environment Variables
 

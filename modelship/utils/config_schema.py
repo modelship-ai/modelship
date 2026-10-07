@@ -24,9 +24,8 @@ FINGERPRINT_LEN = 10
 # `{gateway}.{model}-{fingerprint}`; gateway names never contain '.'.
 _DEPLOYMENT_NAME_RE = re.compile(rf"([^.]+)\.(.+)-[0-9a-f]{{{FINGERPRINT_LEN}}}")
 
-# Excluded from the fingerprint: `name` is already in the deployment name, and Ray Serve
-# updates the replica-count fields in place when serve.run() re-binds an app.
-_FINGERPRINT_EXCLUDED_FIELDS = {"name", "num_replicas", "autoscaling_config"}
+# `name` is already in the deployment name.
+_FINGERPRINT_EXCLUDED_FIELDS = {"name"}
 
 # vLLM's own default.
 _VLLM_GPU_DEFAULT_GPU_MEMORY_UTILIZATION = 0.9
