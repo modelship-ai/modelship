@@ -308,6 +308,18 @@ class TestChatLlamaServer:
         message = completion.choices[0].message
         assert message.content, f"expected the free-text branch to stay reachable, got message={message!r}"
 
+    def test_tool_choice_none_answers_in_text(self, client):
+        completion = client.chat.completions.create(
+            model="chat-llama-server",
+            messages=[{"role": "user", "content": "What is the weather in Paris?"}],
+            tools=[_WEATHER_TOOL],
+            tool_choice="none",
+            max_tokens=512,
+        )
+        message = completion.choices[0].message
+        assert not message.tool_calls
+        assert message.content and "<tool_call>" not in message.content
+
     def test_concurrent_requests_are_not_serialized(self, client):
         """llama-server's `--parallel` slots let requests run concurrently instead
         of serializing behind a single lock; times one request, then several at once."""
