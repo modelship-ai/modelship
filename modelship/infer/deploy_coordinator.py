@@ -26,7 +26,7 @@ import os
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import ray
 from ray import serve
@@ -39,6 +39,9 @@ from modelship.state import get_state_store, state_store_env_var
 from modelship.utils import head_node_options, random_uuid
 from modelship.utils.config_schema import parse_deployment_name
 from modelship.utils.runtime_env import DEPLOY_COORDINATOR_ENV_VARS, build_env_vars, cluster_env_vars
+
+if TYPE_CHECKING:
+    from modelship.deploy.diff import Diff
 
 logger = get_logger("deploy_coordinator")
 
@@ -107,7 +110,7 @@ def _routing(seq: int, models: list[dict] | None, gateway_name: str) -> _Routing
 
 
 def _outcome(entry: _Entry, state: str, reason: str) -> dict:
-    return {"id": entry.request.id, "state": state, "reason": reason, "models": {}, "version": None}
+    return {"id": entry.request.id, "state": state, "reason": reason, "models": {}, "diff": [], "version": None}
 
 
 def _lease_key(node_id: str) -> str:
@@ -316,14 +319,36 @@ class DeployCoordinator:
         logger.info("Deploy %s: switching gateway %s to its new models", request_id, gateway_name)
         return self._routing[gateway_name].seq
 
-    async def reset_routing(self, gateway_name: str) -> tuple[int, list[dict] | None]:
-        """Routes the gateway by its committed version again; returns the routing seq and that version's models."""
+    async def diff(self, request_id: str, gateway_name: str) -> "Diff | None":
+        """The running request's diff against its gateway's committed version and Serve's apps; None when
+        Serve can't be read."""
+        return await self._diff(self._running_entry(request_id, gateway_name).request)
+
+    async def rollback_diff(self, gateway_name: str) -> "Diff | None":
+        """The diff that takes the gateway's apps back to its committed version; None when Serve can't be read."""
+        return await self._diff(DeployRequest(gateway_name, "bare", "blue_green", None, {}))
+
+    async def _diff(self, request: DeployRequest) -> "Diff | None":
+        from modelship.deploy.diff import build_diff
+        from modelship.deploy.strategy import serve_apps
+
+        async with self._version_locks[request.gateway]:
+            committed = await self._committed(request.gateway)
+        try:
+            apps = await asyncio.to_thread(serve_apps)
+        except Exception:
+            logger.debug("Could not read Serve's apps", exc_info=True)
+            return None
+        return build_diff(request, committed, apps)
+
+    async def reset_routing(self, gateway_name: str) -> int:
+        """Routes the gateway by its committed version again; returns the routing seq."""
         async with self._version_locks[gateway_name]:
             committed = await self._committed(gateway_name)
         current = self._routing.get(gateway_name)
         if current is None or current.models != committed:
             self._routing[gateway_name] = _routing(self._next_seq(), committed, gateway_name)
-        return self._routing[gateway_name].seq, committed
+        return self._routing[gateway_name].seq
 
     async def commit(self, request_id: str, gateway_name: str, models: list[dict]) -> int | None:
         """Writes *models* as the gateway's next version; None, writing nothing, for a cancelled request."""
@@ -408,10 +433,9 @@ class DeployCoordinator:
         from modelship.deploy.worker import create_worker
 
         gateway = entry.request.gateway
-        committed = await self._committed(gateway)
         entry.worker = create_worker(self._self())
         try:
-            return await entry.worker.run.remote(entry.request, committed, self._switch_timeout)
+            return await entry.worker.run.remote(entry.request, self._switch_timeout)
         except RayActorError as e:
             logger.warning(
                 "Deploy %s's worker stopped while %s; rolling back gateway %s", entry.request.id, entry.state, gateway

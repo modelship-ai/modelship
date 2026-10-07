@@ -1,31 +1,26 @@
-"""What a deploy request submits and deletes, planned against Serve's apps, and the submit itself."""
+"""What Serve holds for the model apps, and the submits that change it."""
 
-from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from ray import serve
-from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview, LoggingConfig
+from ray.serve.config import AutoscalingConfig as ServeAutoscalingConfig
+from ray.serve.schema import ApplicationStatus, LoggingConfig
 
 from modelship.deploy.actor_options import build_deployment_options
-from modelship.deploy.ledger import RequestMode, Version, merge
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.infer.model_deployment import ModelDeployment
 from modelship.logging import get_logger
-from modelship.utils.config_schema import parse_deployment_name
+from modelship.utils.config_schema import AutoscalingConfig, parse_deployment_name
 
 logger = get_logger("startup")
 
-# Serve has stopped starting replicas for these; submitting again replaces the app.
-_NOT_LIVE = (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.DELETING)
+_AUTOSCALING_FIELDS = tuple(AutoscalingConfig.model_fields)
 
 
-@dataclass
-class Plan:
-    adds: list[ModelshipModelConfig]
-    # the gateway's apps the request replaces or drops
-    retired: list[str]
-    # models whose live app only gets new replica-count fields
-    rescaled: list[ModelshipModelConfig] = field(default_factory=list)
+class ServeApp(NamedTuple):
+    status: ApplicationStatus
+    # the replica-count fields its deployment is set to, shaped as `serve_scaling`; None without a deployment
+    scaling: dict | None
 
 
 class LiveApp(NamedTuple):
@@ -45,55 +40,34 @@ def gateway_apps(apps, gateway_name: str) -> dict[str, str]:
     }
 
 
-def plan_request(
-    mode: RequestMode,
-    models: list[ModelshipModelConfig],
-    committed: list[ModelshipModelConfig] | None,
-    apps: dict[str, ApplicationStatusOverview],
-    gateway_name: str,
-) -> Plan:
-    """What to submit and what to delete, against the gateway's apps in Serve."""
-    wanted = (committed or []) if mode == "bare" else models
-    wanted_apps = {c.deployment_name(gateway_name): c for c in wanted}
-    adds = [c for name, c in wanted_apps.items() if name not in apps or apps[name].status in _NOT_LIVE]
-    if mode == "bare":
-        return Plan(adds, [])
-    names = {c.name for c in wanted}
-    retired = sorted(
-        name
-        for name, model in gateway_apps(apps, gateway_name).items()
-        if name not in wanted_apps and (mode == "reconcile" or model in names)
-    )
-    added = {c.name for c in adds}
-    current = {c.deployment_name(gateway_name): c.scaling() for c in committed or []}
-    rescaled = [
-        c for name, c in wanted_apps.items() if c.name not in added and name in current and c.scaling() != current[name]
-    ]
-    return Plan(adds, retired, rescaled)
+def serve_scaling(config: ModelshipModelConfig) -> dict:
+    """The replica-count fields Serve holds for *config*: `num_replicas` alone, or the autoscaling fields
+    with Serve's defaults filled in."""
+    if config.autoscaling_config is None:
+        return {"num_replicas": config.num_replicas}
+    autoscaling = ServeAutoscalingConfig(**config.autoscaling_config.to_serve_dict())
+    return {name: getattr(autoscaling, name) for name in _AUTOSCALING_FIELDS}
 
 
-def proposed_models(
-    mode: RequestMode, models: list[dict] | None, committed: list[dict] | None, gateway_name: str
-) -> list[dict] | None:
-    """The model set the request commits; None when it leaves the committed version as it is."""
-    if mode == "bare" or models is None:
-        return None
-    proposed = list(models) if mode == "reconcile" else merge(committed or [], models, gateway_name, "additive")
-    if committed is not None and _deployed(proposed, gateway_name) == _deployed(committed, gateway_name):
-        return None
-    return proposed
+def serve_apps() -> dict[str, ServeApp]:
+    """Every Serve app's status and the replica-count fields its deployment is set to."""
+    from ray.serve.context import _get_global_client
+
+    client = _get_global_client()
+    assert client is not None
+    apps = {}
+    for name, app in client.get_serve_details().get("applications", {}).items():
+        deployment = app["deployments"].get(name)
+        apps[name] = ServeApp(ApplicationStatus(app["status"]), _set_scaling(deployment) if deployment else None)
+    return apps
 
 
-def _deployed(models: list[dict], gateway_name: str) -> dict[str, tuple[str, dict]]:
-    """Model name -> its app and replica-count fields."""
-    configs = [ModelshipModelConfig.model_validate(raw) for raw in models]
-    return {c.name: (c.deployment_name(gateway_name), c.scaling()) for c in configs}
-
-
-def unnamed_apps(gateway_name: str, committed: list[dict] | None, apps) -> list[str]:
-    """The gateway's apps that *committed* doesn't name; every one of them when there's no committed version."""
-    keep = set(Version(0, committed).apps(gateway_name).values()) if committed is not None else set()
-    return sorted(name for name in gateway_apps(apps, gateway_name) if name not in keep)
+def _set_scaling(deployment: dict) -> dict:
+    config = deployment["deployment_config"]
+    autoscaling = config.get("autoscaling_config")
+    if autoscaling is None:
+        return {"num_replicas": config.get("num_replicas")}
+    return {name: autoscaling.get(name) for name in _AUTOSCALING_FIELDS}
 
 
 def submit_app(

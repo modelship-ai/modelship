@@ -480,7 +480,14 @@ class TestDriverVerbs:
         from modelship import driver
         from modelship.deploy import serve_utils
 
-        outcome = outcome or {"id": "r1", "state": "succeeded", "reason": "", "models": {"a": "up"}, "version": 1}
+        outcome = outcome or {
+            "id": "r1",
+            "state": "succeeded",
+            "reason": "",
+            "models": {"a": "up"},
+            "diff": ["4. add a", "6. switch the gateway and commit"],
+            "version": 1,
+        }
         receipt = {"id": "r1", "behind": None, "outcome": "outcome-ref"}
         coordinator = MagicMock()
         coordinator.cluster_settings.remote.return_value = "settings-ref"
@@ -591,14 +598,20 @@ class TestDriverVerbs:
         caplog.set_level(logging.INFO, logger="modelship")
         deployed = self._deploy(["--wait"], existing_apps={"modelship"})
         assert [c.args[0] for c in deployed.get.call_args_list] == ["settings-ref", "outcome-ref"]
-        assert "Deploy r1 succeeded; the gateway is on version 1." in caplog.messages
+        assert caplog.messages[-5:] == [
+            "Deploy r1's diff:",
+            "  4. add a",
+            "  6. switch the gateway and commit",
+            "  a: up",
+            "Deploy r1 succeeded; the gateway is on version 1.",
+        ]
 
     @pytest.mark.parametrize(
         ("state", "message"), [("failed", "Deploy r1 failed: boom"), ("cancelled", "Deploy r1 cancelled.")]
     )
     def test_deploy_exits_nonzero_when_the_request_does_not_succeed(self, state, message, caplog):
         caplog.set_level(logging.INFO, logger="modelship")
-        outcome = {"id": "r1", "state": state, "reason": "boom", "models": {}, "version": None}
+        outcome = {"id": "r1", "state": state, "reason": "boom", "models": {}, "diff": [], "version": None}
         with pytest.raises(SystemExit) as exc:
             self._deploy(["--wait"], existing_apps={"modelship"}, outcome=outcome)
         assert exc.value.code == 1
@@ -739,7 +752,7 @@ class TestCancelCommand:
 
         coordinator = MagicMock()
         coordinator.cancel.remote.return_value = result
-        rolled_back = {"id": "r1", "state": "cancelled", "reason": "", "models": {"a": "rolled back"}}
+        rolled_back = {"id": "r1", "state": "cancelled", "reason": "", "models": {"a": "rolled back"}, "diff": []}
         with (
             patch.object(serve_utils, "local_ray_clusters", return_value=set(clusters)),
             patch.object(serve_utils, "attach_cluster"),
@@ -786,7 +799,7 @@ class TestCancelCommand:
             "message": "deploy r1 is being cancelled and rolled back",
             "outcome": "outcome-ref",
         }
-        failed = {"id": "r1", "state": "failed", "reason": "boom", "models": {}}
+        failed = {"id": "r1", "state": "failed", "reason": "boom", "models": {}, "diff": []}
 
         with pytest.raises(SystemExit) as exc:
             self._cancel(result, argv=["--wait"], waiting=lambda value: failed if value == "outcome-ref" else value)

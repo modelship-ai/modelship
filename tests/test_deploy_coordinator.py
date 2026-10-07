@@ -9,10 +9,12 @@ from unittest.mock import create_autospec
 
 import pytest
 from ray.exceptions import RayActorError
-from ray.serve.schema import LoggingConfig
+from ray.serve.schema import ApplicationStatus, LoggingConfig
 
+from modelship.deploy import strategy
 from modelship.deploy import worker as worker_module
 from modelship.deploy.ledger import DeployRequest, Version, commit_version, read_versions
+from modelship.deploy.strategy import ServeApp
 from modelship.infer import deploy_coordinator
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
@@ -260,18 +262,18 @@ class _Worker:
 
     def __init__(self, workers: "_Workers"):
         self.run_future: asyncio.Future = asyncio.get_running_loop().create_future()
-        self.runs: list[tuple] = []
+        self.runs: list[DeployRequest] = []
         self.killed = False
         self.run = SimpleNamespace(remote=self._run)
         self.roll_back = SimpleNamespace(remote=lambda *args: workers.record_rollback(args))
 
-    def _run(self, request, committed, switch_timeout):
-        self.runs.append((request, committed))
+    def _run(self, request, switch_timeout):
+        self.runs.append(request)
         return self.run_future
 
     def finish(self, state: str = "succeeded") -> None:
-        request = self.runs[0][0]
-        self.run_future.set_result({"id": request.id, "state": state, "reason": "", "models": {}, "version": None})
+        outcome = {"id": self.runs[0].id, "state": state, "reason": "", "models": {}, "diff": [], "version": None}
+        self.run_future.set_result(outcome)
 
 
 class _Workers:
@@ -281,7 +283,7 @@ class _Workers:
         # when set, a rollback routes back through it as the real worker does
         self.ledger = None
         # what each rollback's reset_routing returned
-        self.resets: list[tuple] = []
+        self.resets: list[int] = []
         # when set, a rollback waits for it after its reset
         self.hold: asyncio.Event | None = None
 
@@ -366,7 +368,7 @@ class TestQueue:
         assert receipt["behind"] is None
         await _settle()
         (worker,) = workers.created
-        assert worker.runs[0][1] is None
+        assert worker.runs[0].id == receipt["id"]
         worker.finish()
         outcome = await receipt["outcome"]
         assert outcome["id"] == receipt["id"]
@@ -393,13 +395,6 @@ class TestQueue:
         await coord.submit(_request("edge"))
         await _settle()
         assert len(workers.created) == 2
-
-    async def test_a_request_starts_from_the_committed_version(self, workers):
-        coord = _ledger()
-        commit_version(coord._store, "g", [_raw("a")])
-        await coord.submit(_request())
-        await _settle()
-        assert workers.created[0].runs[0][1] == [_raw("a")]
 
     async def test_the_outcome_is_forgotten_once_collected(self, workers):
         coord = _ledger()
@@ -549,7 +544,7 @@ class TestWorkerDeath:
         assert (await receipt["outcome"])["state"] == "succeeded"
         assert await commit == 1
 
-    async def test_a_reset_during_a_commit_returns_the_version_it_writes(self, workers, monkeypatch):
+    async def test_a_reset_during_a_commit_routes_by_the_version_it_writes(self, workers, monkeypatch):
         coord = _ledger()
         release = _hold_commits(monkeypatch)
         receipt = await coord.submit(_request())
@@ -560,7 +555,8 @@ class TestWorkerDeath:
         reset = asyncio.ensure_future(coord.reset_routing("g"))
         await _settle()
         release.set()
-        assert (await reset)[1] == [_raw("a")]
+        await reset
+        assert (await coord.routing_versions(["g"]))["g"]["apps"] == {"a": _app_name(_raw("a"))}
         await commit
 
     async def test_a_commit_that_reaches_a_rollback_after_its_reset_is_refused(self, workers):
@@ -577,7 +573,7 @@ class TestWorkerDeath:
             await coord.commit(receipt["id"], "g", [_raw("b")])
         workers.hold.set()
         assert (await receipt["outcome"])["state"] == "failed"
-        assert workers.resets[0][1] == [_raw("a")]
+        assert (await coord.routing_versions(["g"]))["g"]["apps"] == {"a": _app_name(_raw("a"))}
         assert read_versions(coord._store, "g")[0] == Version(1, [_raw("a")])
 
     async def test_a_switch_that_reaches_a_rollback_after_its_reset_is_refused(self, workers):
@@ -654,13 +650,13 @@ class TestRouting:
         receipt = await coord.submit(_request())
         await _settle()
         seq = await coord.switch(receipt["id"], "g", [_raw("b")])
-        assert (await coord.reset_routing("g"))[0] > seq
+        assert await coord.reset_routing("g") > seq
         assert (await coord.routing_versions(["g"]))["g"]["apps"] == {}
 
     async def test_a_reset_on_the_committed_version_keeps_the_seq(self, workers):
         coord = _ledger()
         seq = (await coord.routing_versions(["g"]))["g"]["seq"]
-        assert await coord.reset_routing("g") == (seq, None)
+        assert await coord.reset_routing("g") == seq
 
     async def test_only_the_running_request_can_switch(self, workers):
         coord = _ledger()
@@ -685,6 +681,51 @@ class TestCommit:
         await coord.cancel(receipt["id"])
         assert await coord.commit(receipt["id"], "g", [_raw("a")]) is None
         assert read_versions(coord._store, "g") == (None, None)
+
+
+@pytest.mark.asyncio
+class TestDiff:
+    @pytest.fixture
+    def held(self, monkeypatch) -> dict:
+        apps: dict = {}
+        monkeypatch.setattr(strategy, "serve_apps", lambda: apps)
+        return apps
+
+    async def test_the_running_requests_diff_against_the_committed_version_and_serve(self, workers, held):
+        coord = _ledger()
+        b = _raw("b", llama_server_config={"n_ctx": 4096})
+        commit_version(coord._store, "g", [_raw("a"), b])
+        held[_app_name(_raw("a"))] = ServeApp(ApplicationStatus.RUNNING, {"num_replicas": 1})
+        held[_app_name(b)] = ServeApp(ApplicationStatus.RUNNING, {"num_replicas": 1})
+        receipt = await coord.submit(_request(models=[_raw("a"), {**b, "num_replicas": 2}, _raw("c")]))
+        await _settle()
+        diff = await coord.diff(receipt["id"], "g")
+        assert diff.actions == {"a": "keep", "b": "rescale", "c": "add"}
+
+    async def test_only_the_running_request_has_a_diff(self, workers, held):
+        with pytest.raises(ValueError, match="not running"):
+            await _ledger().diff("nope", "g")
+
+    async def test_a_rollback_diff_takes_the_apps_back_to_the_committed_version(self, workers, held):
+        coord = _ledger()
+        commit_version(coord._store, "g", [_raw("a")])
+        held[_app_name(_raw("a"))] = ServeApp(ApplicationStatus.RUNNING, {"num_replicas": 2})
+        held[_app_name(_raw("b"))] = ServeApp(ApplicationStatus.RUNNING, {"num_replicas": 1})
+        diff = await coord.rollback_diff("g")
+        assert diff.leftovers == [_app_name(_raw("b"))]
+        assert [rescale.app for rescale in diff.scale_downs] == [_app_name(_raw("a"))]
+        assert diff.commits is False
+
+    async def test_none_while_serve_cannot_be_read(self, workers, monkeypatch):
+        def unreadable():
+            raise RuntimeError("serve controller unreachable")
+
+        monkeypatch.setattr(strategy, "serve_apps", unreadable)
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        assert await coord.diff(receipt["id"], "g") is None
+        assert await coord.rollback_diff("g") is None
 
 
 class TestFindCoordinator:
