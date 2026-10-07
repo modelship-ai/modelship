@@ -398,8 +398,8 @@ elif loader == "vllm":
     # both sides.
     m_dict["distributed_executor_backend"] = None if m_match.group(4) == "None" else m_match.group(4)
 
-    # Auto-detected from the chat template after the engine is up, so they land
-    # on their own line rather than in the kwargs dict.
+    # Auto-detected from the chat template, so they land on their own line
+    # rather than in the kwargs dict.
     p_match = re.search(
         r"resolved vllm parsers for '.*': enable_auto_tools=(\S+), tool_parser=(\S+), reasoning_parser=(\S+)",
         m_content,

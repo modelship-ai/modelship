@@ -49,6 +49,8 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 
 Every deployment also requests a `mship_<loader>` Ray custom resource (see [Capability-aware scheduling](#capability-aware-scheduling)) alongside `num_gpus`/`GPU`.
 
+A chat or Responses request with `tool_choice: none` reaches every loader without its tools (`BaseInfer.create_chat_completion`, `responses_request_to_chat`), so they are never rendered into the prompt.
+
 ### Identity-scoped vLLM prefix caching
 
 vLLM's automatic prefix caching shares KV-cache blocks across every request on an engine by default — two callers sending the same prefix (e.g. a shared system prompt) get observably different time-to-first-token depending on cache state, leaking one caller's recent activity to another via timing. Every vLLM chat/Responses request is cache-salted with the caller's `identity_key()` (`modelship/openai/auth.py`) before it reaches the engine, so cache reuse is confined to one identity; a different identity always misses. This only isolates as well as identity resolution does — with no `MSHIP_TRUSTED_IDENTITY_HEADER` configured, every caller shares one identity bucket. Salting trades cache hit rate, not memory, for isolation. Set `enable_prefix_caching: false` in `vllm_engine_kwargs` to disable prefix caching entirely.

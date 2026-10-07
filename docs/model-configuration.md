@@ -309,6 +309,8 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 | `quantization` | string | — | e.g. `awq`, `gptq` |
 | `enable_auto_tool_choice` | bool | — | Enable automatic tool/function calling |
 | `tool_call_parser` | string | — | e.g. `llama3_json`, `hermes` |
+| `enable_reasoning` | bool | — | `false` turns reasoning parsing off |
+| `reasoning_parser` | string | — | e.g. `deepseek_r1`, `gemma4` |
 | `enforce_eager` | bool | — | Disable CUDA graph capture |
 | `kv_cache_dtype` | string | — | e.g. `fp8` |
 | `enable_prefix_caching` | bool | vLLM default: on | Disable to turn off vLLM's automatic prefix caching entirely. Not usually needed — every request is already cache-salted per caller identity (see [Identity-scoped prefix caching](architecture.md#identity-scoped-vllm-prefix-caching)); this is for an operator who wants caching off regardless of identity |
@@ -318,6 +320,12 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 | `mm_processor_kwargs` | dict | — | Forwarded to the HF processor (e.g. `min_pixels`/`max_pixels` for Qwen2.5-VL) |
 
 > **GGUF is not supported on the `vllm` loader** — vLLM 0.24 dropped in-tree GGUF, so a `.gguf` source is rejected at driver preflight, unconditionally regardless of GPU vs. CPU. Use `loader: llama_server` for GGUF; `vllm` takes safetensors, or AWQ/GPTQ/FP8 quants.
+
+### Tool calling and reasoning
+
+Both parsers are picked from the model's chat template. `tool_call_parser` and `reasoning_parser` name one instead; `enable_auto_tool_choice: false` and `enable_reasoning: false` switch one off.
+
+On a model that reasons, `response_format` and a forced `tool_choice` (`required` or a named function) take effect once the reasoning ends: the answer arrives in `content` or `tool_calls` with the reasoning beside it, and `max_tokens` covers both.
 
 ### CPU (no GPU required)
 
