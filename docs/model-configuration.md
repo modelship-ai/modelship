@@ -557,6 +557,8 @@ models:
       n_ctx: 8192
 ```
 
+Changing `num_replicas` on a deployed model changes the running deployment: its replicas keep serving while Ray Serve starts or stops the others, and `--replace-strategy` plays no part. The deploy waits for the new count, so a scale-up the cluster has no room for holds the gateway's deploy queue like any pending deploy; `mship deploy --cancel` puts the committed count back. Any other change to the model replaces its deployment. Setting the context length on a model deployed without one is such a change, so set it from the first deploy when you plan to scale.
+
 ## Autoscaling
 
 Set `autoscaling_config` instead of a fixed `num_replicas` to let Ray Serve grow/shrink replica count with load. The two are mutually exclusive — setting both is a config error.
@@ -588,7 +590,7 @@ models:
 | `upscale_delay_s` | float | Seconds of sustained over-load before adding replicas. Default: Ray Serve's own |
 | `downscale_delay_s` | float | Seconds of sustained under-load before removing replicas. Default: Ray Serve's own. Raise it to avoid thrashing on models with slow GPU warm-up |
 
-Autoscaling bounds are changed in place on `mship deploy --reconcile` (excluded from the config fingerprint) — tuning them doesn't tear down and rebuild the deployment.
+Changing `autoscaling_config` on a deployed model is applied to the running deployment like a `num_replicas` change ([Scaling a Deployment](#scaling-a-deployment)): its replicas keep serving, and the current count is kept within the new bounds.
 
 ## Environment Variables
 
