@@ -86,9 +86,9 @@ def merge(
 ) -> list[dict]:
     """Fold the user's input into the committed raw model set under *mode*.
 
-    - additive: replace-by-name — identical config (same deployment_name) is an
-      idempotent skip; a different config sharing a model name replaces the
-      existing entry for that name rather than joining it.
+    - additive: replace-by-name — the same app (same deployment_name) takes the
+      input's entry and its replica-count fields; a different config sharing a model
+      name replaces the existing entry for that name rather than joining it.
     - reconcile: input replaces the committed set entirely.
 
     Validates *input_raw* alone (not the merged result), so a model name reused with a
@@ -111,6 +111,7 @@ def merge(
     for d in input_raw:
         dep_name, model_name = _identity(d, gateway_name)
         if dep_name in merged:
+            merged[dep_name] = d
             continue
         prior_dep_name = dep_name_by_model_name.get(model_name)
         if prior_dep_name is not None:

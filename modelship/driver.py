@@ -306,6 +306,10 @@ def _wait_for_outcome(ref, stopped: str, lost: str) -> dict:
 
 
 def _log_outcome(outcome: dict) -> None:
+    if outcome["diff"]:
+        logger.info("Deploy %s's diff:", outcome["id"])
+    for line in outcome["diff"]:
+        logger.info("  %s", line)
     for model, result in sorted(outcome["models"].items()):
         logger.info("  %s: %s", model, result)
     if outcome["state"] == "succeeded":
