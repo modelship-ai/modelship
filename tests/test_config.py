@@ -524,9 +524,10 @@ class TestFingerprint:
         # the name is the deployment-name prefix, not part of the hash.
         assert self._cfg(name="a").fingerprint() == self._cfg(name="b").fingerprint()
 
-    def test_changes_when_num_replicas_differs(self):
+    def test_unaffected_by_num_replicas(self):
+        # Replica count is a Ray Serve in-place rebind, not a config drift.
         fixed = {"vllm_engine_kwargs": {"max_model_len": 4096}}
-        assert self._cfg(num_replicas=1, **fixed).fingerprint() != self._cfg(num_replicas=4, **fixed).fingerprint()
+        assert self._cfg(num_replicas=1, **fixed).fingerprint() == self._cfg(num_replicas=4, **fixed).fingerprint()
 
     def test_changes_when_loader_differs(self):
         assert (
@@ -649,11 +650,12 @@ class TestAutoscalingConfig:
         config = self._model(autoscaling_config={"min_replicas": 1, "max_replicas": 4})
         assert config.autoscaling_config is not None
 
-    def test_changes_the_fingerprint(self):
+    def test_excluded_from_fingerprint(self):
+        # Changing scaling bounds is an in-place Serve rebind, not config drift.
         a = self._model(autoscaling_config={"min_replicas": 1, "max_replicas": 2})
         b = self._model(autoscaling_config={"min_replicas": 3, "max_replicas": 9})
         plain = self._model()
-        assert len({a.fingerprint(), b.fingerprint(), plain.fingerprint()}) == 3
+        assert a.fingerprint() == b.fingerprint() == plain.fingerprint()
 
 
 class TestReplicasShareAContextLength:

@@ -49,8 +49,6 @@ FAILED = _app(ApplicationStatus.DEPLOY_FAILED, "engine died")
 UNHEALTHY = _app(ApplicationStatus.UNHEALTHY)
 DELETING = _app(ApplicationStatus.DELETING)
 A, A2, B = _raw("a", num_cpus=1), _raw("a", num_cpus=2), _raw("b")
-C = _raw("c", llama_server_config={"n_ctx": 4096})
-RESCALED = [{**C, "num_replicas": 2}, {**C, "autoscaling_config": {"min_replicas": 1, "max_replicas": 2}}]
 
 
 class _Serve:
@@ -222,13 +220,6 @@ class TestPlan:
         apps = {_app_name(A, "edge"): RUNNING}
         assert plan_request("reconcile", [], None, apps, "gw").retired == []
 
-    @pytest.mark.parametrize("mode", ["additive", "reconcile"])
-    @pytest.mark.parametrize("rescaled", RESCALED)
-    def test_a_replica_count_change_replaces_the_app(self, rescaled, mode):
-        plan = plan_request(mode, _configs(rescaled), _configs(C), {_app_name(C): RUNNING}, "gw")
-        assert [c.deployment_name("gw") for c in plan.adds] == [_app_name(rescaled)]
-        assert plan.retired == [_app_name(C)]
-
 
 class TestProposedModels:
     def test_reconcile_proposes_the_request(self):
@@ -242,10 +233,6 @@ class TestProposedModels:
 
     def test_a_request_that_changes_no_app_proposes_nothing(self):
         assert proposed_models("additive", [A], [A, B], "gw") is None
-
-    @pytest.mark.parametrize("rescaled", RESCALED)
-    def test_a_replica_count_change_is_proposed(self, rescaled):
-        assert proposed_models("additive", [rescaled], [C], "gw") == [rescaled]
 
     def test_a_bare_request_proposes_nothing(self):
         assert proposed_models("bare", None, [A], "gw") is None
