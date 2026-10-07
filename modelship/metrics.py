@@ -331,7 +331,7 @@ def _build_util_metrics():
         "deploy_models_changed_total": Counter(
             "modelship_deploy_models_changed_total",
             description="Models changed by a deploy request, by action.",
-            tag_keys=("gateway", "action"),  # action: add | remove | fail
+            tag_keys=("gateway", "action"),  # action: add | remove | rescale | fail
         ),
     }
 

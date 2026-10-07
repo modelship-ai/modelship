@@ -16,7 +16,16 @@ from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview
 from modelship.deploy.actor_options import build_cache_env_vars, build_deployment_options, total_gpu_reservation
 from modelship.deploy.config import resolve_all_model_sources
 from modelship.deploy.ledger import DeployRequest, to_config
-from modelship.deploy.strategy import Plan, gateway_apps, plan_request, proposed_models, submit_app, unnamed_apps
+from modelship.deploy.strategy import (
+    Plan,
+    gateway_apps,
+    live_app,
+    plan_request,
+    proposed_models,
+    rescale_app,
+    submit_app,
+    unnamed_apps,
+)
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.logging import configure_logging, get_logger, serve_logging_config
 from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
@@ -133,7 +142,8 @@ def roll_back(
     switching: bool,
     switch_timeout: float,
 ) -> list[str]:
-    """Routes the gateway back to its committed version, then deletes each of its apps that version doesn't name."""
+    """Routes the gateway back to its committed version, deletes each of its apps that version doesn't name,
+    then gives the apps it names that version's replica-count fields."""
     routing, committed = ledger.reset_routing(gateway_name)
     if switching and not replicas.wait_switched(gateway_name, routing, switch_timeout):
         logger.warning(
@@ -143,7 +153,29 @@ def roll_back(
     if doomed:
         logger.info("Rolling back gateway %s: deleting %s", gateway_name, ", ".join(doomed))
     delete_apps(doomed, read_until_readable)
+    restore_scaling(gateway_name, committed)
     return doomed
+
+
+def restore_scaling(gateway_name: str, committed: list[dict] | None) -> None:
+    """Re-submits each of *committed*'s apps whose replica-count fields differ in Serve; an app that keeps
+    failing is given up on after `_UNREADABLE_LIMIT_S`."""
+    left = {c.deployment_name(gateway_name): c for c in to_config(committed).models} if committed else {}
+    deadline = time.monotonic() + _UNREADABLE_LIMIT_S
+    while left:
+        for name, config in list(left.items()):
+            try:
+                live = live_app(name)
+                if live is not None and live.config.scaling() != config.scaling():
+                    logger.info("Rolling back gateway %s: rescaling %s", gateway_name, name)
+                    rescale_app(name, live, config.scaling(), serve_logging_config())
+            except Exception:
+                if time.monotonic() < deadline:
+                    continue
+                logger.exception("Could not give %s its committed replica-count fields", name)
+            del left[name]
+        if left:
+            time.sleep(POLL_SECONDS)
 
 
 @dataclass
@@ -198,7 +230,7 @@ class Run:
 
         if request.strategy == "blue_green":
             delete_apps(plan.retired, read_until_readable)
-        for action, count in (("add", len(plan.adds)), ("remove", len(plan.retired))):
+        for action, count in (("add", len(plan.adds)), ("remove", len(plan.retired)), ("rescale", len(plan.rescaled))):
             if count:
                 DEPLOY_MODELS_CHANGED_TOTAL.inc(count, tags={**tags, "action": action})
         DEPLOY_DURATION_SECONDS.observe(time.monotonic() - started, tags=tags)
@@ -221,6 +253,8 @@ class Run:
             self._results[config.name] = "unchanged"
         for config in plan.adds:
             self._results[config.name] = "coming up"
+        for config in plan.rescaled:
+            self._results[config.name] = "rescaling"
         self._log_plan(plan, proposed)
 
         if plan.adds:
@@ -231,6 +265,7 @@ class Run:
         if request.strategy == "stop_start":
             delete_apps(plan.retired, self._read)
         self._bring_up(plan.adds)
+        self._rescale(plan.rescaled)
         if proposed is not None:
             self._switch_and_commit(proposed)
         for model in gateway_apps(dict.fromkeys(plan.retired), request.gateway).values():
@@ -246,6 +281,10 @@ class Run:
             )
         if plan.retired:
             logger.info("Deploy %s retires: %s", self._request.id, ", ".join(plan.retired))
+        if plan.rescaled:
+            logger.info(
+                "Deploy %s rescales: %s", self._request.id, ", ".join(c.deployment_name(gateway) for c in plan.rescaled)
+            )
         after = proposed if proposed is not None else self._committed
         if not after:
             return
@@ -307,6 +346,48 @@ class Run:
                 # UNHEALTHY follows RUNNING while Serve replaces a replica, so it stays pending
                 elif app.status == ApplicationStatus.DEPLOY_FAILED:
                     self._failed_attempt(name, item, app.message)
+            if pending and (polls == 1 or polls % _PENDING_LOG_EVERY_N_POLLS == 0):
+                _log_pending(pending, statuses)
+
+    def _rescale(self, rescaled: list[ModelshipModelConfig]) -> None:
+        """Re-submits each model's live app with its new replica-count fields and polls until every one is RUNNING."""
+        gateway = self._request.gateway
+        pending = {c.deployment_name(gateway): _Add(c) for c in rescaled}
+        if not pending:
+            return
+        self._ledger.forget_deaths(list(pending))
+        for name, item in pending.items():
+            # one left by a replica that failed before this request
+            self._ledger.pop_fatal_error(name)
+            try:
+                live = live_app(name)
+                if live is not None:
+                    rescale_app(name, live, item.config.scaling(), serve_logging_config())
+            except Exception as e:
+                self._fail(item, f"{type(e).__name__}: {e}")
+            if live is None:
+                self._fail(item, f"deployment {name} was deleted")
+
+        polls = 0
+        while pending:
+            time.sleep(POLL_SECONDS)
+            polls += 1
+            if (statuses := self._try_read()) is None:
+                continue
+            crashing = self._ledger.crash_looping(list(pending))
+            for name, item in list(pending.items()):
+                if name in crashing:
+                    self._fail(item, f"its backend keeps dying: {crashing[name]}")
+                # Serve retries a new replica without limit and never reports DEPLOY_FAILED
+                if (fatal := self._ledger.pop_fatal_error(name)) is not None:
+                    self._fail(item, fatal)
+                app = statuses.get(name)
+                if app is None or app.status == ApplicationStatus.DELETING:
+                    self._fail(item, f"deployment {name} was deleted")
+                if app.status == ApplicationStatus.RUNNING:
+                    logger.info("Model rescaled: %s (deployment: %s)", item.config.name, name)
+                    self._results[item.config.name] = "rescaled"
+                    del pending[name]
             if pending and (polls == 1 or polls % _PENDING_LOG_EVERY_N_POLLS == 0):
                 _log_pending(pending, statuses)
 
@@ -376,7 +457,7 @@ class Run:
         roll_back(self._ledger, self._replicas, request.gateway, self._switching, self._switch_timeout)
         logger.info("Deploy %s rolled back", request.id)
         for model, result in self._results.items():
-            if result in ("up", "coming up"):
+            if result in ("up", "coming up", "rescaled", "rescaling"):
                 self._results[model] = "rolled back"
         return self._outcome(state, reason)
 

@@ -30,6 +30,11 @@ class TestMerge:
         merged = merge([_model("a")], [_model("a")], "g", "additive")
         assert [m["name"] for m in merged] == ["a"]
 
+    def test_additive_takes_the_inputs_replica_count_for_the_same_app(self):
+        rescaled = _model("a", num_replicas=2, llama_server_config={"n_ctx": 4096})
+        merged = merge([_model("a", llama_server_config={"n_ctx": 4096}), _model("b")], [rescaled], "g", "additive")
+        assert merged == [rescaled, _model("b")]
+
     def test_additive_replaces_same_name_different_config(self):
         # same name, different config -> the new one replaces the old (one deployment per name)
         a1 = _model("a", num_cpus=1)

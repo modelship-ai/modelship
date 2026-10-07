@@ -24,8 +24,8 @@ FINGERPRINT_LEN = 10
 # `{gateway}.{model}-{fingerprint}`; gateway names never contain '.'.
 _DEPLOYMENT_NAME_RE = re.compile(rf"([^.]+)\.(.+)-[0-9a-f]{{{FINGERPRINT_LEN}}}")
 
-# Excluded from the fingerprint: `name` is already in the deployment name, and Ray Serve
-# updates the replica-count fields in place when serve.run() re-binds an app.
+# Excluded from the fingerprint: `name` is already in the deployment name, and the
+# replica-count fields are applied to the app while it runs.
 _FINGERPRINT_EXCLUDED_FIELDS = {"name", "num_replicas", "autoscaling_config"}
 
 # vLLM's own default.
@@ -401,6 +401,9 @@ class ModelshipModelConfig(_StrictModel):
 
     def deployment_name(self, gateway_name: str) -> str:
         return f"{gateway_name}.{self.name}-{self.fingerprint()}"
+
+    def scaling(self) -> dict:
+        return {"num_replicas": self.num_replicas, "autoscaling_config": self.autoscaling_config}
 
 
 def parse_deployment_name(app_name: str) -> tuple[str, str] | None:

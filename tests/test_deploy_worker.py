@@ -18,9 +18,10 @@ from ray.serve.schema import (
 
 from modelship.deploy import strategy, worker
 from modelship.deploy.ledger import DeployRequest, to_config
-from modelship.deploy.strategy import plan_request, proposed_models, submit_app, unnamed_apps
+from modelship.deploy.strategy import LiveApp, plan_request, proposed_models, rescale_app, submit_app, unnamed_apps
 from modelship.deploy.worker import DeployLedger, Run, roll_back
 from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.infer.sources import LocalSource
 
 
 def _raw(name: str, **overrides) -> dict:
@@ -49,6 +50,9 @@ FAILED = _app(ApplicationStatus.DEPLOY_FAILED, "engine died")
 UNHEALTHY = _app(ApplicationStatus.UNHEALTHY)
 DELETING = _app(ApplicationStatus.DELETING)
 A, A2, B = _raw("a", num_cpus=1), _raw("a", num_cpus=2), _raw("b")
+C = _raw("c", llama_server_config={"n_ctx": 4096})
+C2 = {**C, "num_replicas": 2}
+RESCALED = [C2, {**C, "autoscaling_config": {"min_replicas": 1, "max_replicas": 2}}]
 
 
 class _Serve:
@@ -63,6 +67,7 @@ class _Serve:
         self.unreadable = 0
         self.events: list[tuple[str, str]] = []
         self.logging_configs: list = []
+        self.configs: dict[str, ModelshipModelConfig] = {}
 
     def status(self):
         if self.unreadable:
@@ -87,8 +92,20 @@ class _Serve:
         name = config.deployment_name(gateway_name)
         self.events.append(("submit", name))
         self.logging_configs.append(serve_logging_config)
+        self.configs[name] = config
         self.running[name] = self.scripts.setdefault(config.name, [RUNNING])
         self.apps[name] = DEPLOYING
+
+    def live(self, app_name: str) -> LiveApp | None:
+        if app_name not in self.apps or app_name not in self.configs:
+            return None
+        return LiveApp(self.configs[app_name], {}, "v1")
+
+    def rescale(self, app_name: str, live: LiveApp, scaling: dict, serve_logging_config) -> None:
+        self.events.append(("rescale", app_name))
+        self.configs[app_name] = live.config.model_copy(update=scaling)
+        self.running[app_name] = self.scripts.setdefault(live.config.name, [RUNNING])
+        self.apps[app_name] = DEPLOYING
 
 
 class _Ledger:
@@ -169,6 +186,8 @@ def cluster(monkeypatch):
     monkeypatch.setattr(worker.serve, "status", serve.status)
     monkeypatch.setattr(worker.serve, "delete", serve.delete)
     monkeypatch.setattr(worker, "submit_app", serve.submit)
+    monkeypatch.setattr(worker, "live_app", serve.live)
+    monkeypatch.setattr(worker, "rescale_app", serve.rescale)
     monkeypatch.setattr(worker.time, "sleep", clock.sleep)
     monkeypatch.setattr(worker.time, "monotonic", clock.monotonic)
     monkeypatch.setattr(worker.ray, "cluster_resources", lambda: {})
@@ -186,6 +205,7 @@ def _run(cluster, models, committed=None, mode="additive", strategy="blue_green"
 def _existing(cluster, *raws: dict) -> None:
     for raw in raws:
         cluster.serve.apps[_app_name(raw)] = RUNNING
+        cluster.serve.configs[_app_name(raw)] = ModelshipModelConfig.model_validate(raw)
 
 
 def _configs(*raws: dict) -> list[ModelshipModelConfig]:
@@ -220,6 +240,28 @@ class TestPlan:
         apps = {_app_name(A, "edge"): RUNNING}
         assert plan_request("reconcile", [], None, apps, "gw").retired == []
 
+    @pytest.mark.parametrize("mode", ["additive", "reconcile"])
+    @pytest.mark.parametrize("rescaled", RESCALED)
+    def test_a_replica_count_change_rescales_the_live_app(self, rescaled, mode):
+        plan = plan_request(mode, _configs(rescaled), _configs(C), {_app_name(C): RUNNING}, "gw")
+        assert (plan.adds, plan.retired) == ([], [])
+        assert plan.rescaled == _configs(rescaled)
+
+    def test_a_fingerprint_change_replaces_the_app_whatever_its_replica_count(self):
+        changed = {**C2, "num_cpus": 2}
+        plan = plan_request("additive", _configs(changed), _configs(C), {_app_name(C): RUNNING}, "gw")
+        assert plan.adds == _configs(changed)
+        assert plan.retired == [_app_name(C)]
+        assert plan.rescaled == []
+
+    def test_a_failed_app_is_submitted_again_instead_of_rescaled(self):
+        plan = plan_request("additive", _configs(C2), _configs(C), {_app_name(C): FAILED}, "gw")
+        assert plan.adds == _configs(C2)
+        assert plan.rescaled == []
+
+    def test_an_unchanged_replica_count_rescales_nothing(self):
+        assert plan_request("additive", _configs(C2), _configs(C2), {_app_name(C): RUNNING}, "gw").rescaled == []
+
 
 class TestProposedModels:
     def test_reconcile_proposes_the_request(self):
@@ -233,6 +275,10 @@ class TestProposedModels:
 
     def test_a_request_that_changes_no_app_proposes_nothing(self):
         assert proposed_models("additive", [A], [A, B], "gw") is None
+
+    @pytest.mark.parametrize("rescaled", RESCALED)
+    def test_a_replica_count_change_is_proposed(self, rescaled):
+        assert proposed_models("additive", [rescaled], [C, B], "gw") == [rescaled, B]
 
     def test_a_bare_request_proposes_nothing(self):
         assert proposed_models("bare", None, [A], "gw") is None
@@ -280,6 +326,31 @@ class TestSucceeds:
         outcome = _run(cluster, [A], committed=[A, B], mode="reconcile")
         assert cluster.serve.events == [("switch", "1"), ("commit", "1"), ("delete", _app_name(B))]
         assert outcome["models"] == {"a": "unchanged", "b": "removed"}
+
+    def test_a_replica_count_change_rescales_the_live_app_then_commits(self, cluster):
+        _existing(cluster, C)
+        outcome = _run(cluster, [C2], committed=[C])
+        assert outcome == {"id": "r1", "state": "succeeded", "reason": "", "models": {"c": "rescaled"}, "version": 1}
+        assert cluster.serve.events == [("rescale", _app_name(C)), ("switch", "1"), ("commit", "1")]
+        assert cluster.ledger.commits == [[C2]]
+        assert cluster.serve.configs[_app_name(C)].num_replicas == 2
+        assert cluster.serve.pinned == []
+
+    def test_a_new_model_comes_up_before_a_rescale(self, cluster):
+        _existing(cluster, C)
+        _run(cluster, [C2, A], committed=[C])
+        assert cluster.serve.events[:2] == [("submit", _app_name(A)), ("rescale", _app_name(C))]
+
+    def test_a_rescale_is_pending_until_the_app_is_running_again(self, cluster):
+        _existing(cluster, C)
+        cluster.serve.scripts["c"] = [DEPLOYING] * 50 + [RUNNING]
+        assert _run(cluster, [C2], committed=[C])["state"] == "succeeded"
+        assert cluster.serve.events.count(("rescale", _app_name(C))) == 1
+
+    def test_a_fatal_error_reported_before_the_request_does_not_fail_a_rescale(self, cluster):
+        _existing(cluster, C)
+        cluster.ledger.fatal[_app_name(C)] = "an older failure"
+        assert _run(cluster, [C2], committed=[C])["state"] == "succeeded"
 
     def test_a_bare_request_resubmits_a_missing_committed_app_without_switching(self, cluster):
         _existing(cluster, A)
@@ -409,6 +480,40 @@ class TestRollsBack:
         cluster.ledger.crashing[_app_name(A)] = "llama-server exited"
         assert _run(cluster, [A])["reason"] == "model 'a': its backend keeps dying: llama-server exited"
 
+    def test_a_fatal_error_while_rescaling_gives_the_app_its_committed_replica_count(self, cluster):
+        _existing(cluster, C)
+        cluster.serve.scripts["c"] = [DEPLOYING] * 50 + [RUNNING]
+        cluster.clock.hook = lambda now: cluster.ledger.fatal.setdefault(_app_name(C), "no memory left")
+        outcome = _run(cluster, [C2], committed=[C])
+        assert outcome["reason"] == "model 'c': no memory left"
+        assert outcome["models"] == {"c": "failed: no memory left"}
+        assert cluster.serve.events.count(("rescale", _app_name(C))) == 2
+        assert cluster.serve.configs[_app_name(C)].num_replicas == 1
+        assert cluster.ledger.commits == []
+
+    def test_a_cancel_while_rescaling_gives_the_app_its_committed_replica_count(self, cluster):
+        _existing(cluster, C)
+        cluster.serve.scripts["c"] = [DEPLOYING]
+        cluster.clock.hook = lambda now: setattr(cluster.ledger, "cancel", now > 10)
+        outcome = _run(cluster, [C2], committed=[C])
+        assert outcome["state"] == "cancelled"
+        assert outcome["models"] == {"c": "rolled back"}
+        assert cluster.serve.configs[_app_name(C)].num_replicas == 1
+        assert _app_name(C) in cluster.serve.apps
+
+    def test_a_rescale_of_an_app_serve_no_longer_has_fails_the_request(self, cluster):
+        cluster.serve.apps[_app_name(C)] = RUNNING
+        outcome = _run(cluster, [C2], committed=[C])
+        assert outcome["reason"] == f"model 'c': deployment {_app_name(C)} was deleted"
+
+    def test_a_rescale_that_raises_fails_the_request(self, cluster, monkeypatch):
+        def broken(app_name, live, scaling, serve_logging_config):
+            raise RuntimeError("controller busy")
+
+        _existing(cluster, C)
+        monkeypatch.setattr(worker, "rescale_app", broken)
+        assert _run(cluster, [C2], committed=[C])["reason"] == "model 'c': RuntimeError: controller busy"
+
     def test_a_source_that_cannot_be_checked_fails_before_any_submit(self, cluster, monkeypatch):
         def missing(conf):
             raise FileNotFoundError("repo org/a not found")
@@ -429,6 +534,29 @@ class TestRollBack:
     def test_waits_for_the_switch_back_only_when_switching(self, cluster):
         roll_back(cluster.ledger, cluster.replicas, "gw", True, 60.0)
         assert cluster.replicas.waits == [0]
+
+    def test_gives_a_live_app_its_committed_replica_count(self, cluster):
+        _existing(cluster, C2, B)
+        cluster.ledger.committed = [C, B]
+        roll_back(cluster.ledger, cluster.replicas, "gw", False, 60.0)
+        assert [event for event in cluster.serve.events if event[0] == "rescale"] == [("rescale", _app_name(C))]
+        assert cluster.serve.configs[_app_name(C)].num_replicas == 1
+
+    def test_does_not_bring_back_a_committed_app_serve_no_longer_has(self, cluster):
+        cluster.ledger.committed = [C]
+        roll_back(cluster.ledger, cluster.replicas, "gw", False, 60.0)
+        assert cluster.serve.events == [("reset", "0")]
+
+    def test_gives_up_on_an_app_whose_deployment_cannot_be_read(self, cluster, monkeypatch, caplog):
+        def unreadable(app_name):
+            raise RuntimeError("controller busy")
+
+        _existing(cluster, C)
+        cluster.ledger.committed = [C]
+        monkeypatch.setattr(worker, "live_app", unreadable)
+        roll_back(cluster.ledger, cluster.replicas, "gw", False, 60.0)
+        assert cluster.clock.now >= 30
+        assert f"Could not give {_app_name(C)} its committed replica-count fields" in caplog.messages
 
     def test_without_a_committed_version_every_model_app_goes(self, cluster):
         _existing(cluster, A, B)
@@ -454,3 +582,41 @@ class TestSubmitApp:
     def test_run_many_still_takes_wait_for_applications_running(self):
         # @DeveloperAPI: the only public way to deploy without blocking on RUNNING.
         assert "wait_for_applications_running" in inspect.signature(serve.run_many).parameters
+
+    def test_leaves_the_version_to_serve(self, monkeypatch):
+        targets = []
+        monkeypatch.setattr(strategy.serve, "run_many", lambda submitted, **kwargs: targets.extend(submitted))
+        submit_app(_configs(A)[0], "gw", LoggingConfig(), {})
+        assert targets[0].target._bound_deployment._version is None
+
+
+class TestRescaleApp:
+    def test_resubmits_the_live_config_under_its_version_and_runtime_env(self, monkeypatch):
+        targets = []
+        monkeypatch.setattr(strategy.serve, "run_many", lambda submitted, **kwargs: targets.extend(submitted))
+        config = _configs(C)[0]
+        config._pinned_source = LocalSource("/models/c.gguf")
+        live = LiveApp(config, {"env_vars": {"MSHIP_PREFLIGHT": "false"}}, "v7")
+
+        rescale_app(_app_name(C), live, _configs(C2)[0].scaling(), LoggingConfig())
+
+        deployment = targets[0].target._bound_deployment
+        assert targets[0].name == deployment.name == _app_name(C)
+        assert deployment._version == "v7"
+        assert deployment.num_replicas == 2
+        assert deployment.ray_actor_options["runtime_env"] == {"env_vars": {"MSHIP_PREFLIGHT": "false"}}
+        assert deployment.init_args[0].num_replicas == 2
+        assert deployment.init_args[0]._pinned_source == LocalSource("/models/c.gguf")
+
+    def test_serve_still_has_what_a_rescale_reads_and_sets(self):
+        from ray.serve._private.client import ServeControllerClient
+        from ray.serve._private.config import ReplicaConfig
+        from ray.serve._private.deployment_info import DeploymentInfo
+
+        assert "deployment._version or get_random_string()" in inspect.getsource(
+            ServeControllerClient.deploy_applications
+        )
+        assert list(inspect.signature(ServeControllerClient.get_deployment_info).parameters)[1:] == ["name", "app_name"]
+        assert "version" in inspect.signature(DeploymentInfo.__init__).parameters
+        assert isinstance(inspect.getattr_static(ReplicaConfig, "init_args"), property)
+        assert "ray_actor_options" in inspect.signature(ReplicaConfig.__init__).parameters
