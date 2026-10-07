@@ -393,6 +393,9 @@ class BaseInfer[Prepared](ABC):
         produced gets a normal HTTP 4xx JSON body, not a `200` SSE stream carrying
         an error chunk.
         """
+        # A chat template renders the tools whatever the tool_choice.
+        if request.tool_choice == "none" and request.tools:
+            request = request.model_copy(update={"tools": None})
         prepared = await self._prepare_chat(request, raw_request)
         if isinstance(prepared, ErrorResponse):
             return prepared

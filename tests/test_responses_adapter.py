@@ -317,6 +317,11 @@ class TestRequestFieldTranslation:
         chat = responses_request_to_chat(_req(tool_choice={"type": "function", "name": "f"}))
         assert chat.tool_choice == {"type": "function", "function": {"name": "f"}}
 
+    def test_tool_choice_none_drops_the_tools(self):
+        chat = responses_request_to_chat(_req(tools=[{"type": "function", "name": "f"}], tool_choice="none"))
+        assert chat.tools is None
+        assert chat.tool_choice == "none"
+
     def test_text_format_json_schema_nested(self):
         chat = responses_request_to_chat(
             _req(text={"format": {"type": "json_schema", "name": "p", "schema": {"type": "object"}, "strict": True}})
