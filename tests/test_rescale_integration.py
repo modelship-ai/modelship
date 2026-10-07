@@ -23,6 +23,19 @@ def _config(num_cpus: int = 1, **scaling) -> dict:
     }
 
 
+def _cpu_share() -> int:
+    """A CPU count per replica that two replicas fit in and a third doesn't."""
+    cpus = int(run_on_cluster("print(int(ray.cluster_resources()['CPU']))"))
+    share = (cpus - 1) // 2
+    if cpus - 2 * share >= share:
+        pytest.skip(f"two replicas must leave no room for a third; the cluster has {cpus} CPUs")
+    return share
+
+
+def _free_cpus() -> float:
+    return float(run_on_cluster("print(ray.available_resources().get('CPU', 0))"))
+
+
 def _running() -> dict[str, set[str]]:
     """The model's apps, each with the ids of its RUNNING replicas."""
     return {
@@ -92,4 +105,58 @@ class TestInPlaceRescale:
 
         assert _poll(lambda: serve_apps()[app]["status"] == "RUNNING", deadline_s=60)
         assert _running() == before
+        assert client.chat.completions.create(model=_MODEL, messages=_PING_PROMPT, max_tokens=5).choices
+
+    def test_a_replica_count_changed_in_serve_is_put_back_by_the_same_config(self, model_deployer, tmp_path):
+        model_deployer.deploy_raw([_config()])
+        (app,) = _running()
+        run_on_cluster(
+            f"""
+            from modelship.deploy.strategy import live_app, rescale_app
+            from modelship.logging import serve_logging_config
+
+            scaling = {{"num_replicas": 2, "autoscaling_config": None}}
+            rescale_app({app!r}, live_app({app!r}), scaling, serve_logging_config())
+            """
+        )
+        assert _poll(lambda: len(_running()[app]) == 2, deadline_s=120), "the app never got its second replica"
+
+        same = tmp_path / "same.yaml"
+        same.write_text(yaml.dump({"models": [_config()]}))
+        log = model_deployer.run("--config", str(same), "--reconcile", log_name="same-config")
+
+        assert f"rescale {_MODEL}: num_replicas: 2 -> 1 (Serve differs from the committed version)" in log
+        assert len(_running()[app]) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+@pytest.mark.rescale
+class TestScaleDownFirst:
+    def test_a_scale_down_frees_the_room_a_new_model_needs(self, client, model_deployer):
+        share = _cpu_share()
+        model_deployer.deploy_raw([_config(num_cpus=share, num_replicas=2)])
+        ((app, two),) = _running().items()
+        assert _free_cpus() < share
+        neighbour = {**_config(num_cpus=share), "name": "rescale-neighbour"}
+
+        model_deployer.deploy_raw([_config(num_cpus=share), neighbour], replace_strategy="blue_green")
+
+        after = _running()
+        assert set(after) == {app}, f"the app changed on a replica-count change: {after}"
+        assert len(after[app]) == 1 and after[app] < two
+        assert _poll(lambda: _model_in_all_samples(client, neighbour["name"]), deadline_s=60)
+
+    def test_a_replaced_app_is_scaled_down_to_make_room_for_its_replacement(self, client, model_deployer):
+        share = _cpu_share()
+        model_deployer.deploy_raw([_config(num_cpus=share, num_replicas=2)])
+        (old_app,) = _running()
+        assert _free_cpus() < share
+        replacement = {**_config(num_cpus=share), "llama_server_config": {"n_ctx": 4096, "parallel": 2}}
+
+        model_deployer.deploy_raw([replacement], replace_strategy="blue_green")
+
+        ((app, replicas),) = _running().items()
+        assert app != old_app
+        assert len(replicas) == 1
         assert client.chat.completions.create(model=_MODEL, messages=_PING_PROMPT, max_tokens=5).choices
