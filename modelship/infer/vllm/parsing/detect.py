@@ -212,7 +212,7 @@ def resolve_tool_parser(cfg: ModelshipModelConfig, template: str | None) -> str 
 
 
 def resolve_reasoning_parser(cfg: ModelshipModelConfig, template: str | None) -> str | None:
-    """Resolve the reasoning parser name to hand to ``OnlineRenderer``.
+    """Resolve the reasoning parser name to hand to the engine and ``OnlineRenderer``.
 
     Same precedence/validation shape as ``resolve_tool_parser``.
     """
