@@ -154,6 +154,47 @@ mship deploy --config config/tts.yaml             # add, doesn't touch the LLMs
 mship deploy --config config/all.yaml --reconcile      # make the cluster match exactly
 ```
 
+### What a deploy changes
+
+A deploy request is compared, model by model, with the gateway's committed version and with what Ray Serve holds. Each model gets one action:
+
+| Action | When |
+|--------|------|
+| `add` | The gateway doesn't have the model |
+| `replace` | A field other than `num_replicas` or `autoscaling_config` changed, so the model gets a new deployment |
+| `rescale` | Only `num_replicas` or `autoscaling_config` differ from what Serve holds; the running deployment is changed in place |
+| `redeploy` | The config is unchanged, but Serve has no such deployment or a failed one |
+| `remove` | `--reconcile`, and the config leaves the model out |
+| `keep` | Nothing differs |
+
+The actions run in a fixed order, so that what frees room runs before what needs it:
+
+1. Deployments left behind by an earlier failed deploy are deleted.
+2. Rescales that raise no replica limit. Under `blue_green`, a replaced model whose replica count drops has its old deployment scaled down here.
+3. `stop_start` only: the old deployments of replaced and removed models are deleted.
+4. New deployments come up (`add`, `replace`, `redeploy`).
+5. Rescales that raise a replica limit.
+6. The gateway switches to the new models and the version is committed.
+7. `blue_green` only: the old deployments of replaced and removed models are deleted.
+
+The head's log lists the request's actions by step, and `--wait` prints them with the outcome:
+
+```
+Deploy 3f2a9c1d04be's diff:
+  2. rescale whisper: num_replicas: 2 -> 1
+  4. replace qwen: llama_server_config.n_ctx: 4096 -> 8192
+  6. switch the gateway and commit
+  keep: kokoro
+  kokoro: unchanged
+  qwen: up
+  whisper: rescaled
+Deploy 3f2a9c1d04be succeeded; the gateway is on version 8.
+```
+
+Replica counts are compared with Serve, not with the committed version, so sending the same config again puts back a count that no longer matches it. A deploy with no config does that for every committed model, and redeploys the ones Serve no longer has.
+
+A request that fails or is cancelled after step 2 gets its scale-downs undone too, which loads the stopped replicas again.
+
 ## Trusted Identity Header
 
 modelship never authenticates callers. There is no login, API keys, permissions, or per-model access control, and none is planned; that belongs to whatever sits in front (nginx, Kong, LiteLLM, a custom credentials layer). `MSHIP_TRUSTED_IDENTITY_HEADER` lets that layer forward a caller identity it already resolved (a consumer/tenant id), used for log correlation and for scoping server-side state (see [Stateful responses](#stateful-responses)) — never for authorization.
@@ -557,7 +598,7 @@ models:
       n_ctx: 8192
 ```
 
-Changing `num_replicas` on a deployed model changes the running deployment: its replicas keep serving while Ray Serve starts or stops the others, and `--replace-strategy` plays no part. The deploy waits for the new count, so a scale-up the cluster has no room for holds the gateway's deploy queue like any pending deploy; `mship deploy --cancel` puts the committed count back. Any other change to the model replaces its deployment. Setting the context length on a model deployed without one is such a change, so set it from the first deploy when you plan to scale.
+Changing `num_replicas` on a deployed model changes the running deployment: its replicas keep serving while Ray Serve starts or stops the others, and `--replace-strategy` plays no part. A scale-down runs before the request's new deployments come up and a scale-up after them ([What a deploy changes](#what-a-deploy-changes)). The deploy waits for the new count, so a scale-up the cluster has no room for holds the gateway's deploy queue like any pending deploy; `mship deploy --cancel` puts the committed count back. Any other change to the model replaces its deployment. Setting the context length on a model deployed without one is such a change, so set it from the first deploy when you plan to scale.
 
 ## Autoscaling
 
