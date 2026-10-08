@@ -360,7 +360,7 @@ class TestChatReasoning:
         model_deployer.deploy("chat-reasoning")
 
     def test_reasoning_completion(self):
-        """Non-streaming: the deepseek_r1 reasoning parser routes `<think>...</think>`
+        """Non-streaming: the reasoning parser routes `<think>...</think>`
         to `message.reasoning`, leaving the final answer in `message.content`."""
         # Use httpx so we read the raw `reasoning` field — the OpenAI Python
         # SDK doesn't always surface it as a typed attribute.
@@ -474,6 +474,47 @@ class TestChatReasoning:
             messages=[{"role": "user", "content": "Hello!"}],
             tools=[_WEATHER_TOOL],
             tool_choice={"type": "function", "function": {"name": "get_weather"}},
+        )
+
+        assert choice["message"]["tool_calls"][0]["function"]["name"] == "get_weather"
+
+    def test_thinking_off_answer_lands_in_content(self):
+        message = self._chat(chat_template_kwargs={"enable_thinking": False})["message"]
+
+        assert message["content"].strip()
+        assert not message.get("reasoning")
+
+    def test_thinking_off_streaming_answer_lands_in_content(self):
+        with httpx.stream(
+            "POST",
+            f"{OPENAI_API_BASE}/chat/completions",
+            json={
+                "model": "chat-reasoning",
+                "messages": [{"role": "user", "content": "Briefly: what is 7 times 8?"}],
+                "max_tokens": 1024,
+                "chat_template_kwargs": {"enable_thinking": False},
+                "stream": True,
+            },
+            timeout=120,
+        ) as response:
+            assert response.status_code == 200
+            content, reasoning = "", ""
+            for line in response.iter_lines():
+                if not line.startswith("data: ") or line == "data: [DONE]":
+                    continue
+                delta = json.loads(line[len("data: ") :])["choices"][0].get("delta") or {}
+                content += delta.get("content") or ""
+                reasoning += delta.get("reasoning") or ""
+
+        assert content.strip()
+        assert not reasoning
+
+    def test_thinking_off_tool_call_is_returned(self):
+        choice = self._chat(
+            messages=[{"role": "user", "content": "What is the weather in Paris?"}],
+            tools=[_WEATHER_TOOL],
+            tool_choice="required",
+            chat_template_kwargs={"enable_thinking": False},
         )
 
         assert choice["message"]["tool_calls"][0]["function"]["name"] == "get_weather"

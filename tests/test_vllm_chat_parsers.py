@@ -33,7 +33,8 @@ def _build(
 
         def create_engine_config(self, usage_context: Any) -> Any:
             return SimpleNamespace(
-                model_config=object(), structured_outputs_config=SimpleNamespace(reasoning_parser="")
+                model_config=SimpleNamespace(hf_config=SimpleNamespace(model_type=None, architectures=None)),
+                structured_outputs_config=SimpleNamespace(reasoning_parser=""),
             )
 
     class Engine:
@@ -44,7 +45,7 @@ def _build(
 
     def tokenizer(model_config: Any) -> Any:
         assert template is not None
-        return SimpleNamespace(get_chat_template=lambda: template)
+        return SimpleNamespace(get_chat_template=lambda: template, get_vocab=lambda: {"<think>": 1, "</think>": 2})
 
     monkeypatch.setattr(vllm_infer, "run_preflight", lambda config, hw: {})
     monkeypatch.setattr(vllm_infer, "discover_hardware", lambda: None)
