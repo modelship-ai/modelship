@@ -424,10 +424,11 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if self.model_config.usecase is not ModelUsecase.generate:
             return None
 
+        tokenizer = cast(Any, vllm_cached_tokenizer_from_config(vllm_config.model_config))
         # get_chat_template is HF's, not in vLLM's TokenizerLike protocol. It raises
         # on a base model, which carries no template.
         try:
-            template = cast(Any, vllm_cached_tokenizer_from_config(vllm_config.model_config)).get_chat_template()
+            template = tokenizer.get_chat_template()
         except ValueError as exc:
             logger.warning(
                 "'%s' has no usable chat template (%s) — the model is deployed but has no reachable "
@@ -440,7 +441,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         parsers = _ChatParsers(
             template,
             resolve_tool_parser(self.model_config, template),
-            resolve_reasoning_parser(self.model_config, template),
+            resolve_reasoning_parser(self.model_config, template, tokenizer, vllm_config.model_config.hf_config),
         )
         logger.info(
             "resolved vllm parsers for '%s': enable_auto_tools=%s, tool_parser=%s, reasoning_parser=%s",
