@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from vllm.reasoning import ReasoningParser as VllmReasoningParser
 from vllm.reasoning import ReasoningParserManager as VllmReasoningParserManager
+from vllm.tool_parsers import ToolParserManager as VllmToolParserManager
 
 from modelship.infer.infer_config import (
     ModelLoader,
@@ -19,6 +20,7 @@ from modelship.infer.infer_config import (
     ModelUsecase,
     VllmEngineConfig,
 )
+from modelship.infer.vllm.parsing import detect
 from modelship.infer.vllm.parsing.detect import (
     classify_tool_template,
     detect_boolean_defaults,
@@ -271,18 +273,91 @@ class TestDetectTemplateToggleDefaults:
         assert result == {"enable_thinking": False}
 
 
-class TestResolveToolParsersStoresExplicit:
-    """Explicit `tool_call_parser` must be returned as-is."""
+_HERMES_MARKERS = "{% if tools %}<tool_call>{% endif %}"
 
-    def test_vllm_explicit_stored(self):
+
+def _unbuildable(tokenizer: Any) -> None:
+    raise RuntimeError("tokens missing")
+
+
+@pytest.fixture
+def tool_registry(monkeypatch) -> dict[str, Any]:
+    parsers: dict[str, Any] = {}
+    monkeypatch.setattr(VllmToolParserManager, "list_registered", lambda: list(parsers))
+    monkeypatch.setattr(VllmToolParserManager, "get_tool_parser", parsers.__getitem__)
+    return parsers
+
+
+@pytest.fixture
+def probe(monkeypatch):
+    def answer(call: str | None, readers: tuple[str, ...] = ()) -> None:
+        monkeypatch.setattr(detect, "rendered_tool_call", lambda tokenizer, eos_token_id: call)
+        monkeypatch.setattr(detect, "tool_parsers_reading", lambda tokenizer, call: list(readers))
+
+    return answer
+
+
+class TestResolveToolParsers:
+    def test_explicit_parser_stored(self):
         cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(tool_call_parser="hermes"))
-        assert resolve_tool_parser(cfg, None) == "hermes"
+        assert resolve_tool_parser(cfg, None, None, _hf(), None) == "hermes"
 
     def test_unknown_explicit_raises(self):
         cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(tool_call_parser="not-a-real-parser"))
         with pytest.raises(ValueError, match="not-a-real-parser"):
-            resolve_tool_parser(cfg, None)
+            resolve_tool_parser(cfg, None, None, _hf(), None)
 
-    def test_vllm_opt_out_leaves_none(self):
+    def test_opt_out_leaves_none(self):
         cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(enable_auto_tool_choice=False, tool_call_parser="hermes"))
-        assert resolve_tool_parser(cfg, None) is None
+        assert resolve_tool_parser(cfg, None, None, _hf(), None) is None
+
+    def test_explicit_wins_over_the_probe(self, probe):
+        probe("call", ("glm45",))
+        cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(tool_call_parser="hermes"))
+        assert resolve_tool_parser(cfg, "plain", None, _hf(), None) == "hermes"
+
+    def test_no_template_leaves_none(self, probe):
+        probe("call", ("hermes",))
+        assert resolve_tool_parser(_make_cfg(), None, None, _hf(), None) is None
+
+    def test_the_parser_that_reads_the_call_is_picked(self, probe):
+        probe("call", ("lfm2",))
+        assert resolve_tool_parser(_make_cfg(), "plain", None, _hf(), None) == "lfm2"
+
+    def test_tied_readers_go_to_the_name_closest_to_the_model_reference(self, probe):
+        probe("call", ("mimo", "qwen3_coder", "qwen3_xml"))
+        cfg = _make_cfg(model="org/Qwen3.8-27B-AWQ")
+        assert resolve_tool_parser(cfg, "plain", None, _hf(), None) == "qwen3_coder"
+
+    def test_model_type_counts_for_the_closest_name(self, probe):
+        probe("call", ("abcd1", "glm47"))
+        assert resolve_tool_parser(_make_cfg(), "plain", None, _hf(model_type="glm4_moe"), None) == "glm47"
+
+    def test_a_shared_run_under_four_characters_does_not_count(self, probe):
+        probe("call", ("abc9", "xyz1"))
+        cfg = _make_cfg(model="org/xyz-chat")
+        assert resolve_tool_parser(cfg, "plain", None, _hf(), None) == "abc9"
+
+    def test_a_call_no_parser_reads_leaves_none(self, probe):
+        probe("call")
+        assert resolve_tool_parser(_make_cfg(), _HERMES_MARKERS, None, _hf(), None) is None
+
+    def test_without_a_written_call_a_name_in_the_metadata_is_picked(self, probe, tool_registry):
+        probe(None)
+        tool_registry["acme9"] = lambda tokenizer: None
+        cfg = _make_cfg(model="org/Acme-9-Chat")
+        assert resolve_tool_parser(cfg, "plain", None, _hf(), None) == "acme9"
+
+    def test_a_named_parser_that_cannot_be_built_is_skipped(self, probe, tool_registry):
+        probe(None)
+        tool_registry.update(acme9=_unbuildable, hermes=_unbuildable)
+        cfg = _make_cfg(model="org/Acme-9-Chat")
+        assert resolve_tool_parser(cfg, _HERMES_MARKERS, None, _hf(), None) == "hermes"
+
+    def test_without_a_written_call_or_a_name_the_markers_decide(self, probe):
+        probe(None)
+        assert resolve_tool_parser(_make_cfg(), _HERMES_MARKERS, None, _hf(), None) == "hermes"
+
+    def test_unrecognized_markers_leave_none(self, probe):
+        probe(None)
+        assert resolve_tool_parser(_make_cfg(), "{% if tools %}x{% endif %}", None, _hf(), None) is None
