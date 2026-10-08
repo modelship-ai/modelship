@@ -1,15 +1,14 @@
 """vLLM tool-call / reasoning parser-name detection, run inside the vllm actor.
 
 Auto-detects which vLLM-native parser (``vllm.tool_parsers.ToolParserManager`` /
-``vllm.reasoning.ReasoningParserManager``) a model's chat template calls for, by
-marker sniffing, with explicit config always taking precedence. Names returned
-here must match vLLM's own registered parser names exactly — both resolvers
-validate against vLLM's registry directly rather than a modelship-side one.
+``vllm.reasoning.ReasoningParserManager``) a model calls for, with explicit config
+always taking precedence. Names returned here are vLLM's own registered names.
 """
 
 from __future__ import annotations
 
 import inspect
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -64,13 +63,24 @@ def classify_tool_template(template: str) -> str | None:
     return "unknown"
 
 
-def classify_reasoning_template(template: str) -> str | None:
-    """Map a chat-template string to a vLLM reasoning parser name based on markers."""
-    if "<|channel>thought" in template:
-        return "gemma4"
-    if "<think>" in template or "</think>" in template:
-        return "deepseek_r1"
-    return None
+def _alnum(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _named_in(registered: set[str], text: str | None) -> list[str]:
+    haystack = _alnum(text or "")
+    return sorted((name for name in registered if _alnum(name) in haystack), key=lambda name: (-len(name), name))
+
+
+def _fits_template(name: str, tokenizer: Any, template: str) -> bool:
+    from vllm.reasoning import ReasoningParserManager as VllmReasoningParserManager
+
+    try:
+        parser = VllmReasoningParserManager.get_reasoning_parser(name)(tokenizer)
+    except Exception:
+        return False
+    markers = [marker for marker in (parser.reasoning_start_str, parser.reasoning_end_str) if marker]
+    return not markers or any(marker in template for marker in markers)
 
 
 def _is_tool_opt_out(cfg: ModelshipModelConfig) -> bool:
@@ -211,11 +221,10 @@ def resolve_tool_parser(cfg: ModelshipModelConfig, template: str | None) -> str 
     return detected
 
 
-def resolve_reasoning_parser(cfg: ModelshipModelConfig, template: str | None) -> str | None:
-    """Resolve the reasoning parser name to hand to ``OnlineRenderer``.
-
-    Same precedence/validation shape as ``resolve_tool_parser``.
-    """
+def resolve_reasoning_parser(
+    cfg: ModelshipModelConfig, template: str | None, tokenizer: Any, hf_config: Any
+) -> str | None:
+    """Resolve the reasoning parser name to hand to the engine and ``OnlineRenderer``."""
     if _is_reasoning_opt_out(cfg):
         logger.info("Reasoning resolution skipped for '%s' (explicit opt-out).", cfg.name)
         return None
@@ -238,15 +247,23 @@ def resolve_reasoning_parser(cfg: ModelshipModelConfig, template: str | None) ->
         logger.info("No chat template found for '%s'; reasoning detection skipped.", cfg.name)
         return None
 
-    detected = classify_reasoning_template(template)
-    if detected is None:
+    sources = (
+        ("model reference", cfg.model),
+        ("model_type", hf_config.model_type),
+        ("architecture", (hf_config.architectures or [None])[0]),
+    )
+    for source, text in sources:
+        for name in _named_in(registered, text):
+            if _fits_template(name, tokenizer, template):
+                logger.info("Auto-detected reasoning_parser=%r for '%s' from its %s", name, cfg.name, source)
+                return name
+
+    # qwen3 reads the template's switch; deepseek_r1 does not.
+    fallback = "qwen3" if "enable_thinking" in template else "deepseek_r1"
+    if fallback not in registered:
+        logger.warning("vLLM registers no %r reasoning parser; none detected for '%s'.", fallback, cfg.name)
         return None
-    if detected not in registered:
-        logger.warning(
-            "Model '%s' uses reasoning format %r but no parser is registered; reasoning disabled.",
-            cfg.name,
-            detected,
-        )
-        return None
-    logger.info("Auto-detected reasoning_parser=%r for '%s'", detected, cfg.name)
-    return detected
+    if _fits_template(fallback, tokenizer, template):
+        logger.info("Auto-detected reasoning_parser=%r for '%s' from its chat template", fallback, cfg.name)
+        return fallback
+    return None

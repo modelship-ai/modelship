@@ -377,6 +377,28 @@ class TestNonStreamingProjection:
         assert captured["payload"]["tools"][0]["function"]["name"] == "f"
 
     @pytest.mark.asyncio
+    async def test_tool_choice_none_drops_the_tools(self):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            import json
+
+            captured["payload"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={"choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}}], "usage": {}},
+            )
+
+        infer = _infer_with_client(handler)
+        await infer.create_chat_completion(
+            _request(tools=[{"type": "function", "function": {"name": "f"}}], tool_choice="none"),
+            RawRequestProxy(None, {}),
+        )
+
+        assert "tools" not in captured["payload"]
+        assert captured["payload"]["tool_choice"] == "none"
+
+    @pytest.mark.asyncio
     async def test_drops_logprobs_fields_not_yet_supported(self):
         # ChatCompletionRequest defaults top_logprobs to 0 (not None), so a naive
         # exclude_none dump forwards it; llama-server rejects that unless logprobs=true.

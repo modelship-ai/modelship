@@ -129,7 +129,6 @@ MODEL_CONFIGS: dict[str, dict] = {
             "max_model_len": 4096,
             "enforce_eager": True,
             "enable_reasoning": True,
-            "reasoning_parser": "deepseek_r1",
         },
     },
     "chat-vlm": {

@@ -56,6 +56,7 @@ from vllm.parser import Parser as VllmParser
 from vllm.renderers.online_renderer import OnlineRenderer as VllmOnlineRenderer
 from vllm.sampling_params import SamplingParams as VllmSamplingParams
 from vllm.tokenizers import TokenizerLike as VllmTokenizerLike
+from vllm.tokenizers import cached_tokenizer_from_config as vllm_cached_tokenizer_from_config
 from vllm.usage.usage_lib import UsageContext as VllmUsageContext
 from vllm.v1.engine.async_llm import AsyncLLM as VllmAsyncLLM
 
@@ -299,6 +300,13 @@ class _VllmPrepared:
     sampling_params: VllmSamplingParams
 
 
+@dataclass(frozen=True)
+class _ChatParsers:
+    template: str | None
+    tool_parser: str | None
+    reasoning_parser: str | None
+
+
 class VllmInfer(BaseInfer[_VllmPrepared]):
     _vllm_usecases: ClassVar[list[ModelUsecase]] = [
         ModelUsecase.generate,
@@ -392,6 +400,11 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         usage_context = VllmUsageContext.OPENAI_API_SERVER
         vllm_config = engine_args.create_engine_config(usage_context=usage_context)
 
+        self._chat_parsers = self._resolve_chat_parsers(vllm_config)
+        if self._chat_parsers is not None and self._chat_parsers.reasoning_parser:
+            # vLLM reads this once, at engine start.
+            vllm_config.structured_outputs_config.reasoning_parser = self._chat_parsers.reasoning_parser
+
         stat_loggers: list | None = None
         if _METRICS_ENABLED:
             from vllm.v1.metrics.ray_wrappers import RayPrometheusStatLogger as VllmRayPrometheusStatLogger
@@ -405,6 +418,39 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             usage_context=usage_context,
             stat_loggers=stat_loggers,
         )
+
+    def _resolve_chat_parsers(self, vllm_config: Any) -> _ChatParsers | None:
+        """None for a non-chat model or a tokenizer without a chat template."""
+        if self.model_config.usecase is not ModelUsecase.generate:
+            return None
+
+        tokenizer = cast(Any, vllm_cached_tokenizer_from_config(vllm_config.model_config))
+        # get_chat_template is HF's, not in vLLM's TokenizerLike protocol. It raises
+        # on a base model, which carries no template.
+        try:
+            template = tokenizer.get_chat_template()
+        except ValueError as exc:
+            logger.warning(
+                "'%s' has no usable chat template (%s) — the model is deployed but has no reachable "
+                "endpoint, since modelship serves no /v1/completions route",
+                self.model_config.name,
+                exc,
+            )
+            return None
+
+        parsers = _ChatParsers(
+            template,
+            resolve_tool_parser(self.model_config, template),
+            resolve_reasoning_parser(self.model_config, template, tokenizer, vllm_config.model_config.hf_config),
+        )
+        logger.info(
+            "resolved vllm parsers for '%s': enable_auto_tools=%s, tool_parser=%s, reasoning_parser=%s",
+            self.model_config.name,
+            parsers.tool_parser is not None,
+            parsers.tool_parser,
+            parsers.reasoning_parser,
+        )
+        return parsers
 
     def shutdown(self) -> None:
         try:
@@ -502,22 +548,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         """Sets up the render/parse pipeline `create_chat_completion` drives directly
         (see engine_ops), if the model supports it. Leaves `openai_serving_render`
         unset otherwise — callers gate on `hasattr(self, "openai_serving_render")`."""
-        if not (self.model_config.usecase is ModelUsecase.generate and "generate" in self.supported_tasks):
+        if self._chat_parsers is None or "generate" not in self.supported_tasks:
             return
-
-        # get_chat_template isn't in vLLM's TokenizerLike protocol (it's a plain
-        # HF PreTrainedTokenizer method). It raises on a base model, which carries
-        # no template — leave the pipeline unset instead of killing the replica.
-        try:
-            template = cast(Any, self.engine.get_tokenizer()).get_chat_template()
-        except ValueError as exc:
-            logger.warning(
-                "'%s' has no usable chat template (%s) — the model is deployed but has no reachable "
-                "endpoint, since modelship serves no /v1/completions route",
-                self.model_config.name,
-                exc,
-            )
-            return
+        template = self._chat_parsers.template
 
         # A reasoning parser reads chat_template_kwargs["enable_thinking"] (and
         # similar toggles) and defaults them True when absent, but a template may
@@ -540,30 +573,16 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     overridden,
                 )
 
-        tool_parser_name = resolve_tool_parser(self.model_config, template)
-        enable_tools = tool_parser_name is not None
-        reasoning_parser_name = resolve_reasoning_parser(self.model_config, template) or ""
-
-        # Resolved from the chat template, not from config, so neither name
-        # appears in the engine-kwargs dump the bench compares against.
-        logger.info(
-            "resolved vllm parsers for '%s': enable_auto_tools=%s, tool_parser=%s, reasoning_parser=%s",
-            self.model_config.name,
-            enable_tools,
-            tool_parser_name,
-            reasoning_parser_name or None,
-        )
-
-        self._enable_auto_tools = enable_tools
+        self._enable_auto_tools = self._chat_parsers.tool_parser is not None
         self.openai_serving_render = VllmOnlineRenderer(
             model_config=self.engine.model_config,
             renderer=self.engine.renderer,
             request_logger=VllmRequestLogger(max_log_len=None),
             chat_template=None,
             chat_template_content_format=self.vllm_engine_kwargs.chat_template_content_format,
-            enable_auto_tools=enable_tools,
-            tool_parser=tool_parser_name,
-            reasoning_parser=reasoning_parser_name,
+            enable_auto_tools=self._enable_auto_tools,
+            tool_parser=self._chat_parsers.tool_parser,
+            reasoning_parser=self._chat_parsers.reasoning_parser or "",
         )
         tokenizer = self.openai_serving_render.renderer.tokenizer
         assert tokenizer is not None, "vllm renderer has no tokenizer (skip_tokenizer_init=True is unsupported here)"

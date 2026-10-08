@@ -240,13 +240,13 @@ Notes:
   covers every `vllm_engine_kwargs` key `VllmInfer` forwards, the multimodal
   `limit_mm_per_prompt`/`mm_processor_kwargs` included, so a vision config can't
   benchmark two different engines.
-- vLLM tool-call and reasoning parsers are auto-detected from the model's chat
-  template whenever the config leaves them unset, so the raw arm calls
+- vLLM tool-call and reasoning parsers are auto-detected whenever the config
+  leaves them unset, so the raw arm calls
   `resolve_tool_parser`/`resolve_reasoning_parser` itself and passes the result
   as `--enable-auto-tool-choice --tool-call-parser`/`--reasoning-parser`. Both
   bench configs hit this: Qwen3.5 resolves to `qwen3_coder` (its template nests
-  `<function=`/`<parameter=` inside `<tool_call>`) plus `deepseek_r1`, Qwen3-0.6B
-  to `hermes` plus `deepseek_r1`. The resolved names never reach the kwargs dump, so the actor
+  `<function=`/`<parameter=` inside `<tool_call>`) plus `qwen3`, Qwen3-0.6B
+  to `hermes` plus `qwen3`. The resolved names never reach the kwargs dump, so the actor
   logs them on their own line for the parity check to read. Note that the
   chat-template toggle defaults the actor pins into `chat_template_kwargs` are
   request-time, not launch flags — `vllm serve` has no equivalent, so a template

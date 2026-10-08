@@ -311,6 +311,16 @@ class TestSignaturesGuardVllmBump:
         params = inspect.signature(VllmOnlineRenderer.render_chat).parameters
         assert "request" in params
 
+    def test_structured_outputs_config_has_a_reasoning_parser(self):
+        from vllm.config import StructuredOutputsConfig as VllmStructuredOutputsConfig
+
+        assert VllmStructuredOutputsConfig().reasoning_parser == ""
+
+    def test_cached_tokenizer_from_config_takes_the_model_config(self):
+        from vllm.tokenizers import cached_tokenizer_from_config as vllm_cached_tokenizer_from_config
+
+        assert next(iter(inspect.signature(vllm_cached_tokenizer_from_config).parameters)) == "model_config"
+
 
 class TestVllmParserAcceptsOurRequest:
     """Real vLLM render pipeline and cached tokenizers, no engine/GPU. Skips
@@ -435,3 +445,22 @@ class TestVllmParserAcceptsOurRequest:
         assert reasoning is None
         assert content == "Just a plain text response."
         assert tool_calls in (None, [])
+
+    def test_structured_output_manager_takes_a_reasoning_parser_set_on_the_built_config(self):
+        from vllm.engine.arg_utils import AsyncEngineArgs as VllmAsyncEngineArgs
+        from vllm.reasoning import ReasoningParserManager as VllmReasoningParserManager
+        from vllm.tokenizers import cached_tokenizer_from_config as vllm_cached_tokenizer_from_config
+        from vllm.usage.usage_lib import UsageContext as VllmUsageContext
+        from vllm.v1.structured_output import StructuredOutputManager as VllmStructuredOutputManager
+
+        try:
+            engine_args = VllmAsyncEngineArgs(model="Qwen/Qwen3-0.6B", max_model_len=4096, enforce_eager=True)
+            vllm_config = engine_args.create_engine_config(usage_context=VllmUsageContext.OPENAI_API_SERVER)
+            vllm_cached_tokenizer_from_config(vllm_config.model_config)
+        except Exception as e:
+            pytest.skip(f"could not build a GPU-free engine config: {e}")
+
+        vllm_config.structured_outputs_config.reasoning_parser = "deepseek_r1"
+        manager = VllmStructuredOutputManager(vllm_config)
+
+        assert manager.reasoner_cls is VllmReasoningParserManager.get_reasoning_parser("deepseek_r1")

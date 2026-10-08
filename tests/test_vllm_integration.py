@@ -69,6 +69,15 @@ _WEATHER_TOOL = {
 }
 
 
+_ANSWER_SCHEMA = {
+    "type": "object",
+    "properties": {"answer": {"type": "integer"}},
+    "required": ["answer"],
+    "additionalProperties": False,
+}
+_ANSWER_FORMAT = {"type": "json_schema", "json_schema": {"name": "calc", "strict": True, "schema": _ANSWER_SCHEMA}}
+
+
 @pytest.mark.integration
 @pytest.mark.vllm
 class TestChatCapable:
@@ -225,6 +234,18 @@ class TestChatCapable:
         parsed = json.loads(content)
         assert set(parsed.keys()) == {"city", "country"}
 
+    def test_tool_choice_none_answers_in_text(self, client):
+        completion = client.chat.completions.create(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "What is the weather in Paris?"}],
+            tools=[_WEATHER_TOOL],
+            tool_choice="none",
+            max_tokens=64,
+        )
+        message = completion.choices[0].message
+        assert not message.tool_calls
+        assert message.content and "<tool_call>" not in message.content
+
     def test_n_greater_than_one_returns_independent_choices(self, client):
         """n>1 needs its own parser instance per choice (engine_ops.make_parsers);
         a shared instance would corrupt state across choices."""
@@ -339,7 +360,7 @@ class TestChatReasoning:
         model_deployer.deploy("chat-reasoning")
 
     def test_reasoning_completion(self):
-        """Non-streaming: the deepseek_r1 reasoning parser routes `<think>...</think>`
+        """Non-streaming: the reasoning parser routes `<think>...</think>`
         to `message.reasoning`, leaving the final answer in `message.content`."""
         # Use httpx so we read the raw `reasoning` field — the OpenAI Python
         # SDK doesn't always surface it as a typed attribute.
@@ -394,6 +415,125 @@ class TestChatReasoning:
         # Reasoning markers must not leak into either stream.
         assert "<think>" not in "".join(reasoning_parts)
         assert "<think>" not in "".join(content_parts)
+
+    def _chat(self, **body) -> dict:
+        response = httpx.post(
+            f"{OPENAI_API_BASE}/chat/completions",
+            json={
+                "model": "chat-reasoning",
+                "messages": [{"role": "user", "content": "Briefly: what is 7 times 8?"}],
+                "max_tokens": 1024,
+                **body,
+            },
+            timeout=120,
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["choices"][0]
+
+    def test_json_schema_answer_lands_in_content(self):
+        message = self._chat(response_format=_ANSWER_FORMAT)["message"]
+
+        assert message["content"].lstrip().startswith("{")
+        assert message.get("reasoning")
+
+    def test_json_schema_streaming_answer_lands_in_content(self):
+        with httpx.stream(
+            "POST",
+            f"{OPENAI_API_BASE}/chat/completions",
+            json={
+                "model": "chat-reasoning",
+                "messages": [{"role": "user", "content": "Briefly: what is 7 times 8?"}],
+                "max_tokens": 1024,
+                "response_format": _ANSWER_FORMAT,
+                "stream": True,
+            },
+            timeout=120,
+        ) as response:
+            assert response.status_code == 200
+            content = ""
+            for line in response.iter_lines():
+                if not line.startswith("data: ") or line == "data: [DONE]":
+                    continue
+                delta = json.loads(line[len("data: ") :])["choices"][0].get("delta") or {}
+                content += delta.get("content") or ""
+
+        assert content.lstrip().startswith("{")
+
+    def test_required_tool_choice_returns_the_call(self):
+        choice = self._chat(
+            messages=[{"role": "user", "content": "What is the weather in Paris?"}],
+            tools=[_WEATHER_TOOL],
+            tool_choice="required",
+        )
+
+        assert choice["message"]["tool_calls"][0]["function"]["name"] == "get_weather"
+        assert choice["finish_reason"] == "tool_calls"
+
+    def test_named_tool_choice_returns_the_call(self):
+        choice = self._chat(
+            messages=[{"role": "user", "content": "Hello!"}],
+            tools=[_WEATHER_TOOL],
+            tool_choice={"type": "function", "function": {"name": "get_weather"}},
+        )
+
+        assert choice["message"]["tool_calls"][0]["function"]["name"] == "get_weather"
+
+    def test_thinking_off_answer_lands_in_content(self):
+        message = self._chat(chat_template_kwargs={"enable_thinking": False})["message"]
+
+        assert message["content"].strip()
+        assert not message.get("reasoning")
+
+    def test_thinking_off_streaming_answer_lands_in_content(self):
+        with httpx.stream(
+            "POST",
+            f"{OPENAI_API_BASE}/chat/completions",
+            json={
+                "model": "chat-reasoning",
+                "messages": [{"role": "user", "content": "Briefly: what is 7 times 8?"}],
+                "max_tokens": 1024,
+                "chat_template_kwargs": {"enable_thinking": False},
+                "stream": True,
+            },
+            timeout=120,
+        ) as response:
+            assert response.status_code == 200
+            content, reasoning = "", ""
+            for line in response.iter_lines():
+                if not line.startswith("data: ") or line == "data: [DONE]":
+                    continue
+                delta = json.loads(line[len("data: ") :])["choices"][0].get("delta") or {}
+                content += delta.get("content") or ""
+                reasoning += delta.get("reasoning") or ""
+
+        assert content.strip()
+        assert not reasoning
+
+    def test_thinking_off_tool_call_is_returned(self):
+        choice = self._chat(
+            messages=[{"role": "user", "content": "What is the weather in Paris?"}],
+            tools=[_WEATHER_TOOL],
+            tool_choice="required",
+            chat_template_kwargs={"enable_thinking": False},
+        )
+
+        assert choice["message"]["tool_calls"][0]["function"]["name"] == "get_weather"
+
+    def test_responses_json_schema_answer_lands_in_a_message(self):
+        response = httpx.post(
+            f"{OPENAI_API_BASE}/responses",
+            json={
+                "model": "chat-reasoning",
+                "input": "Briefly: what is 7 times 8?",
+                "max_output_tokens": 1024,
+                "text": {"format": {"type": "json_schema", "name": "calc", "strict": True, "schema": _ANSWER_SCHEMA}},
+            },
+            timeout=120,
+        )
+        assert response.status_code == 200, response.text
+        messages = [item for item in response.json()["output"] if item["type"] == "message"]
+
+        assert messages[0]["content"][0]["text"].lstrip().startswith("{")
 
 
 @pytest.mark.integration

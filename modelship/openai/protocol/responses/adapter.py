@@ -74,7 +74,7 @@ def responses_request_to_chat(request: ResponsesRequest) -> ChatCompletionReques
         kwargs["user"] = request.user
 
     tools = _tools_to_chat(request.tools)
-    if tools is not None:
+    if tools is not None and request.tool_choice != "none":
         kwargs["tools"] = tools
     tool_choice = _tool_choice_to_chat(request.tool_choice)
     if tool_choice is not None:
