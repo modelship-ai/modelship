@@ -87,9 +87,8 @@ def _fits_template(name: str, tokenizer: Any, template: str) -> bool:
     return not markers or any(marker in template for marker in markers)
 
 
-def _metadata(cfg: ModelshipModelConfig, hf_config: Any) -> tuple[tuple[str, str | None], ...]:
+def _metadata(hf_config: Any) -> tuple[tuple[str, str | None], ...]:
     return (
-        ("model reference", cfg.model),
         ("model_type", hf_config.model_type),
         ("architecture", (hf_config.architectures or [None])[0]),
     )
@@ -236,7 +235,7 @@ def resolve_tool_parser(
         logger.info("No chat template found for '%s'; tool-call detection skipped.", cfg.name)
         return None
 
-    metadata = _metadata(cfg, hf_config)
+    metadata = _metadata(hf_config)
     call = rendered_tool_call(tokenizer, eos_token_id)
     if call is not None:
         readers = tool_parsers_reading(tokenizer, call)
@@ -299,7 +298,7 @@ def resolve_reasoning_parser(
         logger.info("No chat template found for '%s'; reasoning detection skipped.", cfg.name)
         return None
 
-    for source, text in _metadata(cfg, hf_config):
+    for source, text in _metadata(hf_config):
         for name in _named_in(registered, text):
             if _fits_template(name, tokenizer, template):
                 logger.info("Auto-detected reasoning_parser=%r for '%s' from its %s", name, cfg.name, source)
