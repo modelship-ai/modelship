@@ -16,7 +16,7 @@ _PICKS = [
     ("Qwen/Qwen3-Coder-30B-A3B-Instruct", "qwen3_coder"),
     ("zai-org/GLM-4.5-Air", "glm45"),
     ("zai-org/GLM-4.6", "glm45"),
-    ("zai-org/GLM-4.7", "glm47"),
+    ("zai-org/GLM-4.7", "glm45"),
     ("MiniMaxAI/MiniMax-M2", "minimax_m2"),
     ("allenai/Olmo-3-7B-Instruct", "olmo3"),
     ("allenai/Olmo-3-7B-Think", "olmo3"),
@@ -26,7 +26,7 @@ _PICKS = [
     ("deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", None),
     ("ibm-granite/granite-3.3-8b-instruct", "granite"),
     ("ibm-granite/granite-4.0-micro", "hermes"),
-    ("tencent/Hunyuan-A13B-Instruct", "hunyuan_a13b"),
+    ("tencent/Hunyuan-A13B-Instruct", None),
     ("openai/gpt-oss-20b", None),
     ("google/gemma-4-12B-it-qat-w4a16-ct", "gemma4"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "mimo"),
@@ -36,7 +36,7 @@ _PICKS = [
     ("unsloth/Llama-4-Scout-17B-16E-Instruct", "llama4_pythonic"),
     ("unsloth/mistral-7b-instruct-v0.3", "mistral"),
     ("microsoft/Phi-4-mini-instruct", None),
-    ("Salesforce/xLAM-2-1b-fc-r", "xlam"),
+    ("Salesforce/xLAM-2-1b-fc-r", "granite"),
     ("LiquidAI/LFM2-1.2B", "lfm2"),
 ]
 

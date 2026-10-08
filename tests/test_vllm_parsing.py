@@ -141,14 +141,10 @@ class TestResolveReasoningParsers:
         resolve_reasoning_parser(cfg, None, None, _hf())
         assert cfg.chat_template_kwargs == {}
 
-    def test_a_registered_name_in_the_model_reference_is_picked(self, registry):
+    def test_the_names_in_models_yaml_are_not_searched(self, registry):
         registry["acme9"] = _parser()
-        assert resolve_reasoning_parser(_make_cfg(model="org/Acme-9-Chat"), "<think>", None, _hf()) == "acme9"
-
-    def test_the_model_reference_outranks_model_type(self, registry):
-        registry.update(acme9=_parser(), other7=_parser())
-        cfg = _make_cfg(model="org/Acme-9-Chat")
-        assert resolve_reasoning_parser(cfg, "<think>", None, _hf(model_type="other7")) == "acme9"
+        cfg = _make_cfg(name="acme9", model="org/Acme-9-Chat")
+        assert resolve_reasoning_parser(cfg, "<think>", None, _hf()) is None
 
     def test_model_type_outranks_architecture(self, registry):
         registry.update(acme9=_parser(), other7=_parser())
@@ -324,35 +320,44 @@ class TestResolveToolParsers:
         probe("call", ("lfm2",))
         assert resolve_tool_parser(_make_cfg(), "plain", None, _hf(), None) == "lfm2"
 
-    def test_tied_readers_go_to_the_name_closest_to_the_model_reference(self, probe):
-        probe("call", ("mimo", "qwen3_coder", "qwen3_xml"))
-        cfg = _make_cfg(model="org/Qwen3.8-27B-AWQ")
-        assert resolve_tool_parser(cfg, "plain", None, _hf(), None) == "qwen3_coder"
-
-    def test_model_type_counts_for_the_closest_name(self, probe):
+    def test_tied_readers_go_to_the_name_closest_to_model_type(self, probe):
         probe("call", ("abcd1", "glm47"))
         assert resolve_tool_parser(_make_cfg(), "plain", None, _hf(model_type="glm4_moe"), None) == "glm47"
 
+    def test_the_architecture_counts_for_the_closest_name(self, probe):
+        probe("call", ("mimo", "qwen3_coder", "qwen3_xml"))
+        hf_config = _hf(architecture="Qwen3ForCausalLM")
+        assert resolve_tool_parser(_make_cfg(), "plain", None, hf_config, None) == "qwen3_coder"
+
     def test_a_shared_run_under_four_characters_does_not_count(self, probe):
         probe("call", ("abc9", "xyz1"))
-        cfg = _make_cfg(model="org/xyz-chat")
-        assert resolve_tool_parser(cfg, "plain", None, _hf(), None) == "abc9"
+        assert resolve_tool_parser(_make_cfg(), "plain", None, _hf(model_type="xyz_chat"), None) == "abc9"
+
+    def test_the_names_in_models_yaml_do_not_break_a_tie(self, probe):
+        probe("call", ("abcd1", "glm47"))
+        cfg = _make_cfg(name="glm47", model="org/GLM-4.7")
+        assert resolve_tool_parser(cfg, "plain", None, _hf(), None) == "abcd1"
 
     def test_a_call_no_parser_reads_leaves_none(self, probe):
         probe("call")
         assert resolve_tool_parser(_make_cfg(), _HERMES_MARKERS, None, _hf(), None) is None
 
-    def test_without_a_written_call_a_name_in_the_metadata_is_picked(self, probe, tool_registry):
+    def test_without_a_written_call_a_name_in_model_type_is_picked(self, probe, tool_registry):
         probe(None)
         tool_registry["acme9"] = lambda tokenizer: None
-        cfg = _make_cfg(model="org/Acme-9-Chat")
-        assert resolve_tool_parser(cfg, "plain", None, _hf(), None) == "acme9"
+        assert resolve_tool_parser(_make_cfg(), "plain", None, _hf(model_type="acme9"), None) == "acme9"
+
+    def test_without_a_written_call_the_names_in_models_yaml_are_not_searched(self, probe, tool_registry):
+        probe(None)
+        tool_registry["acme9"] = lambda tokenizer: None
+        cfg = _make_cfg(name="acme9", model="org/Acme-9-Chat")
+        assert resolve_tool_parser(cfg, "plain", None, _hf(), None) is None
 
     def test_a_named_parser_that_cannot_be_built_is_skipped(self, probe, tool_registry):
         probe(None)
         tool_registry.update(acme9=_unbuildable, hermes=_unbuildable)
-        cfg = _make_cfg(model="org/Acme-9-Chat")
-        assert resolve_tool_parser(cfg, _HERMES_MARKERS, None, _hf(), None) == "hermes"
+        hf_config = _hf(model_type="acme9")
+        assert resolve_tool_parser(_make_cfg(), _HERMES_MARKERS, None, hf_config, None) == "hermes"
 
     def test_without_a_written_call_or_a_name_the_markers_decide(self, probe):
         probe(None)
