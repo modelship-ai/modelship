@@ -68,13 +68,11 @@ def _alnum(text: str) -> str:
 
 
 def _named_in(registered: set[str], text: str | None) -> list[str]:
-    """Registered names found in ``text`` as lowercase alphanumerics, longest first."""
     haystack = _alnum(text or "")
     return sorted((name for name in registered if _alnum(name) in haystack), key=lambda name: (-len(name), name))
 
 
 def _fits_template(name: str, tokenizer: Any, template: str) -> bool:
-    """The parser builds on the tokenizer and, when it declares markers, the template holds one."""
     from vllm.reasoning import ReasoningParserManager as VllmReasoningParserManager
 
     try:
@@ -226,11 +224,7 @@ def resolve_tool_parser(cfg: ModelshipModelConfig, template: str | None) -> str 
 def resolve_reasoning_parser(
     cfg: ModelshipModelConfig, template: str | None, tokenizer: Any, hf_config: Any
 ) -> str | None:
-    """Resolve the reasoning parser name to hand to the engine and ``OnlineRenderer``.
-
-    Opt-out and an explicit name as in ``resolve_tool_parser``; else a registered name found in the
-    model's metadata; else a ``<think>`` parser picked by the template's thinking switch.
-    """
+    """Resolve the reasoning parser name to hand to the engine and ``OnlineRenderer``."""
     if _is_reasoning_opt_out(cfg):
         logger.info("Reasoning resolution skipped for '%s' (explicit opt-out).", cfg.name)
         return None
@@ -264,7 +258,7 @@ def resolve_reasoning_parser(
                 logger.info("Auto-detected reasoning_parser=%r for '%s' from its %s", name, cfg.name, source)
                 return name
 
-    # vLLM's qwen3 parser reads this switch; its deepseek_r1 parser reads none.
+    # qwen3 reads the template's switch; deepseek_r1 does not.
     fallback = "qwen3" if "enable_thinking" in template else "deepseek_r1"
     if fallback not in registered:
         logger.warning("vLLM registers no %r reasoning parser; none detected for '%s'.", fallback, cfg.name)

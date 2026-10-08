@@ -327,8 +327,6 @@ The tool parser is picked from the model's chat template. The reasoning parser i
 
 On a model that reasons, `response_format` and a forced `tool_choice` (`required` or a named function) take effect once the reasoning ends: the answer arrives in `content` or `tool_calls` with the reasoning beside it, and `max_tokens` covers both.
 
-vLLM does not enforce a forced `tool_choice` when the reasoning parser is `qwen3` and the tool parser is `qwen3_coder` or `qwen3_xml`: the request behaves like `auto`. `reasoning_parser: deepseek_r1` enforces it; an answer given with thinking switched off then arrives as reasoning.
-
 ### CPU (no GPU required)
 
 Installable via the `vllm-cpu` extra (paired with `num_gpus: 0`) for quantized chat with no GPU — safetensors, or AWQ/GPTQ/compressed-tensors quants (CPU backend supports AWQ/GPTQ on x86 plus INT8 W8A8); GGUF is rejected here too.
