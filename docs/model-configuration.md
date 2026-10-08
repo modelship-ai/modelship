@@ -310,7 +310,7 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 | `enable_auto_tool_choice` | bool | — | Enable automatic tool/function calling |
 | `tool_call_parser` | string | — | e.g. `llama3_json`, `hermes` |
 | `enable_reasoning` | bool | — | `false` turns reasoning parsing off |
-| `reasoning_parser` | string | — | e.g. `deepseek_r1`, `gemma4` |
+| `reasoning_parser` | string | — | e.g. `qwen3`, `deepseek_r1` |
 | `enforce_eager` | bool | — | Disable CUDA graph capture |
 | `kv_cache_dtype` | string | — | e.g. `fp8` |
 | `enable_prefix_caching` | bool | vLLM default: on | Disable to turn off vLLM's automatic prefix caching entirely. Not usually needed — every request is already cache-salted per caller identity (see [Identity-scoped prefix caching](architecture.md#identity-scoped-vllm-prefix-caching)); this is for an operator who wants caching off regardless of identity |
@@ -323,9 +323,11 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 
 ### Tool calling and reasoning
 
-Both parsers are picked from the model's chat template. `tool_call_parser` and `reasoning_parser` name one instead; `enable_auto_tool_choice: false` and `enable_reasoning: false` switch one off.
+The tool parser is picked from the model's chat template. The reasoning parser is the vLLM parser named after the model, found in the model reference or its `config.json`; a model with `<think>` markers and no such name gets `qwen3` or `deepseek_r1`. The startup log names the parser picked. `tool_call_parser` and `reasoning_parser` name one instead; `enable_auto_tool_choice: false` and `enable_reasoning: false` switch one off.
 
 On a model that reasons, `response_format` and a forced `tool_choice` (`required` or a named function) take effect once the reasoning ends: the answer arrives in `content` or `tool_calls` with the reasoning beside it, and `max_tokens` covers both.
+
+vLLM does not enforce a forced `tool_choice` when the reasoning parser is `qwen3` and the tool parser is `qwen3_coder` or `qwen3_xml`: the request behaves like `auto`. `reasoning_parser: deepseek_r1` enforces it; an answer given with thinking switched off then arrives as reasoning.
 
 ### CPU (no GPU required)
 
