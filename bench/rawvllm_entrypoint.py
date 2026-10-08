@@ -23,7 +23,7 @@ from pathlib import Path  # noqa: E402
 
 import yaml  # noqa: E402
 from vllm.tokenizers import get_tokenizer  # noqa: E402
-from vllm.transformers_utils.config import get_config  # noqa: E402
+from vllm.transformers_utils.config import get_config, try_get_generation_config  # noqa: E402
 
 from modelship.infer.infer_config import (  # noqa: E402
     ModelLoader,
@@ -95,8 +95,10 @@ def main() -> int:
         except ValueError:
             # A base model carries no template; the actor leaves both unset too.
             template = None
-        tool_parser = resolve_tool_parser(m, template)
         hf_config = get_config(m._resolved_path, k.trust_remote_code)
+        generation_config = try_get_generation_config(m._resolved_path, k.trust_remote_code)
+        eos_token_id = generation_config.eos_token_id if generation_config else None
+        tool_parser = resolve_tool_parser(m, template, tokenizer, hf_config, eos_token_id)
         reasoning_parser = resolve_reasoning_parser(m, template, tokenizer, hf_config)
     print(f"rawvllm parsers: tool={tool_parser} reasoning={reasoning_parser}", flush=True)
 

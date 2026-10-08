@@ -438,10 +438,12 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             )
             return None
 
+        hf_config = vllm_config.model_config.hf_config
+        eos_token_id = vllm_config.model_config.try_get_generation_config().get("eos_token_id")
         parsers = _ChatParsers(
             template,
-            resolve_tool_parser(self.model_config, template),
-            resolve_reasoning_parser(self.model_config, template, tokenizer, vllm_config.model_config.hf_config),
+            resolve_tool_parser(self.model_config, template, tokenizer, hf_config, eos_token_id),
+            resolve_reasoning_parser(self.model_config, template, tokenizer, hf_config),
         )
         logger.info(
             "resolved vllm parsers for '%s': enable_auto_tools=%s, tool_parser=%s, reasoning_parser=%s",

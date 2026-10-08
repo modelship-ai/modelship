@@ -10,9 +10,11 @@ from __future__ import annotations
 import inspect
 import re
 from collections.abc import Callable
+from difflib import SequenceMatcher
 from typing import Any
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
+from modelship.infer.vllm.parsing.tool_probe import rendered_tool_call, tool_parsers_reading
 from modelship.logging import get_logger
 
 logger = get_logger("infer.vllm.parsing.detect")
@@ -21,6 +23,8 @@ logger = get_logger("infer.vllm.parsing.detect")
 # boolean toggle defaults. Content is irrelevant — only which branches the
 # template takes for a given kwarg matters.
 _PROBE_MESSAGES = [{"role": "user", "content": "hi"}]
+
+_MIN_SHARED_RUN = 4
 
 
 def classify_tool_template(template: str) -> str | None:
@@ -81,6 +85,36 @@ def _fits_template(name: str, tokenizer: Any, template: str) -> bool:
         return False
     markers = [marker for marker in (parser.reasoning_start_str, parser.reasoning_end_str) if marker]
     return not markers or any(marker in template for marker in markers)
+
+
+def _metadata(cfg: ModelshipModelConfig, hf_config: Any) -> tuple[tuple[str, str | None], ...]:
+    return (
+        ("model reference", cfg.model),
+        ("model_type", hf_config.model_type),
+        ("architecture", (hf_config.architectures or [None])[0]),
+    )
+
+
+def _closest(names: list[str], texts: list[str | None]) -> str:
+    haystacks = [_alnum(text) for text in texts if text]
+
+    def rank(name: str) -> tuple[int, str]:
+        needle = _alnum(name)
+        runs = (SequenceMatcher(None, needle, hay, autojunk=False).find_longest_match().size for hay in haystacks)
+        run = max(runs, default=0)
+        return (-run if run >= _MIN_SHARED_RUN else 0, name)
+
+    return min(names, key=rank)
+
+
+def _tool_parser_builds(name: str, tokenizer: Any) -> bool:
+    from vllm.tool_parsers import ToolParserManager as VllmToolParserManager
+
+    try:
+        VllmToolParserManager.get_tool_parser(name)(tokenizer)
+    except Exception:
+        return False
+    return True
 
 
 def _is_tool_opt_out(cfg: ModelshipModelConfig) -> bool:
@@ -172,14 +206,14 @@ def detect_template_toggle_defaults(template_src: str, tokenizer: Any) -> dict[s
     return detect_boolean_defaults(candidates, render)
 
 
-def resolve_tool_parser(cfg: ModelshipModelConfig, template: str | None) -> str | None:
-    """Resolve the tool-call parser name to hand to ``OnlineRenderer``.
-
-    Precedence: opt-out -> None; explicit ``tool_call_parser`` (validated against
-    vLLM's registry, raises if unknown) -> that name; else classify the chat
-    template and validate the detected name against the registry (warn +
-    disable if unrecognized or unregistered); else None.
-    """
+def resolve_tool_parser(
+    cfg: ModelshipModelConfig,
+    template: str | None,
+    tokenizer: Any,
+    hf_config: Any,
+    eos_token_id: int | list[int] | None,
+) -> str | None:
+    """Resolve the tool-call parser name to hand to ``OnlineRenderer``."""
     if _is_tool_opt_out(cfg):
         logger.info("Tool-call resolution skipped for '%s' (explicit opt-out).", cfg.name)
         return None
@@ -201,6 +235,24 @@ def resolve_tool_parser(cfg: ModelshipModelConfig, template: str | None) -> str 
     if template is None:
         logger.info("No chat template found for '%s'; tool-call detection skipped.", cfg.name)
         return None
+
+    metadata = _metadata(cfg, hf_config)
+    call = rendered_tool_call(tokenizer, eos_token_id)
+    if call is not None:
+        readers = tool_parsers_reading(tokenizer, call)
+        if not readers:
+            logger.warning("No vLLM tool parser reads the tool call '%s' writes; tool calling disabled.", cfg.name)
+            return None
+        detected = _closest(readers, [text for _, text in metadata])
+        logger.info("Auto-detected tool_call_parser=%r for '%s' out of %s", detected, cfg.name, readers)
+        return detected
+
+    # The template writes no tool call for an assistant turn.
+    for source, text in metadata:
+        for name in _named_in(registered, text):
+            if _tool_parser_builds(name, tokenizer):
+                logger.info("Auto-detected tool_call_parser=%r for '%s' from its %s", name, cfg.name, source)
+                return name
 
     detected = classify_tool_template(template)
     if detected is None:
@@ -247,12 +299,7 @@ def resolve_reasoning_parser(
         logger.info("No chat template found for '%s'; reasoning detection skipped.", cfg.name)
         return None
 
-    sources = (
-        ("model reference", cfg.model),
-        ("model_type", hf_config.model_type),
-        ("architecture", (hf_config.architectures or [None])[0]),
-    )
-    for source, text in sources:
+    for source, text in _metadata(cfg, hf_config):
         for name in _named_in(registered, text):
             if _fits_template(name, tokenizer, template):
                 logger.info("Auto-detected reasoning_parser=%r for '%s' from its %s", name, cfg.name, source)
