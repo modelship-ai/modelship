@@ -33,7 +33,10 @@ def _build(
 
         def create_engine_config(self, usage_context: Any) -> Any:
             return SimpleNamespace(
-                model_config=SimpleNamespace(hf_config=SimpleNamespace(model_type=None, architectures=None)),
+                model_config=SimpleNamespace(
+                    hf_config=SimpleNamespace(model_type=None, architectures=None),
+                    try_get_generation_config=dict,
+                ),
                 structured_outputs_config=SimpleNamespace(reasoning_parser=""),
             )
 

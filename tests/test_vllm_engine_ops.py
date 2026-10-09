@@ -67,6 +67,27 @@ class TestBuildVllmRequest:
         vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
         assert vllm_req.cache_salt is None
 
+    def test_no_tools_and_no_tool_choice_gives_none(self):
+        request = ChatCompletionRequest.model_validate({"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
+        assert vllm_req.tool_choice == "none"
+
+    def test_tools_and_no_tool_choice_gives_auto(self):
+        tool = {"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object"}}}
+        request = ChatCompletionRequest.model_validate(
+            {"model": "m", "messages": [{"role": "user", "content": "hi"}], "tools": [tool]}
+        )
+        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
+        assert vllm_req.tool_choice == "auto"
+
+    def test_a_tool_choice_from_the_request_is_kept(self):
+        tool = {"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object"}}}
+        request = ChatCompletionRequest.model_validate(
+            {"model": "m", "messages": [{"role": "user", "content": "hi"}], "tools": [tool], "tool_choice": "required"}
+        )
+        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
+        assert vllm_req.tool_choice == "required"
+
 
 class TestDeriveReasoningEnded:
     def test_include_reasoning_false_forces_true(self):
