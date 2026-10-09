@@ -186,14 +186,14 @@ class TestResolveReasoningParsers:
         registry["acme9"] = ImportError("optional dependency")
         assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(model_type="acme9")) is None
 
-    def test_fallback_with_the_thinking_switch_is_qwen3(self, registry):
-        registry.update(qwen3=_parser(), deepseek_r1=_parser())
-        template = "{% if enable_thinking %}<think>{% endif %}"
-        assert resolve_reasoning_parser(_make_cfg(), template, None, _hf()) == "qwen3"
-
-    def test_fallback_without_the_thinking_switch_is_deepseek_r1(self, registry):
+    def test_fallback_is_deepseek_r1(self, registry):
         registry.update(qwen3=_parser(), deepseek_r1=_parser())
         assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf()) == "deepseek_r1"
+
+    def test_a_thinking_switch_in_the_template_does_not_change_the_fallback(self, registry):
+        registry.update(qwen3=_parser(), deepseek_r1=_parser())
+        template = "{% if enable_thinking %}<think>{% endif %}"
+        assert resolve_reasoning_parser(_make_cfg(), template, None, _hf()) == "deepseek_r1"
 
     def test_no_fallback_for_a_template_without_its_markers(self, registry):
         registry.update(qwen3=_parser(), deepseek_r1=_parser())
@@ -205,13 +205,12 @@ class TestResolveReasoningParsers:
 
 
 class TestVllmReasoningRegistry:
-    def test_both_fallback_parsers_are_registered(self):
-        assert {"qwen3", "deepseek_r1"} <= set(VllmReasoningParserManager.list_registered())
+    def test_the_fallback_parser_is_registered(self):
+        assert "deepseek_r1" in VllmReasoningParserManager.list_registered()
 
-    def test_both_fallback_parsers_implement_is_reasoning_end(self):
-        for name in ("qwen3", "deepseek_r1"):
-            parser = VllmReasoningParserManager.get_reasoning_parser(name)
-            assert parser.is_reasoning_end is not VllmReasoningParser.is_reasoning_end
+    def test_the_fallback_parser_implements_is_reasoning_end(self):
+        parser = VllmReasoningParserManager.get_reasoning_parser("deepseek_r1")
+        assert parser.is_reasoning_end is not VllmReasoningParser.is_reasoning_end
 
     def test_a_parser_declares_its_markers(self):
         assert isinstance(VllmReasoningParser.reasoning_start_str, property)
