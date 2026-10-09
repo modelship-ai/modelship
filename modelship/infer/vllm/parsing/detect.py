@@ -308,8 +308,7 @@ def resolve_reasoning_parser(
                 logger.info("Auto-detected reasoning_parser=%r for '%s' from its %s", name, cfg.name, source)
                 return name
 
-    # qwen3 reads the template's switch; deepseek_r1 does not.
-    fallback = "qwen3" if "enable_thinking" in template else "deepseek_r1"
+    fallback = "deepseek_r1"
     if fallback not in registered:
         logger.warning("vLLM registers no %r reasoning parser; none detected for '%s'.", fallback, cfg.name)
         return None
