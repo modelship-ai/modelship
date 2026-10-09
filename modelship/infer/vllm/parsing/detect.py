@@ -76,12 +76,16 @@ def _named_in(registered: set[str], text: str | None) -> list[str]:
     return sorted((name for name in registered if _alnum(name) in haystack), key=lambda name: (-len(name), name))
 
 
-def _fits_template(name: str, tokenizer: Any, template: str) -> bool:
+def _usable(name: str, tokenizer: Any, template: str) -> bool:
+    from vllm.reasoning import ReasoningParser as VllmReasoningParser
     from vllm.reasoning import ReasoningParserManager as VllmReasoningParserManager
 
     try:
         parser = VllmReasoningParserManager.get_reasoning_parser(name)(tokenizer)
     except Exception:
+        return False
+    # The engine applies a grammar only once is_reasoning_end returns True.
+    if type(parser).is_reasoning_end is VllmReasoningParser.is_reasoning_end:
         return False
     markers = [marker for marker in (parser.reasoning_start_str, parser.reasoning_end_str) if marker]
     return not markers or any(marker in template for marker in markers)
@@ -300,7 +304,7 @@ def resolve_reasoning_parser(
 
     for source, text in _metadata(hf_config):
         for name in _named_in(registered, text):
-            if _fits_template(name, tokenizer, template):
+            if _usable(name, tokenizer, template):
                 logger.info("Auto-detected reasoning_parser=%r for '%s' from its %s", name, cfg.name, source)
                 return name
 
@@ -309,7 +313,7 @@ def resolve_reasoning_parser(
     if fallback not in registered:
         logger.warning("vLLM registers no %r reasoning parser; none detected for '%s'.", fallback, cfg.name)
         return None
-    if _fits_template(fallback, tokenizer, template):
+    if _usable(fallback, tokenizer, template):
         logger.info("Auto-detected reasoning_parser=%r for '%s' from its chat template", fallback, cfg.name)
         return fallback
     return None
