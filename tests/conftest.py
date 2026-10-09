@@ -273,7 +273,7 @@ MODEL_CONFIGS: dict[str, dict] = {
     },
     "image-model": {
         "name": "image-model",
-        "model": "stabilityai/sdxl-turbo",
+        "model": "stabilityai/sd-turbo",
         "usecase": "image",
         "loader": "diffusers",
         "num_gpus": 1,
