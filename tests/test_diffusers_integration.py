@@ -10,7 +10,7 @@ import pytest
 @pytest.mark.integration
 @pytest.mark.diffusers
 class TestImage:
-    """One sdxl-turbo deployment backs all three endpoints (weight-shared via
+    """One sd-turbo deployment backs all three endpoints (weight-shared via
     from_pipe); the generated image is reused as input for edit/variation calls."""
 
     SIZE = "512x512"

@@ -413,8 +413,8 @@ HuggingFace Diffusers for image generation; any `AutoPipelineForText2Image`-comp
 
 ```yaml
 models:
-  - name: sdxl-turbo
-    model: stabilityai/sdxl-turbo
+  - name: sd-turbo
+    model: stabilityai/sd-turbo
     usecase: image
     loader: diffusers
     num_gpus: 0.35
