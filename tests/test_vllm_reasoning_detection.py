@@ -19,7 +19,7 @@ _PICKS = [
     ("ByteDance-Seed/Seed-OSS-36B-Instruct", "seed_oss"),
     ("deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "deepseek_r1"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseek_v3"),
-    ("ibm-granite/granite-3.3-8b-instruct", "granite"),
+    ("ibm-granite/granite-3.3-8b-instruct", None),
     ("tencent/Hunyuan-A13B-Instruct", None),
     ("openai/gpt-oss-20b", None),
     ("google/gemma-4-12B-it-qat-w4a16-ct", "gemma4"),

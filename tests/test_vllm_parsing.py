@@ -84,10 +84,16 @@ def _hf(model_type: str | None = None, architecture: str | None = None) -> Simpl
     return SimpleNamespace(model_type=model_type, architectures=[architecture] if architecture else None)
 
 
-def _parser(start: str | None = "<think>", end: str | None = "</think>", error: Exception | None = None) -> type:
+def _parser(
+    start: str | None = "<think>",
+    end: str | None = "</think>",
+    error: Exception | None = None,
+    reports_end: bool = True,
+) -> type:
     class Parser:
         reasoning_start_str = start
         reasoning_end_str = end
+        is_reasoning_end = (lambda self, input_ids: True) if reports_end else VllmReasoningParser.is_reasoning_end
 
         def __init__(self, tokenizer: Any) -> None:
             if error:
@@ -168,6 +174,10 @@ class TestResolveReasoningParsers:
         registry["acme9"] = _parser(start=None, end=None)
         assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="acme9")) == "acme9"
 
+    def test_a_parser_that_does_not_implement_is_reasoning_end_is_skipped(self, registry):
+        registry["acme9"] = _parser(start=None, end=None, reports_end=False)
+        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="acme9")) is None
+
     def test_a_parser_that_cannot_be_built_is_skipped(self, registry):
         registry.update(step3=_parser(), step3p5=_parser(error=RuntimeError("no think tokens")))
         assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(model_type="step3p5")) == "step3"
@@ -197,6 +207,11 @@ class TestResolveReasoningParsers:
 class TestVllmReasoningRegistry:
     def test_both_fallback_parsers_are_registered(self):
         assert {"qwen3", "deepseek_r1"} <= set(VllmReasoningParserManager.list_registered())
+
+    def test_both_fallback_parsers_implement_is_reasoning_end(self):
+        for name in ("qwen3", "deepseek_r1"):
+            parser = VllmReasoningParserManager.get_reasoning_parser(name)
+            assert parser.is_reasoning_end is not VllmReasoningParser.is_reasoning_end
 
     def test_a_parser_declares_its_markers(self):
         assert isinstance(VllmReasoningParser.reasoning_start_str, property)
