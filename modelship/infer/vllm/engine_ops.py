@@ -68,7 +68,7 @@ def build_vllm_request(
     `cache_salt` scopes vLLM's prefix-cache reuse to the caller's identity.
     """
     request_data = request.model_dump()
-    # vLLM defaults an absent tool_choice; an explicit None reads as "auto" even without tools.
+    # vLLM defaults tool_choice only when the key is absent: "none" without tools, "auto" with them.
     if request_data.get("tool_choice") is None:
         request_data.pop("tool_choice", None)
     if chat_template_kwargs:
