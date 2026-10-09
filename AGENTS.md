@@ -5,7 +5,7 @@ Operational notes for agents working in this repo. Read before making changes.
 ## Toolchain
 
 - Python is pinned exactly to `3.12.10` (`requires-python = "==3.12.10"`). Not `>=3.12`. That applies to the engine; `bootstrap/` (published as `mship`) is `>=3.10` because it runs before the pinned environment exists.
-- Dependency manager is **uv**.
+- Dependency manager is **uv**, pinned exactly by `required-version` in `pyproject.toml`: CI installs that version, the `Dockerfile` copies the same tag (`tests/test_uv_pin.py` guards it), and any other uv refuses to run in the repo. Bump both together and re-run `make pins`.
 - Never run `pip install`; always use `uv sync` / `uv run` / `uv lock`.
 - `cuda` and `cpu` extras are mutually exclusive (declared in `[tool.uv] conflicts`). `torch` / `torchvision` come from different indexes per extra (`pytorch-cu130` vs `pytorch-cpu`). A third extra, `thin`, is empty (base deps only) — no torch/vllm, used by the thin control/coordinator image.
 

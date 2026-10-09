@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Toolchain essentials
 
 - Python is pinned exactly to `3.12.10` (not `>=`). Dependency manager is **uv**. Never use `pip install`.
+- uv is pinned exactly by `required-version` in `pyproject.toml`: CI installs that version, the `Dockerfile` copies the same tag (`tests/test_uv_pin.py` guards it), and any other uv refuses to run in the repo. Bump both together and re-run `make pins`.
 - Two packages: `bootstrap/` publishes as **`mship`** (the installer users run, any Python 3.10+); the root publishes as **`mship-engine`**. Versions move in lockstep via `make _release`. Only the bootstrapper has a console script.
 - `cuda` and `cpu` extras are **mutually exclusive** (declared in `[tool.uv] conflicts`) — `torch`/`torchvision` come from different indexes per extra. A third extra, `thin`, is empty — no torch/vllm.
 - Line length is **120**, not 88. Ruff owns formatting (`E501` disabled); don't hand-sort imports (isort via `I` rule handles it).
