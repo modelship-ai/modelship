@@ -24,8 +24,6 @@ logger = get_logger("infer.vllm.parsing.detect")
 # template takes for a given kwarg matters.
 _PROBE_MESSAGES = [{"role": "user", "content": "hi"}]
 
-_MIN_SHARED_RUN = 4
-
 
 def classify_tool_template(template: str) -> str | None:
     """Map a chat-template string to a vLLM tool-call parser name based on markers.
@@ -105,7 +103,7 @@ def _closest(names: list[str], texts: list[str | None]) -> str:
         needle = _alnum(name)
         runs = (SequenceMatcher(None, needle, hay, autojunk=False).find_longest_match().size for hay in haystacks)
         run = max(runs, default=0)
-        return (-run if run >= _MIN_SHARED_RUN else 0, name)
+        return (-run if run >= 4 else 0, name)
 
     return min(names, key=rank)
 
