@@ -114,7 +114,7 @@ This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu
 | File | Purpose |
 |------|---------|
 | `modelship/launcher.py` | Entry point behind `mship start` / `join` / `deploy` / `stop` (`python -m modelship.launcher <command>`) — resolves cache root, checks Python version, detects accelerator, hands off to `driver.py` |
-| `modelship/driver.py` | `start` / `join` / `deploy` / `stop`: bring up or attach to Ray, then send a deploy request (additive by default, `--reconcile` to converge exactly) or cancel one |
+| `modelship/driver.py` | `start` / `join` / `deploy` / `stop`: bring up or attach to Ray, then send a deploy request (`start` converges on its config; `deploy` is additive by default, `--reconcile` to converge exactly) or cancel one |
 | `modelship/infer/deploy_coordinator.py` | Per-gateway deploy queues, routing versions, node load leases, replica-death counts and fatal errors |
 | `modelship/deploy/diff.py` | A deploy request's diff: each model's action and the order the actions run in |
 | `modelship/deploy/worker.py`, `strategy.py` | One deploy request's Serve work: the diff's steps, switch, commit or roll back |
