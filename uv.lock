@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.12.10"
 resolution-markers = [
     "sys_platform == 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra != 'extra-12-mship-engine-metal' and extra != 'extra-12-mship-engine-vllm-cpu'",
@@ -1680,7 +1680,7 @@ wheels = [
 
 [[package]]
 name = "mship-engine"
-version = "0.7.15"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "argparse" },

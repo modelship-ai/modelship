@@ -4,6 +4,257 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.8.0] - 2026-10-10
+
+### Added
+- a deploy request runs from one diff built by the deploy coordinator
+- deploy through a Job running mship deploy --ray-dashboard-url
+- mship deploy waits up to 5 min for the head
+- name resources after the release alone
+- the head turns Ready only once mship start is done
+- drop the default config/models.yaml
+- mship deploy --ray-dashboard-url deploys to a remote cluster
+- the Ray token comes only from env; start warns about an exposed dashboard
+- start --enable-ray-auth; the chart always enables it
+- remove MSHIP_API_KEYS gateway auth
+- mship deploy --cancel replaces mship stop
+- the chart sets the gateway's autoscaling range instead of a replica count
+- every gateway autoscales, sized by mship start's --gateway-* flags
+- mship stop --wait waits for the cancelled deploy's rollback
+- mship deploy sends the request and exits; --wait waits for the outcome
+- the deploy worker logs when a rollback finishes
+- mship deploy sends a request and waits for it; mship stop --deploy-id cancels one
+- the gateway coordinator routes by the deploy coordinator's routing version and reports switches
+- the deploy coordinator queues requests per gateway and runs their workers
+- a deploy worker actor plans, submits, switches, commits and rolls back one request
+- keep each gateway's committed and previous deploy version in the state store
+- deploy waits for the replica coordinator to remove retired apps
+- the gateway answers 503 for a configured model with nothing serving
+- the replica coordinator derives routing instead of keeping a registry
+- routing rules as a pure function
+- deploy hands models to Serve instead of gating on free capacity
+- serialise model loads per node with a deploy-lease actor
+- pre-delete hook deletes the RayCluster before its Secrets, then the release's state
+- python -m modelship.uninstall deletes a release's RayCluster, then its state
+- namespace modelship's Redis keys per release
+- namespace Redis state keys with ?namespace= on the URI
+- run mship start and join as the Ray nodes
+- add --ray-dashboard-host and --metrics-port to the node commands
+- split mship deploy into start, join and deploy
+- forward cluster settings to the actors that read them
+- hold a cluster-wide lease while downloading model sources
+- add per-source cached check and leftover removal
+
+### Fixed
+- a model that reserves no GPU sees none
+- start serves exactly the models it is given
+- the vLLM reasoning fallback is deepseek_r1 only
+- a vLLM request without tools parses no tool calls
+- a vLLM reasoning parser without is_reasoning_end is not picked
+- the vLLM parsers are not picked from models.yaml names
+- the vLLM tool parser is picked by trying vLLM's parsers
+- the vLLM benchmark resolves the reasoning parser with the new arguments
+- the vLLM reasoning parser is picked from vLLM's registry
+- tool_choice none drops the tools for every loader
+- the vLLM engine gets the reasoning parser before it starts
+- a num_replicas or autoscaling_config change rescales the live deployment
+- a num_replicas or autoscaling_config change replaces the deployment
+- a CPU llama_server model with n_ctx, n_gpu_layers and tensor_split set is still checked
+- the not-sized message names memory and n_ctx before --no-preflight
+- a CPU llama_server model that preflight cannot size fails its deploy
+- llama_server prompt cache is off by default
+- llama_server CPU preflight fits against free RAM
+- a model with replicas or autoscaling must set its context length
+- kokoro bundles download from modelship's model-bundles release
+- kokoro-multi-lang-v1_0 pin matches the re-uploaded bundle
+- start refuses a malformed Redis state-store URL before starting its head
+- start refuses a bad state store or gateway sizing without a traceback
+- the disconnect and heartbeat registries restart in place
+- pin the disconnect and heartbeat registries to the head
+- accept every reasoning_effort value OpenAI defines
+- model and gateway names reject '#'
+- Ray auth stays off without --enable-ray-auth on Ray 2.59
+- a remote deploy waits for a dashboard that's down at connect or submit
+- the gateway Service routes only to pods whose Serve proxy answers
+- cap a remote deploy's config by its JSON-escaped size
+- a local deploy with no Ray token exits with the token hint
+- a gateway replica being stopped waits for its background responses
+- drop the unread RAY_LOG_LEVEL and correct the documented library log levels
+- log level, target and OTLP endpoint are set per node on mship start and join
+- an empty cluster setting stays empty instead of taking its default
+- the bench's modelship arm runs mship start
+- logging and metrics are set once on mship start for the whole cluster
+- the head forwards the default state store explicitly
+- mship deploy uses the head's state store
+- a deploy that is already rolling back refuses a cancel
+- llama_server rejects an mmproj that isn't a GGUF file at driver preflight
+- a repeat SIGINT/SIGTERM no longer re-enters the stop handler mid-teardown
+- llama_server rejects a source that isn't a GGUF file at driver preflight
+- a dead worker's late switch or commit is refused during its rollback
+- a rollback deletes against the version the deploy coordinator holds
+- a gateway without a committed version routes nothing
+- the gateway coordinator never creates the deploy coordinator
+- a deploy stops waiting on a model whose app was deleted elsewhere
+- models autoscaled to zero stay routed
+- every configured model with nothing serving answers 503, not 404
+- every delete of a gateway's app runs under its deploy lease, re-checked first
+- an interrupted or failed deploy no longer deletes the apps it submitted
+- a gateway's deploys take turns under its deploy lease
+- the gateway takes expected models from a snapshot even when its routes fail to apply
+- the deploy loop reports Serve's deployment message as the pending reason
+- a new deploy-lease actor grants at once when only the gateway exists
+- the deploy loop leaves an UNHEALTHY app pending
+- the deploy "add" count covers only models that came up
+- a failed app is redeployed and a live unrouted app is routed
+- deploy-lease renewal retries a failed call until the lease would have expired
+- blue_green keeps the old app serving until its replacement is ready
+- deploy loop never blocks on removal and fails models still waiting to retry at the deadline
+- model replicas register their own deployment once loaded
+- a replacement deploy-lease actor waits out a lease period before granting
+- a lost deploy lease no longer kills the loading replica
+- omit workerGroupSpecs when there are no worker groups
+- always declare the metrics port, require metrics for the PodMonitor
+- create the RayCluster with KubeRay's Redis cleanup finalizer
+- run the image entrypoint under tini
+- keep worker groups as KubeRay writes them back, size memory from requests
+- pin the deploy RayJob to the head by resource
+- keep apps and pass Redis credentials when the GCS is Redis-backed
+- create the operator probe only when a deploy has models to add
+- carry models.yaml in the chart's deploy RayJob
+- run the chart on KubeRay 1.7.1
+- relay the state-store URI through model replicas
+- carry the state-store URI through the deploy coordinator
+- expand the state-store URI before checking it for a password
+- keep the redis password out of the forwarded state-store URI
+- pin the cluster-wide actors to the head node
+- configure logging in vLLM's engine and worker processes
+- bound the lease release call
+- pin HF_HUB_CACHE under MSHIP_CACHE_DIR for replicas
+- time out stalled archive downloads
+- create the lease actor outside the caller's placement group
+- keep the download lease until the held work ends, even when cancelled
+- report unrecoverable on-disk source state as fatal, not a download retry
+- check a local model path exists on the replica's node
+- stop double-counting snapshot download progress
+- remove the downloaded archive when extraction fails
+- give each sherpa_onnx bundle download its own archive path
+- reject a llama-server binary this user can't execute
+- reject a llama-server wrapper this user can't execute
+- run the container as the owner of the mounted cache
+- stop mship deploy rewriting the llama-server wrapper
+- stop forwarding the driver's HF settings to replicas
+- resolve whispercpp built-in names through the HF cache
+- expand cache placeholders in the bench's raw entrypoints
+- resolve replica cache paths on each node, not the driver
+- apply cache-dir flags before the driver sets its cache env
+- chown only the image's fixed cache paths in the entrypoint
+- keep vLLM/Triton/FlashInfer caches node-local under MSHIP_NODE_CACHE_DIR
+
+### Changed
+- num_gpus 0 hides the node's GPUs from the model
+- start and join set Ray's zero-GPU override
+- seed the two llama_server tool_choice fallback requests
+- start serves exactly its config
+- start sends a reconcile and takes no --reconcile
+- the diffusers integration tests use sd-turbo
+- the diffusers example uses sd-turbo
+- uv is pinned by required-version
+- the Dockerfile's uv tag matches required-version
+- the release wheels job installs the pinned uv
+- pin uv to 0.12.23
+- the tool_choice comment states vLLM's default for an absent key
+- the vLLM reasoning fallback is deepseek_r1
+- one reasoning fallback
+- inline the shared-run threshold
+- reasoning parsers must implement is_reasoning_end
+- reasoning parsers without is_reasoning_end, tool_choice defaults
+- the vLLM parsers are picked from config.json
+- parser detection ignores the names in models.yaml
+- how the vLLM tool parser is picked
+- tool parser detection by trying vLLM's parsers
+- shorter reasoning parser comments and notes
+- how the vLLM reasoning parser is picked
+- reasoning parser detection from vLLM's registry, thinking switched off
+- the vLLM reasoning parser and tool_choice none
+- constrained output on a reasoning model, tool_choice none on both loaders
+- what a deploy changes and in what order
+- a scale-down makes room for the same request's new apps
+- a replica-count change is applied to the running deployment
+- a rescale keeps the running replicas under traffic
+- test_cancel_on_completed_is_idempotent sends temperature=0
+- README states loader parity in one sentence
+- the examples README says what the per-loader files are for
+- restore the example config entries
+- correct the token path, port table, stop timeout and example configs
+- the quick start quotes the real ready log line; multi-node pins use X.Y.Z
+- cap the autoscale test model's n_ctx
+- CLAUDE.md notes resolve_ray_auth_env's disabled default
+- guard every private ray.init kwarg start_head passes
+- bump Ray to 2.59
+- install notes watch the pods, not the RayCluster
+- clarify the deploy Job's retry comment
+- drop API-key leftovers from chart comments and docs
+- a remote deploy retries nothing
+- trim the identity comments
+- live remote deploy and cancel with token auth
+- join --gcs-address, start --gcs-port
+- MSHIP_API_KEYS removed
+- mship deploy --cancel replaces mship stop
+- trim the gateway autoscaling test's module docstring
+- load past its target scales the gateway out and the new replica serves the model
+- gateway autoscaling settings replace --gateway-replicas
+- a replica on a joined node follows that node's logging and the head's format and metrics
+- Serve's HTTP proxy and a replica's first startup lines log at the head's level
+- clarify /readyz stays 503 with no models configured
+- the gateway coordinator is created without the state store
+- the broken deploy fixture fails in its replica via a text model's GGUF as mmproj
+- only mship start creates the deploy coordinator
+- drop the deploy lease startup window
+- the deploy coordinator releases a deploy lease once its replica is RUNNING or gone
+- a committed deployment whose backend keeps dying is kept
+- silence Ray's own deprecation warning when the deploy coordinator checks for a restart
+- integration tests for the deploy ledger
+- the deploy ledger
+- remove the gateway deploy lease and the code only it needed
+- integration tests for concurrent, pending and multi-gateway deploys, gateway coordinator restart and replica retirement
+- name both coordinators in the driver's actor comment
+- describe the gateway's deploy lease, and drop the registry and deploy-lock mentions
+- say which coordinator wherever a comment, doc or message said only "coordinator"
+- the deploy coordinator grants the per-node deploy leases
+- name the GatewayCoordinator in the architecture doc
+- rename the replica coordinator to the gateway coordinator
+- routing is derived by the replica coordinator, not kept in a registry
+- app names carry the gateway as a prefix
+- the replica-coordinator and logging tests stop leaking a non-propagating modelship logger
+- trim the run_deploy_loop docstring
+- cover what _apply deploys, routes and removes
+- sync the chart dashboard and document --deploy-timeout
+- retry backoff uses None when unset, and the first poll logs what is outstanding
+- drop the GPU-footprint deploy ordering
+- trim comments and stale retry wording
+- correct what --no-metrics disables
+- note worker-group removal and Redis keys left by a disabled cleanup
+- validate the rendered chart with a server-side dry-run apply
+- run the chart on Helm 4 and test a server-side upgrade
+- rename --dashboard-port to --ray-dashboard-port
+- correct the chart's Serve-proxy readiness claims
+- document start, join and deploy
+- install the locked kuberay-operator tarball for the server dry-run
+- raise max_tokens on the response-format tool_choice=none test
+- raise max_tokens on the llama_server tool-call tests to fit the reasoning preamble
+- remove the init_serving_* startup logs
+- name the HF cache settings replicas override
+- skip the download lease once the source is cached while waiting
+- trim lease comments
+- log the request body limit in MiB
+- stub configure_logging when constructing the lease actor
+- describe download leases
+- route sherpa_onnx bundles through a shared model-sources package
+- add Discord community links across README, docs, and package metadata
+- raise the huggingface-hub floor to 1.18.0
+- record the 2026-09-13 llama_server GPU bench results on Qwen3.5-9B
+- disable llama.cpp's prompt cache in the llama bench configs
+
 ## [0.7.15] - 2026-09-13
 
 ### Added
