@@ -270,8 +270,6 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             if self.config.tensor_split:
                 args += ["-ts", ",".join(str(v) for v in self.config.tensor_split)]
         else:
-            # Ray only sets CUDA_VISIBLE_DEVICES for actors that reserve GPUs, so
-            # a num_gpus=0 deployment may still see every GPU — force no offload.
             args += ["-ngl", "0"]
         if self.config.threads is not None:
             args += ["--threads", str(self.config.threads)]

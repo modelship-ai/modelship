@@ -1779,6 +1779,39 @@ class TestStartHead:
             serve_utils.start_head(20)
         mock_prune.assert_called_once()
 
+    @pytest.mark.parametrize(("given", "expected"), [({}, "1"), ({"RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO": "0"}, "0")])
+    def test_hides_gpus_from_workers_that_reserve_none(self, given, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ),
+            patch.object(serve_utils.ray, "init"),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", None)
+            os.environ.update(given)
+            serve_utils.start_head(20)
+            assert os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] == expected
+
+
+class TestRayHidesGpusFromWorkersThatReserveNone:
+    def test_the_override_empties_the_visible_devices(self):
+        from ray._private import accelerators, utils
+
+        context = MagicMock()
+        context.get_accelerator_ids.return_value = {"GPU": []}
+        with (
+            patch.dict(os.environ, {"RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO": "1", "CUDA_VISIBLE_DEVICES": "0,1"}),
+            patch.object(utils.ray, "get_runtime_context", return_value=context),
+            patch.object(
+                accelerators,
+                "get_accelerator_manager_for_resource",
+                return_value=accelerators.NvidiaGPUAcceleratorManager,
+            ),
+        ):
+            utils.set_visible_accelerator_ids()
+            assert os.environ["CUDA_VISIBLE_DEVICES"] == ""
+
 
 class TestAttachCluster:
     @pytest.mark.parametrize(
@@ -2041,6 +2074,20 @@ class TestJoinCluster:
         ):
             serve_utils.join_cluster(address)
         mock_join.assert_called_once_with(expected)
+
+    @pytest.mark.parametrize(("given", "expected"), [({}, "1"), ({"RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO": "0"}, "0")])
+    def test_hides_gpus_from_workers_that_reserve_none(self, given, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ),
+            patch.object(serve_utils, "_join_ray_cluster"),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", None)
+            os.environ.update(given)
+            serve_utils.join_cluster("head:6380")
+            assert os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] == expected
 
 
 class TestLeaveRayCluster:

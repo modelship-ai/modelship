@@ -361,6 +361,7 @@ def start_head(lib_level: int) -> None:
     _validate_node_gpu_reservation()
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
+    os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
     # ray.init's only hook for the GCS port; unset, Ray picks a random one per start.
     os.environ.setdefault("RAY_GCS_SERVER_PORT", os.environ.get("MSHIP_GCS_PORT", str(_DEFAULT_RAY_GCS_PORT)))
     prune_ray_sessions()
@@ -374,6 +375,7 @@ def join_cluster(address: str) -> None:
     _validate_node_gpu_reservation()
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
+    os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
     prune_ray_sessions()
     _join_ray_cluster(_with_default_port(address, _DEFAULT_RAY_GCS_PORT))
 
