@@ -72,7 +72,8 @@ _USAGE = {
     "       mship deploy [--ray-dashboard-url URL] --cancel ID [--wait]",
 }
 _DESCRIPTION = {
-    "start": "Start a cluster on this machine: its head node, the API gateway and any models given. Stays running.",
+    "start": "Start a cluster on this machine: its head node, the API gateway and exactly the models given, or with "
+    "none given, the models its gateway last committed. Stays running.",
     "join": "Add this machine to a running cluster as a worker node. Stays running.",
     "deploy": "Change the models of the cluster running on this machine, or with --ray-dashboard-url, of the cluster "
     "whose Ray dashboard that is: sends the change and exits, or with --wait, waits for it to succeed or fail. With "
@@ -118,6 +119,17 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
             help=(
                 "Wait for the deploy to succeed or fail, or with --cancel, to be rolled back, and exit with its "
                 "outcome. A signal only stops the wait."
+            ),
+        )
+        parser.add_argument(
+            "--reconcile",
+            action="store_true",
+            default=False,
+            help=(
+                "Diff models.yaml against the cluster: add new models, remove dropped ones, "
+                "replace those whose config changed (matched by name + fingerprint). "
+                "With no --config, redeploys this gateway's committed models that are missing "
+                "(self-heal after cluster loss)."
             ),
         )
         parser.add_argument(
@@ -402,17 +414,6 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Disable preflight hardware-based auto-sizing; models run on loader/library "
             "defaults plus explicit config (env: MSHIP_PREFLIGHT). Useful for benchmarking."
-        ),
-    )
-    parser.add_argument(
-        "--reconcile",
-        action="store_true",
-        default=False,
-        help=(
-            "Diff models.yaml against the cluster: add new models, remove dropped ones, "
-            "replace those whose config changed (matched by name + fingerprint). "
-            "With no --config, redeploys this gateway's committed models that are missing "
-            "(self-heal after cluster loss)."
         ),
     )
     _add_single_model_args(parser)

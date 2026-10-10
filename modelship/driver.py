@@ -112,7 +112,7 @@ def _start(args) -> None:
         start_gateway(
             gateway_name, serve_logging_config, route_prefix, cluster_env_vars() | state_store_env_var(), sizing
         )
-        _send(args, gateway_name, coordinator)
+        _send(args, gateway_name, coordinator, reconcile=True)
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
@@ -242,7 +242,7 @@ def _deploy(args) -> None:
         )
     if create_gateway:
         start_gateway(gateway_name, head["serve_logging_config"], route_prefix, head["env"], head["gateway_sizing"])
-    receipt = _send(args, gateway_name, coordinator)
+    receipt = _send(args, gateway_name, coordinator, reconcile=args.reconcile)
     request_id = receipt["id"]
     if not args.wait:
         logger.info("Follow it in the head's log; cancel it with `mship deploy --cancel %s`.", request_id)
@@ -257,7 +257,7 @@ def _deploy(args) -> None:
         sys.exit(1)
 
 
-def _send(args, gateway_name: str, coordinator) -> dict:
+def _send(args, gateway_name: str, coordinator, reconcile: bool) -> dict:
     """Queues this invocation's models on the gateway; returns the deploy coordinator's receipt."""
     import ray
 
@@ -266,11 +266,11 @@ def _send(args, gateway_name: str, coordinator) -> dict:
     from modelship.deploy.ledger import DeployRequest
 
     from_job = getattr(args, "config_from_job", False)
-    bare = args.config is None and args.model is None and not from_job and args.reconcile
+    bare = args.config is None and args.model is None and not from_job and reconcile
     models = None if bare else resolve_input_models(args)
     if models is None:
         logger.info("No models given: redeploying gateway %r's committed models that are missing.", gateway_name)
-    mode = "bare" if models is None else ("reconcile" if args.reconcile else "additive")
+    mode = "bare" if models is None else ("reconcile" if reconcile else "additive")
     request = DeployRequest(
         gateway=gateway_name,
         mode=mode,
