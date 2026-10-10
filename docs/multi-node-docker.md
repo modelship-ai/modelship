@@ -200,7 +200,8 @@ Without it, each gateway's committed version (the model set its last successful
 deploy recorded) lives in a cluster-scoped Ray actor — it survives a redeploy or a restart
 of the deploy or gateway coordinator, but not the loss of the head/cluster itself. A
 `redis://` store survives cluster loss too, so `mship start` with no `--config` on a fresh
-cluster redeploys the real model set instead of coming back empty. See [State store
+cluster redeploys the real model set instead of coming back empty. With `--config`, it
+serves exactly that file and removes the store's other models. See [State store
 (`MSHIP_STATE_STORE`)](model-configuration.md#state-store-mship_state_store) for
 the full connection-URI reference — the head is otherwise a single point of
 failure for this state, same as it is for Ray's GCS itself.

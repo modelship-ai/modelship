@@ -14,7 +14,7 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 
 | Argument | Commands | Env Var | Default | Description |
 |---|---|---|---|---|
-| `--config` | start, deploy | — | — | Path to a models.yaml; one that doesn't exist is a hard error. Without it (or `--model`), `start` comes up with no models and `deploy` redeploys the gateway's committed models that are missing |
+| `--config` | start, deploy | — | — | Path to a models.yaml; one that doesn't exist is a hard error. `start` makes its gateway serve exactly these models; `deploy` adds them. Without it (or `--model`), both redeploy the gateway's committed models that are missing |
 | `--gateway-name` | start, deploy | `MSHIP_GATEWAY_NAME` | `modelship` | Name for the API gateway app. Multiple gateways can coexist on one cluster, each mounted at `/<slugified-name>` (e.g. `modelship` → `/modelship/v1/...`) |
 | `--gateway-min-replicas` | start | `MSHIP_GATEWAY_MIN_REPLICAS` | `1` | Fewest replicas each API gateway autoscales down to; 2 or more gives routing/ingress HA |
 | `--gateway-max-replicas` | start | `MSHIP_GATEWAY_MAX_REPLICAS` | `4` | Most replicas each API gateway autoscales up to |
@@ -30,7 +30,7 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--node-num-gpus` | start, join | `MSHIP_NODE_NUM_GPUS` | auto-detect | GPUs this node reserves. Refused at startup if it exceeds what the container can actually see |
 | `--node-memory` | start, join | `MSHIP_NODE_MEMORY` | auto-detect | This node's total memory budget, e.g. `8Gi`. Set explicitly when co-locating multiple modelship containers on one host without per-container cgroup memory limits |
 | `--prune-ray-sessions` | start, join | `MSHIP_PRUNE_RAY_SESSIONS` | `true` | At node startup, delete stale `session_*` dirs left under the Ray temp root by previous, no-longer-running nodes. A live node's session is always kept |
-| `--reconcile` | start, deploy | — | `false` | Make the cluster match the config: add new models, remove dropped ones, replace changed ones (vs. the default additive union). With no `--config`, redeploys this gateway's committed models that are missing (self-heal) |
+| `--reconcile` | deploy | — | `false` | Make the cluster match the config: add new models, remove dropped ones, replace changed ones (vs. the default additive union). With no `--config`, redeploys this gateway's committed models that are missing (self-heal) |
 | `--replace-strategy` | deploy | — | `blue_green` | How to replace a changed model: `blue_green` (deploy new before dropping old, no request loss) or `stop_start` (drop old first, brief unavailability) |
 | `--wait` | deploy | — | `false` | Wait for the deploy request's outcome and exit with it. `deploy` waits for the request to succeed or fail (`0` succeeded, `1` failed or cancelled); without it, `deploy` exits once the request is queued, and the outcome shows in the head's log. With `--cancel`, it waits for the rollback (`0` once cancelled, `1` if the request ends otherwise). A signal only stops the wait; `mship deploy --cancel` cancels |
 | `--cancel` | deploy | — | — | Cancel the deploy request with this id, as `mship deploy` printed it, instead of sending one; takes no model options. A queued request is dropped; a running one is rolled back, models already up included. A request that has committed, or that failed and is already rolling back, can't be cancelled |
@@ -154,6 +154,8 @@ mship deploy --config config/tts.yaml             # add, doesn't touch the LLMs
 mship deploy --config config/all.yaml --reconcile      # make the cluster match exactly
 ```
 
+`mship start` always makes its gateway match the models it is given, and removes any others its state store still holds. A model added later with `mship deploy` lasts until the head's next start; start the head with no `--config` to bring back what the store holds instead.
+
 ### What a deploy changes
 
 A deploy request is compared, model by model, with the gateway's committed version and with what Ray Serve holds. Each model gets one action:
@@ -164,7 +166,7 @@ A deploy request is compared, model by model, with the gateway's committed versi
 | `replace` | A field other than `num_replicas` or `autoscaling_config` changed, so the model gets a new deployment |
 | `rescale` | Only `num_replicas` or `autoscaling_config` differ from what Serve holds; the running deployment is changed in place |
 | `redeploy` | The config is unchanged, but Serve has no such deployment or a failed one |
-| `remove` | `--reconcile`, and the config leaves the model out |
+| `remove` | `deploy --reconcile` or `start`, and the config leaves the model out |
 | `keep` | Nothing differs |
 
 The actions run in a fixed order, so that what frees room runs before what needs it:

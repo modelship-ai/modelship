@@ -182,7 +182,7 @@ class TestCmdRun:
         return mock_validate, mock_gate, mock_guard, mock_run
 
     def test_forwards_argv_to_driver_after_gates(self):
-        argv = ["--config", "models.yaml", "--reconcile"]
+        argv = ["--config", "models.yaml"]
         _, mock_gate, mock_guard, mock_run = self._run("start", argv)
         mock_guard.assert_called_once()
         mock_gate.assert_called_once()

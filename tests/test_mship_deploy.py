@@ -65,8 +65,10 @@ class TestParseArgs:
     def test_defaults(self, command):
         args = parse_args(command, [])
         assert args.config is None
-        assert args.reconcile is False
         assert args.gateway_name is None
+
+    def test_deploy_is_additive_by_default(self):
+        assert parse_args("deploy", []).reconcile is False
 
     def test_reconcile_flag(self):
         args = parse_args("deploy", ["--reconcile"])
@@ -121,6 +123,7 @@ class TestParseArgs:
             ("start", ["--gcs-address", "h:1"]),
             ("start", ["--token", "secret"]),
             ("start", ["--replace-strategy", "stop_start"]),
+            ("start", ["--reconcile"]),
             ("join", ["--gcs-address", "h:1", "--config", "models.yaml"]),
             ("join", ["--gcs-address", "h:1", "--model", "org/repo"]),
             ("join", ["--gcs-address", "h:1", "--gcs-port", "6380"]),
@@ -409,6 +412,9 @@ class TestDriverVerbs:
         started.gateway_coordinator.assert_called_once_with()
         assert started.send.call_args.args[2] == "deploy-coordinator"
 
+    def test_start_sends_its_models_as_a_reconcile(self):
+        assert self._start().send.call_args.kwargs == {"reconcile": True}
+
     def test_start_creates_the_gateway_after_both_coordinators_and_before_its_deploy(self):
         calls = self._start().calls.mock_calls
         assert [c[0] for c in calls] == ["gateway_coordinator", "deploy_coordinator", "gateway", "send"]
@@ -566,6 +572,11 @@ class TestDriverVerbs:
         deployed = self._deploy([], existing_apps={"modelship"})
         assert deployed.send.call_args.args[2] is deployed.coordinator
 
+    @pytest.mark.parametrize(("argv", "reconcile"), [([], False), (["--reconcile"], True)])
+    def test_deploy_reconciles_only_when_asked(self, argv, reconcile):
+        deployed = self._deploy(argv, existing_apps={"modelship"})
+        assert deployed.send.call_args.kwargs == {"reconcile": reconcile}
+
     def test_deploy_creates_a_named_gateway_that_is_missing(self):
         deployed = self._deploy(["--gateway-name", "edge"], existing_apps={"modelship"})
         assert deployed.gateway.call_args.args[0] == "edge"
@@ -653,10 +664,10 @@ class TestSend:
         coordinator.submit.remote.side_effect = lambda request: {"id": "r1", "behind": "r0", "outcome": "ref"}
         submitted = []
 
-        def run(argv):
-            args = parse_args("deploy", argv)
+        def run(argv, command="deploy"):
+            args = parse_args(command, argv)
             with patch("ray.get", side_effect=lambda value: value):
-                receipt = driver._send(args, "gw", coordinator)
+                receipt = driver._send(args, "gw", coordinator, reconcile=command == "start" or args.reconcile)
             submitted.append(coordinator.submit.remote.call_args.args[0])
             return receipt
 
@@ -685,8 +696,16 @@ class TestSend:
         (request,) = send.submitted
         assert (request.mode, request.strategy, request.models) == ("reconcile", "stop_start", [])
 
-    def test_no_models_sends_a_bare_request(self, send):
-        send.run(["--reconcile"])
+    def test_models_given_to_start_are_sent_as_a_reconcile(self, send, tmp_path):
+        config = tmp_path / "models.yaml"
+        config.write_text("models: []\n")
+        send.run(["--config", str(config)], command="start")
+        (request,) = send.submitted
+        assert (request.mode, request.strategy, request.models) == ("reconcile", "blue_green", [])
+
+    @pytest.mark.parametrize(("command", "argv"), [("deploy", ["--reconcile"]), ("deploy", []), ("start", [])])
+    def test_no_models_sends_a_bare_request(self, send, command, argv):
+        send.run(argv, command=command)
         assert send.submitted[0].mode == "bare"
         assert send.submitted[0].models is None
 
