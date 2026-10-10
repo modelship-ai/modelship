@@ -291,6 +291,7 @@ class TestChatLlamaServer:
             tools=[_WEATHER_TOOL],
             tool_choice="required",
             max_tokens=512,  # headroom for the reasoning preamble to not crowd out the answer
+            seed=1,
         )
         message = completion.choices[0].message
         assert message.content, f"expected the free-text branch to stay reachable, got message={message!r}"
@@ -304,6 +305,7 @@ class TestChatLlamaServer:
             tools=[_WEATHER_TOOL],
             tool_choice={"type": "function", "function": {"name": "get_weather"}},
             max_tokens=512,  # headroom for the reasoning preamble to not crowd out the answer
+            seed=1,
         )
         message = completion.choices[0].message
         assert message.content, f"expected the free-text branch to stay reachable, got message={message!r}"
