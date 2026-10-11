@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.8.1] - 2026-10-11
+
+### Fixed
+- start and join hold fewer idle Ray threads
+- start and join hide gRPC's info lines
+- a stopping model no longer reaps its own watchdog
+- stopping the head prints no traceback
+
+### Changed
+- Ray's idle threads are cut at start
+- the gRPC thread count and the prestart switch
+- the head's stop, the watchdog and the gRPC default
+
 ## [0.8.0] - 2026-10-10
 
 ### Added
