@@ -13,12 +13,14 @@ logger = get_logger("startup")
 _POLL_S = 1.0
 
 
-def delete_model_apps(timeout_s: float) -> None:
-    """Deletes every model app without blocking on Serve, then waits up to *timeout_s* for them to go."""
+def delete_apps(timeout_s: float, models_only: bool = False) -> None:
+    """Deletes the apps without blocking on Serve, then waits up to *timeout_s* for them to go."""
     try:
-        left = [name for name in serve.status().applications if parse_deployment_name(name) is not None]
+        left = [
+            name for name in serve.status().applications if not models_only or parse_deployment_name(name) is not None
+        ]
     except Exception:
-        logger.exception("Could not list the model deployments to delete")
+        logger.exception("Could not list the deployments to delete")
         return
     for name in left:
         try:
