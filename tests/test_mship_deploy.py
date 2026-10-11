@@ -315,6 +315,13 @@ class TestDriverCacheEnv:
         assert seen["MSHIP_NODE_CACHE_DIR"] == expected
 
 
+class TestDriverGrpcThreads:
+    @pytest.mark.parametrize(("given", "expected"), [({}, "2"), ({"RAY_num_grpc_internal_threads": "8"}, "8")])
+    def test_the_count_is_set_before_ray_is_imported(self, given, expected):
+        seen = TestDriverCacheEnv._env_before_ray(given, [])
+        assert seen["RAY_num_grpc_internal_threads"] == expected
+
+
 _HEAD_SETTINGS = {
     "env": {**CLUSTER_ENV_DEFAULTS, "MSHIP_METRICS": "false", "MSHIP_STATE_STORE": "redis://head:6379/0"},
     "serve_logging_config": "head-logging",
@@ -1803,6 +1810,42 @@ class TestStartHead:
             serve_utils.start_head(20)
             assert os.environ["GRPC_VERBOSITY"] == expected
 
+    @pytest.mark.parametrize(("given", "expected"), [({}, "0"), ({"RAY_prestart_worker_first_driver": "1"}, "1")])
+    def test_prestarts_no_workers(self, given, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ),
+            patch.object(serve_utils.ray, "init"),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop("RAY_prestart_worker_first_driver", None)
+            os.environ.update(given)
+            serve_utils.start_head(20)
+            assert os.environ["RAY_prestart_worker_first_driver"] == expected  # noqa: SIM112 — Ray's spelling.
+
+
+class TestRayReadsTheThreadSwitches:
+    @staticmethod
+    def _binaries() -> dict[str, str]:
+        import ray
+        from ray._private import services
+
+        return {
+            "raylet": services.RAYLET_EXECUTABLE,
+            "gcs_server": services.GCS_SERVER_EXECUTABLE,
+            "_raylet": ray._raylet.__file__,
+        }
+
+    def test_the_raylet_knows_the_prestart_switch(self):
+        with open(self._binaries()["raylet"], "rb") as f:
+            assert b"prestart_worker_first_driver" in f.read()
+
+    @pytest.mark.parametrize("binary", ["raylet", "gcs_server", "_raylet"])
+    def test_ray_grpc_reads_the_thread_count(self, binary):
+        with open(self._binaries()[binary], "rb") as f:
+            assert b"RAY_num_grpc_internal_threads" in f.read()
+
 
 class TestRayHidesGpusFromWorkersThatReserveNone:
     def test_the_override_empties_the_visible_devices(self):
@@ -2112,6 +2155,20 @@ class TestJoinCluster:
             os.environ.update(given)
             serve_utils.join_cluster("head:6380")
             assert os.environ["GRPC_VERBOSITY"] == expected
+
+    @pytest.mark.parametrize(("given", "expected"), [({}, "0"), ({"RAY_prestart_worker_first_driver": "1"}, "1")])
+    def test_prestarts_no_workers(self, given, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ),
+            patch.object(serve_utils, "_join_ray_cluster"),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop("RAY_prestart_worker_first_driver", None)
+            os.environ.update(given)
+            serve_utils.join_cluster("head:6380")
+            assert os.environ["RAY_prestart_worker_first_driver"] == expected  # noqa: SIM112 — Ray's spelling.
 
 
 class TestLeaveRayCluster:
