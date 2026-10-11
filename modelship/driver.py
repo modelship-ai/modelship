@@ -40,6 +40,7 @@ def run(command: str, argv: list[str] | None = None) -> None:
     os.environ.setdefault("VLLM_CACHE_ROOT", f"{node_cache}/vllm")
     os.environ.setdefault("FLASHINFER_WORKSPACE_BASE", f"{node_cache}/flashinfer")
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    os.environ.setdefault("RAY_num_grpc_internal_threads", "2")
     if command == "start" and (stray := token_env_without_auth()):
         sys.exit(f"error: {', '.join(stray)} is set but Ray auth is off; pass --enable-ray-auth, or unset it.")
     # Before `import ray`: RAY_AUTH_MODE latches at import.
