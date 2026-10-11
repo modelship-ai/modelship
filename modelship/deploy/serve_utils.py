@@ -27,8 +27,6 @@ from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars, env_setting
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from ray._private.node import Node
 
 logger = get_logger("startup")
@@ -77,16 +75,12 @@ def get_existing_apps() -> set[str]:
     return set(get_app_statuses())
 
 
-def shutdown_ray(keep_serve: bool = False) -> None:
-    """Shut down Ray Serve (unless *keep_serve*) and Ray. Logs but swallows errors."""
-    steps: list[tuple[str, Callable[[], None]]] = [("ray.shutdown()", ray.shutdown)]
-    if not keep_serve:
-        steps.insert(0, ("serve.shutdown()", serve.shutdown))
-    for label, fn in steps:
-        try:
-            fn()
-        except Exception:
-            logger.exception("%s failed", label)
+def shutdown_ray() -> None:
+    """Shut down Ray. Logs but swallows errors."""
+    try:
+        ray.shutdown()
+    except Exception:
+        logger.exception("ray.shutdown() failed")
 
 
 # Buffer below the free-RAM snapshot, since usage can drift before Ray allocates against it.
@@ -362,6 +356,7 @@ def start_head(lib_level: int) -> None:
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
+    os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
     # ray.init's only hook for the GCS port; unset, Ray picks a random one per start.
     os.environ.setdefault("RAY_GCS_SERVER_PORT", os.environ.get("MSHIP_GCS_PORT", str(_DEFAULT_RAY_GCS_PORT)))
     prune_ray_sessions()
@@ -376,6 +371,7 @@ def join_cluster(address: str) -> None:
     os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
+    os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
     prune_ray_sessions()
     _join_ray_cluster(_with_default_port(address, _DEFAULT_RAY_GCS_PORT))
 

@@ -77,8 +77,8 @@ def _reject_unsupported_accelerator(config: ModelshipModelConfig) -> None:
         )
 
 
-def _reap_child_processes() -> None:
-    """Kill any subprocesses still alive in this actor process.
+def _reap_child_processes(sidecar_pid: int | None) -> None:
+    """Kill any subprocesses still alive in this actor process, except *sidecar_pid*.
 
     Some loaders (and vLLM's engine core process) fork helper subprocesses
     before constructors return. If init then raises (e.g. CUDA OOM during
@@ -88,7 +88,7 @@ def _reap_child_processes() -> None:
     try:
         import psutil
 
-        children = psutil.Process().children(recursive=True)
+        children = [c for c in psutil.Process().children(recursive=True) if c.pid != sidecar_pid]
         if not children:
             return
         logger.warning(
@@ -276,11 +276,12 @@ class ModelDeployment:
                 infer.shutdown()
             except Exception:
                 logger.exception("Failed to shutdown infer for %s", self.config.name)
-        _reap_child_processes()
+        reaper = getattr(self, "_orphan_reaper", None)
+        _reap_child_processes(reaper.pid if reaper else None)
         # Cleanup is done — let the sidecar exit. It would auto-die on actor
         # exit anyway (parent gone), but kill it explicitly so it doesn't sit
         # around for its next 0.5s poll tick.
-        if reaper := getattr(self, "_orphan_reaper", None):
+        if reaper:
             with contextlib.suppress(Exception):
                 reaper.terminate()
 

@@ -6,7 +6,7 @@ import os
 import signal
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from ray.exceptions import AuthenticationError, RayActorError
@@ -887,7 +887,7 @@ class TestStopHead:
 
         with (
             patch.dict(os.environ, env, clear=False),
-            patch.object(removal, "delete_model_apps") as mock_delete,
+            patch.object(removal, "delete_apps") as mock_delete,
             patch.object(serve_utils, "shutdown_ray") as mock_shutdown,
         ):
             for key in pop:
@@ -895,37 +895,26 @@ class TestStopHead:
             driver._stop_head()
         return mock_delete, mock_shutdown
 
-    def test_deletes_every_model_app_then_stops_serve_and_ray(self):
+    def test_deletes_the_model_apps_then_every_app_then_stops_ray(self):
         mock_delete, mock_shutdown = self._stop({}, pop=("RAY_REDIS_ADDRESS",))
-        mock_delete.assert_called_once_with(30.0)
+        assert mock_delete.call_args_list == [call(30.0, models_only=True), call(30.0)]
         mock_shutdown.assert_called_once_with()
 
     def test_redis_backed_gcs_keeps_the_apps(self):
         mock_delete, mock_shutdown = self._stop({"RAY_REDIS_ADDRESS": "redis:6379"})
         mock_delete.assert_not_called()
-        mock_shutdown.assert_called_once_with(keep_serve=True)
+        mock_shutdown.assert_called_once_with()
 
 
 class TestShutdownRay:
-    def test_stops_serve_then_ray(self):
-        from modelship.deploy import serve_utils
-
-        calls = []
-        with (
-            patch.object(serve_utils.serve, "shutdown", side_effect=lambda: calls.append("serve")),
-            patch.object(serve_utils.ray, "shutdown", side_effect=lambda: calls.append("ray")),
-        ):
-            serve_utils.shutdown_ray()
-        assert calls == ["serve", "ray"]
-
-    def test_keep_serve_stops_only_ray(self):
+    def test_stops_ray_without_shutting_serve_down(self):
         from modelship.deploy import serve_utils
 
         with (
             patch.object(serve_utils.serve, "shutdown") as mock_serve,
             patch.object(serve_utils.ray, "shutdown") as mock_ray,
         ):
-            serve_utils.shutdown_ray(keep_serve=True)
+            serve_utils.shutdown_ray()
         mock_serve.assert_not_called()
         mock_ray.assert_called_once()
 
@@ -1354,7 +1343,7 @@ class TestReservationTotals:
         assert total_gpu_reservation(opts) == 4
 
 
-class TestDeleteModelApps:
+class TestDeleteApps:
     @pytest.fixture
     def serve(self, monkeypatch):
         from modelship.deploy import removal
@@ -1366,18 +1355,25 @@ class TestDeleteModelApps:
         monkeypatch.setattr(removal.time, "sleep", lambda seconds: [apps.pop(name, None) for name in deleted])
         return SimpleNamespace(apps=apps, deleted=deleted)
 
-    def test_deletes_every_model_app_but_not_the_gateway(self, serve):
+    def test_models_only_leaves_the_gateway(self, serve):
         from modelship.deploy import removal
 
-        removal.delete_model_apps(30.0)
+        removal.delete_apps(30.0, models_only=True)
         assert serve.deleted == ["gw.a-1234567890", "gw.b-1234567890"]
         assert set(serve.apps) == {"gw"}
+
+    def test_deletes_every_app(self, serve):
+        from modelship.deploy import removal
+
+        removal.delete_apps(30.0)
+        assert serve.deleted == ["gw", "gw.a-1234567890", "gw.b-1234567890"]
+        assert not serve.apps
 
     def test_gives_up_waiting_after_the_timeout(self, serve, monkeypatch, caplog):
         from modelship.deploy import removal
 
         monkeypatch.setattr(removal.time, "sleep", lambda seconds: None)
-        removal.delete_model_apps(0.0)
+        removal.delete_apps(0.0, models_only=True)
         assert "2 deployment(s) still being removed after 0 s" in caplog.text
 
 
@@ -1793,6 +1789,20 @@ class TestStartHead:
             serve_utils.start_head(20)
             assert os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] == expected
 
+    @pytest.mark.parametrize(("given", "expected"), [({}, "ERROR"), ({"GRPC_VERBOSITY": "INFO"}, "INFO")])
+    def test_quiets_grpc(self, given, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ),
+            patch.object(serve_utils.ray, "init"),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop("GRPC_VERBOSITY", None)
+            os.environ.update(given)
+            serve_utils.start_head(20)
+            assert os.environ["GRPC_VERBOSITY"] == expected
+
 
 class TestRayHidesGpusFromWorkersThatReserveNone:
     def test_the_override_empties_the_visible_devices(self):
@@ -2088,6 +2098,20 @@ class TestJoinCluster:
             os.environ.update(given)
             serve_utils.join_cluster("head:6380")
             assert os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] == expected
+
+    @pytest.mark.parametrize(("given", "expected"), [({}, "ERROR"), ({"GRPC_VERBOSITY": "INFO"}, "INFO")])
+    def test_quiets_grpc(self, given, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ),
+            patch.object(serve_utils, "_join_ray_cluster"),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop("GRPC_VERBOSITY", None)
+            os.environ.update(given)
+            serve_utils.join_cluster("head:6380")
+            assert os.environ["GRPC_VERBOSITY"] == expected
 
 
 class TestLeaveRayCluster:
