@@ -22,7 +22,6 @@ from vllm.entrypoints.openai.engine.protocol import FunctionCall as VllmFunction
 from vllm.entrypoints.serve.utils.api_utils import get_max_tokens as vllm_get_max_tokens
 from vllm.inputs import EngineInput as VllmEngineInput
 from vllm.logprobs import Logprob as VllmLogprob
-from vllm.outputs import CompletionOutput as VllmCompletionOutput
 from vllm.outputs import RequestOutput as VllmRequestOutput
 from vllm.parser import Parser as VllmParser
 from vllm.renderers.inputs.preprocess import extract_prompt_components as vllm_extract_prompt_components
@@ -345,18 +344,6 @@ def _finish_reason_for_choice(
     return "tool_calls"
 
 
-def total_reasoning_tokens(outputs: Sequence[VllmCompletionOutput], parser: VllmParser | None) -> int | None:
-    """Sum reasoning-classified tokens across every choice's completed `token_ids`,
-    mirroring vLLM's own `entrypoints.openai.responses.serving` usage accounting.
-
-    Returns `None` when no reasoning parser is active for this request, so callers can
-    leave `completion_tokens_details` unset rather than reporting a misleading zero.
-    """
-    if parser is None or parser.reasoning_parser is None:
-        return None
-    return sum(parser.reasoning_parser.count_reasoning_tokens(list(o.token_ids)) for o in outputs)
-
-
 def build_choices(
     final_res: VllmRequestOutput,
     vllm_req: VllmChatCompletionRequest,
@@ -366,7 +353,7 @@ def build_choices(
     enable_auto_tools: bool,
     want_logprobs: bool,
     num_output_top_logprobs: int | None,
-) -> tuple[list[ParsedChatOutput], list[str | None], list[ChatCompletionLogProbs | None]]:
+) -> tuple[list[ParsedChatOutput], list[str | None], list[ChatCompletionLogProbs | None], int | None]:
     """Parse every choice in a finished `VllmRequestOutput` into modelship's response DTOs.
 
     Non-streaming reuses one shared `parser` instance across every choice —
@@ -376,6 +363,7 @@ def build_choices(
     choices: list[ParsedChatOutput] = []
     finish_reasons: list[str | None] = []
     logprobs_list: list[ChatCompletionLogProbs | None] = []
+    reasoning_tokens = 0 if parser is not None and parser.reasoning_parser_cls is not None else None
 
     for output in final_res.outputs:
         if parser is not None:
@@ -385,6 +373,8 @@ def build_choices(
                 enable_auto_tools=enable_auto_tools,
                 model_output_token_ids=output.token_ids,
             )
+            if reasoning_tokens is not None:
+                reasoning_tokens += parser.count_reasoning_tokens(output.token_ids)
         else:
             reasoning, content, raw_tool_calls = None, output.text, None
 
@@ -399,7 +389,7 @@ def build_choices(
         else:
             logprobs_list.append(None)
 
-    return choices, finish_reasons, logprobs_list
+    return choices, finish_reasons, logprobs_list, reasoning_tokens
 
 
 def _reconcile_trapped_content(
@@ -621,11 +611,11 @@ async def stream_chat_completion(
     if include_usage:
         completion_tokens = sum(previous_num_tokens)
         reasoning_tokens = None
-        if parsers[0] is not None and parsers[0].reasoning_parser is not None:
+        if parsers[0] is not None and parsers[0].reasoning_parser_cls is not None:
             reasoning_tokens = 0
             for i, choice_parser in enumerate(parsers):
-                if choice_parser is not None and choice_parser.reasoning_parser is not None:
-                    reasoning_tokens += choice_parser.reasoning_parser.count_reasoning_tokens(accumulated_token_ids[i])
+                if choice_parser is not None:
+                    reasoning_tokens += choice_parser.count_reasoning_tokens(accumulated_token_ids[i])
         yield ChatCompletionStreamResponse(
             id=request_id,
             model=model_name,
