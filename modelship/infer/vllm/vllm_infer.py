@@ -768,7 +768,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         except VllmValidationError as exc:
             return _to_error_response(exc)
 
-        choices, finish_reasons, logprobs_list = engine_ops.build_choices(
+        choices, finish_reasons, logprobs_list, reasoning_tokens = engine_ops.build_choices(
             final_res,
             vllm_request,
             parser,
@@ -782,7 +782,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return _to_error_response("vllm returned no prompt_token_ids for a completed request", status_code=502)
         prompt_tokens = len(final_res.prompt_token_ids)
         completion_tokens = sum(len(output.token_ids) for output in final_res.outputs)
-        reasoning_tokens = engine_ops.total_reasoning_tokens(final_res.outputs, parser)
 
         usage = UsageInfo(
             prompt_tokens=prompt_tokens,
@@ -872,7 +871,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         except VllmValidationError as exc:
             return _to_error_response(exc)
 
-        choices, finish_reasons, _logprobs_list = engine_ops.build_choices(
+        choices, finish_reasons, _logprobs_list, reasoning_tokens = engine_ops.build_choices(
             final_res,
             vllm_request,
             parser,
@@ -886,7 +885,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return _to_error_response("vllm returned no prompt_token_ids for a completed request", status_code=502)
         prompt_tokens = len(final_res.prompt_token_ids)
         completion_tokens = sum(len(output.token_ids) for output in final_res.outputs)
-        reasoning_tokens = engine_ops.total_reasoning_tokens(final_res.outputs, parser)
 
         usage = UsageInfo(
             prompt_tokens=prompt_tokens,

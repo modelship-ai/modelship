@@ -450,7 +450,7 @@ class TestCancel:
         coord = _ledger()
         coord._cancel_grace = 0.01
         receipt = await coord.submit(_request())
-        await _settle()
+        await _until(lambda: workers.created)
         await coord.cancel(receipt["id"])
         await coord.is_cancelled(receipt["id"])
         await asyncio.sleep(0.05)

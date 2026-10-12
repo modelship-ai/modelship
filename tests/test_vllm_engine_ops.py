@@ -11,6 +11,10 @@ from typing import Any, ClassVar
 from unittest.mock import Mock
 
 import pytest
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import WhitespaceSplit
+from transformers import PreTrainedTokenizerFast
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest as VllmChatCompletionRequest,
 )
@@ -18,6 +22,7 @@ from vllm.entrypoints.openai.engine.protocol import DeltaFunctionCall as VllmDel
 from vllm.entrypoints.openai.engine.protocol import DeltaMessage as VllmDeltaMessage
 from vllm.entrypoints.openai.engine.protocol import DeltaToolCall as VllmDeltaToolCall
 from vllm.parser import Parser as VllmParser
+from vllm.parser import ParserManager as VllmParserManager
 from vllm.renderers.online_renderer import OnlineRenderer as VllmOnlineRenderer
 from vllm.tokenizers import TokenizerLike as VllmTokenizerLike
 
@@ -119,35 +124,6 @@ class TestDeriveReasoningEnded:
         assert engine_ops.derive_reasoning_ended(vllm_req, parser=None, prompt_token_ids=[]) is None
 
 
-class TestTotalReasoningTokens:
-    """`usage.completion_tokens_details.reasoning_tokens` sums vLLM's own
-    `count_reasoning_tokens` across choices."""
-
-    def test_no_parser_returns_none(self):
-        outputs = [Mock(token_ids=[1, 2, 3])]
-        assert engine_ops.total_reasoning_tokens(outputs, parser=None) is None
-
-    def test_parser_without_reasoning_returns_none(self):
-        parser = Mock(spec=VllmParser)
-        parser.reasoning_parser = None
-        outputs = [Mock(token_ids=[1, 2, 3])]
-        assert engine_ops.total_reasoning_tokens(outputs, parser=parser) is None
-
-    def test_sums_across_choices(self):
-        parser = Mock(spec=VllmParser)
-        parser.reasoning_parser = Mock()
-        parser.reasoning_parser.count_reasoning_tokens.side_effect = [5, 2]
-        outputs = [Mock(token_ids=[1, 2, 3, 4, 5]), Mock(token_ids=[6, 7])]
-
-        result = engine_ops.total_reasoning_tokens(outputs, parser=parser)
-
-        assert result == 7
-        assert parser.reasoning_parser.count_reasoning_tokens.call_args_list == [
-            ((list(outputs[0].token_ids),),),
-            ((list(outputs[1].token_ids),),),
-        ]
-
-
 class TestMakeParsers:
     def test_no_parser_class_returns_n_nones(self):
         render = Mock(spec=VllmOnlineRenderer)
@@ -205,7 +181,7 @@ def _res(text: str, token_ids: list[int], finish_reason: str | None):
     return SimpleNamespace(prompt_token_ids=[1, 2], outputs=[output])
 
 
-async def _drive_stream(monkeypatch, parser_cls, *, results=None) -> list[Any]:
+async def _drive_stream(monkeypatch, parser_cls, *, results=None, vllm_req=None, tokenizer=None) -> list[Any]:
     """Run `stream_chat_completion` over a scripted engine stream, returning the chunks."""
     monkeypatch.setattr(engine_ops, "extract_prompt_token_ids", lambda render, engine_input: [1, 2])
 
@@ -222,12 +198,12 @@ async def _drive_stream(monkeypatch, parser_cls, *, results=None) -> list[Any]:
     async for chunk in engine_ops.stream_chat_completion(
         engine,
         render,
-        _vllm_req(tools=None),
+        vllm_req or _vllm_req(tools=None),
         engine_input=Mock(),
         sampling_params=Mock(),
         request_id="req-1",
         model_name="m",
-        tokenizer=Mock(decode=Mock(return_value="a token re-decode, not the engine's text")),
+        tokenizer=tokenizer or Mock(decode=Mock(return_value="a token re-decode, not the engine's text")),
         enable_auto_tools=False,
         want_logprobs=False,
         num_output_top_logprobs=None,
@@ -306,6 +282,77 @@ class TestStreamReconcilesTrappedContent:
         chunks = await _drive_stream(monkeypatch, ToolParser)
 
         assert chunks[-1].choices[0].delta.content is None
+
+
+def _word_tokenizer() -> PreTrainedTokenizerFast:
+    vocab = ["<unk>", "a", "b", "c", "ok", "<think>", "</think>", "<tool_call>", "</tool_call>"]
+    tokenizer = Tokenizer(WordLevel({token: i for i, token in enumerate(vocab)}, unk_token="<unk>"))
+    tokenizer.pre_tokenizer = WhitespaceSplit()
+    return PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>")
+
+
+class TestReasoningTokens:
+    @pytest.mark.parametrize(
+        ("tool_parser", "reasoning_parser", "expected"),
+        [("qwen3_xml", "qwen3", 4), ("hermes", "qwen3", 4), ("hermes", None, None)],
+    )
+    def test_build_choices_sums_the_reasoning_of_every_choice(self, tool_parser, reasoning_parser, expected):
+        tokenizer = _word_tokenizer()
+        parser_cls = VllmParserManager.get_parser(
+            tool_parser_name=tool_parser, reasoning_parser_name=reasoning_parser, enable_auto_tools=True
+        )
+        outputs = [
+            SimpleNamespace(text=text, token_ids=tokenizer.encode(text), finish_reason="stop", logprobs=None)
+            for text in ("<think> a b c </think> ok", "<think> a </think> ok")
+        ]
+
+        *_, reasoning_tokens = engine_ops.build_choices(
+            SimpleNamespace(outputs=outputs),
+            _vllm_req(),
+            parser_cls(tokenizer),
+            tokenizer,
+            enable_auto_tools=True,
+            want_logprobs=False,
+            num_output_top_logprobs=None,
+        )
+
+        assert reasoning_tokens == expected
+
+    def test_build_choices_without_a_parser_counts_nothing(self):
+        outputs = [SimpleNamespace(text="ok", token_ids=[4], finish_reason="stop", logprobs=None)]
+
+        *_, reasoning_tokens = engine_ops.build_choices(
+            SimpleNamespace(outputs=outputs),
+            _vllm_req(),
+            None,
+            Mock(),
+            enable_auto_tools=False,
+            want_logprobs=False,
+            num_output_top_logprobs=None,
+        )
+
+        assert reasoning_tokens is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_parser", ["qwen3_xml", "hermes"])
+    async def test_the_stream_usage_chunk_counts_the_reasoning(self, monkeypatch, tool_parser):
+        tokenizer = _word_tokenizer()
+        parser_cls = VllmParserManager.get_parser(
+            tool_parser_name=tool_parser, reasoning_parser_name="qwen3", enable_auto_tools=True
+        )
+        words = ["<think>", "a", "b", "</think>", "ok"]
+        results = [_res(f"{word} ", tokenizer.encode(word), None) for word in words]
+        results.append(_res("", [], "stop"))
+
+        chunks = await _drive_stream(
+            monkeypatch,
+            parser_cls,
+            results=results,
+            vllm_req=_vllm_req(stream=True, stream_options={"include_usage": True}),
+            tokenizer=tokenizer,
+        )
+
+        assert chunks[-1].usage.completion_tokens_details.reasoning_tokens == 2
 
 
 class TestSignaturesGuardVllmBump:
