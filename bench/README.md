@@ -140,7 +140,6 @@ LAUNCH PARITY PASSED, RESULT PARITY PASSED (0 dropped/truncated on both arms).
 | ITL mean (ms) | 17.04 | 17.00 | +0.2% |
 | E2E p50 (ms) | 9089.0 | 9079.7 | +0.1% |
 | peak VRAM (MiB) | 12506 | 12502 | +4 |
-| anon / process RSS (MiB) | 7152 | 5233 | +1918 |
 
 Notes:
 
@@ -149,9 +148,6 @@ Notes:
 - **TTFT mean favors modelship here**; p50 is exactly equal and p95 shows the
   same small proxy/router jitter as before (+5.5%, ~23 ms against a 9.1 s E2E
   latency) — inside the noise for a 512-token response.
-- **Read host-RAM cost from `anon`**, not container RSS. The `file` (page cache)
-  row swings multiple GB between arms depending on which cgroup faulted the
-  weights first, and is not overhead.
 - Qwen3.5 is hybrid (mostly linear-attention/Mamba layers, 8 full-attention of
   32) and thinking is on by default in its chat template, so these numbers are
   not comparable to the old Qwen2.5-7B table — don't diff them against it.
@@ -178,7 +174,6 @@ finding (20 of 300 baseline requests dropped across the 3 sweeps, 0 for modelshi
 | ITL mean (ms) | 35.59 | 35.37 | +0.6% |
 | E2E p50 (ms) | 19094.2 | 18851.5 | +1.3% |
 | peak VRAM (MiB) | 13750 | 13752 | −2 |
-| anon / process RSS (MiB) | 3860 | 1175 | +2685 |
 
 Notes:
 
