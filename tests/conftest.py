@@ -131,6 +131,18 @@ MODEL_CONFIGS: dict[str, dict] = {
             "enable_reasoning": True,
         },
     },
+    "chat-reasoning-opened": {
+        "name": "chat-reasoning-opened",
+        "model": "Qwen/Qwen3.5-0.8B",
+        "usecase": "generate",
+        "loader": "vllm",
+        "num_gpus": 0.3,
+        "vllm_engine_kwargs": {
+            "max_model_len": 4096,
+            "enforce_eager": True,
+            "default_chat_template_kwargs": {"enable_thinking": True},
+        },
+    },
     "chat-vlm": {
         "name": "chat-vlm",
         "model": "Qwen/Qwen3-VL-2B-Instruct",

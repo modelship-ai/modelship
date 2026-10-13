@@ -113,9 +113,14 @@ class TestRenderer:
 
         def renderer(**kwargs: Any) -> Any:
             built.update(kwargs)
-            return SimpleNamespace(renderer=SimpleNamespace(tokenizer=object()))
+            return SimpleNamespace(renderer=SimpleNamespace(tokenizer=SimpleNamespace(decode=str)))
+
+        async def learn_prompt_endings(render: Any, tokenizer: Any, toggles: Any) -> list[list[int]]:
+            built["toggles"] = list(toggles)
+            return [[7, 8]]
 
         monkeypatch.setattr(vllm_infer, "VllmOnlineRenderer", renderer)
+        monkeypatch.setattr(vllm_infer.engine_ops, "learn_prompt_endings", learn_prompt_endings)
         return built
 
     @pytest.mark.asyncio
@@ -142,6 +147,28 @@ class TestRenderer:
 
         assert built["default_chat_template_kwargs"] == {"enable_thinking": False, "clear_thinking": True}
         assert infer.vllm_engine_kwargs.default_chat_template_kwargs == {"enable_thinking": False}
+
+    @pytest.mark.asyncio
+    async def test_prompt_endings_are_learned_for_the_detected_toggles(self, built, monkeypatch):
+        monkeypatch.setattr(
+            vllm_infer, "detect_template_toggle_defaults", lambda template, tokenizer: {"enable_thinking": True}
+        )
+        infer = _started_infer(["generate"])
+
+        await infer.init_serving_chat()
+
+        assert built["toggles"] == ["enable_thinking"]
+        assert infer._prompt_endings == [[7, 8]]
+
+    @pytest.mark.asyncio
+    async def test_no_prompt_endings_are_learned_without_a_reasoning_parser(self, built):
+        infer = _started_infer(["generate"])
+        infer._chat_parsers = _ChatParsers(_PLAIN_TEMPLATE, "hermes", None)
+
+        await infer.init_serving_chat()
+
+        assert "toggles" not in built
+        assert infer._prompt_endings == []
 
     @pytest.mark.asyncio
     async def test_not_built_without_the_generate_task(self, built):
