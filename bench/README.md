@@ -243,10 +243,10 @@ Notes:
   `<function=`/`<parameter=` inside `<tool_call>`) plus `qwen3`, Qwen3-0.6B
   to `hermes` plus `qwen3`. The resolved names never reach the kwargs dump, so the actor
   logs them on their own line for the parity check to read. Note that the
-  chat-template toggle defaults the actor pins into `chat_template_kwargs` are
-  request-time, not launch flags — `vllm serve` has no equivalent, so a template
-  whose `enable_thinking` default differs from the parser's is the one
-  request-shaping difference this harness cannot equalize.
+  chat-template toggle defaults the actor detects and hands its renderer are not
+  passed to `vllm serve`, so a template whose `enable_thinking` default differs
+  from the parser's is the one request-shaping difference this harness does not
+  equalize.
 - **Tokenizer extraction**: GGUF configs can't be used as Hugging Face repo IDs by
   the bench client, so the harness reads a `# bench-tokenizer: <repo-id>` comment
   from the yaml (inert to modelship). `--tokenizer` overrides it.

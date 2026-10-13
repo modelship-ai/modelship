@@ -663,6 +663,24 @@ class TestResponsesReasoning:
         message_items = [item for item in output if item["type"] == "message"]
         assert message_items, "expected an assistant message output item alongside reasoning"
 
+    def test_effort_none_returns_no_reasoning_item(self):
+        response = httpx.post(
+            f"{OPENAI_API_BASE}/responses",
+            json={
+                "model": "chat-reasoning",
+                "input": "Briefly: what is 7 times 8?",
+                "max_output_tokens": 512,
+                "temperature": 0,
+                "reasoning": {"effort": "none"},
+            },
+            timeout=120,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+        assert [item["type"] for item in body["output"]] == ["message"]
+        assert body["usage"]["output_tokens_details"]["reasoning_tokens"] == 0
+
     def test_streaming_emits_reasoning_summary_deltas(self, client):
         stream = client.responses.create(
             model="chat-reasoning",

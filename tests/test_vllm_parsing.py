@@ -140,12 +140,12 @@ class TestResolveReasoningParsers:
         with pytest.raises(ValueError, match="not-a-real-parser"):
             resolve_reasoning_parser(cfg, None, None, _hf())
 
-    def test_does_not_mutate_chat_template_kwargs(self):
+    def test_does_not_mutate_default_chat_template_kwargs(self):
         # Toggle defaults are pinned by detect_template_toggle_defaults at init,
         # not here — the resolver is pure name resolution.
         cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(reasoning_parser="gemma4"))
         resolve_reasoning_parser(cfg, None, None, _hf())
-        assert cfg.chat_template_kwargs == {}
+        assert cfg.vllm_engine_kwargs.default_chat_template_kwargs is None
 
     def test_the_names_in_models_yaml_are_not_searched(self, registry):
         registry["acme9"] = _parser()

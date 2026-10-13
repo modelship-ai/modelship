@@ -163,19 +163,19 @@ class TestModelshipModelConfig:
         assert config.loader == ModelLoader.vllm
         assert config.num_gpus == 0
         assert config.num_cpus == 0.1
-        assert config.chat_template_kwargs == {}
+        assert config.vllm_engine_kwargs.default_chat_template_kwargs is None
 
-    def test_chat_template_kwargs_round_trips(self):
+    def test_default_chat_template_kwargs_round_trips(self):
         config = ModelshipModelConfig.model_validate(
             {
                 "name": "qwen3",
                 "model": "some-org/qwen3",
                 "usecase": ModelUsecase.generate,
-                "loader": ModelLoader.llama_server,
-                "chat_template_kwargs": {"enable_thinking": False},
+                "loader": ModelLoader.vllm,
+                "vllm_engine_kwargs": {"default_chat_template_kwargs": {"enable_thinking": False}},
             }
         )
-        assert config.chat_template_kwargs == {"enable_thinking": False}
+        assert config.vllm_engine_kwargs.default_chat_template_kwargs == {"enable_thinking": False}
 
     def test_a_hash_in_the_name_is_rejected(self):
         with pytest.raises(ValidationError, match="name 'qwen#2' must not contain '#'"):

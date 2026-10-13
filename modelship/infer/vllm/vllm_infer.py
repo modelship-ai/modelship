@@ -217,7 +217,10 @@ def _deployment_summary(name: str, vllm_config: Any) -> list[str]:
 
 
 def _trace_request(
-    request_id: str, vllm_request: VllmChatCompletionRequest, sampling_params: VllmSamplingParams
+    request_id: str,
+    render: VllmOnlineRenderer,
+    vllm_request: VllmChatCompletionRequest,
+    sampling_params: VllmSamplingParams,
 ) -> None:
     """TRACE-log the effective request: the generation budget and the
     `chat_template_kwargs` actually in play (e.g. `enable_thinking`), so a
@@ -229,7 +232,7 @@ def _trace_request(
         "%s request: max_tokens=%s chat_template_kwargs=%s messages=%s tools=%s",
         request_id,
         sampling_params.max_tokens,
-        vllm_request.chat_template_kwargs,
+        engine_ops.resolved_chat_template_kwargs(render, vllm_request),
         vllm_request.messages,
         vllm_request.tools,
     )
@@ -553,6 +556,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if self._chat_parsers is None or "generate" not in self.supported_tasks:
             return
         template = self._chat_parsers.template
+        default_chat_template_kwargs = dict(self.vllm_engine_kwargs.default_chat_template_kwargs or {})
 
         # A reasoning parser reads chat_template_kwargs["enable_thinking"] (and
         # similar toggles) and defaults them True when absent, but a template may
@@ -561,9 +565,8 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         # detected default so both sides agree; user/config values still win.
         if template is not None:
             defaults = detect_template_toggle_defaults(template, cast(Any, self.engine.get_tokenizer()))
-            applied = {k: v for k, v in defaults.items() if k not in self.model_config.chat_template_kwargs}
-            for key, value in applied.items():
-                self.model_config.chat_template_kwargs[key] = value
+            applied = {k: v for k, v in defaults.items() if k not in default_chat_template_kwargs}
+            default_chat_template_kwargs.update(applied)
             if applied:
                 logger.info("Pinned chat-template toggle defaults for '%s': %s", self.model_config.name, applied)
             overridden = {k: v for k, v in defaults.items() if k not in applied}
@@ -571,7 +574,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                 logger.info(
                     "Chat-template toggle defaults for '%s' overridden by config: %s (detected defaults: %s)",
                     self.model_config.name,
-                    {k: self.model_config.chat_template_kwargs[k] for k in overridden},
+                    {k: default_chat_template_kwargs[k] for k in overridden},
                     overridden,
                 )
 
@@ -585,6 +588,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             enable_auto_tools=self._enable_auto_tools,
             tool_parser=self._chat_parsers.tool_parser,
             reasoning_parser=self._chat_parsers.reasoning_parser or "",
+            default_chat_template_kwargs=default_chat_template_kwargs,
         )
         tokenizer = self.openai_serving_render.renderer.tokenizer
         assert tokenizer is not None, "vllm renderer has no tokenizer (skip_tokenizer_init=True is unsupported here)"
@@ -592,9 +596,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
 
     def _make_parsers(self, vllm_request: VllmChatCompletionRequest, n: int) -> list[VllmParser | None]:
         """One stateful parser instance per choice — the streaming path (see `engine_ops.make_parsers`)."""
-        return engine_ops.make_parsers(
-            self.openai_serving_render, self._tokenizer, vllm_request, vllm_request.chat_template_kwargs, n
-        )
+        return engine_ops.make_parsers(self.openai_serving_render, self._tokenizer, vllm_request, n)
 
     def _make_parser(self, vllm_request: VllmChatCompletionRequest) -> VllmParser | None:
         """Single parser instance for the non-streaming path, which reuses it
@@ -675,9 +677,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         except UnsupportedContentError as exc:
             return _to_error_response(exc)
         try:
-            vllm_request = engine_ops.build_vllm_request(
-                request, self.model_config.chat_template_kwargs, cache_salt=raw_request.identity
-            )
+            vllm_request = engine_ops.build_vllm_request(request, cache_salt=raw_request.identity)
         except ValidationError as exc:
             # pydantic's .args is () here (str(exc) is the only useful message),
             # matching api.py's _validation_error_from_cause for the same reason.
@@ -697,7 +697,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         Rendering already succeeded in `_prepare_chat` — this only drives generation."""
         request_id = f"chatcmpl-{base_request_id(raw_request)}"
         vllm_request = prepared.vllm_request
-        _trace_request(request_id, vllm_request, prepared.sampling_params)
+        _trace_request(request_id, self.openai_serving_render, vllm_request, prepared.sampling_params)
 
         stream = engine_ops.stream_chat_completion(
             self.engine,
@@ -749,7 +749,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         reasoning_ended = engine_ops.derive_reasoning_ended(vllm_request, parser, prompt_token_ids)
 
         request_id = f"chatcmpl-{base_request_id(raw_request)}"
-        _trace_request(request_id, vllm_request, sampling_params)
+        _trace_request(request_id, self.openai_serving_render, vllm_request, sampling_params)
         try:
             final_res = await self.run_cancellable(
                 engine_ops.consume_final_output(
@@ -759,7 +759,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     request_id,
                     reasoning_ended=reasoning_ended,
                     parser=parser,
-                    chat_template_kwargs=vllm_request.chat_template_kwargs,
+                    chat_template_kwargs=engine_ops.resolved_chat_template_kwargs(
+                        self.openai_serving_render, vllm_request
+                    ),
                 ),
                 raw_request,
             )
@@ -827,9 +829,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return _to_error_response(exc)
         chat_request.stream = request.stream or False
         try:
-            vllm_request = engine_ops.build_vllm_request(
-                chat_request, self.model_config.chat_template_kwargs, cache_salt=raw_request.identity
-            )
+            vllm_request = engine_ops.build_vllm_request(chat_request, cache_salt=raw_request.identity)
         except ValidationError as exc:
             # Same 400 as the `responses_request_to_chat` failure above.
             logger.info("Validation error building vllm request: %s", exc)
@@ -852,7 +852,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         reasoning_ended = engine_ops.derive_reasoning_ended(vllm_request, parser, prompt_token_ids)
 
         request_id = f"resp-{base_request_id(raw_request)}"
-        _trace_request(request_id, vllm_request, sampling_params)
+        _trace_request(request_id, self.openai_serving_render, vllm_request, sampling_params)
         try:
             final_res = await self.run_cancellable(
                 engine_ops.consume_final_output(
@@ -862,7 +862,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     request_id,
                     reasoning_ended=reasoning_ended,
                     parser=parser,
-                    chat_template_kwargs=vllm_request.chat_template_kwargs,
+                    chat_template_kwargs=engine_ops.resolved_chat_template_kwargs(
+                        self.openai_serving_render, vllm_request
+                    ),
                 ),
                 raw_request,
             )
@@ -919,7 +921,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         round trip. Rendering already succeeded in `_prepare_responses`."""
         request_id = f"resp-{base_request_id(raw_request)}"
         vllm_request = prepared.vllm_request
-        _trace_request(request_id, vllm_request, prepared.sampling_params)
+        _trace_request(request_id, self.openai_serving_render, vllm_request, prepared.sampling_params)
 
         stream = engine_ops.stream_chat_completion(
             self.engine,

@@ -53,16 +53,8 @@ from modelship.openai.utils.chat import ParsedChatOutput
 logger = get_logger("infer.vllm.engine_ops")
 
 
-def build_vllm_request(
-    request: ChatCompletionRequest,
-    chat_template_kwargs: dict[str, Any] | None,
-    cache_salt: str | None = None,
-) -> VllmChatCompletionRequest:
+def build_vllm_request(request: ChatCompletionRequest, cache_salt: str | None = None) -> VllmChatCompletionRequest:
     """Shape a modelship chat request into vLLM's own request model.
-
-    Merges the model's default `chat_template_kwargs` under any per-request
-    value (request wins) — vLLM renders the chat template internally, so
-    unlike llama.cpp-family loaders this can't be patched in after the fact.
 
     `cache_salt` scopes vLLM's prefix-cache reuse to the caller's identity.
     """
@@ -70,11 +62,6 @@ def build_vllm_request(
     # vLLM defaults tool_choice only when the key is absent: "none" without tools, "auto" with them.
     if request_data.get("tool_choice") is None:
         request_data.pop("tool_choice", None)
-    if chat_template_kwargs:
-        request_data["chat_template_kwargs"] = {
-            **chat_template_kwargs,
-            **(request_data.get("chat_template_kwargs") or {}),
-        }
     if cache_salt is not None:
         request_data["cache_salt"] = cache_salt
     return VllmChatCompletionRequest(**request_data)
@@ -127,11 +114,18 @@ def extract_prompt_token_ids(render: VllmOnlineRenderer, engine_input: VllmEngin
     return list(vllm_extract_prompt_components(render.model_config, engine_input).token_ids or [])
 
 
+def resolved_chat_template_kwargs(render: VllmOnlineRenderer, vllm_req: VllmChatCompletionRequest) -> dict[str, Any]:
+    return (
+        vllm_req.build_chat_params(render.chat_template, render.chat_template_content_format)
+        .with_defaults(render.default_chat_template_kwargs)
+        .chat_template_kwargs
+    )
+
+
 def make_parsers(
     render: VllmOnlineRenderer,
     tokenizer: VllmTokenizerLike,
     vllm_req: VllmChatCompletionRequest,
-    chat_template_kwargs: dict[str, Any] | None,
     n: int,
 ) -> list[VllmParser | None]:
     """Instantiate one parser per choice.
@@ -145,6 +139,7 @@ def make_parsers(
     if render.parser is None:
         return [None] * n
     parser_cls = render.parser
+    chat_template_kwargs = resolved_chat_template_kwargs(render, vllm_req)
     return [
         parser_cls(tokenizer, vllm_req.tools, chat_template_kwargs=chat_template_kwargs)  # type: ignore[arg-type]
         for _ in range(n)
@@ -424,7 +419,7 @@ def _reconcile_trapped_content(
     streamed out, so a parser error here must not crash the generator mid-stream.
     """
     try:
-        parser = make_parsers(render, tokenizer, vllm_req, vllm_req.chat_template_kwargs, n=1)[0]
+        parser = make_parsers(render, tokenizer, vllm_req, n=1)[0]
         if parser is None:
             return None
         _reasoning, content, _tool_calls = parser.parse(
@@ -463,7 +458,7 @@ async def stream_chat_completion(
     `ChatCompletionResponse` assembly to `utils.chat.build_from_parsed`).
     """
     num_choices = vllm_req.n or 1
-    parsers = make_parsers(render, tokenizer, vllm_req, vllm_req.chat_template_kwargs, n=num_choices)
+    parsers = make_parsers(render, tokenizer, vllm_req, n=num_choices)
     prompt_token_ids = extract_prompt_token_ids(render, engine_input)
     reasoning_ended = derive_reasoning_ended(vllm_req, parsers[0], prompt_token_ids)
 
@@ -493,7 +488,7 @@ async def stream_chat_completion(
         request_id,
         reasoning_ended=reasoning_ended,
         parser=parsers[0],
-        chat_template_kwargs=vllm_req.chat_template_kwargs,
+        chat_template_kwargs=resolved_chat_template_kwargs(render, vllm_req),
     ):
         if res.prompt_token_ids is not None:
             num_prompt_tokens = len(res.prompt_token_ids)

@@ -222,9 +222,9 @@ class TestNestedFlags:
             ),
             ("--diffusers-config.guidance-scale", "0.0", ("diffusers_config", "guidance_scale"), 0.0),
             (
-                "--chat-template-kwargs",
+                "--vllm-engine-kwargs.default-chat-template-kwargs",
                 "{enable_thinking: false}",
-                ("chat_template_kwargs",),
+                ("vllm_engine_kwargs", "default_chat_template_kwargs"),
                 {"enable_thinking": False},
             ),
         ],
@@ -299,7 +299,7 @@ class TestNestedFlags:
                 "2",
                 "--autoscaling-config.max-replicas",
                 "3",
-                "--chat-template-kwargs",
+                "--vllm-engine-kwargs.default-chat-template-kwargs",
                 "{}",
             )
         assert exc.value.code == 2
