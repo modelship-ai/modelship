@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import stat
 import sys
 import textwrap
@@ -339,6 +340,8 @@ class TestNonStreamingProjection:
         }
 
         def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/tokenize":
+                return httpx.Response(200, json={"tokens": [1, 2]})
             assert request.url.path == "/v1/chat/completions"
             return httpx.Response(200, json=raw)
 
@@ -908,3 +911,90 @@ class TestResponsesProjection:
         assert "response.created" in types
         assert "response.completed" not in types
         assert "response.failed" not in types
+
+
+_REASONED = {
+    "choices": [
+        {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {"role": "assistant", "content": "56", "reasoning_content": "7 times 8"},
+        }
+    ],
+    "usage": {"prompt_tokens": 10, "completion_tokens": 9, "total_tokens": 19},
+}
+
+_REASONED_STREAM = (
+    'data: {"choices":[{"index":0,"delta":{"reasoning_content":"7 times"},"finish_reason":null}]}\n\n'
+    'data: {"choices":[{"index":0,"delta":{"reasoning_content":" 8"},"finish_reason":null}]}\n\n'
+    'data: {"choices":[{"index":0,"delta":{"content":"56"},"finish_reason":null}]}\n\n'
+    'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+    'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":9,"total_tokens":19}}\n\n'
+    "data: [DONE]\n\n"
+)
+
+
+def _infer_counting(body: dict | str, tokenized: list, tokenize_status: int = 200) -> LlamaServerInfer:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/tokenize":
+            tokenized.append(json.loads(request.content)["content"])
+            return httpx.Response(tokenize_status, json={"tokens": [11, 12, 13]})
+        if isinstance(body, str):
+            return httpx.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
+        return httpx.Response(200, json=body)
+
+    return _infer_with_client(handler)
+
+
+class TestReasoningTokens:
+    @pytest.mark.asyncio
+    async def test_chat_counts_the_reasoning_text(self):
+        tokenized = []
+        infer = _infer_counting(_REASONED, tokenized)
+        result = await infer.create_chat_completion(_request(), RawRequestProxy(None, {}))
+
+        assert tokenized == [["7 times 8"]]
+        assert result.usage.completion_tokens_details.reasoning_tokens == 3
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_counts_the_joined_reasoning_deltas(self):
+        tokenized = []
+        infer = _infer_counting(_REASONED_STREAM, tokenized)
+        result = await infer.create_chat_completion(_request(stream=True), RawRequestProxy(None, {}))
+        chunks = [json.loads(chunk[len("data: ") :]) async for chunk in result if "[DONE]" not in chunk]
+
+        assert tokenized == [["7 times 8"]]
+        assert chunks[-1]["usage"]["completion_tokens_details"] == {"reasoning_tokens": 3}
+
+    @pytest.mark.asyncio
+    async def test_response_counts_the_reasoning_text(self):
+        infer = _infer_counting(_REASONED, [])
+        result = await infer.create_response(_responses_request(), RawRequestProxy(None, {}))
+
+        assert result.usage.output_tokens_details.reasoning_tokens == 3
+
+    @pytest.mark.asyncio
+    async def test_response_stream_counts_the_reasoning_text(self):
+        infer = _infer_counting(_REASONED_STREAM, [])
+        result = await infer.create_response(_responses_request(stream=True), RawRequestProxy(None, {}))
+        events = [event async for event in result]
+
+        assert events[-1]["response"]["usage"]["output_tokens_details"]["reasoning_tokens"] == 3
+
+    @pytest.mark.asyncio
+    async def test_an_answer_without_reasoning_is_not_tokenized(self):
+        tokenized = []
+        body = {"choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}}], "usage": {}}
+        infer = _infer_counting(body, tokenized)
+        result = await infer.create_chat_completion(_request(), RawRequestProxy(None, {}))
+
+        assert tokenized == []
+        assert result.usage.completion_tokens_details is None
+
+    @pytest.mark.asyncio
+    async def test_a_failed_count_leaves_the_usage_without_the_detail(self):
+        infer = _infer_counting(_REASONED, [], tokenize_status=500)
+        result = await infer.create_chat_completion(_request(), RawRequestProxy(None, {}))
+
+        assert result.usage.completion_tokens == 9
+        assert result.usage.completion_tokens_details is None

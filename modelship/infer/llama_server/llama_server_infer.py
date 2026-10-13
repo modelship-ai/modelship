@@ -23,6 +23,7 @@ from modelship.openai.protocol import (
     ChatCompletionResponse,
     ChatCompletionResponseStreamChoice,
     ChatCompletionStreamResponse,
+    CompletionTokenUsageInfo,
     DeltaFunctionCall,
     DeltaMessage,
     DeltaToolCall,
@@ -579,6 +580,8 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             message = error_data.get("message") if isinstance(error_data, dict) else str(error_data)
             logger.warning("chat request %s failed with inline error: %s", request_id, message)
             return create_error_response(message or "Unknown error returned from llama-server", status_code=502)
+        reasoning = [(choice.get("message") or {}).get("reasoning_content") for choice in data.get("choices", [])]
+        await _add_reasoning_tokens(self._client, data, reasoning, request_id)
         return data
 
     async def _create_chat_completion_stream(
@@ -715,11 +718,29 @@ def _project_tool_calls(raw_tool_calls: list[dict] | None) -> list[ToolCall]:
 
 def _project_usage(raw_usage: dict | None) -> UsageInfo:
     usage = raw_usage or {}
+    reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
     return UsageInfo(
         prompt_tokens=usage.get("prompt_tokens", 0) or 0,
         completion_tokens=usage.get("completion_tokens", 0) or 0,
         total_tokens=usage.get("total_tokens", 0) or 0,
+        completion_tokens_details=CompletionTokenUsageInfo(reasoning_tokens=reasoning_tokens)
+        if reasoning_tokens is not None
+        else None,
     )
+
+
+async def _add_reasoning_tokens(
+    client: httpx.AsyncClient, data: dict, reasoning: list[str | None], request_id: str
+) -> None:
+    texts = [text for text in reasoning if text]
+    if not texts:
+        return
+    try:
+        resp = await client.post("/tokenize", json={"content": texts})
+        resp.raise_for_status()
+        data.setdefault("usage", {})["completion_tokens_details"] = {"reasoning_tokens": len(resp.json()["tokens"])}
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+        logger.warning("request %s: reasoning tokens not counted: %s", request_id, e)
 
 
 def _parsed_choices_from_data(
@@ -866,6 +887,7 @@ async def _raw_stream_chunks(
             raise _LlamaServerStreamError(detail) from e
 
         done = False
+        reasoning: dict[int, list[str]] = {}
         async for line in resp.aiter_lines():
             if not line.startswith("data:"):
                 continue
@@ -890,7 +912,13 @@ async def _raw_stream_chunks(
                 message = error_data.get("message") if isinstance(error_data, dict) else str(error_data)
                 logger.warning("chat request %s failed mid-stream with error: %s", request_id, message)
                 raise _LlamaServerStreamError(message or "Unknown mid-stream error from llama-server")
-            yield _project_stream_chunk(data, model_name=model_name, request_id=request_id)
+            if data.get("usage"):
+                await _add_reasoning_tokens(client, data, ["".join(parts) for parts in reasoning.values()], request_id)
+            chunk = _project_stream_chunk(data, model_name=model_name, request_id=request_id)
+            for choice in chunk.choices:
+                if choice.delta.reasoning:
+                    reasoning.setdefault(choice.index, []).append(choice.delta.reasoning)
+            yield chunk
 
 
 def _project_embedding_response(data: dict, *, model_name: str) -> EmbeddingResponse:
