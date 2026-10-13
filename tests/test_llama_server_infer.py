@@ -380,6 +380,34 @@ class TestNonStreamingProjection:
         assert captured["payload"]["tools"][0]["function"]["name"] == "f"
 
     @pytest.mark.asyncio
+    async def test_sends_a_message_reasoning_as_reasoning_content(self):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["payload"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={"choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}}], "usage": {}},
+            )
+
+        infer = _infer_with_client(handler)
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello", "reasoning": "greet back"},
+                {"role": "user", "content": "again"},
+            ],
+        )
+        await infer.create_chat_completion(request, RawRequestProxy(None, {}))
+
+        assert captured["payload"]["messages"][1] == {
+            "role": "assistant",
+            "content": "hello",
+            "reasoning_content": "greet back",
+        }
+
+    @pytest.mark.asyncio
     async def test_tool_choice_none_drops_the_tools(self):
         captured = {}
 

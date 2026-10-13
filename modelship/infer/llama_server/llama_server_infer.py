@@ -669,7 +669,10 @@ def _build_payload(request: ChatCompletionRequest, messages: list[dict], *, mode
     # If request.logprobs is True, we want to forward logprobs and top_logprobs (if > 0) to llama-server.
     exclude_fields = {"messages", "model", "logprobs", "top_logprobs"}
     payload = request.model_dump(exclude_none=True, exclude=exclude_fields)
-    payload["messages"] = messages
+    payload["messages"] = [
+        {("reasoning_content" if key == "reasoning" else key): value for key, value in message.items()}
+        for message in messages
+    ]
     payload["model"] = model_name
 
     if request.logprobs:
