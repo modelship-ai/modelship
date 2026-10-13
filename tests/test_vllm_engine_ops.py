@@ -36,21 +36,20 @@ def _vllm_req(**overrides: Any) -> VllmChatCompletionRequest:
     return VllmChatCompletionRequest(**base)
 
 
+def _render(parser_cls: Any, **default_chat_template_kwargs: Any) -> Mock:
+    return Mock(
+        spec=VllmOnlineRenderer,
+        parser=parser_cls,
+        chat_template=None,
+        chat_template_content_format="auto",
+        default_chat_template_kwargs=default_chat_template_kwargs,
+    )
+
+
 class TestBuildVllmRequest:
-    def test_request_chat_template_kwargs_wins_over_model_default(self):
+    def test_request_chat_template_kwargs_are_kept(self):
         # chat_template_kwargs is a client-supplied extra (extra="allow"), not a
         # declared field, so it must be built via model_validate, not kwargs.
-        request = ChatCompletionRequest.model_validate(
-            {
-                "model": "m",
-                "messages": [{"role": "user", "content": "hi"}],
-                "chat_template_kwargs": {"enable_thinking": False},
-            }
-        )
-        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs={"enable_thinking": True, "x": 1})
-        assert vllm_req.chat_template_kwargs == {"enable_thinking": False, "x": 1}
-
-    def test_no_model_defaults_leaves_request_value_untouched(self):
         request = ChatCompletionRequest.model_validate(
             {
                 "model": "m",
@@ -58,23 +57,23 @@ class TestBuildVllmRequest:
                 "chat_template_kwargs": {"a": 1},
             }
         )
-        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
+        vllm_req = engine_ops.build_vllm_request(request)
         assert vllm_req.chat_template_kwargs == {"a": 1}
 
     def test_cache_salt_set_from_identity(self):
         # cache_salt scopes vLLM's prefix-cache reuse per caller identity.
         request = ChatCompletionRequest.model_validate({"model": "m", "messages": [{"role": "user", "content": "hi"}]})
-        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None, cache_salt="identity-a")
+        vllm_req = engine_ops.build_vllm_request(request, cache_salt="identity-a")
         assert vllm_req.cache_salt == "identity-a"
 
     def test_no_cache_salt_leaves_it_unset(self):
         request = ChatCompletionRequest.model_validate({"model": "m", "messages": [{"role": "user", "content": "hi"}]})
-        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
+        vllm_req = engine_ops.build_vllm_request(request)
         assert vllm_req.cache_salt is None
 
     def test_no_tools_and_no_tool_choice_gives_none(self):
         request = ChatCompletionRequest.model_validate({"model": "m", "messages": [{"role": "user", "content": "hi"}]})
-        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
+        vllm_req = engine_ops.build_vllm_request(request)
         assert vllm_req.tool_choice == "none"
 
     def test_tools_and_no_tool_choice_gives_auto(self):
@@ -82,7 +81,7 @@ class TestBuildVllmRequest:
         request = ChatCompletionRequest.model_validate(
             {"model": "m", "messages": [{"role": "user", "content": "hi"}], "tools": [tool]}
         )
-        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
+        vllm_req = engine_ops.build_vllm_request(request)
         assert vllm_req.tool_choice == "auto"
 
     def test_a_tool_choice_from_the_request_is_kept(self):
@@ -90,7 +89,7 @@ class TestBuildVllmRequest:
         request = ChatCompletionRequest.model_validate(
             {"model": "m", "messages": [{"role": "user", "content": "hi"}], "tools": [tool], "tool_choice": "required"}
         )
-        vllm_req = engine_ops.build_vllm_request(request, chat_template_kwargs=None)
+        vllm_req = engine_ops.build_vllm_request(request)
         assert vllm_req.tool_choice == "required"
 
 
@@ -124,30 +123,70 @@ class TestDeriveReasoningEnded:
         assert engine_ops.derive_reasoning_ended(vllm_req, parser=None, prompt_token_ids=[]) is None
 
 
+class TestResolvedChatTemplateKwargs:
+    @pytest.mark.parametrize(
+        ("defaults", "request_kwargs", "effort", "expected"),
+        [
+            ({"enable_thinking": True}, None, None, True),
+            ({"enable_thinking": True}, None, "none", False),
+            ({"enable_thinking": False}, None, "low", True),
+            ({"enable_thinking": True}, {"enable_thinking": False}, "high", False),
+            ({"enable_thinking": False}, {"enable_thinking": True}, "none", True),
+        ],
+    )
+    def test_enable_thinking_is_the_requests_then_the_efforts_then_the_default(
+        self, defaults, request_kwargs, effort, expected
+    ):
+        vllm_req = _vllm_req(chat_template_kwargs=request_kwargs, reasoning_effort=effort)
+
+        resolved = engine_ops.resolved_chat_template_kwargs(_render(None, **defaults), vllm_req)
+
+        assert resolved["enable_thinking"] is expected
+
+    def test_an_effort_leaves_the_other_defaults_alone(self):
+        vllm_req = _vllm_req(reasoning_effort="none")
+
+        resolved = engine_ops.resolved_chat_template_kwargs(_render(None, clear_thinking=False), vllm_req)
+
+        assert resolved["clear_thinking"] is False
+
+
 class TestMakeParsers:
     def test_no_parser_class_returns_n_nones(self):
-        render = Mock(spec=VllmOnlineRenderer)
-        render.parser = None
-        result = engine_ops.make_parsers(render, tokenizer=Mock(), vllm_req=_vllm_req(), chat_template_kwargs=None, n=3)
+        result = engine_ops.make_parsers(_render(None), tokenizer=Mock(), vllm_req=_vllm_req(), n=3)
         assert result == [None, None, None]
 
     def test_instantiates_one_independent_parser_per_choice(self):
-        render = Mock(spec=VllmOnlineRenderer)
         parser_cls = Mock()
         instances = [Mock(), Mock(), Mock()]
         parser_cls.side_effect = instances
-        render.parser = parser_cls
         vllm_req = _vllm_req(tools=None)
         tokenizer = Mock()
 
-        result = engine_ops.make_parsers(render, tokenizer, vllm_req, chat_template_kwargs={"k": "v"}, n=3)
+        result = engine_ops.make_parsers(_render(parser_cls, k="v"), tokenizer, vllm_req, n=3)
 
         assert result == instances
         assert parser_cls.call_count == 3
         for call in parser_cls.call_args_list:
             args, kwargs = call
             assert args == (tokenizer, vllm_req.tools)
-            assert kwargs == {"chat_template_kwargs": {"k": "v"}}
+            assert list(kwargs) == ["chat_template_kwargs"]
+            assert kwargs["chat_template_kwargs"]["k"] == "v"
+
+    @pytest.mark.parametrize("tool_parser", ["qwen3_xml", "hermes"])
+    def test_effort_none_tells_the_parser_thinking_is_off(self, tool_parser):
+        parser_cls = VllmParserManager.get_parser(
+            tool_parser_name=tool_parser, reasoning_parser_name="qwen3", enable_auto_tools=True
+        )
+        tokenizer = _word_tokenizer()
+        vllm_req = _vllm_req(reasoning_effort="none")
+
+        parser = engine_ops.make_parsers(_render(parser_cls, enable_thinking=True), tokenizer, vllm_req, n=1)[0]
+        reasoning, content, _ = parser.parse(
+            "ok", vllm_req, enable_auto_tools=True, model_output_token_ids=tokenizer.encode("ok")
+        )
+
+        assert (reasoning, content) == (None, "ok")
 
 
 class _TrapParser:
@@ -191,8 +230,7 @@ async def _drive_stream(monkeypatch, parser_cls, *, results=None, vllm_req=None,
 
     engine = Mock()
     engine.generate = fake_generate
-    render = Mock(spec=VllmOnlineRenderer)
-    render.parser = parser_cls
+    render = _render(parser_cls)
 
     chunks = []
     async for chunk in engine_ops.stream_chat_completion(
@@ -379,6 +417,9 @@ class TestSignaturesGuardVllmBump:
         params = inspect.signature(VllmOnlineRenderer.render_chat).parameters
         assert "request" in params
 
+    def test_online_renderer_takes_default_chat_template_kwargs(self):
+        assert "default_chat_template_kwargs" in inspect.signature(VllmOnlineRenderer.__init__).parameters
+
     def test_structured_outputs_config_has_a_reasoning_parser(self):
         from vllm.config import StructuredOutputsConfig as VllmStructuredOutputsConfig
 
@@ -461,7 +502,7 @@ class TestVllmParserAcceptsOurRequest:
         assert prompt_ids
 
         n = 2
-        parsers = engine_ops.make_parsers(render, tokenizer, vllm_req, chat_template_kwargs=None, n=n)
+        parsers = engine_ops.make_parsers(render, tokenizer, vllm_req, n=n)
         assert len(parsers) == n
         assert all(p is not None for p in parsers)
 
@@ -483,6 +524,29 @@ class TestVllmParserAcceptsOurRequest:
             assert tool_calls[0].name == "get_weather"
 
     @pytest.mark.asyncio
+    async def test_effort_none_turns_thinking_off_in_the_prompt_and_the_parser(self):
+        render, tokenizer = self._build_render(
+            "Qwen/Qwen3-0.6B",
+            tool_parser="hermes",
+            reasoning_parser="qwen3",
+            default_chat_template_kwargs={"enable_thinking": True},
+        )
+        vllm_req = _vllm_req(reasoning_effort="none")
+
+        result = await engine_ops.render_and_params(render, vllm_req)
+        assert not isinstance(result, engine_ops.VllmErrorResponse)
+        engine_input, _sampling_params = result
+        prompt = tokenizer.decode(engine_ops.extract_prompt_token_ids(render, engine_input))
+        assert prompt.endswith("<think>\n\n</think>\n\n")
+
+        parser = engine_ops.make_parsers(render, tokenizer, vllm_req, n=1)[0]
+        assert parser is not None
+        reasoning, content, _tool_calls = parser.parse(
+            "56", vllm_req, enable_auto_tools=True, model_output_token_ids=[]
+        )
+        assert (reasoning, content) == (None, "56")
+
+    @pytest.mark.asyncio
     async def test_mistral_tool_only_no_grammar_flag(self):
         # A tool-only request takes MistralParser.adjust_request's early-return
         # branch and never sets _grammar_from_parser.
@@ -498,7 +562,7 @@ class TestVllmParserAcceptsOurRequest:
         assert vllm_req._grammar_from_parser is False
 
         prompt_ids = engine_ops.extract_prompt_token_ids(render, engine_input)
-        parsers = engine_ops.make_parsers(render, tokenizer, vllm_req, chat_template_kwargs=None, n=1)
+        parsers = engine_ops.make_parsers(render, tokenizer, vllm_req, n=1)
         assert len(parsers) == 1
         parser = parsers[0]
         assert parser is not None

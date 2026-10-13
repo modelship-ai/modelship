@@ -141,6 +141,11 @@ def main() -> int:
     if k.disable_log_stats:
         args += ["--disable-log-stats"]
     args += ["--chat-template-content-format", k.chat_template_content_format]
+    if k.default_chat_template_kwargs is not None:
+        args += [
+            "--default-chat-template-kwargs",
+            json.dumps(k.default_chat_template_kwargs, sort_keys=True, separators=(",", ":")),
+        ]
     # Forwarded only when set, so vLLM's own defaults apply otherwise — same as
     # VllmInfer's mm_kwargs.
     if k.limit_mm_per_prompt is not None:

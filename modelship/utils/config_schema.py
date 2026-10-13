@@ -90,6 +90,7 @@ class VllmEngineConfig(_StrictModel):
     enable_reasoning: bool | None = None
     reasoning_parser: str | None = None
     chat_template_content_format: ChatTemplateContentFormatOption = "auto"
+    default_chat_template_kwargs: dict[str, Any] | None = None
     enforce_eager: bool | None = None
     enable_prefix_caching: bool | None = None
     max_num_batched_tokens: int | None = None
@@ -228,9 +229,6 @@ class ModelshipModelConfig(_StrictModel):
     llama_server_config: LlamaServerConfig | None = None
     stable_diffusion_cpp_config: StableDiffusionCppConfig | None = None
     whispercpp_config: WhispercppConfig | None = None
-    # Forwarded into the chat-template Jinja render on every text loader; only
-    # does something if the model's template branches on the key.
-    chat_template_kwargs: dict[str, Any] = Field(default_factory=dict)
 
     # Checked by `resolve_all_model_sources`, downloaded into
     # `_resolved_path` by `BaseInfer.ensure_downloaded`.

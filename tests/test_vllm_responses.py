@@ -40,7 +40,6 @@ def _make_infer() -> VllmInfer:
     infer._caps = VllmCapabilities(supports_image=False, supports_audio=False)
     infer.model_config = MagicMock()
     infer.model_config.name = "m"
-    infer.model_config.chat_template_kwargs = {}
     infer.openai_serving_render = MagicMock()
     infer._tokenizer = MagicMock()
     infer.engine = MagicMock()

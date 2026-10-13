@@ -129,6 +129,21 @@ class TestRenderer:
         assert built["enable_auto_tools"] is True
 
     @pytest.mark.asyncio
+    async def test_the_config_kwargs_go_over_the_detected_template_defaults(self, built, monkeypatch):
+        monkeypatch.setattr(
+            vllm_infer,
+            "detect_template_toggle_defaults",
+            lambda template, tokenizer: {"enable_thinking": True, "clear_thinking": True},
+        )
+        infer = _started_infer(["generate"])
+        infer.vllm_engine_kwargs = VllmEngineConfig(default_chat_template_kwargs={"enable_thinking": False})
+
+        await infer.init_serving_chat()
+
+        assert built["default_chat_template_kwargs"] == {"enable_thinking": False, "clear_thinking": True}
+        assert infer.vllm_engine_kwargs.default_chat_template_kwargs == {"enable_thinking": False}
+
+    @pytest.mark.asyncio
     async def test_not_built_without_the_generate_task(self, built):
         infer = _started_infer(["embed"])
 

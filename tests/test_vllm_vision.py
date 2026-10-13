@@ -81,7 +81,7 @@ def _make_infer(*, supports_image: bool, monkeypatch: pytest.MonkeyPatch) -> Vll
     """
     infer = VllmInfer.__new__(VllmInfer)
     infer._caps = VllmCapabilities(supports_image=supports_image)  # type: ignore[attr-defined]
-    infer.model_config = MagicMock(chat_template_kwargs={})
+    infer.model_config = MagicMock()
     infer.openai_serving_render = MagicMock()
     infer._tokenizer = MagicMock()
     infer._create_chat_completion_stream = MagicMock(return_value=MagicMock())
@@ -132,17 +132,3 @@ async def test_text_only_request_reaches_streaming_path_on_vlm(monkeypatch: pyte
     await infer.create_chat_completion(request, raw_request=MagicMock(identity=None))
 
     infer._create_chat_completion_stream.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_model_chat_template_kwargs_merged_into_vllm_request(monkeypatch: pytest.MonkeyPatch):
-    """The model's chat_template_kwargs default reaches the vLLM request built
-    for the streaming path."""
-    infer = _make_infer(supports_image=False, monkeypatch=monkeypatch)
-    infer.model_config.chat_template_kwargs = {"enable_thinking": False}
-    request = ChatCompletionRequest(model="llm", messages=[{"role": "user", "content": "hi"}], stream=True)
-
-    await infer.create_chat_completion(request, raw_request=MagicMock(identity=None))
-
-    prepared = infer._create_chat_completion_stream.call_args.args[1]
-    assert prepared.vllm_request.chat_template_kwargs == {"enable_thinking": False}

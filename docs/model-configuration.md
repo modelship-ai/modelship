@@ -89,7 +89,7 @@ mship start --model lmstudio-community/Qwen3-8B-GGUF:'*Q4_K_M.gguf' \
              --llama-server-config.parallel 4
 ```
 
-So `--vllm-engine-kwargs.max-model-len 8192` is `vllm_engine_kwargs: {max_model_len: 8192}`, `--autoscaling-config.max-replicas 3` is `autoscaling_config: {max_replicas: 3}`, and so on for `diffusers_config`, `stable_diffusion_cpp_config` and `whispercpp_config`. `chat_template_kwargs` is free-form, so it takes one whole map. `mship deploy --help` lists every flag with its type and default.
+So `--vllm-engine-kwargs.max-model-len 8192` is `vllm_engine_kwargs: {max_model_len: 8192}`, `--autoscaling-config.max-replicas 3` is `autoscaling_config: {max_replicas: 3}`, and so on for `diffusers_config`, `stable_diffusion_cpp_config` and `whispercpp_config`. `mship deploy --help` lists every flag with its type and default.
 
 Values are read as YAML: the same text you would write after the colon in the file.
 
@@ -100,7 +100,7 @@ Values are read as YAML: the same text you would write after the colon in the fi
 | `--vllm-engine-kwargs.limit-mm-per-prompt '{image: 2}'` | a map |
 | `--llama-server-config.tensor-split '[3, 1]'` | a list |
 | `--llama-server-config.threads null` | `null` — an explicit value, not "left unset" |
-| `--chat-template-kwargs '{enable_thinking: false}'` | a map |
+| `--vllm-engine-kwargs.default-chat-template-kwargs '{enable_thinking: false}'` | a map |
 
 That includes YAML's own quirks: bare `on`, `off`, `yes` and `no` are booleans, so quote them — `--llama-server-config.chat-template '"on"'` — when the string is what you mean.
 
@@ -228,7 +228,6 @@ If it's unset (the default), or a request doesn't carry the header, the caller l
 | `llama_server_config` | object | llama-server loader options (see [llama_server Loader](#llama_server-loader)) |
 | `stable_diffusion_cpp_config` | object | stable-diffusion.cpp loader options (see [stable-diffusion.cpp Loader](#stable-diffusioncpp-loader)) |
 | `whispercpp_config` | object | whisper.cpp loader options (see [whispercpp Loader](#whispercpp-loader)) |
-| `chat_template_kwargs` | object | Extra variables forwarded into the chat-template render — `vllm` only. E.g. `enable_thinking: false` for Qwen3. Only has an effect if the model's template branches on the key. A per-request `chat_template_kwargs` overrides the model default |
 
 `sherpa_onnx` has no `sherpa_onnx_config`: `provider` is always `cpu` and thread count is derived from `num_cpus`, neither user-supplied.
 
@@ -313,6 +312,7 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 | `tool_call_parser` | string | — | e.g. `llama3_json`, `hermes` |
 | `enable_reasoning` | bool | — | `false` turns reasoning parsing off |
 | `reasoning_parser` | string | — | e.g. `qwen3`, `deepseek_r1` |
+| `default_chat_template_kwargs` | dict | — | Default variables for the chat template, e.g. `{"enable_thinking": false}` for Qwen3. Only the keys the template reads have an effect |
 | `enforce_eager` | bool | — | Disable CUDA graph capture |
 | `kv_cache_dtype` | string | — | e.g. `fp8` |
 | `enable_prefix_caching` | bool | vLLM default: on | Disable to turn off vLLM's automatic prefix caching entirely. Not usually needed — every request is already cache-salted per caller identity (see [Identity-scoped prefix caching](architecture.md#identity-scoped-vllm-prefix-caching)); this is for an operator who wants caching off regardless of identity |
@@ -328,6 +328,8 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 The tool parser is the vLLM parser that reads a tool call as the model's chat template writes it. The reasoning parser is the vLLM parser named in the model's `config.json`; a model with `<think>` markers and no such name gets `deepseek_r1`. The startup log names the parser picked. `tool_call_parser` and `reasoning_parser` name one instead; `enable_auto_tool_choice: false` and `enable_reasoning: false` switch one off.
 
 On a model that reasons, `response_format` and a forced `tool_choice` (`required` or a named function) take effect once the reasoning ends: the answer arrives in `content` or `tool_calls` with the reasoning beside it, and `max_tokens` covers both.
+
+On a template with an `enable_thinking` variable, a request's `reasoning_effort` (`reasoning.effort` on `/v1/responses`) sets it: `none` turns thinking off, any other value turns it on. That overrides `default_chat_template_kwargs`, and a request's own `chat_template_kwargs` overrides both.
 
 ### CPU (no GPU required)
 
