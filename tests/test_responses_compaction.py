@@ -16,10 +16,11 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from ray.exceptions import RayTaskError
 
 from modelship.openai import compaction_crypto
 from modelship.openai.api import ModelshipAPI
-from modelship.openai.protocol import ChatCompletionResponse, UsageInfo
+from modelship.openai.protocol import ChatCompletionResponse, UsageInfo, create_error_response
 from modelship.openai.protocol.chat import ChatCompletionResponseChoice, ChatMessage
 from modelship.openai.protocol.responses.schemas import CompactionItem, CompactRequest, CompactResource, ResponseUsage
 from modelship.openai.utils.responses import build_compaction, build_summarization_request
@@ -204,6 +205,10 @@ class TestBuildSummarizationRequest:
         chat = build_summarization_request("m", [{"role": "user", "content": "hi"}], None)
         assert len(chat.messages) == 2
 
+    def test_asks_for_no_reasoning(self):
+        chat = build_summarization_request("m", [{"role": "user", "content": "hi"}])
+        assert chat.reasoning_effort == "none"
+
     def test_bad_item_shape_raises(self):
         from modelship.openai.protocol.responses import UnsupportedResponsesFeatureError
 
@@ -241,9 +246,25 @@ def _chat_response_gen(text="a compact summary"):
     return gen()
 
 
-def _wire(api, gen):
+def _raising_gen(cause):
+    async def gen():
+        if False:
+            yield  # pragma: no cover
+        raise RayTaskError(function_name="fn", traceback_str="tb", cause=cause)
+
+    return gen()
+
+
+def _error_gen(status_code):
+    async def gen():
+        yield create_error_response("rejected", status_code=status_code)
+
+    return gen()
+
+
+def _wire(api, *gens):
     handle = MagicMock()
-    handle.generate.options.return_value.remote.return_value = gen
+    handle.generate.options.return_value.remote.side_effect = gens
     api.models = {"m": {"m-a1b2c": handle}}
     return handle
 
@@ -318,19 +339,8 @@ class TestCompactResponseRoute:
 
     @pytest.mark.asyncio
     async def test_summarization_raytaskerror_maps_to_400_not_500(self, api):
-        from ray.exceptions import RayTaskError
-
         cause = ValueError("context overflow during summarization")
-        err = RayTaskError(function_name="fn", traceback_str="tb", cause=cause)
-
-        async def gen():
-            if False:
-                yield  # pragma: no cover
-            raise err
-
-        handle = MagicMock()
-        handle.generate.options.return_value.remote.return_value = gen()
-        api.models = {"m": {"m-a1b2c": handle}}
+        _wire(api, _raising_gen(cause), _raising_gen(cause))
 
         request = CompactRequest(model="m", input="hi")
         result = await api.compact_response(request, _raw_request())
@@ -338,6 +348,29 @@ class TestCompactResponseRoute:
         assert result.status_code == 400
         body = json.loads(bytes(result.body))
         assert body["error"]["type"] == "invalid_request_error"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "rejection", [lambda: _raising_gen(ValueError("rejected")), lambda: _error_gen(400)], ids=["raised", "returned"]
+    )
+    async def test_a_400_is_retried_without_the_effort(self, api, rejection):
+        handle = _wire(api, rejection(), _chat_response_gen(text="the gist"))
+
+        result = await api.compact_response(CompactRequest(model="m", input="hi"), _raw_request())
+
+        calls = handle.generate.options.return_value.remote.call_args_list
+        assert [call.args[0].reasoning_effort for call in calls] == ["none", None]
+        item = json.loads(bytes(result.body))["output"][0]
+        assert compaction_crypto.decrypt_items(item["encrypted_content"])[0]["content"] == "the gist"
+
+    @pytest.mark.asyncio
+    async def test_a_500_is_not_retried(self, api):
+        handle = _wire(api, _error_gen(500), _chat_response_gen())
+
+        result = await api.compact_response(CompactRequest(model="m", input="hi"), _raw_request())
+
+        assert result.status_code == 500
+        assert handle.generate.options.return_value.remote.call_count == 1
 
     @pytest.mark.asyncio
     async def test_does_not_persist_a_snapshot(self, api):

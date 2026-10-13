@@ -1013,13 +1013,13 @@ class ModelshipAPI:
                 REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
                 return _error_response(create_error_response(str(e), err_type="invalid_request_error"))
 
-            response_gen = handle.generate.options(stream=True).remote(
-                chat_request, headers, watcher.registry, req_id, identity
-            )
-            first = await self._await_first(response_gen, model, endpoint)
-            if isinstance(first, JSONResponse):
-                return first
-            if isinstance(first, ErrorResponse):
+            async def _summarize(chat_request: ChatCompletionRequest):
+                response_gen = handle.generate.options(stream=True).remote(
+                    chat_request, headers, watcher.registry, req_id, identity
+                )
+                first = await self._await_first(response_gen, model, endpoint)
+                if not isinstance(first, ErrorResponse):
+                    return first
                 REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "inference_error"})
                 REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
                 logger.info(
@@ -1032,6 +1032,12 @@ class ModelshipAPI:
                     first.error.message,
                 )
                 return _error_response(first)
+
+            first = await _summarize(chat_request)
+            if isinstance(first, JSONResponse) and first.status_code == HTTPStatus.BAD_REQUEST:
+                first = await _summarize(chat_request.model_copy(update={"reasoning_effort": None}))
+            if isinstance(first, JSONResponse):
+                return first
 
             assert isinstance(first, ChatCompletionResponse)
             summary_text = first.choices[0].message.content or ""

@@ -123,7 +123,7 @@ def build_summarization_request(model: str, items: list[Any], instructions: str 
     messages.insert(0, {"role": "system", "content": _COMPACTION_SYSTEM_PROMPT})
     if instructions:
         messages.insert(1, {"role": "system", "content": instructions})
-    return ChatCompletionRequest(model=model, messages=messages, stream=False)
+    return ChatCompletionRequest(model=model, messages=messages, stream=False, reasoning_effort="none")
 
 
 def build_compaction(*, summary_items: list[Any], usage: UsageInfo) -> CompactResource:
