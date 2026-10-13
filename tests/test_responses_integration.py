@@ -60,6 +60,7 @@ class TestResponsesLlamaServer:
         )
         assert resp.status in {"completed", "incomplete"}
         assert resp.output_text.strip()
+        assert 0 < resp.usage.output_tokens_details.reasoning_tokens < resp.usage.output_tokens
 
     def test_streaming_response_through_llama_server(self, client):
         stream = client.responses.create(
@@ -78,6 +79,7 @@ class TestResponsesLlamaServer:
         assert "".join(text_deltas).strip()
         assert completed is not None
         assert completed.status in {"completed", "incomplete"}
+        assert 0 < completed.usage.output_tokens_details.reasoning_tokens < completed.usage.output_tokens
 
 
 # Responses tools use the *flattened* function shape (name/parameters at the

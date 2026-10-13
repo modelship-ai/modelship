@@ -152,6 +152,8 @@ class TestChatLlamaServer:
         assert "</think>" not in (message.get("content") or "")
         assert "<think>" not in message["reasoning"]
         assert "</think>" not in message["reasoning"]
+        usage = response.json()["usage"]
+        assert 0 < usage["completion_tokens_details"]["reasoning_tokens"] < usage["completion_tokens"]
 
     def test_reasoning_streaming_llama_server(self):
         """Streaming: at least one delta carries `reasoning`; concatenated
@@ -164,6 +166,7 @@ class TestChatLlamaServer:
                 "messages": [{"role": "user", "content": "Briefly: what is 7 times 8?"}],
                 "max_tokens": 1024,
                 "stream": True,
+                "stream_options": {"include_usage": True},
             },
             timeout=300,
         ) as response:
@@ -171,6 +174,7 @@ class TestChatLlamaServer:
             reasoning_parts: list[str] = []
             content_parts: list[str] = []
             reasoning_deltas = 0
+            usage = None
             for line in response.iter_lines():
                 if not line.startswith("data: "):
                     continue
@@ -178,6 +182,10 @@ class TestChatLlamaServer:
                 if payload == "[DONE]":
                     break
                 chunk = json.loads(payload)
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
+                if not chunk["choices"]:
+                    continue
                 delta = chunk["choices"][0].get("delta") or {}
                 if delta.get("reasoning"):
                     reasoning_parts.append(delta["reasoning"])
@@ -191,6 +199,8 @@ class TestChatLlamaServer:
         assert "</think>" not in "".join(reasoning_parts)
         assert "<think>" not in "".join(content_parts)
         assert "</think>" not in "".join(content_parts)
+        assert usage is not None
+        assert 0 < usage["completion_tokens_details"]["reasoning_tokens"] < usage["completion_tokens"]
 
     def test_reasoning_with_tools_llama_server(self, client):
         """Reasoning + tool calling in one round-trip: llama-server populates both
