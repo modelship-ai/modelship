@@ -44,7 +44,7 @@ def _make_infer() -> VllmInfer:
     infer._tokenizer = MagicMock()
     infer.engine = MagicMock()
     infer._enable_auto_tools = True
-    infer._prompt_endings = []
+    infer._prompt_endings = None
     return infer
 
 

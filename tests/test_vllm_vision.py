@@ -84,7 +84,7 @@ def _make_infer(*, supports_image: bool, monkeypatch: pytest.MonkeyPatch) -> Vll
     infer.model_config = MagicMock()
     infer.openai_serving_render = MagicMock()
     infer._tokenizer = MagicMock()
-    infer._prompt_endings = []
+    infer._prompt_endings = None
     infer._create_chat_completion_stream = MagicMock(return_value=MagicMock())
     monkeypatch.setattr(
         "modelship.infer.vllm.engine_ops.render_and_params",

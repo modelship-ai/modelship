@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest as VllmChatCompletionRequest
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, VllmEngineConfig
 from modelship.infer.vllm import vllm_infer
@@ -113,14 +114,9 @@ class TestRenderer:
 
         def renderer(**kwargs: Any) -> Any:
             built.update(kwargs)
-            return SimpleNamespace(renderer=SimpleNamespace(tokenizer=SimpleNamespace(decode=str)))
-
-        async def learn_prompt_endings(render: Any, tokenizer: Any, toggles: Any) -> list[list[int]]:
-            built["toggles"] = list(toggles)
-            return [[7, 8]]
+            return SimpleNamespace(renderer=SimpleNamespace(tokenizer=object()))
 
         monkeypatch.setattr(vllm_infer, "VllmOnlineRenderer", renderer)
-        monkeypatch.setattr(vllm_infer.engine_ops, "learn_prompt_endings", learn_prompt_endings)
         return built
 
     @pytest.mark.asyncio
@@ -149,26 +145,21 @@ class TestRenderer:
         assert infer.vllm_engine_kwargs.default_chat_template_kwargs == {"enable_thinking": False}
 
     @pytest.mark.asyncio
-    async def test_prompt_endings_are_learned_for_the_detected_toggles(self, built, monkeypatch):
-        monkeypatch.setattr(
-            vllm_infer, "detect_template_toggle_defaults", lambda template, tokenizer: {"enable_thinking": True}
-        )
+    async def test_prompt_endings_are_kept_for_a_reasoning_parser(self, built):
         infer = _started_infer(["generate"])
 
         await infer.init_serving_chat()
 
-        assert built["toggles"] == ["enable_thinking"]
-        assert infer._prompt_endings == [[7, 8]]
+        assert infer._prompt_endings == {}
 
     @pytest.mark.asyncio
-    async def test_no_prompt_endings_are_learned_without_a_reasoning_parser(self, built):
+    async def test_no_prompt_endings_are_kept_without_a_reasoning_parser(self, built):
         infer = _started_infer(["generate"])
         infer._chat_parsers = _ChatParsers(_PLAIN_TEMPLATE, "hermes", None)
 
         await infer.init_serving_chat()
 
-        assert "toggles" not in built
-        assert infer._prompt_endings == []
+        assert infer._prompt_endings is None
 
     @pytest.mark.asyncio
     async def test_not_built_without_the_generate_task(self, built):
@@ -178,3 +169,67 @@ class TestRenderer:
 
         assert built == {}
         assert not hasattr(infer, "openai_serving_render")
+
+
+def _request(reasoning: str | None = "r", **overrides: Any) -> VllmChatCompletionRequest:
+    assistant: dict[str, Any] = {"role": "assistant", "content": "a"}
+    if reasoning is not None:
+        assistant["reasoning"] = reasoning
+    messages = [{"role": "user", "content": "hi"}, assistant, {"role": "user", "content": "go on"}]
+    return VllmChatCompletionRequest(model="m", messages=messages, **overrides)
+
+
+class TestPromptEndingPerRequest:
+    @pytest.fixture
+    def learned(self, monkeypatch) -> list[Any]:
+        learned: list[Any] = []
+
+        async def render_and_params(render: Any, vllm_req: Any) -> Any:
+            return SimpleNamespace(), SimpleNamespace()
+
+        async def learn_prompt_ending(render: Any, tokenizer: Any, vllm_req: Any) -> list[int]:
+            learned.append(vllm_req.chat_template_kwargs)
+            return [7, 8]
+
+        monkeypatch.setattr(vllm_infer.engine_ops, "render_and_params", render_and_params)
+        monkeypatch.setattr(vllm_infer.engine_ops, "learn_prompt_ending", learn_prompt_ending)
+        monkeypatch.setattr(vllm_infer.engine_ops, "extract_prompt_token_ids", lambda render, engine_input: [1, 7, 8])
+        return learned
+
+    def _infer(self, prompt_endings: dict[str, list[int] | None] | None) -> VllmInfer:
+        infer = object.__new__(VllmInfer)
+        infer.openai_serving_render = SimpleNamespace()
+        infer._tokenizer = SimpleNamespace()
+        infer._prompt_endings = prompt_endings
+        return infer
+
+    @pytest.mark.asyncio
+    async def test_a_prompt_ending_is_learned_once_per_template_kwargs(self, learned):
+        infer = self._infer({})
+
+        endings = [
+            (await infer._render_bundle(_request(chat_template_kwargs=kwargs))).prompt_ending
+            for kwargs in ({"enable_thinking": True}, {"enable_thinking": True}, {"enable_thinking": False})
+        ]
+
+        assert endings == [[7, 8]] * 3
+        assert learned == [{"enable_thinking": True}, {"enable_thinking": False}]
+
+    @pytest.mark.asyncio
+    async def test_no_prompt_ending_without_reasoning_or_a_reasoning_parser(self, learned):
+        without_reasoning = await self._infer({})._render_bundle(_request(reasoning=None))
+        without_parser = await self._infer(None)._render_bundle(_request())
+
+        assert without_reasoning.prompt_ending is None
+        assert without_parser.prompt_ending is None
+        assert learned == []
+
+    @pytest.mark.asyncio
+    async def test_the_oldest_prompt_ending_is_dropped_past_64_template_kwargs(self, learned):
+        infer = self._infer({})
+
+        for i in [*range(65), 0]:
+            await infer._render_bundle(_request(chat_template_kwargs={"i": i}))
+
+        assert infer._prompt_endings is not None and len(infer._prompt_endings) == 64
+        assert learned.count({"i": 0}) == 2

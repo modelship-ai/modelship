@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import os
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
@@ -558,7 +559,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return
         template = self._chat_parsers.template
         default_chat_template_kwargs = dict(self.vllm_engine_kwargs.default_chat_template_kwargs or {})
-        defaults: dict[str, bool] = {}
 
         # A reasoning parser reads chat_template_kwargs["enable_thinking"] (and
         # similar toggles) and defaults them True when absent, but a template may
@@ -595,16 +595,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         tokenizer = self.openai_serving_render.renderer.tokenizer
         assert tokenizer is not None, "vllm renderer has no tokenizer (skip_tokenizer_init=True is unsupported here)"
         self._tokenizer: VllmTokenizerLike = tokenizer
-        self._prompt_endings: list[list[int]] = []
-        if self._chat_parsers.reasoning_parser is not None:
-            self._prompt_endings = await engine_ops.learn_prompt_endings(
-                self.openai_serving_render, tokenizer, defaults
-            )
-            logger.info(
-                "Prompt endings for '%s': %s",
-                self.model_config.name,
-                [tokenizer.decode(ending) for ending in self._prompt_endings],
-            )
+        self._prompt_endings: dict[str, list[int] | None] | None = (
+            {} if self._chat_parsers.reasoning_parser is not None else None
+        )
 
     def _make_parsers(self, vllm_request: VllmChatCompletionRequest, n: int) -> list[VllmParser | None]:
         """One stateful parser instance per choice — the streaming path (see `engine_ops.make_parsers`)."""
@@ -627,9 +620,18 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             logger.info("Validation error rendering chat request: %s", result.error.message)
             return _to_error_response(result)
         engine_input, sampling_params = result
-        prompt_ending = engine_ops.match_prompt_ending(
-            self.openai_serving_render, vllm_request, engine_input, self._prompt_endings
-        )
+        prompt_ending = None
+        if self._prompt_endings is not None and engine_ops.carries_reasoning(vllm_request):
+            key = json.dumps([vllm_request.chat_template_kwargs, vllm_request.reasoning_effort], sort_keys=True)
+            if key not in self._prompt_endings:
+                if len(self._prompt_endings) >= 64:
+                    del self._prompt_endings[next(iter(self._prompt_endings))]
+                self._prompt_endings[key] = await engine_ops.learn_prompt_ending(
+                    self.openai_serving_render, self._tokenizer, vllm_request
+                )
+            prompt_ending = engine_ops.match_prompt_ending(
+                self.openai_serving_render, engine_input, self._prompt_endings[key]
+            )
         return _VllmPrepared(vllm_request, engine_input, sampling_params, prompt_ending)
 
     async def init_serving_embedding(self) -> VllmServingEmbedding | None:
