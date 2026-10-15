@@ -237,13 +237,13 @@ async def resolve_previous(store: StateStore, identity: str, previous_response_i
         if record["response"].get("status") in ("queued", "in_progress"):
             # No output yet to continue from.
             raise _previous_in_progress_error(previous_response_id)
-        history = await responses_state.history_async(store, identity, record)
+        resolved = await responses_state.history_async(store, identity, record)
     except StateStoreUnavailableError:
         logger.exception("State store unavailable resolving previous_response_id=%s", previous_response_id)
         raise _store_unavailable_error() from None
-    if history is None:
+    if resolved is None:
         raise _not_found_error(previous_response_id, previous=True)
-    return history, {"log": record["log"], "depth": record["depth"]}
+    return resolved
 
 
 async def persist_response(
