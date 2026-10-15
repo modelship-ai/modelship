@@ -222,6 +222,34 @@ class TestSubprocessLifecycle:
             infer.shutdown()
 
     @pytest.mark.asyncio
+    async def test_reasoning_budget_flags_at_defaults(self, tmp_path, monkeypatch):
+        binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
+
+        infer = LlamaServerInfer(_make_config())
+        await infer.start()
+        try:
+            args = list(infer._proc.args)
+            assert "--reasoning-budget" not in args
+            assert "--reasoning-budget-message" not in args
+        finally:
+            infer.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_reasoning_budget_flags_appear_when_set(self, tmp_path, monkeypatch):
+        binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
+
+        infer = LlamaServerInfer(_make_config(reasoning_budget=0, reasoning_budget_message="Time is up."))
+        await infer.start()
+        try:
+            args = list(infer._proc.args)
+            assert args[args.index("--reasoning-budget") + 1] == "0"
+            assert args[args.index("--reasoning-budget-message") + 1] == "Time is up."
+        finally:
+            infer.shutdown()
+
+    @pytest.mark.asyncio
     async def test_immediate_crash_retries_then_raises(self, tmp_path, monkeypatch):
         binary = _write_fake_executable(tmp_path, _FAKE_CRASHING_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
@@ -280,8 +308,8 @@ class TestSubprocessLifecycle:
 # ---------------------------------------------------------------------------
 
 
-def _infer_with_client(handler) -> LlamaServerInfer:
-    infer = LlamaServerInfer(_make_config())
+def _infer_with_client(handler, **llama_server_kwargs) -> LlamaServerInfer:
+    infer = LlamaServerInfer(_make_config(**llama_server_kwargs))
     infer._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://test")
     return infer
 
@@ -449,6 +477,38 @@ class TestNonStreamingProjection:
 
         assert "logprobs" not in captured["payload"]
         assert "top_logprobs" not in captured["payload"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("budget", "requested", "expected"),
+        [
+            (None, {"thinking_budget_tokens": 900}, {"thinking_budget_tokens": 900}),
+            (400, {}, {}),
+            (400, {"thinking_budget_tokens": 100}, {"thinking_budget_tokens": 100}),
+            (
+                400,
+                {"thinking_budget_tokens": 900, "reasoning_budget_tokens": 5000.0},
+                {"thinking_budget_tokens": 400, "reasoning_budget_tokens": 400},
+            ),
+            (400, {"reasoning_budget_tokens": -1}, {"reasoning_budget_tokens": -1}),
+        ],
+    )
+    async def test_the_reasoning_budget_caps_a_requests_budget(self, budget, requested, expected):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["payload"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={"choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}}], "usage": {}},
+            )
+
+        infer = _infer_with_client(handler, reasoning_budget=budget)
+        await infer.create_chat_completion(_request(**requested), RawRequestProxy(None, {}))
+
+        payload = captured["payload"]
+        sent = {k: payload[k] for k in ("thinking_budget_tokens", "reasoning_budget_tokens") if k in payload}
+        assert sent == expected
 
     @pytest.mark.asyncio
     async def test_rejects_unsupported_image_content(self):

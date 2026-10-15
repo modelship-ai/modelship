@@ -159,6 +159,8 @@ class LlamaServerConfig(_StrictModel):
     cache_type_v: Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"
     # Proportional split across GPUs for offloading (`-ts`); None splits evenly.
     tensor_split: list[float] | None = Field(default=None, min_length=1)
+    reasoning_budget: int | None = Field(default=None, ge=0)
+    reasoning_budget_message: str | None = Field(default=None, min_length=1)
 
 
 class WhispercppConfig(_StrictModel):

@@ -220,6 +220,7 @@ class TestNestedFlags:
                 ("llama_server_config", "tensor_split"),
                 [3.0, 1.0],
             ),
+            ("--llama-server-config.reasoning-budget", "512", ("llama_server_config", "reasoning_budget"), 512),
             ("--diffusers-config.guidance-scale", "0.0", ("diffusers_config", "guidance_scale"), 0.0),
             (
                 "--vllm-engine-kwargs.default-chat-template-kwargs",

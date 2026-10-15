@@ -38,6 +38,8 @@ class TestLlamaServerConfig:
         assert config.cache_type_k == "f16"
         assert config.cache_type_v == "f16"
         assert config.tensor_split is None
+        assert config.reasoning_budget is None
+        assert config.reasoning_budget_message is None
 
     def test_custom_values(self):
         config = LlamaServerConfig(
@@ -55,6 +57,8 @@ class TestLlamaServerConfig:
             cache_type_k="q8_0",
             cache_type_v="q8_0",
             tensor_split=[3.0, 1.0],
+            reasoning_budget=512,
+            reasoning_budget_message="Time is up.",
         )
         assert config.n_ctx == 4096
         assert config.n_batch == 1024
@@ -70,6 +74,13 @@ class TestLlamaServerConfig:
         assert config.cache_type_k == "q8_0"
         assert config.cache_type_v == "q8_0"
         assert config.tensor_split == [3.0, 1.0]
+        assert config.reasoning_budget == 512
+        assert config.reasoning_budget_message == "Time is up."
+
+    @pytest.mark.parametrize("kwargs", [{"reasoning_budget": -1}, {"reasoning_budget_message": ""}])
+    def test_invalid_reasoning_budget_rejected(self, kwargs):
+        with pytest.raises(ValidationError):
+            LlamaServerConfig(**kwargs)
 
     def test_empty_tensor_split_rejected(self):
         with pytest.raises(ValidationError):

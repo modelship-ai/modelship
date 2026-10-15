@@ -467,6 +467,8 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 | `flash_attn` | `on`/`off`/`auto` | `auto` | Flash Attention use (`-fa`) |
 | `cache_type_k` / `cache_type_v` | string | `f16` | KV cache quantization (`-ctk`/`-ctv`); also `f32`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1` |
 | `tensor_split` | list[float] | `None` | Proportional offload split across GPUs (`-ts`). Preflight recommends an uneven split on heterogeneous cards |
+| `reasoning_budget` | int | `None` (llama-server default: unlimited) | Most tokens a model may spend thinking (`--reasoning-budget`); `0` skips thinking. The default and the ceiling for a request's own `thinking_budget_tokens` or `reasoning_budget_tokens` |
+| `reasoning_budget_message` | string | — | Text written before the end-of-thinking marker when the budget runs out (`--reasoning-budget-message`). A sentence there gives cleaner answers, as on [vLLM](#limiting-thinking) |
 
 Each slot keeps the prompt it last processed (`--cache-prompt`, always on), so a follow-up turn, or another chat with the same system prompt, only processes the new tokens. llama-server can also save a conversation to host RAM when an unrelated one takes its slot and restore it when it returns; `cache_ram_mib` caps that cache and defaults to `0` (off), because it grows after load, outside the memory `n_ctx` was sized against. Saved conversations take about as much RAM per token as the context itself. There is no persistent **on-disk** prompt cache; caching is in-memory only and doesn't survive a process restart, unlike modelship's disk cache for other loaders.
 
