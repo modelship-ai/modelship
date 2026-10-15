@@ -47,7 +47,7 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--no-preflight` | start, deploy | `MSHIP_PREFLIGHT` | enabled | Disable preflight hardware auto-sizing and its check that a model fits; models run on loader/library defaults plus explicit config. Useful for benchmarking |
 | `--trusted-identity-header` | start, deploy | `MSHIP_TRUSTED_IDENTITY_HEADER` | — | Header name (e.g. `X-Consumer-Id`) a fronting credentials layer sets with a caller identity it already resolved and authorized. See [Trusted identity header](#trusted-identity-header) |
 | `--max-request-body-bytes` | start, deploy | `MSHIP_MAX_REQUEST_BODY_BYTES` | `52428800` | Max request body size in bytes |
-| `--responses-ttl-s` | start, deploy | `MSHIP_RESPONSES_TTL_S` | `2592000` | TTL in seconds for stored `/v1/responses` conversation state; `<=0` disables expiry |
+| `--responses-ttl-s` | start, deploy | `MSHIP_RESPONSES_TTL_S` | `2592000` | TTL in seconds for stored `/v1/responses` conversation state, at least `86400` (24 hours); `<=0` disables expiry |
 | `--state-sweep-interval-s` | start | `MSHIP_STATE_SWEEP_INTERVAL_S` | `300` | Interval in seconds between expired-key sweeps in the in-memory state store |
 
 `mship deploy` waits up to 5 minutes for the head: a Ray node on this machine (or the dashboard at
@@ -730,7 +730,7 @@ Conversations are scoped to the caller's identity, so one caller can never read 
 
 | Variable | Description | Default |
 |---|---|---|
-| `MSHIP_RESPONSES_TTL_S` | How long a stored response can be fetched or continued from. A conversation's history lives until this long after its last turn. `0` disables expiry | `2592000` (30 days) |
+| `MSHIP_RESPONSES_TTL_S` | How long a stored response can be fetched or continued from. A conversation's history lives until this long after its last turn. Values under `86400` (24 hours) are raised to it; `0` disables expiry | `2592000` (30 days) |
 | `MSHIP_STATE_SWEEP_INTERVAL_S` | How often the `memory://` store reclaims expired keys. `0` disables sweeping | `300` |
 
 Sizing: each turn stores only its own input and output, so an *n*-turn conversation costs O(n) storage. A client that sends its whole history in `input` on every call, with no `previous_response_id`, stores it again each time; send `"store": false` if it doesn't need the stored copy. On the default `memory://` that all sits in one Ray actor's RAM for up to the TTL, so for sustained multi-user traffic lower `MSHIP_RESPONSES_TTL_S` or move to `redis://`.

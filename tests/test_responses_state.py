@@ -277,8 +277,12 @@ class TestTtl:
         assert responses_state.ttl_seconds() == 30 * 24 * 60 * 60
 
     def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "172800")
+        assert responses_state.ttl_seconds() == 172800
+
+    def test_under_a_day_is_raised_to_a_day(self, monkeypatch):
         monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "60")
-        assert responses_state.ttl_seconds() == 60
+        assert responses_state.ttl_seconds() == 86400
 
     def test_non_positive_disables_expiry(self, monkeypatch):
         monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "0")
@@ -290,13 +294,13 @@ class TestTtl:
 
     @pytest.mark.asyncio
     async def test_record_expires(self, monkeypatch):
-        monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "10")
+        monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "86400")
         clock = {"t": 1000.0}
         monkeypatch.setattr("time.time", lambda: clock["t"])
         store = _MemoryStore()
         await _write(store)
         assert await responses_state.read_async(store, "u1", "resp_1") is not None
-        clock["t"] = 1011.0
+        clock["t"] = 87401.0
         assert await responses_state.read_async(store, "u1", "resp_1") is None
 
 
@@ -308,8 +312,8 @@ async def _resolve(store, response_id):
 class TestRetention:
     @pytest.fixture
     def clock(self, monkeypatch):
-        monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "10")
-        clock = {"t": 1000.0}
+        monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "86400")
+        clock = {"t": 0.0}
         monkeypatch.setattr("time.time", lambda: clock["t"])
         return clock
 
@@ -319,19 +323,19 @@ class TestRetention:
         _, parent = await _resolve(store, "resp_a")
         await _write(store, response_id="resp_b1", parent=parent)
         await _write(store, response_id="resp_b2", parent=parent)
-        clock["t"] = 1002.0
+        clock["t"] = 5 * 3600.0
         _, parent = await _resolve(store, "resp_b2")
-        clock["t"] = 1005.0
+        clock["t"] = 12 * 3600.0
         await _write(store, response_id="resp_c", parent=parent)
-        clock["t"] = 1013.0
+        clock["t"] = 31 * 3600.0
         assert await _resolve(store, "resp_c") is not None
 
     @pytest.mark.asyncio
     async def test_the_parent_log_survives_the_childs_generation(self, store, clock):
         await _write(store, response_id="resp_a")
-        clock["t"] = 1008.0
+        clock["t"] = 19 * 3600.0
         _, parent = await _resolve(store, "resp_a")
-        clock["t"] = 1011.0
+        clock["t"] = 26 * 3600.0
         await _write(store, response_id="resp_b", parent=parent)
-        clock["t"] = 1012.0
+        clock["t"] = 29 * 3600.0
         assert await _resolve(store, "resp_b") is not None

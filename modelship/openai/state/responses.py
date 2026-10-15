@@ -67,7 +67,7 @@ def ttl_seconds() -> float | None:
     except ValueError:
         logger.warning("%s=%r is not a number; falling back to %ss.", _TTL_ENV, raw, _DEFAULT_TTL_S)
         return _DEFAULT_TTL_S
-    return ttl if ttl > 0 else None
+    return max(ttl, 24 * 60 * 60.0) if ttl > 0 else None
 
 
 def stale_seconds() -> float:
