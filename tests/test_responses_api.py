@@ -57,14 +57,24 @@ def _raw_request():
 
 
 def _stored(api, response_id: str = "resp_1", identity: str = "unscoped", output=None, input_items=None):
-    """Seed a stored snapshot the way a completed turn would have left it."""
+    """Seed a stored response the way a completed turn would have left it."""
+    api._state_store.append(
+        f"responses-log/{identity}/{response_id}",
+        1,
+        {"response_id": response_id, "input": input_items if input_items is not None else [], "output": output or []},
+    )
     api._state_store.set(
         f"responses/{identity}/{response_id}",
         {
-            "response": {"id": response_id, "object": "response", "status": "completed", "output": output or []},
-            "input_items": input_items if input_items is not None else [],
+            "response": {"id": response_id, "object": "response", "status": "completed", "output": []},
+            "log": response_id,
+            "depth": 1,
         },
     )
+
+
+def _without_ids(items: list[dict]) -> list[dict]:
+    return [{k: v for k, v in item.items() if k != "id"} for item in items]
 
 
 class TestResponsesRoute:
@@ -310,9 +320,10 @@ class TestPersistence:
 
         await api.create_response(request, _raw_request())
 
-        snap = api._state_store.get("responses/unscoped/resp_new")
-        assert snap["response"]["id"] == "resp_new"
-        assert snap["input_items"] == [{"type": "message", "role": "user", "content": "hi"}]
+        record = api._state_store.get("responses/unscoped/resp_new")
+        assert record["response"]["id"] == "resp_new"
+        [entry] = api._state_store.read_range(f"responses-log/unscoped/{record['log']}")
+        assert _without_ids(entry["input"]) == [{"type": "message", "role": "user", "content": "hi"}]
 
     @pytest.mark.asyncio
     async def test_store_defaults_to_true_when_unset(self, api):
@@ -329,7 +340,7 @@ class TestPersistence:
         assert api._state_store.get("responses/unscoped/resp_nostore") is None
 
     @pytest.mark.asyncio
-    async def test_stored_snapshot_accumulates_across_turns(self, api):
+    async def test_continued_turn_stores_only_its_own_input_after_its_parent(self, api):
         _stored(
             api,
             "resp_1",
@@ -341,18 +352,16 @@ class TestPersistence:
         request = ResponsesRequest(model="m", input="again", previous_response_id="resp_1")
         await api.create_response(request, _raw_request())
 
-        # Turn 2's snapshot embeds turn 1's, for O(1) reads.
-        snap = api._state_store.get("responses/unscoped/resp_2")
-        assert snap["input_items"] == [
-            {"type": "message", "role": "user", "content": "hi"},
-            {"type": "message", "role": "assistant", "content": "hi back"},
-            {"type": "message", "role": "user", "content": "again"},
-        ]
+        record = api._state_store.get("responses/unscoped/resp_2")
+        assert (record["log"], record["depth"]) == ("resp_1", 2)
+        entries = api._state_store.read_range("responses-log/unscoped/resp_1")
+        assert _without_ids(entries[1]["input"]) == [{"type": "message", "role": "user", "content": "again"}]
 
     @pytest.mark.asyncio
     async def test_non_streaming_store_failure_is_503(self, api):
         _wire(api, _response_gen())
         api._state_store = MagicMock()
+        api._state_store.append_async = AsyncMock(side_effect=StateStoreUnavailableError("down"))
         api._state_store.set_async = AsyncMock(side_effect=StateStoreUnavailableError("down"))
 
         result = await api.create_response(ResponsesRequest(model="m", input="hi"), _raw_request())
@@ -393,6 +402,7 @@ class TestPersistence:
 
         _wire(api, gen())
         api._state_store = MagicMock()
+        api._state_store.append_async = AsyncMock(side_effect=StateStoreUnavailableError("down"))
         api._state_store.set_async = AsyncMock(side_effect=StateStoreUnavailableError("down"))
 
         result = await api.create_response(ResponsesRequest(model="m", input="hi", stream=True), _raw_request())

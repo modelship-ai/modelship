@@ -93,24 +93,23 @@ def _raw_request():
     return raw
 
 
-def _stored(api, response_id="resp_1", identity="unscoped", status="completed", output=None):
-    api._state_store.set(
-        f"responses/{identity}/{response_id}",
-        {
-            "response": {"id": response_id, "object": "response", "status": status, "output": output or []},
-            "input_items": [],
-        },
+def _stored(api, response_id="resp_1", identity="unscoped", status="completed", output=None, background=False):
+    response = {"id": response_id, "object": "response", "status": status, "output": [], "background": background}
+    api._state_store.append(
+        f"responses-log/{identity}/{response_id}", 1, {"response_id": response_id, "input": [], "output": output or []}
     )
+    api._state_store.set(f"responses/{identity}/{response_id}", {"response": response, "log": response_id, "depth": 1})
 
 
 async def _stored_background(
     api, response_id="resp_1", identity="unscoped", status="in_progress", req_id="req-1", output=None
 ):
-    response = {"id": response_id, "object": "response", "status": status, "background": True, "output": output or []}
-    value = {"response": response, "input_items": []}
-    api._state_store.set(f"responses/{identity}/{response_id}", value)
-    if status in ("queued", "in_progress"):
-        await responses_state.heartbeat(identity, response_id, req_id)
+    if status not in ("queued", "in_progress"):
+        _stored(api, response_id, identity, status, output, background=True)
+        return
+    response = {"id": response_id, "object": "response", "status": status, "background": True, "output": []}
+    api._state_store.set(f"responses/{identity}/{response_id}", {"response": response, "parent": None, "input": []})
+    await responses_state.heartbeat(identity, response_id, req_id)
 
 
 def _wire(api, side_effect):
@@ -514,7 +513,7 @@ class TestOrphanDetection:
         calls = 0
 
         async def flaky_get_async(key):
-            # 1st call: get_response's own load_snapshot. 2nd: write_terminal_if_not_terminal's
+            # 1st call: get_response's own load_record. 2nd: write_terminal_if_not_terminal's
             # internal pre-write read. 3rd: reconcile_staleness's final read-back — fail there.
             nonlocal calls
             calls += 1
@@ -607,12 +606,13 @@ class TestBackgroundStream:
         response_id = "resp_1"
         await _stored_background(api, response_id, status="completed")
         key = f"responses-stream/unscoped/{response_id}"
-        await api._state_store.append_async(key, {"type": "response.created", "sequence_number": 0, "response": {}})
+        await api._state_store.append_async(key, 1, {"type": "response.created", "sequence_number": 0, "response": {}})
         await api._state_store.append_async(
-            key, {"type": "response.output_text.delta", "sequence_number": 1, "delta": "hi"}
+            key, 2, {"type": "response.output_text.delta", "sequence_number": 1, "delta": "hi"}
         )
         await api._state_store.append_async(
             key,
+            3,
             {
                 "type": "response.completed",
                 "sequence_number": 2,
@@ -653,7 +653,14 @@ class TestBackgroundStream:
             "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "hi"}]}],
             "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
         }
-        api._state_store.set("responses/unscoped/resp_done", {"response": response, "input_items": []})
+        api._state_store.append(
+            "responses-log/unscoped/resp_done",
+            1,
+            {"response_id": "resp_done", "input": [], "output": response["output"]},
+        )
+        api._state_store.set(
+            "responses/unscoped/resp_done", {"response": {**response, "output": []}, "log": "resp_done", "depth": 1}
+        )
 
         result = await api.get_response("resp_done", _raw_request(), stream=True)
         body = await _consume_body(result)
@@ -684,7 +691,7 @@ class TestBackgroundStream:
     async def test_get_stream_ends_cleanly_on_buffer_read_outage(self, api):
         await _stored_background(api, "resp_1", status="in_progress")
         with patch.object(
-            api._state_store, "read_from_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))
+            api._state_store, "read_range_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))
         ):
             result = await api.get_response("resp_1", _raw_request(), stream=True)
             body = await _consume_body(result)

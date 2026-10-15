@@ -172,7 +172,12 @@ class TestHeartbeatNeverTouchesTheSnapshot:
     async def test_heartbeat_after_a_terminal_write_leaves_the_snapshot_untouched(self, fake_registry):
         store = _MemoryStore()
         await responses_state.write_background(
-            store, "u1", "resp_1", response={"id": "resp_1", "status": "in_progress", "output": []}, input_items=[]
+            store,
+            "u1",
+            "resp_1",
+            response={"id": "resp_1", "status": "in_progress", "output": []},
+            parent=None,
+            input_items=[],
         )
         terminal = {"id": "resp_1", "status": "cancelled", "output": []}
         await responses_state.write_terminal_if_not_terminal(store, "u1", "resp_1", response=terminal)

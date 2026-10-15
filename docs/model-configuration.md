@@ -730,7 +730,7 @@ Conversations are scoped to the caller's identity, so one caller can never read 
 
 | Variable | Description | Default |
 |---|---|---|
-| `MSHIP_RESPONSES_TTL_S` | How long a stored conversation lives. Each turn rewrites a fresh TTL, so an active conversation stays alive while superseded snapshots age out. `0` disables expiry | `2592000` (30 days) |
+| `MSHIP_RESPONSES_TTL_S` | How long a stored response can be fetched or continued from. A conversation's history lives until this long after its last turn. `0` disables expiry | `2592000` (30 days) |
 | `MSHIP_STATE_SWEEP_INTERVAL_S` | How often the `memory://` store reclaims expired keys. `0` disables sweeping | `300` |
 
-Sizing: a snapshot holds the whole conversation as of that turn, so an *n*-turn conversation costs O(n²) storage total — the price of continuing in a single read. On the default `memory://` that all sits in one Ray actor's RAM for up to the TTL, so for sustained multi-user traffic lower `MSHIP_RESPONSES_TTL_S` or move to `redis://`.
+Sizing: each turn stores only its own input and output, so an *n*-turn conversation costs O(n) storage. A client that sends its whole history in `input` on every call, with no `previous_response_id`, stores it again each time; send `"store": false` if it doesn't need the stored copy. On the default `memory://` that all sits in one Ray actor's RAM for up to the TTL, so for sustained multi-user traffic lower `MSHIP_RESPONSES_TTL_S` or move to `redis://`.
