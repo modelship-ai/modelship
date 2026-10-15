@@ -395,7 +395,9 @@ class TestCancel:
         await _stored_background(api, "resp_1", status="in_progress")
 
         with (
-            patch.object(api._state_store, "set_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))),
+            patch.object(
+                api._state_store, "append_and_set_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))
+            ),
             pytest.raises(HTTPException) as exc,
         ):
             await api.cancel_response("resp_1", _raw_request())
@@ -496,7 +498,9 @@ class TestOrphanDetection:
         heartbeat_registry.expire("unscoped", "resp_stale")
 
         with (
-            patch.object(api._state_store, "set_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))),
+            patch.object(
+                api._state_store, "append_and_set_async", AsyncMock(side_effect=StateStoreUnavailableError("down"))
+            ),
             pytest.raises(HTTPException) as exc,
         ):
             await api.get_response("resp_stale", _raw_request())

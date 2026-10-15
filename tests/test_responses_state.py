@@ -5,6 +5,8 @@ Runs against every backend the store supports, so the layer is proven on the def
 memory:// and on the durable redis:// alike.
 """
 
+import asyncio
+
 import pytest
 
 from modelship.openai.state import responses as responses_state
@@ -121,6 +123,37 @@ class TestHistory:
         record = await responses_state.read_async(store, "u1", "resp_2", with_output=False)
         history = await responses_state.history_async(store, "u1", record)
         assert _without_ids(history) == [{"i": 1}, {"o": 1}, {"i": 2}, {"o": 2}]
+
+
+class TestTerminalRace:
+    @pytest.mark.parametrize("parent", [None, {"log": "resp_0", "depth": 1}])
+    @pytest.mark.asyncio
+    async def test_record_and_output_come_from_one_writer(self, store, monkeypatch, parent):
+        if parent is not None:
+            await _write(store, response_id="resp_0")
+        await responses_state.write_background(
+            store, "u1", "resp_1", response={**_response(output=[]), "status": "queued"}, parent=parent, input_items=[]
+        )
+        both_read = asyncio.Barrier(2)
+        get_async = store.get_async
+
+        async def get_after_both(key):
+            value = await get_async(key)
+            await both_read.wait()
+            return value
+
+        monkeypatch.setattr(store, "get_async", get_after_both)
+        cancelled = {**_response(output=[]), "status": "cancelled"}
+        completed = _response(output=[{"type": "message", "role": "assistant", "content": "done"}])
+        await asyncio.gather(
+            responses_state.write_terminal_if_not_terminal(store, "u1", "resp_1", response=cancelled),
+            responses_state.write_terminal_if_not_terminal(store, "u1", "resp_1", response=completed),
+        )
+        monkeypatch.undo()
+
+        record = await responses_state.read_async(store, "u1", "resp_1")
+        assert record is not None
+        assert record["response"] in (cancelled, completed)
 
 
 class TestMalformedRecord:

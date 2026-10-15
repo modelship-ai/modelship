@@ -92,6 +92,19 @@ class StateStore(ABC):
         Refused, returning ``False``, unless *position* is past the log's last entry."""
 
     @abstractmethod
+    async def append_and_set_async(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+    ) -> bool:
+        """``append_async``, also setting *key* to *value* in the same atomic step; neither is written if refused."""
+
+    @abstractmethod
     async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
         """Entries at *key* with *start* <= position <= *end* (no bound if ``None``), in order."""
 

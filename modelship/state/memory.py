@@ -136,6 +136,21 @@ class MemoryStoreActor(StateStore):
         self._maybe_sweep(now)
         return True
 
+    def append_and_set(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+    ) -> bool:
+        if not self.append(log_key, position, entry, ttl_seconds=ttl_seconds):
+            return False
+        self.set(key, value, ttl_seconds=ttl_seconds)
+        return True
+
     def read_range(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
         return copy.deepcopy(
             [
@@ -168,6 +183,18 @@ class MemoryStoreActor(StateStore):
         self, key: str, position: int, value: JsonValue, *, ttl_seconds: float | None = None
     ) -> bool:
         return self.append(key, position, value, ttl_seconds=ttl_seconds)
+
+    async def append_and_set_async(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+    ) -> bool:
+        return self.append_and_set(log_key, position, entry, key, value, ttl_seconds=ttl_seconds)
 
     async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
         return self.read_range(key, start=start, end=end)
@@ -253,6 +280,18 @@ class MemoryStateStore(StateStore):
         self, key: str, position: int, value: JsonValue, *, ttl_seconds: float | None = None
     ) -> bool:
         return await self._acall("append_async", key, position, value, ttl_seconds=ttl_seconds)
+
+    async def append_and_set_async(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+    ) -> bool:
+        return await self._acall("append_and_set_async", log_key, position, entry, key, value, ttl_seconds=ttl_seconds)
 
     async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
         return await self._acall("read_range_async", key, start=start, end=end)

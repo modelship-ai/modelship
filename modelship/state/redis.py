@@ -24,7 +24,7 @@ from typing import cast
 import redis
 import redis.asyncio as aioredis
 from redis.exceptions import ConnectionError as RedisConnectionError
-from redis.exceptions import ResponseError
+from redis.exceptions import ResponseError, WatchError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from modelship.logging import get_logger
@@ -157,6 +157,35 @@ class RedisStateStore(StateStore):
             if ttl_seconds is not None:
                 await self._async().pexpire(self._slug(key), cast(int, self._px(ttl_seconds)))
         return True
+
+    async def append_and_set_async(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+    ) -> bool:
+        log, px = self._slug(log_key), self._px(ttl_seconds)
+        with _mapped(f"redis xadd {log_key!r} and set {key!r}"):
+            async with self._async().pipeline() as pipe:
+                while True:
+                    try:
+                        await pipe.watch(log)
+                        top = await pipe.xrevrange(log, count=1)
+                        if top and int(cast(str, top[0][0]).split("-")[0]) >= position:
+                            return False
+                        pipe.multi()
+                        pipe.xadd(log, {"data": json.dumps(entry)}, id=f"{position}-0")
+                        if px is not None:
+                            pipe.pexpire(log, px)
+                        pipe.set(self._slug(key), json.dumps(value), px=px)
+                        await pipe.execute()
+                        return True
+                    except WatchError:
+                        continue
 
     async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
         with _mapped(f"redis xrange {key!r}"):

@@ -361,8 +361,7 @@ class TestPersistence:
     async def test_non_streaming_store_failure_is_503(self, api):
         _wire(api, _response_gen())
         api._state_store = MagicMock()
-        api._state_store.append_async = AsyncMock(side_effect=StateStoreUnavailableError("down"))
-        api._state_store.set_async = AsyncMock(side_effect=StateStoreUnavailableError("down"))
+        api._state_store.append_and_set_async = AsyncMock(side_effect=StateStoreUnavailableError("down"))
 
         result = await api.create_response(ResponsesRequest(model="m", input="hi"), _raw_request())
         assert result.status_code == 503
@@ -402,8 +401,7 @@ class TestPersistence:
 
         _wire(api, gen())
         api._state_store = MagicMock()
-        api._state_store.append_async = AsyncMock(side_effect=StateStoreUnavailableError("down"))
-        api._state_store.set_async = AsyncMock(side_effect=StateStoreUnavailableError("down"))
+        api._state_store.append_and_set_async = AsyncMock(side_effect=StateStoreUnavailableError("down"))
 
         result = await api.create_response(ResponsesRequest(model="m", input="hi", stream=True), _raw_request())
         body = "".join([chunk async for chunk in result.body_iterator])

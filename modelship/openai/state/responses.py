@@ -308,24 +308,31 @@ async def _store_turn(
     store: StateStore, identity: str, response_id: str, response: dict, parent: dict | None, input_items: list[dict]
 ) -> None:
     ttl = ttl_seconds()
+    key = _key(identity, response_id)
     entry = {"response_id": response_id, "input": input_items, "output": response.get("output") or []}
+    record = {"response": {**response, "output": []}}
     if parent is None:
-        await store.append_async(_log_key(identity, response_id), 1, entry, ttl_seconds=ttl)
-        position = {"log": response_id, "depth": 1}
-    else:
-        depth = parent["depth"] + 1
-        parent_log = _log_key(identity, parent["log"])
-        position = {"log": parent["log"], "depth": depth}
-        if not await store.append_async(parent_log, depth, entry, ttl_seconds=ttl):
-            taken = await store.read_range_async(parent_log, start=depth, end=depth)
-            if not (taken and isinstance(taken[0], dict) and taken[0].get("response_id") == response_id):
-                await _refresh(store, identity, parent["log"])
-                await store.append_async(
-                    _log_key(identity, response_id), depth, {**entry, "base": parent}, ttl_seconds=ttl
-                )
-                position = {"log": response_id, "depth": depth}
-    await store.set_async(
-        _key(identity, response_id), {"response": {**response, "output": []}, **position}, ttl_seconds=ttl
+        await store.append_and_set_async(
+            _log_key(identity, response_id), 1, entry, key, {**record, "log": response_id, "depth": 1}, ttl_seconds=ttl
+        )
+        return
+    depth = parent["depth"] + 1
+    parent_log = _log_key(identity, parent["log"])
+    if await store.append_and_set_async(
+        parent_log, depth, entry, key, {**record, "log": parent["log"], "depth": depth}, ttl_seconds=ttl
+    ):
+        return
+    taken = await store.read_range_async(parent_log, start=depth, end=depth)
+    if taken and isinstance(taken[0], dict) and taken[0].get("response_id") == response_id:
+        return
+    await _refresh(store, identity, parent["log"])
+    await store.append_and_set_async(
+        _log_key(identity, response_id),
+        depth,
+        {**entry, "base": parent},
+        key,
+        {**record, "log": response_id, "depth": depth},
+        ttl_seconds=ttl,
     )
 
 

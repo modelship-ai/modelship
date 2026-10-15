@@ -132,6 +132,21 @@ class _InstrumentedStateStore(StateStore):
     ) -> bool:
         return await self._arun("append", self._inner.append_async(key, position, value, ttl_seconds=ttl_seconds))
 
+    async def append_and_set_async(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+    ) -> bool:
+        return await self._arun(
+            "append_and_set",
+            self._inner.append_and_set_async(log_key, position, entry, key, value, ttl_seconds=ttl_seconds),
+        )
+
     async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
         return await self._arun("read_range", self._inner.read_range_async(key, start=start, end=end))
 
