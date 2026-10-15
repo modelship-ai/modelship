@@ -23,8 +23,6 @@ def _config(usecase: ModelUsecase = ModelUsecase.generate, **engine_kwargs: Any)
 
 
 class _FakeReasoningConfig:
-    """Stands in for vLLM's `ReasoningConfig`, whose `initialize_token_ids` needs a real tokenizer."""
-
     has_markers = True
 
     def __init__(self) -> None:

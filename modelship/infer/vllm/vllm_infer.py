@@ -608,8 +608,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         return self._make_parsers(vllm_request, n=1)[0]
 
     def _enable_thinking_budget(self, vllm_config: Any, reasoning_parser: str | None) -> int | None:
-        """Turn on vLLM's `reasoning_config`, the switch for a request's `thinking_token_budget`; return the
-        operator's budget when it can be enforced. vLLM reads the config once, at engine start."""
         cap = self.vllm_engine_kwargs.thinking_token_budget
         overrides = self.vllm_engine_kwargs.reasoning_config
         name = self.model_config.name
@@ -636,7 +634,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         return cap
 
     def _limit_thinking(self, vllm_request: VllmChatCompletionRequest) -> None:
-        """The operator's thinking budget is the default for a request without one and the ceiling for one with."""
         cap = self._thinking_budget_cap
         if cap is None:
             return

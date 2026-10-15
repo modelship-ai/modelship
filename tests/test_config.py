@@ -205,7 +205,8 @@ class TestModelshipModelConfig:
         [
             ({"thinking_token_budget": -1}, "greater than or equal to 0"),
             ({"reasoning_config": {"reasoning_end_str": ""}}, "at least 1 character"),
-            ({"reasoning_config": {"reasoning_parser": "qwen3"}}, "Extra inputs are not permitted"),
+            ({"reasoning_config": {"reasoning_parser": "qwen3"}}, "Set vllm_engine_kwargs.reasoning_parser instead"),
+            ({"reasoning_config": {"reasoning_end": "</think>"}}, "Extra inputs are not permitted"),
         ],
     )
     def test_thinking_limits_are_validated(self, engine_kwargs, match):

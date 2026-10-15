@@ -77,6 +77,16 @@ class ReasoningConfig(_StrictModel):
     reasoning_start_str: str | None = Field(default=None, min_length=1)
     reasoning_end_str: str | None = Field(default=None, min_length=1)
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_reasoning_parser(cls, data):
+        if isinstance(data, dict) and "reasoning_parser" in data:
+            raise ValueError(
+                "vllm_engine_kwargs.reasoning_config.reasoning_parser cannot be set: it's always the model's "
+                "reasoning parser. Set vllm_engine_kwargs.reasoning_parser instead."
+            )
+        return data
+
 
 class VllmEngineConfig(_StrictModel):
     tensor_parallel_size: int = 1
