@@ -301,7 +301,6 @@ class _VllmPrepared:
     vllm_request: VllmChatCompletionRequest
     engine_input: VllmEngineInput
     sampling_params: VllmSamplingParams
-    prompt_ending: list[int] | None
 
 
 @dataclass(frozen=True)
@@ -558,7 +557,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return
         template = self._chat_parsers.template
         default_chat_template_kwargs = dict(self.vllm_engine_kwargs.default_chat_template_kwargs or {})
-        defaults: dict[str, bool] = {}
 
         # A reasoning parser reads chat_template_kwargs["enable_thinking"] (and
         # similar toggles) and defaults them True when absent, but a template may
@@ -595,16 +593,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         tokenizer = self.openai_serving_render.renderer.tokenizer
         assert tokenizer is not None, "vllm renderer has no tokenizer (skip_tokenizer_init=True is unsupported here)"
         self._tokenizer: VllmTokenizerLike = tokenizer
-        self._prompt_endings: list[list[int]] = []
-        if self._chat_parsers.reasoning_parser is not None:
-            self._prompt_endings = await engine_ops.learn_prompt_endings(
-                self.openai_serving_render, tokenizer, defaults
-            )
-            logger.info(
-                "Prompt endings for '%s': %s",
-                self.model_config.name,
-                [tokenizer.decode(ending) for ending in self._prompt_endings],
-            )
 
     def _make_parsers(self, vllm_request: VllmChatCompletionRequest, n: int) -> list[VllmParser | None]:
         """One stateful parser instance per choice — the streaming path (see `engine_ops.make_parsers`)."""
@@ -627,10 +615,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             logger.info("Validation error rendering chat request: %s", result.error.message)
             return _to_error_response(result)
         engine_input, sampling_params = result
-        prompt_ending = engine_ops.match_prompt_ending(
-            self.openai_serving_render, vllm_request, engine_input, self._prompt_endings
-        )
-        return _VllmPrepared(vllm_request, engine_input, sampling_params, prompt_ending)
+        return _VllmPrepared(vllm_request, engine_input, sampling_params)
 
     async def init_serving_embedding(self) -> VllmServingEmbedding | None:
         return (
@@ -726,7 +711,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             enable_auto_tools=self._enable_auto_tools,
             want_logprobs=bool(request.logprobs),
             num_output_top_logprobs=request.top_logprobs,
-            prompt_ending=prepared.prompt_ending,
         )
         chunks = self.run_cancellable_stream(stream, raw_request)
         if logger.isEnabledFor(TRACE):
@@ -762,9 +746,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
 
         parser = self._make_parser(vllm_request)
         prompt_token_ids = engine_ops.extract_prompt_token_ids(self.openai_serving_render, engine_input)
-        reasoning_ended = engine_ops.derive_reasoning_ended(
-            vllm_request, parser, prompt_token_ids, prepared.prompt_ending
-        )
+        reasoning_ended = engine_ops.derive_reasoning_ended(vllm_request, parser, prompt_token_ids)
 
         request_id = f"chatcmpl-{base_request_id(raw_request)}"
         _trace_request(request_id, self.openai_serving_render, vllm_request, sampling_params)
@@ -867,9 +849,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
 
         parser = self._make_parser(vllm_request)
         prompt_token_ids = engine_ops.extract_prompt_token_ids(self.openai_serving_render, engine_input)
-        reasoning_ended = engine_ops.derive_reasoning_ended(
-            vllm_request, parser, prompt_token_ids, prepared.prompt_ending
-        )
+        reasoning_ended = engine_ops.derive_reasoning_ended(vllm_request, parser, prompt_token_ids)
 
         request_id = f"resp-{base_request_id(raw_request)}"
         _trace_request(request_id, self.openai_serving_render, vllm_request, sampling_params)
@@ -955,7 +935,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             enable_auto_tools=self._enable_auto_tools,
             want_logprobs=False,
             num_output_top_logprobs=None,
-            prompt_ending=prepared.prompt_ending,
         )
         chunks = self.run_cancellable_stream(stream, raw_request)
         if logger.isEnabledFor(TRACE):

@@ -6,7 +6,7 @@ stream comes out. Nothing outside this module should import from
 vLLM version bump's blast radius confined to one file.
 """
 
-from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import Any
 
 from vllm.entrypoints.openai.chat_completion.protocol import (
@@ -146,61 +146,14 @@ def make_parsers(
     ]
 
 
-async def learn_prompt_endings(
-    render: VllmOnlineRenderer, tokenizer: VllmTokenizerLike, toggles: Iterable[str]
-) -> list[list[int]]:
-    defaults = render.default_chat_template_kwargs or {}
-    endings: list[list[int]] = []
-    for chat_template_kwargs in ({}, *({toggle: not defaults.get(toggle)} for toggle in toggles)):
-        prompts = []
-        for add_generation_prompt in (True, False):
-            vllm_req = VllmChatCompletionRequest.model_validate(
-                {
-                    "messages": [{"role": "user", "content": "hi"}],
-                    "add_generation_prompt": add_generation_prompt,
-                    "chat_template_kwargs": chat_template_kwargs,
-                }
-            )
-            try:
-                result = await render.render_chat(vllm_req)
-            except Exception:
-                break
-            if isinstance(result, VllmErrorResponse):
-                break
-            prompts.append(extract_prompt_token_ids(render, result[1][0]))
-        if len(prompts) < 2:
-            continue
-        prompt, without_ending = prompts
-        ending = prompt[len(without_ending) :]
-        parser = make_parsers(render, tokenizer, vllm_req, n=1)[0]
-        if parser is None or not ending or prompt[: len(without_ending)] != without_ending:
-            continue
-        if parser.is_reasoning_end(prompt) != parser.is_reasoning_end(ending):
-            return []
-        if ending not in endings:
-            endings.append(ending)
-    return sorted(endings, key=len, reverse=True)
-
-
-def match_prompt_ending(
-    render: VllmOnlineRenderer,
-    vllm_req: VllmChatCompletionRequest,
-    engine_input: VllmEngineInput,
-    endings: list[list[int]],
-) -> list[int] | None:
-    if not endings or not any(isinstance(message, dict) and message.get("reasoning") for message in vllm_req.messages):
-        return None
-    prompt_token_ids = extract_prompt_token_ids(render, engine_input)
-    return next((ending for ending in endings if prompt_token_ids[-len(ending) :] == ending), None)
-
-
 def derive_reasoning_ended(
     vllm_req: VllmChatCompletionRequest,
     parser: VllmParser | None,
     prompt_token_ids: list[int],
-    prompt_ending: list[int] | None = None,
 ) -> bool | None:
-    """Mistral's grammar (when built) already encodes an optional `think?` rule
+    """Replicates the reasoning_ended precedence in vLLM's own chat completion serving.
+
+    Mistral's grammar (when built) already encodes an optional `think?` rule
     covering both reasoning and non-reasoning outputs, so `reasoning_ended`
     is forced True whenever `_grammar_from_parser` is set. But that flag
     is only set on the grammar-building branch of
@@ -213,8 +166,6 @@ def derive_reasoning_ended(
         return True
     if vllm_req._grammar_from_parser:
         return True
-    if parser is not None and prompt_ending is not None:
-        return parser.is_reasoning_end(prompt_ending)
     if parser is not None and parser.reasoning_parser is not None:
         return parser.is_reasoning_end(prompt_token_ids)
     return None
@@ -496,7 +447,6 @@ async def stream_chat_completion(
     enable_auto_tools: bool,
     want_logprobs: bool,
     num_output_top_logprobs: int | None,
-    prompt_ending: list[int] | None = None,
 ) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
     """Drive one streaming chat completion end to end: per-choice parsers,
     per-delta parsing via `VllmParser.parse_delta`, and the OpenAI streaming
@@ -510,7 +460,7 @@ async def stream_chat_completion(
     num_choices = vllm_req.n or 1
     parsers = make_parsers(render, tokenizer, vllm_req, n=num_choices)
     prompt_token_ids = extract_prompt_token_ids(render, engine_input)
-    reasoning_ended = derive_reasoning_ended(vllm_req, parsers[0], prompt_token_ids, prompt_ending)
+    reasoning_ended = derive_reasoning_ended(vllm_req, parsers[0], prompt_token_ids)
 
     stream_options = vllm_req.stream_options
     include_usage = bool(stream_options and stream_options.include_usage)
@@ -572,7 +522,7 @@ async def stream_chat_completion(
                     delta_text=delta_text,
                     delta_token_ids=list(output.token_ids),
                     request=vllm_req,
-                    prompt_token_ids=prompt_ending or res.prompt_token_ids,
+                    prompt_token_ids=res.prompt_token_ids,
                     finished=output.finish_reason is not None,
                 )
                 if vllm_delta is not None and vllm_delta.tool_calls:

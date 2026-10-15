@@ -122,17 +122,6 @@ class TestDeriveReasoningEnded:
         vllm_req = _vllm_req()
         assert engine_ops.derive_reasoning_ended(vllm_req, parser=None, prompt_token_ids=[]) is None
 
-    def test_a_prompt_ending_is_what_the_parser_is_asked_about(self):
-        vllm_req = _vllm_req()
-        parser = Mock(spec=VllmParser)
-        parser.reasoning_parser = None
-        parser.is_reasoning_end.return_value = False
-        result = engine_ops.derive_reasoning_ended(
-            vllm_req, parser=parser, prompt_token_ids=[1, 2, 3], prompt_ending=[3]
-        )
-        assert result is False
-        parser.is_reasoning_end.assert_called_once_with([3])
-
 
 class TestResolvedChatTemplateKwargs:
     @pytest.mark.parametrize(
@@ -446,23 +435,6 @@ class TestVllmParserAcceptsOurRequest:
     """Real vLLM render pipeline and cached tokenizers, no engine/GPU. Skips
     cleanly if the tokenizer can't be fetched."""
 
-    _TOOL_LOOP_WITH_REASONING: ClassVar[list[dict[str, Any]]] = [
-        {"role": "user", "content": "What is the weather in Paris?"},
-        {
-            "role": "assistant",
-            "content": None,
-            "reasoning": "I should check the weather.",
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {"name": "get_weather", "arguments": '{"location": "Paris"}'},
-                }
-            ],
-        },
-        {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
-    ]
-
     def _build_render(
         self, model: str, *, tokenizer_mode: str = "auto", **tool_reasoning_kwargs: Any
     ) -> tuple[VllmOnlineRenderer, VllmTokenizerLike]:
@@ -516,57 +488,6 @@ class TestVllmParserAcceptsOurRequest:
         base.update(overrides)
         return VllmChatCompletionRequest(**base)
 
-    async def _stream(
-        self,
-        render: VllmOnlineRenderer,
-        tokenizer: VllmTokenizerLike,
-        endings: list[list[int]],
-        enable_thinking: bool,
-        text: str,
-    ) -> tuple[bool | None, str, str]:
-        vllm_req = self._tool_request(
-            messages=self._TOOL_LOOP_WITH_REASONING, chat_template_kwargs={"enable_thinking": enable_thinking}
-        )
-        result = await engine_ops.render_and_params(render, vllm_req)
-        assert not isinstance(result, engine_ops.VllmErrorResponse)
-        engine_input, sampling_params = result
-        prompt_ids = engine_ops.extract_prompt_token_ids(render, engine_input)
-        token_ids = tokenizer.encode(text, add_special_tokens=False)
-        given: dict[str, Any] = {}
-
-        async def generate(*args: Any, **kwargs: Any):
-            given.update(kwargs)
-            for i, token_id in enumerate(token_ids):
-                output = SimpleNamespace(
-                    index=0,
-                    text=tokenizer.decode([token_id]),
-                    token_ids=[token_id],
-                    finish_reason="stop" if i == len(token_ids) - 1 else None,
-                    logprobs=None,
-                    stop_reason=None,
-                )
-                yield SimpleNamespace(prompt_token_ids=prompt_ids, outputs=[output])
-
-        reasoning = content = ""
-        async for chunk in engine_ops.stream_chat_completion(
-            Mock(generate=generate),
-            render,
-            vllm_req,
-            engine_input,
-            sampling_params,
-            "req-1",
-            "m",
-            tokenizer,
-            enable_auto_tools=True,
-            want_logprobs=False,
-            num_output_top_logprobs=None,
-            prompt_ending=engine_ops.match_prompt_ending(render, vllm_req, engine_input, endings),
-        ):
-            for choice in chunk.choices:
-                reasoning += choice.delta.reasoning or ""
-                content += choice.delta.content or ""
-        return given["reasoning_ended"], reasoning.strip(), content.strip()
-
     @pytest.mark.asyncio
     async def test_hermes_qwen3_reasoning_and_tools(self):
         render, tokenizer = self._build_render("Qwen/Qwen3-0.6B", tool_parser="hermes", reasoning_parser="qwen3")
@@ -605,107 +526,30 @@ class TestVllmParserAcceptsOurRequest:
     @pytest.mark.asyncio
     async def test_a_message_reasoning_is_in_the_prompt_while_its_tool_call_is_answered(self):
         render, tokenizer = self._build_render("Qwen/Qwen3-0.6B", tool_parser="hermes", reasoning_parser="qwen3")
-        vllm_req = self._tool_request(messages=self._TOOL_LOOP_WITH_REASONING)
+        vllm_req = self._tool_request(
+            messages=[
+                {"role": "user", "content": "What is the weather in Paris?"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning": "I should check the weather.",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "get_weather", "arguments": '{"location": "Paris"}'},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
+            ]
+        )
 
         result = await engine_ops.render_and_params(render, vllm_req)
         assert not isinstance(result, engine_ops.VllmErrorResponse)
         engine_input, _sampling_params = result
         prompt = tokenizer.decode(engine_ops.extract_prompt_token_ids(render, engine_input))
         assert "I should check the weather." in prompt
-
-    @pytest.mark.asyncio
-    async def test_prompt_endings_are_learned_for_each_thinking_setting(self):
-        render, tokenizer = self._build_render(
-            "Qwen/Qwen3-0.6B",
-            tool_parser="hermes",
-            reasoning_parser="qwen3",
-            default_chat_template_kwargs={"enable_thinking": True},
-        )
-
-        endings = await engine_ops.learn_prompt_endings(render, tokenizer, ["enable_thinking"])
-
-        assert [tokenizer.decode(ending) for ending in endings] == [
-            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
-            "<|im_start|>assistant\n",
-        ]
-
-    @pytest.mark.asyncio
-    async def test_no_prompt_endings_for_a_prompt_with_think_tags_before_its_ending(self):
-        render, tokenizer = self._build_render(
-            "HuggingFaceTB/SmolLM3-3B", tool_parser="hermes", reasoning_parser="deepseek_r1"
-        )
-
-        assert await engine_ops.learn_prompt_endings(render, tokenizer, []) == []
-
-    @pytest.mark.asyncio
-    async def test_a_streamed_reply_to_a_request_with_reasoning_is_split_where_its_thinking_ends(self):
-        render, tokenizer = self._build_render(
-            "Qwen/Qwen3-0.6B",
-            tool_parser="hermes",
-            reasoning_parser="qwen3",
-            default_chat_template_kwargs={"enable_thinking": True},
-        )
-        endings = await engine_ops.learn_prompt_endings(render, tokenizer, ["enable_thinking"])
-
-        thinking = await self._stream(
-            render, tokenizer, endings, True, "<think>\nIt is sunny.\n</think>\n\nIt is sunny in Paris."
-        )
-        not_thinking = await self._stream(render, tokenizer, endings, False, "It is sunny in Paris.")
-
-        assert thinking == (False, "It is sunny.", "It is sunny in Paris.")
-        assert not_thinking == (True, "", "It is sunny in Paris.")
-
-    @pytest.mark.asyncio
-    async def test_a_streamed_reply_is_split_by_a_parser_that_reads_tools_and_reasoning(self):
-        render, tokenizer = self._build_render(
-            "Qwen/Qwen3.5-0.8B",
-            tool_parser="qwen3_coder",
-            reasoning_parser="qwen3",
-            default_chat_template_kwargs={"enable_thinking": False},
-        )
-        endings = await engine_ops.learn_prompt_endings(render, tokenizer, ["enable_thinking"])
-
-        thinking = await self._stream(
-            render, tokenizer, endings, True, "It is sunny.\n</think>\n\nIt is sunny in Paris."
-        )
-
-        assert [tokenizer.decode(ending) for ending in endings] == [
-            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
-            "<|im_start|>assistant\n<think>\n",
-        ]
-        assert thinking == (False, "It is sunny.", "It is sunny in Paris.")
-
-    @pytest.mark.asyncio
-    async def test_without_a_prompt_ending_vllm_reads_a_replayed_reasoning_as_the_end_of_thinking(self):
-        render, tokenizer = self._build_render("Qwen/Qwen3-0.6B", tool_parser="hermes", reasoning_parser="qwen3")
-
-        ended, reasoning, content = await self._stream(
-            render, tokenizer, [], True, "<think>\nIt is sunny.\n</think>\n\nIt is sunny in Paris."
-        )
-
-        assert ended is True
-        assert reasoning == ""
-        assert "<think>" in content
-
-    @pytest.mark.asyncio
-    async def test_a_prompt_ending_is_matched_only_for_a_request_with_reasoning_that_ends_with_it(self):
-        render, tokenizer = self._build_render("Qwen/Qwen3-0.6B", tool_parser="hermes", reasoning_parser="qwen3")
-        endings = await engine_ops.learn_prompt_endings(render, tokenizer, [])
-        with_reasoning = self._tool_request(messages=self._TOOL_LOOP_WITH_REASONING)
-        without_reasoning = self._tool_request()
-        rendered = {}
-        for vllm_req in (with_reasoning, without_reasoning):
-            result = await engine_ops.render_and_params(render, vllm_req)
-            assert not isinstance(result, engine_ops.VllmErrorResponse)
-            rendered[id(vllm_req)] = result[0]
-
-        assert (
-            engine_ops.match_prompt_ending(render, with_reasoning, rendered[id(with_reasoning)], endings) == endings[0]
-        )
-        assert engine_ops.match_prompt_ending(render, with_reasoning, rendered[id(with_reasoning)], [[0]]) is None
-        assert (
-            engine_ops.match_prompt_ending(render, without_reasoning, rendered[id(without_reasoning)], endings) is None
-        )
 
     @pytest.mark.asyncio
     async def test_effort_none_turns_thinking_off_in_the_prompt_and_the_parser(self):
