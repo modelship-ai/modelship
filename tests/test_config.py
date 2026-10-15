@@ -38,6 +38,8 @@ class TestLlamaServerConfig:
         assert config.cache_type_k == "f16"
         assert config.cache_type_v == "f16"
         assert config.tensor_split is None
+        assert config.reasoning_budget is None
+        assert config.reasoning_budget_message is None
 
     def test_custom_values(self):
         config = LlamaServerConfig(
@@ -55,6 +57,8 @@ class TestLlamaServerConfig:
             cache_type_k="q8_0",
             cache_type_v="q8_0",
             tensor_split=[3.0, 1.0],
+            reasoning_budget=512,
+            reasoning_budget_message="Time is up.",
         )
         assert config.n_ctx == 4096
         assert config.n_batch == 1024
@@ -70,6 +74,13 @@ class TestLlamaServerConfig:
         assert config.cache_type_k == "q8_0"
         assert config.cache_type_v == "q8_0"
         assert config.tensor_split == [3.0, 1.0]
+        assert config.reasoning_budget == 512
+        assert config.reasoning_budget_message == "Time is up."
+
+    @pytest.mark.parametrize("kwargs", [{"reasoning_budget": -1}, {"reasoning_budget_message": ""}])
+    def test_invalid_reasoning_budget_rejected(self, kwargs):
+        with pytest.raises(ValidationError):
+            LlamaServerConfig(**kwargs)
 
     def test_empty_tensor_split_rejected(self):
         with pytest.raises(ValidationError):
@@ -176,6 +187,50 @@ class TestModelshipModelConfig:
             }
         )
         assert config.vllm_engine_kwargs.default_chat_template_kwargs == {"enable_thinking": False}
+
+    def test_thinking_limits_default_to_unset(self):
+        config = ModelshipModelConfig(name="m", model="org/m", usecase=ModelUsecase.generate, loader=ModelLoader.vllm)
+        assert config.vllm_engine_kwargs.thinking_token_budget is None
+        assert config.vllm_engine_kwargs.reasoning_config is None
+
+    def test_thinking_limits_round_trip(self):
+        config = ModelshipModelConfig.model_validate(
+            {
+                "name": "qwen3",
+                "model": "some-org/qwen3",
+                "usecase": ModelUsecase.generate,
+                "loader": ModelLoader.vllm,
+                "vllm_engine_kwargs": {
+                    "thinking_token_budget": 0,
+                    "reasoning_config": {"reasoning_end_str": "</think>"},
+                },
+            }
+        )
+        assert config.vllm_engine_kwargs.thinking_token_budget == 0
+        assert config.vllm_engine_kwargs.reasoning_config is not None
+        assert config.vllm_engine_kwargs.reasoning_config.reasoning_end_str == "</think>"
+        assert config.vllm_engine_kwargs.reasoning_config.reasoning_start_str is None
+
+    @pytest.mark.parametrize(
+        ("engine_kwargs", "match"),
+        [
+            ({"thinking_token_budget": -1}, "greater than or equal to 0"),
+            ({"reasoning_config": {"reasoning_end_str": ""}}, "at least 1 character"),
+            ({"reasoning_config": {"reasoning_parser": "qwen3"}}, "Set vllm_engine_kwargs.reasoning_parser instead"),
+            ({"reasoning_config": {"reasoning_end": "</think>"}}, "Extra inputs are not permitted"),
+        ],
+    )
+    def test_thinking_limits_are_validated(self, engine_kwargs, match):
+        with pytest.raises(ValidationError, match=match):
+            ModelshipModelConfig.model_validate(
+                {
+                    "name": "qwen3",
+                    "model": "some-org/qwen3",
+                    "usecase": ModelUsecase.generate,
+                    "loader": ModelLoader.vllm,
+                    "vllm_engine_kwargs": engine_kwargs,
+                }
+            )
 
     def test_a_hash_in_the_name_is_rejected(self):
         with pytest.raises(ValidationError, match="name 'qwen#2' must not contain '#'"):

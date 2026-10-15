@@ -220,12 +220,25 @@ class TestNestedFlags:
                 ("llama_server_config", "tensor_split"),
                 [3.0, 1.0],
             ),
+            ("--llama-server-config.reasoning-budget", "512", ("llama_server_config", "reasoning_budget"), 512),
             ("--diffusers-config.guidance-scale", "0.0", ("diffusers_config", "guidance_scale"), 0.0),
             (
                 "--vllm-engine-kwargs.default-chat-template-kwargs",
                 "{enable_thinking: false}",
                 ("vllm_engine_kwargs", "default_chat_template_kwargs"),
                 {"enable_thinking": False},
+            ),
+            (
+                "--vllm-engine-kwargs.thinking-token-budget",
+                "1024",
+                ("vllm_engine_kwargs", "thinking_token_budget"),
+                1024,
+            ),
+            (
+                "--vllm-engine-kwargs.reasoning-config",
+                "{reasoning_end_str: '</think>'}",
+                ("vllm_engine_kwargs", "reasoning_config"),
+                {"reasoning_end_str": "</think>"},
             ),
         ],
     )

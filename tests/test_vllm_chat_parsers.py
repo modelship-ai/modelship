@@ -22,8 +22,25 @@ def _config(usecase: ModelUsecase = ModelUsecase.generate, **engine_kwargs: Any)
     return config
 
 
+class _FakeReasoningConfig:
+    has_markers = True
+
+    def __init__(self) -> None:
+        self.reasoning_parser = ""
+        self.enabled = False
+        self.initialized_with: Any = None
+
+    def initialize_token_ids(self, model_config: Any) -> None:
+        self.initialized_with = model_config
+        self.enabled = self.has_markers
+
+
 def _build(
-    monkeypatch: pytest.MonkeyPatch, config: ModelshipModelConfig, template: str | None
+    monkeypatch: pytest.MonkeyPatch,
+    config: ModelshipModelConfig,
+    template: str | None,
+    *,
+    has_markers: bool = True,
 ) -> tuple[VllmInfer, dict[str, Any]]:
     started: dict[str, Any] = {}
 
@@ -38,12 +55,14 @@ def _build(
                     try_get_generation_config=dict,
                 ),
                 structured_outputs_config=SimpleNamespace(reasoning_parser=""),
+                reasoning_config=None,
             )
 
     class Engine:
         @classmethod
         def from_vllm_config(cls, vllm_config: Any, **kwargs: Any) -> Any:
             started["reasoning_parser"] = vllm_config.structured_outputs_config.reasoning_parser
+            started["reasoning_config"] = vllm_config.reasoning_config
             return SimpleNamespace(shutdown=lambda: None)
 
     def tokenizer(model_config: Any) -> Any:
@@ -55,6 +74,9 @@ def _build(
     monkeypatch.setattr(vllm_infer, "resolve_gpu_memory_utilization", lambda config, recommended: 0.9)
     monkeypatch.setattr(vllm_infer, "VllmAsyncEngineArgs", EngineArgs)
     monkeypatch.setattr(vllm_infer, "VllmAsyncLLM", Engine)
+    monkeypatch.setattr(
+        vllm_infer, "VllmReasoningConfig", type("Fake", (_FakeReasoningConfig,), {"has_markers": has_markers})
+    )
     monkeypatch.setattr(vllm_infer, "vllm_cached_tokenizer_from_config", tokenizer)
     monkeypatch.setattr(vllm_infer, "_METRICS_ENABLED", False)
     monkeypatch.delenv(VLLM_CHILD_ENV, raising=False)
@@ -89,6 +111,74 @@ class TestEngineStartsWithTheReasoningParser:
 
         assert started["reasoning_parser"] == ""
         assert infer._chat_parsers is None
+
+
+class TestThinkingBudget:
+    @pytest.fixture
+    def warnings(self, monkeypatch) -> list[str]:
+        logged: list[str] = []
+        monkeypatch.setattr(vllm_infer.logger, "warning", lambda msg, *args, **kwargs: logged.append(msg % args))
+        return logged
+
+    def test_reasoning_config_is_enabled_for_the_reasoning_parser(self, monkeypatch):
+        infer, started = _build(monkeypatch, _config(thinking_token_budget=512), _THINKING_TEMPLATE)
+
+        reasoning_config = started["reasoning_config"]
+        assert reasoning_config.reasoning_parser == "deepseek_r1"
+        assert reasoning_config.enabled
+        assert reasoning_config.initialized_with is not None
+        assert infer._thinking_budget_cap == 512
+
+    def test_requests_may_set_a_budget_without_an_operator_one(self, monkeypatch):
+        infer, started = _build(monkeypatch, _config(), _THINKING_TEMPLATE)
+
+        assert started["reasoning_config"].enabled
+        assert infer._thinking_budget_cap is None
+
+    def test_the_markers_in_the_config_reach_the_engine(self, monkeypatch):
+        config = _config(reasoning_config={"reasoning_end_str": "stop</think>"})
+
+        _, started = _build(monkeypatch, config, _THINKING_TEMPLATE)
+
+        assert started["reasoning_config"].reasoning_end_str == "stop</think>"
+        assert not hasattr(started["reasoning_config"], "reasoning_start_str")
+
+    def test_a_model_without_a_reasoning_parser_ignores_both_keys(self, monkeypatch, warnings):
+        config = _config(thinking_token_budget=512, reasoning_config={"reasoning_end_str": "</think>"})
+
+        infer, started = _build(monkeypatch, config, _PLAIN_TEMPLATE)
+
+        assert started["reasoning_config"] is None
+        assert infer._thinking_budget_cap is None
+        assert any("no reasoning parser" in message for message in warnings)
+
+    def test_a_parser_without_markers_leaves_the_budget_off(self, monkeypatch, warnings):
+        infer, _ = _build(monkeypatch, _config(thinking_token_budget=512), _THINKING_TEMPLATE, has_markers=False)
+
+        assert infer._thinking_budget_cap is None
+        assert any("reasoning_start_str and reasoning_end_str" in message for message in warnings)
+
+    @pytest.mark.parametrize(
+        ("cap", "requested", "expected"),
+        [
+            (None, None, None),
+            (None, 900, 900),
+            (400, None, 400),
+            (400, 100, 100),
+            (400, 5000, 400),
+            (400, 0, 0),
+            (0, 100, 0),
+        ],
+    )
+    def test_the_operator_budget_is_the_default_and_the_ceiling(self, cap, requested, expected):
+        infer = object.__new__(VllmInfer)
+        if cap is not None:
+            infer._thinking_budget_cap = cap
+        request = SimpleNamespace(thinking_token_budget=requested)
+
+        infer._limit_thinking(request)  # type: ignore[arg-type]
+
+        assert request.thinking_token_budget == expected
 
 
 def _started_infer(supported_tasks: list[str]) -> VllmInfer:

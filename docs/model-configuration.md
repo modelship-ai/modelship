@@ -313,6 +313,8 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 | `enable_reasoning` | bool | — | `false` turns reasoning parsing off |
 | `reasoning_parser` | string | — | e.g. `qwen3`, `deepseek_r1` |
 | `default_chat_template_kwargs` | dict | — | Default variables for the chat template, e.g. `{"enable_thinking": false}` for Qwen3. Only the keys the template reads have an effect |
+| `thinking_token_budget` | int | — | Most tokens a model may spend thinking; `0` skips thinking. See [Limiting thinking](#limiting-thinking) |
+| `reasoning_config` | dict | — | `reasoning_start_str` and `reasoning_end_str` for the budget. See [Limiting thinking](#limiting-thinking) |
 | `enforce_eager` | bool | — | Disable CUDA graph capture |
 | `kv_cache_dtype` | string | — | e.g. `fp8` |
 | `enable_prefix_caching` | bool | vLLM default: on | Disable to turn off vLLM's automatic prefix caching entirely. Not usually needed — every request is already cache-salted per caller identity (see [Identity-scoped prefix caching](architecture.md#identity-scoped-vllm-prefix-caching)); this is for an operator who wants caching off regardless of identity |
@@ -330,6 +332,21 @@ The tool parser is the vLLM parser that reads a tool call as the model's chat te
 On a model that reasons, `response_format` and a forced `tool_choice` (`required` or a named function) take effect once the reasoning ends: the answer arrives in `content` or `tool_calls` with the reasoning beside it, and `max_tokens` covers both.
 
 On a template with an `enable_thinking` variable, a request's `reasoning_effort` (`reasoning.effort` on `/v1/responses`) sets it: `none` turns thinking off, any other value turns it on. That overrides `default_chat_template_kwargs`, and a request's own `chat_template_kwargs` overrides both.
+
+### Limiting thinking
+
+`thinking_token_budget` caps how long a model thinks: at the budget, vLLM writes `reasoning_end_str` and the model answers. It is the default and the ceiling for a request's own `thinking_token_budget` on `/v1/chat/completions`; `/v1/responses` has no such field.
+
+`reasoning_end_str` is the parser's closing marker (`</think>` for `qwen3`) unless set. A sentence ahead of the marker gives cleaner answers:
+
+```yaml
+vllm_engine_kwargs:
+  thinking_token_budget: 1024
+  reasoning_config:
+    reasoning_end_str: "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
+```
+
+`reasoning_start_str` is for a parser that declares no marker of its own. A model with no reasoning parser, or without both strings, has no budget, and the startup log says so.
 
 ### CPU (no GPU required)
 
@@ -450,6 +467,8 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 | `flash_attn` | `on`/`off`/`auto` | `auto` | Flash Attention use (`-fa`) |
 | `cache_type_k` / `cache_type_v` | string | `f16` | KV cache quantization (`-ctk`/`-ctv`); also `f32`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1` |
 | `tensor_split` | list[float] | `None` | Proportional offload split across GPUs (`-ts`). Preflight recommends an uneven split on heterogeneous cards |
+| `reasoning_budget` | int | `None` (llama-server default: unlimited) | Most tokens a model may spend thinking (`--reasoning-budget`); `0` skips thinking. The default and the ceiling for a request's own `thinking_budget_tokens` or `reasoning_budget_tokens` |
+| `reasoning_budget_message` | string | — | Text written before the end-of-thinking marker when the budget runs out (`--reasoning-budget-message`). A sentence there gives cleaner answers, as on [vLLM](#limiting-thinking) |
 
 Each slot keeps the prompt it last processed (`--cache-prompt`, always on), so a follow-up turn, or another chat with the same system prompt, only processes the new tokens. llama-server can also save a conversation to host RAM when an unrelated one takes its slot and restore it when it returns; `cache_ram_mib` caps that cache and defaults to `0` (off), because it grows after load, outside the memory `n_ctx` was sized against. Saved conversations take about as much RAM per token as the context itself. There is no persistent **on-disk** prompt cache; caching is in-memory only and doesn't survive a process restart, unlike modelship's disk cache for other loaders.
 

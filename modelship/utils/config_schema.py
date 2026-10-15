@@ -73,6 +73,21 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ReasoningConfig(_StrictModel):
+    reasoning_start_str: str | None = Field(default=None, min_length=1)
+    reasoning_end_str: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_reasoning_parser(cls, data):
+        if isinstance(data, dict) and "reasoning_parser" in data:
+            raise ValueError(
+                "vllm_engine_kwargs.reasoning_config.reasoning_parser cannot be set: it's always the model's "
+                "reasoning parser. Set vllm_engine_kwargs.reasoning_parser instead."
+            )
+        return data
+
+
 class VllmEngineConfig(_StrictModel):
     tensor_parallel_size: int = 1
     pipeline_parallel_size: int = 1
@@ -91,6 +106,8 @@ class VllmEngineConfig(_StrictModel):
     reasoning_parser: str | None = None
     chat_template_content_format: ChatTemplateContentFormatOption = "auto"
     default_chat_template_kwargs: dict[str, Any] | None = None
+    thinking_token_budget: int | None = Field(default=None, ge=0)
+    reasoning_config: ReasoningConfig | None = None
     enforce_eager: bool | None = None
     enable_prefix_caching: bool | None = None
     max_num_batched_tokens: int | None = None
@@ -142,6 +159,8 @@ class LlamaServerConfig(_StrictModel):
     cache_type_v: Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"
     # Proportional split across GPUs for offloading (`-ts`); None splits evenly.
     tensor_split: list[float] | None = Field(default=None, min_length=1)
+    reasoning_budget: int | None = Field(default=None, ge=0)
+    reasoning_budget_message: str | None = Field(default=None, min_length=1)
 
 
 class WhispercppConfig(_StrictModel):

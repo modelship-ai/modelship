@@ -288,6 +288,10 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             args += ["--cache-reuse", str(self.config.cache_reuse)]
         if self.config.context_shift:
             args += ["--context-shift"]
+        if self.config.reasoning_budget is not None:
+            args += ["--reasoning-budget", str(self.config.reasoning_budget)]
+        if self.config.reasoning_budget_message:
+            args += ["--reasoning-budget-message", self.config.reasoning_budget_message]
 
         logger.info("llama-server launch args for '%s': %s", self.model_config.name, _redact(args))
         self._proc = await loop.run_in_executor(
@@ -484,7 +488,9 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             logger.warning("chat request %s rejected: %s", request_id, e)
             return create_error_response(e)
 
-        return _build_payload(request, messages, model_name=self.model_config.name)
+        return _build_payload(
+            request, messages, model_name=self.model_config.name, reasoning_budget=self.config.reasoning_budget
+        )
 
     async def _create_chat_completion_no_stream(
         self, request: ChatCompletionRequest, prepared: dict[str, Any], raw_request: RawRequestProxy
@@ -536,7 +542,9 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             return create_error_response(e)
 
         chat_request.stream = bool(request.stream)
-        return _build_payload(chat_request, messages, model_name=self.model_config.name)
+        return _build_payload(
+            chat_request, messages, model_name=self.model_config.name, reasoning_budget=self.config.reasoning_budget
+        )
 
     async def _create_response_no_stream(
         self, request: ResponsesRequest, prepared: dict[str, Any], raw_request: RawRequestProxy
@@ -665,7 +673,9 @@ def _redact(args: list[str]) -> list[str]:
     return redacted
 
 
-def _build_payload(request: ChatCompletionRequest, messages: list[dict], *, model_name: str) -> dict[str, Any]:
+def _build_payload(
+    request: ChatCompletionRequest, messages: list[dict], *, model_name: str, reasoning_budget: int | None
+) -> dict[str, Any]:
     # If request.logprobs is True, we want to forward logprobs and top_logprobs (if > 0) to llama-server.
     exclude_fields = {"messages", "model", "logprobs", "top_logprobs"}
     payload = request.model_dump(exclude_none=True, exclude=exclude_fields)
@@ -679,6 +689,12 @@ def _build_payload(request: ChatCompletionRequest, messages: list[dict], *, mode
         payload["logprobs"] = True
         if request.top_logprobs is not None and request.top_logprobs > 0:
             payload["top_logprobs"] = request.top_logprobs
+
+    if reasoning_budget is not None:
+        for key in ("thinking_budget_tokens", "reasoning_budget_tokens"):
+            value = payload.get(key)
+            if isinstance(value, int | float) and value >= 0:
+                payload[key] = min(value, reasoning_budget)
 
     return payload
 
