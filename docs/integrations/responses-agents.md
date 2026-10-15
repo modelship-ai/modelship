@@ -26,9 +26,9 @@ tool type — OpenAI's Codex CLI sends one called `namespace`) have no
 self-hosted equivalent and are dropped rather than failing the whole request;
 a warning is logged per dropped tool. Encrypted reasoning
 (`reasoning.encrypted_content`) isn't implemented — Modelship never returns
-it, and a `reasoning` input item is dropped rather than replayed back into the
-prompt. Server-side state (`previous_response_id`) is how Modelship carries
-reasoning across turns instead.
+it. A `reasoning` item, whether sent in `input` or carried by
+`previous_response_id`, goes back to the model with the assistant message that
+follows it; the model's chat template decides whether it is used.
 
 ## Continuing a conversation
 

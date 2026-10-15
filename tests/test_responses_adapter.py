@@ -191,16 +191,45 @@ class TestRequestInputTranslation:
         )
         assert chat.messages[-1] == {"role": "tool", "tool_call_id": "call_1", "content": "sunny"}
 
-    def test_reasoning_input_item_is_dropped(self):
+    def test_reasoning_goes_only_with_the_item_right_after_it(self):
         chat = responses_request_to_chat(
             _req(
                 input=[
                     {"type": "reasoning", "summary": [{"type": "summary_text", "text": "x"}]},
                     {"role": "user", "content": "go"},
+                    {"type": "message", "role": "assistant", "content": "ok"},
                 ]
             )
         )
-        assert chat.messages == [{"role": "user", "content": "go"}]
+        assert chat.messages == [{"role": "user", "content": "go"}, {"role": "assistant", "content": "ok"}]
+
+    def test_reasoning_goes_with_the_function_call_that_follows_it(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {"role": "user", "content": "weather?"},
+                    {"type": "reasoning", "summary": [{"type": "summary_text", "text": "need the tool"}]},
+                    {"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": "call_1", "output": "sunny"},
+                ]
+            )
+        )
+        assert chat.messages[1]["reasoning"] == "need the tool"
+        assert chat.messages[1]["tool_calls"][0]["id"] == "call_1"
+        assert "reasoning" not in chat.messages[2]
+
+    def test_reasoning_goes_with_the_assistant_message_that_follows_it(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {"role": "user", "content": "hi"},
+                    {"type": "reasoning", "content": [{"type": "reasoning_text", "text": "greet back"}]},
+                    {"type": "message", "role": "assistant", "content": "hello"},
+                    {"role": "user", "content": "again"},
+                ]
+            )
+        )
+        assert chat.messages[1] == {"role": "assistant", "content": "hello", "reasoning": "greet back"}
 
     def test_unknown_input_item_type_rejected(self):
         with pytest.raises(UnsupportedResponsesFeatureError):
@@ -457,6 +486,25 @@ class TestMcpInputItems:
         assert messages[-2]["tool_calls"][0]["id"] == "mcp_1"
         assert messages[-2]["tool_calls"][0]["function"]["name"] == "roll"
         assert messages[-1] == {"role": "tool", "tool_call_id": "mcp_1", "content": "9"}
+
+    def test_reasoning_goes_with_the_mcp_call_that_follows_it(self):
+        chat = responses_request_to_chat(
+            _req(
+                input=[
+                    {"type": "reasoning", "summary": [{"type": "summary_text", "text": "roll it"}]},
+                    {
+                        "type": "mcp_call",
+                        "id": "mcp_1",
+                        "name": "roll",
+                        "arguments": "{}",
+                        "server_label": "dice",
+                        "output": "9",
+                    },
+                ]
+            )
+        )
+        assert chat.messages[-2]["reasoning"] == "roll it"
+        assert "reasoning" not in chat.messages[-1]
 
     def test_mcp_call_with_error_uses_error_as_tool_content(self):
         chat = responses_request_to_chat(

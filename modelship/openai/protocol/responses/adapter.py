@@ -114,8 +114,10 @@ def _messages_from_items(input_: str | list[dict[str, Any]], system_parts: list[
     # call_ids seen from a function_call earlier in this list; an unmatched
     # function_call_output is orphaned. Reset per call, not shared across recursion.
     seen_call_ids: set[str] = set()
+    carried: dict[str, str] = {}
     for item in input_:
         itype = item.get("type")
+        reasoning, carried = carried, {}
         if itype == "function_call":
             # call_id and name identify the call; both required or downstream tool-call handling breaks.
             call_id = item.get("call_id") or item.get("id")
@@ -139,6 +141,7 @@ def _messages_from_items(input_: str | list[dict[str, Any]], system_parts: list[
                             },
                         }
                     ],
+                    **reasoning,
                 }
             )
         elif itype == "mcp_call":
@@ -165,6 +168,7 @@ def _messages_from_items(input_: str | list[dict[str, Any]], system_parts: list[
                             },
                         }
                     ],
+                    **reasoning,
                 }
             )
             content = _text_of(error) if error is not None else _text_of(output)
@@ -185,8 +189,9 @@ def _messages_from_items(input_: str | list[dict[str, Any]], system_parts: list[
                 )
             messages.append({"role": "tool", "tool_call_id": call_id, "content": content})
         elif itype == "reasoning":
-            # Don't replay raw chain-of-thought back into the prompt.
-            continue
+            text = _text_of(item.get("content")) or _text_of(item.get("summary"))
+            if text:
+                carried = {"reasoning": text}
         elif itype == "compaction":
             # Round-trip half of /v1/responses/compact: decrypt the opaque blob back
             # into the items it was built from. Nesting is rejected below rather than
@@ -208,7 +213,9 @@ def _messages_from_items(input_: str | list[dict[str, Any]], system_parts: list[
                 if text:
                     system_parts.append(text)
                 continue
-            messages.append({"role": role, "content": _content_to_chat(item.get("content"))})
+            if role != "assistant":
+                reasoning = {}
+            messages.append({"role": role, "content": _content_to_chat(item.get("content")), **reasoning})
         else:
             raise UnsupportedResponsesFeatureError(f"unsupported input item type {itype!r}.")
 

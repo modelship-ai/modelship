@@ -524,6 +524,34 @@ class TestVllmParserAcceptsOurRequest:
             assert tool_calls[0].name == "get_weather"
 
     @pytest.mark.asyncio
+    async def test_a_message_reasoning_is_in_the_prompt_while_its_tool_call_is_answered(self):
+        render, tokenizer = self._build_render("Qwen/Qwen3-0.6B", tool_parser="hermes", reasoning_parser="qwen3")
+        vllm_req = self._tool_request(
+            messages=[
+                {"role": "user", "content": "What is the weather in Paris?"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning": "I should check the weather.",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "get_weather", "arguments": '{"location": "Paris"}'},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
+            ]
+        )
+
+        result = await engine_ops.render_and_params(render, vllm_req)
+        assert not isinstance(result, engine_ops.VllmErrorResponse)
+        engine_input, _sampling_params = result
+        prompt = tokenizer.decode(engine_ops.extract_prompt_token_ids(render, engine_input))
+        assert "I should check the weather." in prompt
+
+    @pytest.mark.asyncio
     async def test_effort_none_turns_thinking_off_in_the_prompt_and_the_parser(self):
         render, tokenizer = self._build_render(
             "Qwen/Qwen3-0.6B",
