@@ -216,10 +216,7 @@ async def _read_record(store: StateStore, identity: str, response_id: str) -> di
             _is_position(record)
             or (
                 isinstance(record.get("input"), list)
-                and (
-                    record.get("parent") is None
-                    or (_is_position(record["parent"]) and isinstance(record["parent"].get("bases"), list))
-                )
+                and (record.get("parent") is None or _is_position(record["parent"]))
             )
         )
     ):
@@ -275,8 +272,7 @@ async def history_async(store: StateStore, identity: str, record: dict) -> tuple
     entries = await _entries(store, identity, record["log"], record["depth"])
     if entries is None:
         return None
-    bases = [entry["base"]["log"] for entry in entries if "base" in entry]
-    return _items(entries), {"log": record["log"], "depth": record["depth"], "bases": bases}
+    return _items(entries), {"log": record["log"], "depth": record["depth"]}
 
 
 async def input_items_async(store: StateStore, identity: str, record: dict) -> list[dict] | None:
@@ -346,23 +342,19 @@ async def _store_turn(
         ttl_seconds=ttl,
         if_exists=if_exists,
     ):
-        for log in parent["bases"]:
-            await _refresh(store, identity, log)
         return
     taken = await store.read_range_async(parent_log, start=depth, end=depth)
     if taken and isinstance(taken[0], dict) and taken[0].get("response_id") == response_id:
         return
-    if await store.append_and_set_async(
+    await store.append_and_set_async(
         _log_key(identity, response_id),
         depth,
-        {**entry, "base": {"log": parent["log"], "depth": parent["depth"]}},
+        {**entry, "base": parent},
         key,
         {**record, "log": response_id, "depth": depth},
         ttl_seconds=ttl,
         if_exists=if_exists,
-    ):
-        for log in [parent["log"], *parent["bases"]]:
-            await _refresh(store, identity, log)
+    )
 
 
 async def write_async(

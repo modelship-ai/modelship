@@ -109,7 +109,7 @@ class TestHistory:
         record = await responses_state.read_async(store, "u1", "resp_1", with_output=False)
         history, parent = await responses_state.history_async(store, "u1", record)
         assert [(item["role"], item["content"]) for item in history] == [("user", "hi"), ("assistant", "yo")]
-        assert parent == {"log": "resp_1", "depth": 1, "bases": []}
+        assert parent == {"log": "resp_1", "depth": 1}
 
     @pytest.mark.asyncio
     async def test_accumulates_across_turns(self, store):
@@ -118,7 +118,7 @@ class TestHistory:
             store,
             response_id="resp_2",
             response=_response("resp_2", output=[{"o": 2}]),
-            parent={"log": "resp_1", "depth": 1, "bases": []},
+            parent={"log": "resp_1", "depth": 1},
             input_items=[{"i": 2}],
         )
         record = await responses_state.read_async(store, "u1", "resp_2", with_output=False)
@@ -127,7 +127,7 @@ class TestHistory:
 
 
 class TestTerminalRace:
-    @pytest.mark.parametrize("parent", [None, {"log": "resp_0", "depth": 1, "bases": []}])
+    @pytest.mark.parametrize("parent", [None, {"log": "resp_0", "depth": 1}])
     @pytest.mark.asyncio
     async def test_record_and_output_come_from_one_writer(self, store, monkeypatch, parent):
         if parent is not None:
@@ -156,7 +156,7 @@ class TestTerminalRace:
         assert record is not None
         assert record["response"] in (cancelled, completed)
 
-    @pytest.mark.parametrize("parent", [None, {"log": "resp_0", "depth": 1, "bases": []}])
+    @pytest.mark.parametrize("parent", [None, {"log": "resp_0", "depth": 1}])
     @pytest.mark.asyncio
     async def test_a_record_deleted_after_the_read_stays_deleted(self, store, monkeypatch, parent):
         if parent is not None:
@@ -316,19 +316,6 @@ class TestRetention:
         clock = {"t": 0.0}
         monkeypatch.setattr("time.time", lambda: clock["t"])
         return clock
-
-    @pytest.mark.asyncio
-    async def test_base_logs_live_as_long_as_the_newest_turn(self, store, clock):
-        await _write(store, response_id="resp_a")
-        _, parent = await _resolve(store, "resp_a")
-        await _write(store, response_id="resp_b1", parent=parent)
-        await _write(store, response_id="resp_b2", parent=parent)
-        clock["t"] = 5 * 3600.0
-        _, parent = await _resolve(store, "resp_b2")
-        clock["t"] = 12 * 3600.0
-        await _write(store, response_id="resp_c", parent=parent)
-        clock["t"] = 31 * 3600.0
-        assert await _resolve(store, "resp_c") is not None
 
     @pytest.mark.asyncio
     async def test_the_parent_log_survives_the_childs_generation(self, store, clock):
