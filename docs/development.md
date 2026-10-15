@@ -35,7 +35,7 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
 > **Why the extra steps?** The `dev` target is built for source work: it syncs dependencies from `uv.lock` into `/.venv` and never installs the project, so you sync and start it yourself. The published images instead run `mship bootstrap` at build time and start at `mship start` — see [Docker install](install-docker.md).
 
 The Dev Container automatically:
-- Builds the dev image from `Dockerfile` (target: `dev`)
+- Builds the dev image from `Dockerfile` (target: `dev`), with `redis-server` for the `redis` integration tests
 - Bind-mounts the repo to `/modelship` for live editing
 - Forwards ports `8000` (API), `8265` (Ray Dashboard), and `8079` (Metrics)
 - Installs extensions: Ruff, Python, Pyright, and Claude Code

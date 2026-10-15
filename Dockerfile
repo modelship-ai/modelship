@@ -155,7 +155,8 @@ RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
-        git && \
+        git \
+        redis-server && \
     rm -rf /var/lib/apt/lists/*
 
 ENV UV_PROJECT_ENVIRONMENT=/.venv
