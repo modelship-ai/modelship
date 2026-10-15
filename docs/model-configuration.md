@@ -313,6 +313,8 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 | `enable_reasoning` | bool | — | `false` turns reasoning parsing off |
 | `reasoning_parser` | string | — | e.g. `qwen3`, `deepseek_r1` |
 | `default_chat_template_kwargs` | dict | — | Default variables for the chat template, e.g. `{"enable_thinking": false}` for Qwen3. Only the keys the template reads have an effect |
+| `thinking_token_budget` | int | — | Most tokens a model may spend thinking: the default for a request without one, the ceiling for one with. `0` skips thinking. See [Limiting thinking](#limiting-thinking) |
+| `reasoning_config` | dict | — | `reasoning_start_str` and `reasoning_end_str`: the markers the budget looks for and writes when thinking runs out. See [Limiting thinking](#limiting-thinking) |
 | `enforce_eager` | bool | — | Disable CUDA graph capture |
 | `kv_cache_dtype` | string | — | e.g. `fp8` |
 | `enable_prefix_caching` | bool | vLLM default: on | Disable to turn off vLLM's automatic prefix caching entirely. Not usually needed — every request is already cache-salted per caller identity (see [Identity-scoped prefix caching](architecture.md#identity-scoped-vllm-prefix-caching)); this is for an operator who wants caching off regardless of identity |
@@ -330,6 +332,21 @@ The tool parser is the vLLM parser that reads a tool call as the model's chat te
 On a model that reasons, `response_format` and a forced `tool_choice` (`required` or a named function) take effect once the reasoning ends: the answer arrives in `content` or `tool_calls` with the reasoning beside it, and `max_tokens` covers both.
 
 On a template with an `enable_thinking` variable, a request's `reasoning_effort` (`reasoning.effort` on `/v1/responses`) sets it: `none` turns thinking off, any other value turns it on. That overrides `default_chat_template_kwargs`, and a request's own `chat_template_kwargs` overrides both.
+
+### Limiting thinking
+
+`thinking_token_budget` caps how long a model thinks. When thinking reaches the budget, vLLM writes `reasoning_end_str` into the output and the model answers from what it has. It is the default for a request that sets none and the ceiling for one that does; a request sets its own with the `thinking_token_budget` field of `/v1/chat/completions`, and `/v1/responses` has no such field, so there the operator's value applies. A model with no reasoning parser ignores both keys, and the startup log says so.
+
+`reasoning_end_str` is the parser's closing marker (`</think>` for `qwen3`) unless set. A model that reaches a bare marker often keeps deliberating in its answer, so a sentence ahead of it gives cleaner answers:
+
+```yaml
+vllm_engine_kwargs:
+  thinking_token_budget: 1024
+  reasoning_config:
+    reasoning_end_str: "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n</think>\n\n"
+```
+
+`reasoning_start_str` is for a parser that declares no marker of its own. Without both strings no budget is available, and the startup log warns.
 
 ### CPU (no GPU required)
 

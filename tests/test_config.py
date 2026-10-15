@@ -177,6 +177,49 @@ class TestModelshipModelConfig:
         )
         assert config.vllm_engine_kwargs.default_chat_template_kwargs == {"enable_thinking": False}
 
+    def test_thinking_limits_default_to_unset(self):
+        config = ModelshipModelConfig(name="m", model="org/m", usecase=ModelUsecase.generate, loader=ModelLoader.vllm)
+        assert config.vllm_engine_kwargs.thinking_token_budget is None
+        assert config.vllm_engine_kwargs.reasoning_config is None
+
+    def test_thinking_limits_round_trip(self):
+        config = ModelshipModelConfig.model_validate(
+            {
+                "name": "qwen3",
+                "model": "some-org/qwen3",
+                "usecase": ModelUsecase.generate,
+                "loader": ModelLoader.vllm,
+                "vllm_engine_kwargs": {
+                    "thinking_token_budget": 0,
+                    "reasoning_config": {"reasoning_end_str": "</think>"},
+                },
+            }
+        )
+        assert config.vllm_engine_kwargs.thinking_token_budget == 0
+        assert config.vllm_engine_kwargs.reasoning_config is not None
+        assert config.vllm_engine_kwargs.reasoning_config.reasoning_end_str == "</think>"
+        assert config.vllm_engine_kwargs.reasoning_config.reasoning_start_str is None
+
+    @pytest.mark.parametrize(
+        ("engine_kwargs", "match"),
+        [
+            ({"thinking_token_budget": -1}, "greater than or equal to 0"),
+            ({"reasoning_config": {"reasoning_end_str": ""}}, "at least 1 character"),
+            ({"reasoning_config": {"reasoning_parser": "qwen3"}}, "Extra inputs are not permitted"),
+        ],
+    )
+    def test_thinking_limits_are_validated(self, engine_kwargs, match):
+        with pytest.raises(ValidationError, match=match):
+            ModelshipModelConfig.model_validate(
+                {
+                    "name": "qwen3",
+                    "model": "some-org/qwen3",
+                    "usecase": ModelUsecase.generate,
+                    "loader": ModelLoader.vllm,
+                    "vllm_engine_kwargs": engine_kwargs,
+                }
+            )
+
     def test_a_hash_in_the_name_is_rejected(self):
         with pytest.raises(ValidationError, match="name 'qwen#2' must not contain '#'"):
             ModelshipModelConfig(

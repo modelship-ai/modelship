@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import Response
 from vllm.config.model import ModelDType as VllmModelDType
+from vllm.config.reasoning import ReasoningConfig as VllmReasoningConfig
 from vllm.engine.arg_utils import AsyncEngineArgs as VllmAsyncEngineArgs
 from vllm.entrypoints.chat_utils import ChatTemplateConfig as VllmChatTemplateConfig
 from vllm.entrypoints.openai.chat_completion.protocol import (
@@ -317,6 +318,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         ModelUsecase.transcription,
         ModelUsecase.translation,
     ]
+    _thinking_budget_cap: int | None = None
 
     def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
@@ -404,9 +406,11 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         vllm_config = engine_args.create_engine_config(usage_context=usage_context)
 
         self._chat_parsers = self._resolve_chat_parsers(vllm_config)
-        if self._chat_parsers is not None and self._chat_parsers.reasoning_parser:
+        reasoning_parser = self._chat_parsers.reasoning_parser if self._chat_parsers is not None else None
+        if reasoning_parser:
             # vLLM reads this once, at engine start.
-            vllm_config.structured_outputs_config.reasoning_parser = self._chat_parsers.reasoning_parser
+            vllm_config.structured_outputs_config.reasoning_parser = reasoning_parser
+        self._thinking_budget_cap = self._enable_thinking_budget(vllm_config, reasoning_parser)
 
         stat_loggers: list | None = None
         if _METRICS_ENABLED:
@@ -603,9 +607,46 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         (stateless `.parse()` call) across every choice — see `engine_ops.build_choices`."""
         return self._make_parsers(vllm_request, n=1)[0]
 
+    def _enable_thinking_budget(self, vllm_config: Any, reasoning_parser: str | None) -> int | None:
+        """Turn on vLLM's `reasoning_config`, the switch for a request's `thinking_token_budget`; return the
+        operator's budget when it can be enforced. vLLM reads the config once, at engine start."""
+        cap = self.vllm_engine_kwargs.thinking_token_budget
+        overrides = self.vllm_engine_kwargs.reasoning_config
+        name = self.model_config.name
+        if not reasoning_parser:
+            if cap is not None or overrides is not None:
+                logger.warning(
+                    "'%s' has no reasoning parser: thinking_token_budget and reasoning_config are ignored", name
+                )
+            return None
+        reasoning_config = vllm_config.reasoning_config or VllmReasoningConfig()
+        reasoning_config.reasoning_parser = reasoning_parser
+        for key, value in (overrides.model_dump(exclude_none=True) if overrides else {}).items():
+            setattr(reasoning_config, key, value)
+        reasoning_config.initialize_token_ids(vllm_config.model_config)
+        vllm_config.reasoning_config = reasoning_config
+        if not reasoning_config.enabled:
+            logger.warning(
+                "reasoning parser '%s' declares no start/end strings for '%s': a thinking budget is unavailable "
+                "until vllm_engine_kwargs.reasoning_config sets reasoning_start_str and reasoning_end_str",
+                reasoning_parser,
+                name,
+            )
+            return None
+        return cap
+
+    def _limit_thinking(self, vllm_request: VllmChatCompletionRequest) -> None:
+        """The operator's thinking budget is the default for a request without one and the ceiling for one with."""
+        cap = self._thinking_budget_cap
+        if cap is None:
+            return
+        requested = vllm_request.thinking_token_budget
+        vllm_request.thinking_token_budget = cap if requested is None else min(requested, cap)
+
     async def _render_bundle(self, vllm_request: VllmChatCompletionRequest) -> ErrorResponse | _VllmPrepared:
         """Render the chat template and derive sampling params — the single place
         this happens, so every seam sees a pre-generation failure the same way."""
+        self._limit_thinking(vllm_request)
         try:
             result = await engine_ops.render_and_params(self.openai_serving_render, vllm_request)
         except VllmValidationError as exc:

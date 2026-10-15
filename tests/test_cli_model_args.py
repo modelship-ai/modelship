@@ -227,6 +227,18 @@ class TestNestedFlags:
                 ("vllm_engine_kwargs", "default_chat_template_kwargs"),
                 {"enable_thinking": False},
             ),
+            (
+                "--vllm-engine-kwargs.thinking-token-budget",
+                "1024",
+                ("vllm_engine_kwargs", "thinking_token_budget"),
+                1024,
+            ),
+            (
+                "--vllm-engine-kwargs.reasoning-config",
+                "{reasoning_end_str: '</think>'}",
+                ("vllm_engine_kwargs", "reasoning_config"),
+                {"reasoning_end_str": "</think>"},
+            ),
         ],
     )
     def test_values_are_read_as_yaml(self, flag, text, path, expected):
