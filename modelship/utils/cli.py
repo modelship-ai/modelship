@@ -364,8 +364,8 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
         "--responses-ttl-s",
         type=float,
         help=(
-            "TTL in seconds for stored /v1/responses conversation state; <=0 disables "
-            "expiry (env: MSHIP_RESPONSES_TTL_S, default: 2592000 = 30 days)"
+            "TTL in seconds for stored /v1/responses conversation state, at least 86400 = 24 hours; "
+            "<=0 disables expiry (env: MSHIP_RESPONSES_TTL_S, default: 2592000 = 30 days)"
         ),
     )
 

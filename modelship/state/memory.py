@@ -70,10 +70,9 @@ class MemoryStoreActor(StateStore):
         """Drop expired keys, at most once per sweep interval.
 
         Lazy expiry only reclaims a key someone reads again. A key written once and
-        never re-read — the shape of a superseded /v1/responses snapshot — would
-        otherwise pin its value for the actor's lifetime. Sweeping on write rather
-        than from a background task keeps this class usable as a plain object (no
-        event loop, no task to cancel), which is how it is unit-tested.
+        never re-read would otherwise pin its value for the actor's lifetime. Sweeping
+        on write rather than from a background task keeps this class usable as a plain
+        object (no event loop, no task to cancel), which is how it is unit-tested.
         """
         interval = self._sweep_interval
         if interval <= 0 or now - self._last_sweep < interval:
@@ -85,16 +84,19 @@ class MemoryStoreActor(StateStore):
         if expired:
             logger.debug("Swept %d expired state key(s).", len(expired))
 
-    def get(self, key: str) -> JsonValue | None:
+    def _live(self, key: str, now: float) -> tuple[JsonValue, float | None] | None:
         entry = self._data.get(key)
+        if entry is not None and entry[1] is not None and now >= entry[1]:
+            del self._data[key]
+            return None
+        return entry
+
+    def get(self, key: str) -> JsonValue | None:
+        entry = self._live(key, time.time())
         if entry is None:
             return None
-        value, expires_at = entry
-        if expires_at is not None and time.time() >= expires_at:
-            self._data.pop(key, None)
-            return None
         # Deep-copy on the way out so callers can't mutate stored state in place.
-        return copy.deepcopy(value)
+        return copy.deepcopy(entry[0])
 
     def set(self, key: str, value: JsonValue, *, ttl_seconds: float | None = None) -> None:
         now = time.time()
@@ -114,35 +116,55 @@ class MemoryStoreActor(StateStore):
             if (not prefix or k == prefix or k.startswith(f"{prefix}/")) and (expires_at is None or now < expires_at)
         ]
 
-    def append(
-        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
-    ) -> None:
+    def _log(self, key: str, now: float) -> list:
+        entry = self._live(key, now)
+        return entry[0] if entry is not None and isinstance(entry[0], list) else []
+
+    def append(self, key: str, position: int, value: JsonValue, *, ttl_seconds: float | None = None) -> bool:
         # Mutates the actor-local list directly rather than a get+set round trip, so
         # cost per event is O(1) (amortized), not a rewrite of the whole log.
         now = time.time()
-        entries, _ = self._data.get(key, ([], None))
-        if not isinstance(entries, list):
-            entries = []
-        entries.append(copy.deepcopy(event))
-        if max_len is not None and len(entries) > max_len:
-            entries = entries[-max_len:]
+        entries = self._log(key, now)
+        if entries and entries[-1][0] >= position:
+            return False
+        entries.append((position, copy.deepcopy(value)))
         expires_at = now + ttl_seconds if ttl_seconds is not None else None
         self._data[key] = (entries, expires_at)
         self._maybe_sweep(now)
+        return True
 
-    def read_from(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
-        entry = self._data.get(key)
-        if entry is None:
-            return []
-        entries, expires_at = entry
-        if expires_at is not None and time.time() >= expires_at:
-            self._data.pop(key, None)
-            return []
-        if not isinstance(entries, list):
-            return []
+    def append_and_set(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+        if_exists: bool = False,
+    ) -> bool:
+        if if_exists and self._live(key, time.time()) is None:
+            return False
+        if not self.append(log_key, position, entry, ttl_seconds=ttl_seconds):
+            return False
+        self.set(key, value, ttl_seconds=ttl_seconds)
+        return True
+
+    def read_range(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
         return copy.deepcopy(
-            [e for e in entries if isinstance(e, dict) and e.get("sequence_number", -1) > after_sequence]
+            [
+                value
+                for position, value in self._log(key, time.time())
+                if start <= position and (end is None or position <= end)
+            ]
         )
+
+    def expire(self, key: str, ttl_seconds: float) -> None:
+        now = time.time()
+        entry = self._live(key, now)
+        if entry is not None:
+            self._data[key] = (entry[0], now + ttl_seconds)
 
     # In-process (this runs as the actor body itself, not over RPC from within):
     # no thread needed, so skip the base's to_thread hop.
@@ -159,12 +181,28 @@ class MemoryStoreActor(StateStore):
         return self.list(prefix)
 
     async def append_async(
-        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
-    ) -> None:
-        self.append(key, event, ttl_seconds=ttl_seconds, max_len=max_len)
+        self, key: str, position: int, value: JsonValue, *, ttl_seconds: float | None = None
+    ) -> bool:
+        return self.append(key, position, value, ttl_seconds=ttl_seconds)
 
-    async def read_from_async(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
-        return self.read_from(key, after_sequence=after_sequence)
+    async def append_and_set_async(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+        if_exists: bool = False,
+    ) -> bool:
+        return self.append_and_set(log_key, position, entry, key, value, ttl_seconds=ttl_seconds, if_exists=if_exists)
+
+    async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
+        return self.read_range(key, start=start, end=end)
+
+    async def expire_async(self, key: str, ttl_seconds: float) -> None:
+        self.expire(key, ttl_seconds)
 
 
 def get_or_create_memory_store_actor():
@@ -241,9 +279,27 @@ class MemoryStateStore(StateStore):
         return await self._acall("list", prefix)
 
     async def append_async(
-        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
-    ) -> None:
-        await self._acall("append_async", key, event, ttl_seconds=ttl_seconds, max_len=max_len)
+        self, key: str, position: int, value: JsonValue, *, ttl_seconds: float | None = None
+    ) -> bool:
+        return await self._acall("append_async", key, position, value, ttl_seconds=ttl_seconds)
 
-    async def read_from_async(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
-        return await self._acall("read_from_async", key, after_sequence=after_sequence)
+    async def append_and_set_async(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+        if_exists: bool = False,
+    ) -> bool:
+        return await self._acall(
+            "append_and_set_async", log_key, position, entry, key, value, ttl_seconds=ttl_seconds, if_exists=if_exists
+        )
+
+    async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
+        return await self._acall("read_range_async", key, start=start, end=end)
+
+    async def expire_async(self, key: str, ttl_seconds: float) -> None:
+        await self._acall("expire_async", key, ttl_seconds)

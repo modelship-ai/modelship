@@ -382,7 +382,7 @@ def _echo_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """Backfill echoed ``tools[]`` so every ``FunctionTool`` carries all five spec keys
     (the request may omit optional ones, but the echo requires them present, nullable).
     ``mcp`` tools have their credentials scrubbed (OpenAI redacts the same way) since
-    this echo is both returned to the client and written into the state-store snapshot."""
+    this echo is both returned to the client and written into the state-store record."""
     if not tools:
         return []
     out: list[dict[str, Any]] = []

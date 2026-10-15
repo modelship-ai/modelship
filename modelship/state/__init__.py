@@ -128,12 +128,33 @@ class _InstrumentedStateStore(StateStore):
         return await self._arun("list", self._inner.list_async(prefix))
 
     async def append_async(
-        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
-    ) -> None:
-        await self._arun("append", self._inner.append_async(key, event, ttl_seconds=ttl_seconds, max_len=max_len))
+        self, key: str, position: int, value: JsonValue, *, ttl_seconds: float | None = None
+    ) -> bool:
+        return await self._arun("append", self._inner.append_async(key, position, value, ttl_seconds=ttl_seconds))
 
-    async def read_from_async(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
-        return await self._arun("read_from", self._inner.read_from_async(key, after_sequence=after_sequence))
+    async def append_and_set_async(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+        if_exists: bool = False,
+    ) -> bool:
+        return await self._arun(
+            "append_and_set",
+            self._inner.append_and_set_async(
+                log_key, position, entry, key, value, ttl_seconds=ttl_seconds, if_exists=if_exists
+            ),
+        )
+
+    async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
+        return await self._arun("read_range", self._inner.read_range_async(key, start=start, end=end))
+
+    async def expire_async(self, key: str, ttl_seconds: float) -> None:
+        await self._arun("expire", self._inner.expire_async(key, ttl_seconds))
 
 
 def _build_memory(parsed: ParseResult) -> StateStore:

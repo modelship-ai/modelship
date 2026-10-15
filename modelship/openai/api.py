@@ -65,7 +65,6 @@ from modelship.openai.protocol import (
     frame_sse,
 )
 from modelship.openai.protocol.responses.adapter import UnsupportedResponsesFeatureError
-from modelship.openai.state import responses as responses_state
 from modelship.openai.utils import responses as responses_utils
 from modelship.openai.utils.chat import encode_error_sse
 from modelship.state import get_state_store
@@ -637,19 +636,20 @@ class ModelshipAPI:
         # Resolve conversation history here, before the Ray hop: the loader only ever
         # sees a flat `input`, and a store outage fails the request before any GPU
         # work starts. Costs nothing when previous_response_id is unset.
+        input_items_for_turn = responses_utils.as_input_items(request.input)
+        parent = None
         if request.previous_response_id is not None:
             try:
-                request.input = await responses_utils.resolve_history(self._state_store, identity, request)
+                history, parent = await responses_utils.resolve_previous(
+                    self._state_store, identity, request.previous_response_id
+                )
             except BaseException:
                 # Any failure here — not just the expected 404/503 HTTPException — must
                 # still stop the watcher: _handle_response hasn't taken ownership of it
                 # yet, so nothing else will cancel its polling task.
                 watcher.stop()
                 raise
-            # Already item-list-shaped (resolve_history's return type) — avoid re-normalizing.
-            input_items_for_turn = request.input
-        else:
-            input_items_for_turn = responses_utils.as_input_items(request.input)
+            request.input = [*history, *input_items_for_turn]
 
         logger.info(
             "responses model=%s input_items=%s max_output_tokens=%s stream=%s store=%s previous_response_id=%s"
@@ -667,7 +667,7 @@ class ModelshipAPI:
             # Captured before run_background forces request.stream=True on its own copy.
             wants_stream = bool(request.stream)
             response_dict = await responses_utils.start_background(
-                self._state_store, identity, request, req_id, input_items_for_turn
+                self._state_store, identity, request, req_id, parent, input_items_for_turn
             )
             task = asyncio.ensure_future(
                 responses_utils.run_background(
@@ -678,7 +678,6 @@ class ModelshipAPI:
                     identity,
                     store=self._state_store,
                     response_id=response_dict["id"],
-                    input_items=input_items_for_turn,
                     stream_buffer=wants_stream,
                 )
             )
@@ -706,6 +705,7 @@ class ModelshipAPI:
                 response_gen,
                 self._state_store,
                 identity=identity,
+                parent=parent,
                 input_items=input_items_for_turn,
             )
         # SSE-frame + [DONE] happen here, after persistence, so persist_response still sees plain event dicts.
@@ -721,7 +721,7 @@ class ModelshipAPI:
         await websocket.accept()
         identity = self._set_identity(websocket)
         headers = dict(websocket.headers)
-        conn_cache: dict[str, dict] = {}
+        conn_cache: dict[str, list] = {}
         registry = get_disconnect_registry()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         current_req_id: str | None = None
@@ -764,7 +764,7 @@ class ModelshipAPI:
         identity: str,
         headers: dict[str, str],
         raw: str,
-        conn_cache: dict[str, dict],
+        conn_cache: dict[str, list],
         registry: Any,
         req_id: str,
     ) -> None:
@@ -807,18 +807,16 @@ class ModelshipAPI:
         endpoint = "create_response_ws"
 
         prev_id = request.previous_response_id
+        input_items_for_turn = responses_utils.as_input_items(request.input) if request.input is not None else []
+        parent = None
         try:
             if prev_id is not None and prev_id in conn_cache:
                 # A continuation this socket itself produced with store:false.
-                this_turn = responses_utils.as_input_items(request.input) if request.input is not None else []
-                request.input = [*responses_state.history_items(conn_cache[prev_id]), *this_turn]
+                request.input = [*conn_cache[prev_id], *input_items_for_turn]
                 input_items_for_turn = request.input
             elif prev_id is not None:
-                request.input = await responses_utils.resolve_history(self._state_store, identity, request)
-                input_items_for_turn = request.input
-            else:
-                # request.input is left untouched here; only the persist/cache bookkeeping below needs item-list form.
-                input_items_for_turn = responses_utils.as_input_items(request.input)
+                history, parent = await responses_utils.resolve_previous(self._state_store, identity, prev_id)
+                request.input = [*history, *input_items_for_turn]
         except responses_utils.ResponsesApiError as exc:
             await websocket.send_text(error_ws_frame(exc.err))
             return
@@ -854,7 +852,7 @@ class ModelshipAPI:
                 # Same helper HTTP uses — persists before yielding, so a store
                 # failure can still flip the terminal event to response.failed.
                 response_gen = responses_utils.persist_response(
-                    response_gen, self._state_store, identity=identity, input_items=input_items_for_turn
+                    response_gen, self._state_store, identity=identity, parent=parent, input_items=input_items_for_turn
                 )
             async for item in response_gen:
                 STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
@@ -911,7 +909,10 @@ class ModelshipAPI:
         if request.store is False and terminal_response is not None:
             response_id = terminal_response.get("id")
             if response_id:
-                conn_cache[response_id] = {"input_items": input_items_for_turn, "response": terminal_response}
+                conn_cache[response_id] = [
+                    *responses_utils.as_input_items(request.input),
+                    *(terminal_response.get("output") or []),
+                ]
                 while len(conn_cache) > _WS_CONN_CACHE_MAX:
                     conn_cache.pop(next(iter(conn_cache)))
 
@@ -923,7 +924,7 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         # Confirms existence/ownership up front, so an unknown id still 404s cleanly —
         # once a StreamingResponse starts, an in-loop miss can only end the stream quietly.
-        snapshot = await responses_utils.load_snapshot(self._state_store, identity, response_id)
+        record = await responses_utils.load_record(self._state_store, identity, response_id)
         if stream:
             return StreamingResponse(
                 frame_sse(
@@ -934,9 +935,8 @@ class ModelshipAPI:
                 media_type="text/event-stream",
             )
         # Orphan detection: a dead drain task surfaces as `failed` here rather than hanging forever.
-        snapshot = await responses_utils.reconcile_staleness(self._state_store, identity, response_id, snapshot)
-        # Stored verbatim, so this is a passthrough — no re-derivation to drift.
-        return JSONResponse(content=snapshot["response"])
+        record = await responses_utils.reconcile_staleness(self._state_store, identity, response_id, record)
+        return JSONResponse(content=record["response"])
 
     @app.post("/v1/responses/{response_id}/cancel")
     async def cancel_response(self, response_id: str, raw_request: Request):
@@ -951,19 +951,18 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         # Read first: delete is idempotent by contract, so it alone can't tell an
         # unknown id from a real removal.
-        snapshot = await responses_utils.load_snapshot(self._state_store, identity, response_id)
+        record = await responses_utils.load_record(self._state_store, identity, response_id)
         # DELETE on an in-flight background run implies cancel.
-        await responses_utils.signal_background_cancel_if_in_progress(identity, response_id, snapshot)
-        await responses_utils.delete_snapshot(self._state_store, identity, response_id)
+        await responses_utils.signal_background_cancel_if_in_progress(identity, response_id, record)
+        await responses_utils.delete_record(self._state_store, identity, response_id)
         return JSONResponse(content={"id": response_id, "object": "response", "deleted": True})
 
     @app.get("/v1/responses/{response_id}/input_items")
     async def get_response_input_items(self, response_id: str, raw_request: Request):
         self._set_request_id(random_uuid())
         identity = self._set_identity(raw_request)
-        snapshot = await responses_utils.load_snapshot(self._state_store, identity, response_id)
         # Chronological; OpenAI defaults to order=desc, which we don't support yet.
-        items = snapshot.get("input_items") or []
+        items = await responses_utils.load_input_items(self._state_store, identity, response_id)
         return JSONResponse(
             content={
                 "object": "list",
@@ -988,12 +987,12 @@ class ModelshipAPI:
         start = time.monotonic()
         REQUEST_IN_PROGRESS.set(1, tags={"model": model, "endpoint": endpoint})
         try:
-            items = await responses_utils.resolve_history_items(
-                self._state_store,
-                identity,
-                previous_response_id=request.previous_response_id,
-                input_=request.input,
-            )
+            items = responses_utils.as_input_items(request.input) if request.input is not None else []
+            if request.previous_response_id is not None:
+                history, _ = await responses_utils.resolve_previous(
+                    self._state_store, identity, request.previous_response_id
+                )
+                items = [*history, *items]
             if not items:
                 raise HTTPException(
                     status_code=HTTPStatus.BAD_REQUEST.value, detail="cannot compact an empty conversation."

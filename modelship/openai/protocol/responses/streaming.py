@@ -159,7 +159,7 @@ class ResponsesStreamTranslator:
 
     def __init__(self, request: ResponsesRequest, *, response_id: str | None = None):
         self.request = request
-        # Injected for a background run to keep the same id across placeholder/stream/snapshot.
+        # Injected for a background run to keep the same id across placeholder/stream/record.
         self.response_id = response_id or f"resp_{random_uuid()}"
         self.created_at: int | None = None  # pinned after the first envelope
         self.model = request.model or ""

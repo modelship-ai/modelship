@@ -86,12 +86,30 @@ class StateStore(ABC):
     # default would read-modify-write the whole log on every event.
     @abstractmethod
     async def append_async(
-        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
-    ) -> None:
-        """Append *event* to the log at *key* (creating it if absent). *max_len*,
-        if given, bounds how many trailing entries are retained."""
+        self, key: str, position: int, value: JsonValue, *, ttl_seconds: float | None = None
+    ) -> bool:
+        """Add *value* at *position* (from 1) to the log at *key*, creating it if absent.
+        Refused, returning ``False``, unless *position* is past the log's last entry."""
 
     @abstractmethod
-    async def read_from_async(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
-        """Entries at *key* with ``sequence_number`` > *after_sequence*, in order.
-        Sequence numbers start at 0, so -1 means "from the start"."""
+    async def append_and_set_async(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+        if_exists: bool = False,
+    ) -> bool:
+        """``append_async``, also setting *key* to *value* in the same atomic step; neither is written if refused.
+        With *if_exists*, also refused when *key* is absent."""
+
+    @abstractmethod
+    async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
+        """Entries at *key* with *start* <= position <= *end* (no bound if ``None``), in order."""
+
+    @abstractmethod
+    async def expire_async(self, key: str, ttl_seconds: float) -> None:
+        """Make *key* expire after *ttl_seconds*; no-op if absent."""
