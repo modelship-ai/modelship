@@ -195,6 +195,18 @@ class TestMemoryStoreActor:
         clock["t"] = 1016.0
         assert store.read_range("log/a") == []
 
+    def test_expire_leaves_an_expired_key_absent(self, monkeypatch):
+        clock = {"t": 1000.0}
+        monkeypatch.setattr("time.time", lambda: clock["t"])
+        store = _MemoryStore()
+        store.append("log/a", 1, {"n": 1}, ttl_seconds=10)
+        store.set("k", {"x": 1}, ttl_seconds=10)
+        clock["t"] = 1011.0
+        store.expire("log/a", 10)
+        store.expire("k", 10)
+        assert store.read_range("log/a") == []
+        assert store.get("k") is None
+
     def test_append_isolates_stored_value_from_caller_mutation(self):
         store = _MemoryStore()
         value = {"x": 1}

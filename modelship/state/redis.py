@@ -167,13 +167,16 @@ class RedisStateStore(StateStore):
         value: JsonValue,
         *,
         ttl_seconds: float | None = None,
+        if_exists: bool = False,
     ) -> bool:
-        log, px = self._slug(log_key), self._px(ttl_seconds)
+        log, record, px = self._slug(log_key), self._slug(key), self._px(ttl_seconds)
         with _mapped(f"redis xadd {log_key!r} and set {key!r}"):
             async with self._async().pipeline() as pipe:
                 while True:
                     try:
-                        await pipe.watch(log)
+                        await pipe.watch(log, record)
+                        if if_exists and not await pipe.exists(record):
+                            return False
                         top = await pipe.xrevrange(log, count=1)
                         if top and int(cast(str, top[0][0]).split("-")[0]) >= position:
                             return False
@@ -181,7 +184,7 @@ class RedisStateStore(StateStore):
                         pipe.xadd(log, {"data": json.dumps(entry)}, id=f"{position}-0")
                         if px is not None:
                             pipe.pexpire(log, px)
-                        pipe.set(self._slug(key), json.dumps(value), px=px)
+                        pipe.set(record, json.dumps(value), px=px)
                         await pipe.execute()
                         return True
                     except WatchError:

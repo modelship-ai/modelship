@@ -101,8 +101,10 @@ class StateStore(ABC):
         value: JsonValue,
         *,
         ttl_seconds: float | None = None,
+        if_exists: bool = False,
     ) -> bool:
-        """``append_async``, also setting *key* to *value* in the same atomic step; neither is written if refused."""
+        """``append_async``, also setting *key* to *value* in the same atomic step; neither is written if refused.
+        With *if_exists*, also refused when *key* is absent."""
 
     @abstractmethod
     async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:

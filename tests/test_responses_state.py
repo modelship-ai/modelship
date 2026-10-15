@@ -155,6 +155,37 @@ class TestTerminalRace:
         assert record is not None
         assert record["response"] in (cancelled, completed)
 
+    @pytest.mark.parametrize("parent", [None, {"log": "resp_0", "depth": 1}])
+    @pytest.mark.asyncio
+    async def test_a_record_deleted_after_the_read_stays_deleted(self, store, monkeypatch, parent):
+        if parent is not None:
+            await _write(store, response_id="resp_0")
+        await responses_state.write_background(
+            store, "u1", "resp_1", response={**_response(output=[]), "status": "queued"}, parent=parent, input_items=[]
+        )
+        read, deleted = asyncio.Event(), asyncio.Event()
+        get_async = store.get_async
+
+        async def get_until_deleted(key):
+            value = await get_async(key)
+            read.set()
+            await deleted.wait()
+            return value
+
+        monkeypatch.setattr(store, "get_async", get_until_deleted)
+        write = asyncio.create_task(
+            responses_state.write_terminal_if_not_terminal(store, "u1", "resp_1", response=_response())
+        )
+        await read.wait()
+        await responses_state.delete_async(store, "u1", "resp_1")
+        deleted.set()
+        await write
+        monkeypatch.undo()
+
+        assert await responses_state.read_async(store, "u1", "resp_1") is None
+        assert await store.read_range_async("responses-log/u1/resp_1") == []
+        assert len(await store.read_range_async("responses-log/u1/resp_0")) == (0 if parent is None else 1)
+
 
 class TestMalformedRecord:
     @pytest.mark.parametrize(

@@ -141,10 +141,13 @@ class _InstrumentedStateStore(StateStore):
         value: JsonValue,
         *,
         ttl_seconds: float | None = None,
+        if_exists: bool = False,
     ) -> bool:
         return await self._arun(
             "append_and_set",
-            self._inner.append_and_set_async(log_key, position, entry, key, value, ttl_seconds=ttl_seconds),
+            self._inner.append_and_set_async(
+                log_key, position, entry, key, value, ttl_seconds=ttl_seconds, if_exists=if_exists
+            ),
         )
 
     async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:

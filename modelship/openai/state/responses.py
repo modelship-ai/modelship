@@ -305,7 +305,14 @@ def _with_ids(items: list[dict]) -> list[dict]:
 
 
 async def _store_turn(
-    store: StateStore, identity: str, response_id: str, response: dict, parent: dict | None, input_items: list[dict]
+    store: StateStore,
+    identity: str,
+    response_id: str,
+    response: dict,
+    parent: dict | None,
+    input_items: list[dict],
+    *,
+    if_exists: bool = False,
 ) -> None:
     ttl = ttl_seconds()
     key = _key(identity, response_id)
@@ -313,13 +320,25 @@ async def _store_turn(
     record = {"response": {**response, "output": []}}
     if parent is None:
         await store.append_and_set_async(
-            _log_key(identity, response_id), 1, entry, key, {**record, "log": response_id, "depth": 1}, ttl_seconds=ttl
+            _log_key(identity, response_id),
+            1,
+            entry,
+            key,
+            {**record, "log": response_id, "depth": 1},
+            ttl_seconds=ttl,
+            if_exists=if_exists,
         )
         return
     depth = parent["depth"] + 1
     parent_log = _log_key(identity, parent["log"])
     if await store.append_and_set_async(
-        parent_log, depth, entry, key, {**record, "log": parent["log"], "depth": depth}, ttl_seconds=ttl
+        parent_log,
+        depth,
+        entry,
+        key,
+        {**record, "log": parent["log"], "depth": depth},
+        ttl_seconds=ttl,
+        if_exists=if_exists,
     ):
         return
     taken = await store.read_range_async(parent_log, start=depth, end=depth)
@@ -333,6 +352,7 @@ async def _store_turn(
         key,
         {**record, "log": response_id, "depth": depth},
         ttl_seconds=ttl,
+        if_exists=if_exists,
     )
 
 
@@ -380,7 +400,7 @@ async def write_terminal_if_not_terminal(store: StateStore, identity: str, respo
     record = await _read_record(store, identity, response_id)
     if record is None or "log" in record or record["response"].get("status") in TERMINAL_STATUSES:
         return
-    await _store_turn(store, identity, response_id, response, record["parent"], record["input"])
+    await _store_turn(store, identity, response_id, response, record["parent"], record["input"], if_exists=True)
 
 
 def stream_buffer_ttl_seconds() -> float:

@@ -84,16 +84,19 @@ class MemoryStoreActor(StateStore):
         if expired:
             logger.debug("Swept %d expired state key(s).", len(expired))
 
-    def get(self, key: str) -> JsonValue | None:
+    def _live(self, key: str, now: float) -> tuple[JsonValue, float | None] | None:
         entry = self._data.get(key)
+        if entry is not None and entry[1] is not None and now >= entry[1]:
+            del self._data[key]
+            return None
+        return entry
+
+    def get(self, key: str) -> JsonValue | None:
+        entry = self._live(key, time.time())
         if entry is None:
             return None
-        value, expires_at = entry
-        if expires_at is not None and time.time() >= expires_at:
-            self._data.pop(key, None)
-            return None
         # Deep-copy on the way out so callers can't mutate stored state in place.
-        return copy.deepcopy(value)
+        return copy.deepcopy(entry[0])
 
     def set(self, key: str, value: JsonValue, *, ttl_seconds: float | None = None) -> None:
         now = time.time()
@@ -114,14 +117,8 @@ class MemoryStoreActor(StateStore):
         ]
 
     def _log(self, key: str, now: float) -> list:
-        entry = self._data.get(key)
-        if entry is None:
-            return []
-        entries, expires_at = entry
-        if expires_at is not None and now >= expires_at:
-            self._data.pop(key, None)
-            return []
-        return entries if isinstance(entries, list) else []
+        entry = self._live(key, now)
+        return entry[0] if entry is not None and isinstance(entry[0], list) else []
 
     def append(self, key: str, position: int, value: JsonValue, *, ttl_seconds: float | None = None) -> bool:
         # Mutates the actor-local list directly rather than a get+set round trip, so
@@ -145,7 +142,10 @@ class MemoryStoreActor(StateStore):
         value: JsonValue,
         *,
         ttl_seconds: float | None = None,
+        if_exists: bool = False,
     ) -> bool:
+        if if_exists and self._live(key, time.time()) is None:
+            return False
         if not self.append(log_key, position, entry, ttl_seconds=ttl_seconds):
             return False
         self.set(key, value, ttl_seconds=ttl_seconds)
@@ -161,9 +161,10 @@ class MemoryStoreActor(StateStore):
         )
 
     def expire(self, key: str, ttl_seconds: float) -> None:
-        entry = self._data.get(key)
+        now = time.time()
+        entry = self._live(key, now)
         if entry is not None:
-            self._data[key] = (entry[0], time.time() + ttl_seconds)
+            self._data[key] = (entry[0], now + ttl_seconds)
 
     # In-process (this runs as the actor body itself, not over RPC from within):
     # no thread needed, so skip the base's to_thread hop.
@@ -193,8 +194,9 @@ class MemoryStoreActor(StateStore):
         value: JsonValue,
         *,
         ttl_seconds: float | None = None,
+        if_exists: bool = False,
     ) -> bool:
-        return self.append_and_set(log_key, position, entry, key, value, ttl_seconds=ttl_seconds)
+        return self.append_and_set(log_key, position, entry, key, value, ttl_seconds=ttl_seconds, if_exists=if_exists)
 
     async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
         return self.read_range(key, start=start, end=end)
@@ -290,8 +292,11 @@ class MemoryStateStore(StateStore):
         value: JsonValue,
         *,
         ttl_seconds: float | None = None,
+        if_exists: bool = False,
     ) -> bool:
-        return await self._acall("append_and_set_async", log_key, position, entry, key, value, ttl_seconds=ttl_seconds)
+        return await self._acall(
+            "append_and_set_async", log_key, position, entry, key, value, ttl_seconds=ttl_seconds, if_exists=if_exists
+        )
 
     async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
         return await self._acall("read_range_async", key, start=start, end=end)
