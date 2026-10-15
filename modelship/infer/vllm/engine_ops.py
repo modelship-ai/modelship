@@ -6,7 +6,7 @@ stream comes out. Nothing outside this module should import from
 vLLM version bump's blast radius confined to one file.
 """
 
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from typing import Any
 
 from vllm.entrypoints.openai.chat_completion.protocol import (
@@ -146,46 +146,52 @@ def make_parsers(
     ]
 
 
-def carries_reasoning(vllm_req: VllmChatCompletionRequest) -> bool:
-    return any(isinstance(message, dict) and message.get("reasoning") for message in vllm_req.messages)
-
-
-async def learn_prompt_ending(
-    render: VllmOnlineRenderer, tokenizer: VllmTokenizerLike, vllm_req: VllmChatCompletionRequest
-) -> list[int] | None:
-    prompts = []
-    for add_generation_prompt in (True, False):
-        probe = VllmChatCompletionRequest.model_validate(
-            {
-                "messages": [{"role": "user", "content": "hi"}],
-                "add_generation_prompt": add_generation_prompt,
-                "chat_template_kwargs": vllm_req.chat_template_kwargs,
-                "reasoning_effort": vllm_req.reasoning_effort,
-            }
-        )
-        try:
-            result = await render.render_chat(probe)
-        except Exception:
-            return None
-        if isinstance(result, VllmErrorResponse):
-            return None
-        prompts.append(extract_prompt_token_ids(render, result[1][0]))
-    prompt, without_ending = prompts
-    ending = prompt[len(without_ending) :]
-    parser = make_parsers(render, tokenizer, probe, n=1)[0]
-    if parser is None or not ending or prompt[: len(without_ending)] != without_ending:
-        return None
-    if parser.is_reasoning_end(prompt) != parser.is_reasoning_end(ending):
-        return None
-    return ending
+async def learn_prompt_endings(
+    render: VllmOnlineRenderer, tokenizer: VllmTokenizerLike, toggles: Iterable[str]
+) -> list[list[int]]:
+    defaults = render.default_chat_template_kwargs or {}
+    endings: list[list[int]] = []
+    for chat_template_kwargs in ({}, *({toggle: not defaults.get(toggle)} for toggle in toggles)):
+        prompts = []
+        for add_generation_prompt in (True, False):
+            vllm_req = VllmChatCompletionRequest.model_validate(
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "add_generation_prompt": add_generation_prompt,
+                    "chat_template_kwargs": chat_template_kwargs,
+                }
+            )
+            try:
+                result = await render.render_chat(vllm_req)
+            except Exception:
+                break
+            if isinstance(result, VllmErrorResponse):
+                break
+            prompts.append(extract_prompt_token_ids(render, result[1][0]))
+        if len(prompts) < 2:
+            continue
+        prompt, without_ending = prompts
+        ending = prompt[len(without_ending) :]
+        parser = make_parsers(render, tokenizer, vllm_req, n=1)[0]
+        if parser is None or not ending or prompt[: len(without_ending)] != without_ending:
+            continue
+        if parser.is_reasoning_end(prompt) != parser.is_reasoning_end(ending):
+            return []
+        if ending not in endings:
+            endings.append(ending)
+    return sorted(endings, key=len, reverse=True)
 
 
 def match_prompt_ending(
-    render: VllmOnlineRenderer, engine_input: VllmEngineInput, ending: list[int] | None
+    render: VllmOnlineRenderer,
+    vllm_req: VllmChatCompletionRequest,
+    engine_input: VllmEngineInput,
+    endings: list[list[int]],
 ) -> list[int] | None:
-    if ending is None:
+    if not endings or not any(isinstance(message, dict) and message.get("reasoning") for message in vllm_req.messages):
         return None
-    return ending if extract_prompt_token_ids(render, engine_input)[-len(ending) :] == ending else None
+    prompt_token_ids = extract_prompt_token_ids(render, engine_input)
+    return next((ending for ending in endings if prompt_token_ids[-len(ending) :] == ending), None)
 
 
 def derive_reasoning_ended(
