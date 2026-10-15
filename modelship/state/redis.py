@@ -24,6 +24,7 @@ from typing import cast
 import redis
 import redis.asyncio as aioredis
 from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import ResponseError, WatchError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from modelship.logging import get_logger
@@ -144,25 +145,61 @@ class RedisStateStore(StateStore):
         return self._unslug(keys, prefix)
 
     async def append_async(
-        self, key: str, event: JsonValue, *, ttl_seconds: float | None = None, max_len: int | None = None
-    ) -> None:
-        # Entry id is 1-based from the event's own sequence_number ("0-0" is
-        # reserved by Redis), so read_from_async's range query maps directly onto it.
-        seq = event.get("sequence_number") if isinstance(event, dict) else None
-        entry_id = f"{int(seq) + 1}-0" if isinstance(seq, int) else "*"
-        maxlen_kwargs = {"maxlen": max_len, "approximate": True} if max_len is not None else {}
+        self, key: str, position: int, value: JsonValue, *, ttl_seconds: float | None = None
+    ) -> bool:
         with _mapped(f"redis xadd {key!r}"):
-            await self._async().xadd(self._slug(key), {"data": json.dumps(event)}, id=entry_id, **maxlen_kwargs)
+            try:
+                await self._async().xadd(self._slug(key), {"data": json.dumps(value)}, id=f"{position}-0")
+            except ResponseError as exc:
+                if "equal or smaller" in str(exc):
+                    return False
+                raise
             if ttl_seconds is not None:
                 await self._async().pexpire(self._slug(key), cast(int, self._px(ttl_seconds)))
+        return True
 
-    async def read_from_async(self, key: str, *, after_sequence: int = -1) -> list[JsonValue]:
-        start_id = f"({after_sequence + 1}-0"
+    async def append_and_set_async(
+        self,
+        log_key: str,
+        position: int,
+        entry: JsonValue,
+        key: str,
+        value: JsonValue,
+        *,
+        ttl_seconds: float | None = None,
+        if_exists: bool = False,
+    ) -> bool:
+        log, record, px = self._slug(log_key), self._slug(key), self._px(ttl_seconds)
+        with _mapped(f"redis xadd {log_key!r} and set {key!r}"):
+            async with self._async().pipeline() as pipe:
+                while True:
+                    try:
+                        await pipe.watch(log, record)
+                        if if_exists and not await pipe.exists(record):
+                            return False
+                        top = await pipe.xrevrange(log, count=1)
+                        if top and int(cast(str, top[0][0]).split("-")[0]) >= position:
+                            return False
+                        pipe.multi()
+                        pipe.xadd(log, {"data": json.dumps(entry)}, id=f"{position}-0")
+                        if px is not None:
+                            pipe.pexpire(log, px)
+                        pipe.set(record, json.dumps(value), px=px)
+                        await pipe.execute()
+                        return True
+                    except WatchError:
+                        continue
+
+    async def read_range_async(self, key: str, *, start: int = 1, end: int | None = None) -> list[JsonValue]:
         with _mapped(f"redis xrange {key!r}"):
-            entries = await self._async().xrange(self._slug(key), min=start_id, max="+")
-        events = []
+            entries = await self._async().xrange(self._slug(key), min=str(start), max="+" if end is None else str(end))
+        values = []
         for _entry_id, fields in entries or []:
             decoded = _decode(fields.get("data")) if isinstance(fields, dict) else None
             if decoded is not None:
-                events.append(decoded)
-        return events
+                values.append(decoded)
+        return values
+
+    async def expire_async(self, key: str, ttl_seconds: float) -> None:
+        with _mapped(f"redis pexpire {key!r}"):
+            await self._async().pexpire(self._slug(key), cast(int, self._px(ttl_seconds)))

@@ -23,6 +23,7 @@ from modelship.openai.api import ModelshipAPI
 from modelship.openai.protocol import ChatCompletionResponse, UsageInfo, create_error_response
 from modelship.openai.protocol.chat import ChatCompletionResponseChoice, ChatMessage
 from modelship.openai.protocol.responses.schemas import CompactionItem, CompactRequest, CompactResource, ResponseUsage
+from modelship.openai.state import responses as responses_state
 from modelship.openai.utils.responses import build_compaction, build_summarization_request
 from modelship.state import MemoryStoreActor
 from tests.conftest import build_gateway
@@ -312,12 +313,13 @@ class TestCompactResponseRoute:
     async def test_previous_response_id_history_is_resolved_before_dispatch(self, api):
         handle = _wire(api, _chat_response_gen())
         identity = "unscoped"
-        await api._state_store.set_async(
-            f"responses/{identity}/resp_1",
-            {
-                "response": {"id": "resp_1", "object": "response", "status": "completed", "output": []},
-                "input_items": [{"type": "message", "role": "user", "content": "earlier turn"}],
-            },
+        await responses_state.write_async(
+            api._state_store,
+            identity,
+            "resp_1",
+            response={"id": "resp_1", "object": "response", "status": "completed", "output": []},
+            parent=None,
+            input_items=[{"type": "message", "role": "user", "content": "earlier turn"}],
         )
         request = CompactRequest(model="m", input="continue", previous_response_id="resp_1")
 

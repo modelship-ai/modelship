@@ -90,35 +90,48 @@ class TestBackends:
         assert await store.get_async("k") is None
 
     @pytest.mark.asyncio
-    async def test_append_then_read_from_roundtrips_in_order(self, store):
-        for i in range(3):
-            await store.append_async("log/a", {"sequence_number": i, "n": i * 10})
-        assert await store.read_from_async("log/a") == [
-            {"sequence_number": 0, "n": 0},
-            {"sequence_number": 1, "n": 10},
-            {"sequence_number": 2, "n": 20},
-        ]
+    async def test_append_then_read_range_roundtrips_in_order(self, store):
+        for position in (1, 2, 3):
+            assert await store.append_async("log/a", position, {"n": position})
+        assert await store.read_range_async("log/a") == [{"n": 1}, {"n": 2}, {"n": 3}]
 
     @pytest.mark.asyncio
-    async def test_read_from_excludes_after_sequence_and_below(self, store):
-        for i in range(3):
-            await store.append_async("log/a", {"sequence_number": i})
-        assert await store.read_from_async("log/a", after_sequence=0) == [
-            {"sequence_number": 1},
-            {"sequence_number": 2},
-        ]
-        assert await store.read_from_async("log/a", after_sequence=2) == []
+    async def test_read_range_bounds_are_inclusive(self, store):
+        for position in (1, 2, 3, 4):
+            await store.append_async("log/a", position, {"n": position})
+        assert await store.read_range_async("log/a", start=2, end=3) == [{"n": 2}, {"n": 3}]
+        assert await store.read_range_async("log/a", end=1) == [{"n": 1}]
+        assert await store.read_range_async("log/a", start=4) == [{"n": 4}]
+        assert await store.read_range_async("log/a", start=5) == []
 
     @pytest.mark.asyncio
-    async def test_read_from_absent_key_returns_empty(self, store):
-        assert await store.read_from_async("log/nope") == []
+    async def test_positions_may_skip_and_start_past_one(self, store):
+        assert await store.append_async("log/a", 3, {"n": 3})
+        assert await store.append_async("log/a", 7, {"n": 7})
+        assert await store.read_range_async("log/a", end=6) == [{"n": 3}]
+
+    @pytest.mark.asyncio
+    async def test_append_below_the_last_position_is_refused(self, store):
+        await store.append_async("log/a", 1, {"n": 1})
+        await store.append_async("log/a", 2, {"n": 2})
+        assert await store.append_async("log/a", 1, {"n": "late"}) is False
+        assert await store.read_range_async("log/a") == [{"n": 1}, {"n": 2}]
+
+    @pytest.mark.asyncio
+    async def test_read_range_absent_key_returns_empty(self, store):
+        assert await store.read_range_async("log/nope") == []
 
     @pytest.mark.asyncio
     async def test_append_is_isolated_per_key(self, store):
-        await store.append_async("log/a", {"sequence_number": 0})
-        await store.append_async("log/b", {"sequence_number": 0})
-        assert len(await store.read_from_async("log/a")) == 1
-        assert len(await store.read_from_async("log/b")) == 1
+        await store.append_async("log/a", 1, {"n": 1})
+        await store.append_async("log/b", 1, {"n": 1})
+        assert len(await store.read_range_async("log/a")) == 1
+        assert len(await store.read_range_async("log/b")) == 1
+
+    @pytest.mark.asyncio
+    async def test_expire_on_absent_key_is_a_noop(self, store):
+        await store.expire_async("log/nope", 10)
+        assert await store.read_range_async("log/nope") == []
 
 
 class TestMemoryStoreActor:
@@ -146,27 +159,60 @@ class TestMemoryStoreActor:
         assert store.get("k") is None
         assert store.list("k") == []
 
-    def test_append_max_len_bounds_to_trailing_entries(self):
+    def test_append_at_the_last_position_is_refused(self):
         store = _MemoryStore()
-        for i in range(5):
-            store.append("log/a", {"sequence_number": i}, max_len=3)
-        assert store.read_from("log/a") == [{"sequence_number": 2}, {"sequence_number": 3}, {"sequence_number": 4}]
+        store.append("log/a", 1, {"n": 1})
+        assert store.append("log/a", 1, {"n": "again"}) is False
+        assert store.read_range("log/a") == [{"n": 1}]
 
     def test_append_ttl_expires_like_set(self, monkeypatch):
         clock = {"t": 1000.0}
         monkeypatch.setattr("time.time", lambda: clock["t"])
         store = _MemoryStore()
-        store.append("log/a", {"sequence_number": 0}, ttl_seconds=10)
-        assert store.read_from("log/a") == [{"sequence_number": 0}]
+        store.append("log/a", 1, {"n": 1}, ttl_seconds=10)
+        assert store.read_range("log/a") == [{"n": 1}]
         clock["t"] = 1011.0
-        assert store.read_from("log/a") == []
+        assert store.read_range("log/a") == []
 
-    def test_append_isolates_stored_event_from_caller_mutation(self):
+    def test_append_to_an_expired_log_starts_a_new_one(self, monkeypatch):
+        clock = {"t": 1000.0}
+        monkeypatch.setattr("time.time", lambda: clock["t"])
         store = _MemoryStore()
-        event = {"sequence_number": 0, "x": 1}
-        store.append("log/a", event)
-        event["x"] = 999
-        assert store.read_from("log/a") == [{"sequence_number": 0, "x": 1}]
+        store.append("log/a", 2, {"n": "old"}, ttl_seconds=10)
+        clock["t"] = 1011.0
+        assert store.append("log/a", 1, {"n": "new"}, ttl_seconds=10)
+        assert store.read_range("log/a") == [{"n": "new"}]
+
+    def test_expire_extends_a_log(self, monkeypatch):
+        clock = {"t": 1000.0}
+        monkeypatch.setattr("time.time", lambda: clock["t"])
+        store = _MemoryStore()
+        store.append("log/a", 1, {"n": 1}, ttl_seconds=10)
+        clock["t"] = 1005.0
+        store.expire("log/a", 10)
+        clock["t"] = 1011.0
+        assert store.read_range("log/a") == [{"n": 1}]
+        clock["t"] = 1016.0
+        assert store.read_range("log/a") == []
+
+    def test_expire_leaves_an_expired_key_absent(self, monkeypatch):
+        clock = {"t": 1000.0}
+        monkeypatch.setattr("time.time", lambda: clock["t"])
+        store = _MemoryStore()
+        store.append("log/a", 1, {"n": 1}, ttl_seconds=10)
+        store.set("k", {"x": 1}, ttl_seconds=10)
+        clock["t"] = 1011.0
+        store.expire("log/a", 10)
+        store.expire("k", 10)
+        assert store.read_range("log/a") == []
+        assert store.get("k") is None
+
+    def test_append_isolates_stored_value_from_caller_mutation(self):
+        store = _MemoryStore()
+        value = {"x": 1}
+        store.append("log/a", 1, value)
+        value["x"] = 999
+        assert store.read_range("log/a") == [{"x": 1}]
 
 
 class TestMemoryStoreActorSweep:
@@ -277,21 +323,20 @@ class TestRedisStateStore:
         assert store._sync_client.pttl("modelship/state/k2") == -1  # no expiry
 
     @pytest.mark.asyncio
-    async def test_append_uses_a_native_stream(self):
+    async def test_append_uses_a_native_stream_keyed_by_position(self):
         store = _fake_redis_store()
-        await store.append_async("log/a", {"sequence_number": 0, "type": "x"})
-        await store.append_async("log/a", {"sequence_number": 1, "type": "y"})
+        await store.append_async("log/a", 1, {"type": "x"})
+        await store.append_async("log/a", 2, {"type": "y"})
         assert store._sync_client.type("modelship/state/log/a") == "stream"
-        assert await store.read_from_async("log/a") == [
-            {"sequence_number": 0, "type": "x"},
-            {"sequence_number": 1, "type": "y"},
-        ]
+        assert [entry_id for entry_id, _ in store._sync_client.xrange("modelship/state/log/a")] == ["1-0", "2-0"]
 
     @pytest.mark.asyncio
-    async def test_append_ttl_sets_native_expiry(self):
+    async def test_append_and_expire_set_native_expiry(self):
         store = _fake_redis_store()
-        await store.append_async("log/a", {"sequence_number": 0}, ttl_seconds=100)
-        assert store._sync_client.pttl("modelship/state/log/a") > 0
+        await store.append_async("log/a", 1, {"n": 1}, ttl_seconds=100)
+        assert 0 < store._sync_client.pttl("modelship/state/log/a") <= 100_000
+        await store.expire_async("log/a", 1000)
+        assert store._sync_client.pttl("modelship/state/log/a") > 100_000
 
     def test_corrupt_value_treated_as_missing(self):
         store = _fake_redis_store()
@@ -314,7 +359,7 @@ class TestRedisStateStore:
     async def test_namespace_prefixes_every_key(self):
         store = _fake_redis_store(namespace="rel-a")
         store.set("cfg/x", 1)
-        await store.append_async("log/a", {"sequence_number": 0})
+        await store.append_async("log/a", 1, {"n": 1})
         assert sorted(store._sync_client.keys()) == ["modelship/state/rel-a/cfg/x", "modelship/state/rel-a/log/a"]
         assert sorted(store.list("")) == ["cfg/x", "log/a"]
         assert await store.list_async("cfg") == ["cfg/x"]

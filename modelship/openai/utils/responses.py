@@ -1,5 +1,5 @@
 """Utility helpers for ``/v1/responses``: loader-side output shaping plus
-gateway-side conversation-state plumbing (history, persistence, snapshots)."""
+gateway-side conversation-state plumbing (history, persistence, records)."""
 
 from __future__ import annotations
 
@@ -226,39 +226,36 @@ def as_input_items(input_: str | list[Any]) -> list[Any]:
     return list(input_)
 
 
-async def resolve_history_items(
-    store: StateStore, identity: str, *, previous_response_id: str | None, input_: str | list[Any] | None
-) -> list[Any]:
-    """Prepend the conversation stored under ``previous_response_id`` to this turn's
-    input. 404 if unknown, 503 if the store is unreachable."""
-    this_turn = as_input_items(input_) if input_ is not None else []
-    if previous_response_id is None:
-        return this_turn
+async def resolve_previous(store: StateStore, identity: str, previous_response_id: str) -> tuple[list[Any], dict]:
+    """History stored up to *previous_response_id*, and its log position. 404 if unknown, 503 if the store is down."""
     if not RESPONSE_ID_RE.match(previous_response_id):
         raise _not_found_error(previous_response_id, previous=True)
     try:
-        snapshot = await responses_state.read_async(store, identity, previous_response_id)
+        record = await responses_state.read_async(store, identity, previous_response_id, with_output=False)
+        if record is None:
+            raise _not_found_error(previous_response_id, previous=True)
+        if record["response"].get("status") in ("queued", "in_progress"):
+            # No output yet to continue from.
+            raise _previous_in_progress_error(previous_response_id)
+        resolved = await responses_state.history_async(store, identity, record)
     except StateStoreUnavailableError:
         logger.exception("State store unavailable resolving previous_response_id=%s", previous_response_id)
         raise _store_unavailable_error() from None
-    if snapshot is None:
+    if resolved is None:
         raise _not_found_error(previous_response_id, previous=True)
-    status = (snapshot.get("response") or {}).get("status")
-    if status in ("queued", "in_progress"):
-        # No output yet to continue from.
-        raise _previous_in_progress_error(previous_response_id)
-    return [*responses_state.history_items(snapshot), *this_turn]
+    return resolved
 
 
-async def resolve_history(store: StateStore, identity: str, request: ResponsesRequest) -> list[Any]:
-    """``resolve_history_items`` for a ``ResponsesRequest``."""
-    return await resolve_history_items(
-        store, identity, previous_response_id=request.previous_response_id, input_=request.input
-    )
-
-
-async def persist_response(gen, store: StateStore, *, identity: str, input_items: list[Any], conditional: bool = False):
-    """Tee `respond`'s output, storing the snapshot as it passes. `conditional=True`
+async def persist_response(
+    gen,
+    store: StateStore,
+    *,
+    identity: str,
+    parent: dict | None = None,
+    input_items: list[Any] | None = None,
+    conditional: bool = False,
+):
+    """Tee `respond`'s output, storing the turn as it passes. `conditional=True`
     (background mode) routes the terminal write through `write_terminal_if_not_terminal`
     so a concurrent cancel/delete always wins over a genuine completion."""
     async for item in gen:
@@ -270,7 +267,12 @@ async def persist_response(gen, store: StateStore, *, identity: str, input_items
                     )
                 else:
                     await responses_state.write_async(
-                        store, identity, item.id, response=item.model_dump(mode="json"), input_items=input_items
+                        store,
+                        identity,
+                        item.id,
+                        response=item.model_dump(mode="json"),
+                        parent=parent,
+                        input_items=input_items or [],
                     )
             except StateStoreUnavailableError:
                 logger.exception("State store unavailable persisting response %s", item.id)
@@ -299,7 +301,7 @@ async def persist_response(gen, store: StateStore, *, identity: str, input_items
                 await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=response)
             else:
                 await responses_state.write_async(
-                    store, identity, response_id, response=response, input_items=input_items
+                    store, identity, response_id, response=response, parent=parent, input_items=input_items or []
                 )
         except StateStoreUnavailableError:
             logger.exception("State store unavailable persisting streamed response %s", response.get("id"))
@@ -310,23 +312,38 @@ async def persist_response(gen, store: StateStore, *, identity: str, input_items
         yield item
 
 
-async def load_snapshot(store: StateStore, identity: str, response_id: str) -> dict:
-    """The stored snapshot for *response_id*, scoped to the caller's identity."""
+async def load_record(store: StateStore, identity: str, response_id: str) -> dict:
+    """The stored record for *response_id*, scoped to the caller's identity."""
     if not RESPONSE_ID_RE.match(response_id):
         raise _not_found_error(response_id)
     try:
-        snapshot = await responses_state.read_async(store, identity, response_id)
+        record = await responses_state.read_async(store, identity, response_id)
     except StateStoreUnavailableError:
         logger.exception("State store unavailable reading response %s", response_id)
         raise _store_unavailable_error() from None
-    if snapshot is None:
+    if record is None:
         raise _not_found_error(response_id)
-    return snapshot
+    return record
 
 
-async def delete_snapshot(store: StateStore, identity: str, response_id: str) -> None:
-    """Delete the snapshot for *response_id*, and its stream buffer if it had one
-    (a no-op if it didn't). Caller must confirm existence first via :func:`load_snapshot`."""
+async def load_input_items(store: StateStore, identity: str, response_id: str) -> list[dict]:
+    """The items that went into *response_id*'s turn, scoped to the caller's identity."""
+    if not RESPONSE_ID_RE.match(response_id):
+        raise _not_found_error(response_id)
+    try:
+        record = await responses_state.read_async(store, identity, response_id, with_output=False)
+        items = None if record is None else await responses_state.input_items_async(store, identity, record)
+    except StateStoreUnavailableError:
+        logger.exception("State store unavailable reading input items of %s", response_id)
+        raise _store_unavailable_error() from None
+    if items is None:
+        raise _not_found_error(response_id)
+    return items
+
+
+async def delete_record(store: StateStore, identity: str, response_id: str) -> None:
+    """Delete the record for *response_id*, and its stream buffer if it had one
+    (a no-op if it didn't). Caller must confirm existence first via :func:`load_record`."""
     try:
         await responses_state.delete_async(store, identity, response_id)
     except StateStoreUnavailableError:
@@ -355,7 +372,7 @@ class _StreamBuffer:
     """Appends events to the replay log one at a time, in event order, without
     blocking the caller on each individual write. `flush_and_discard` waits for
     every scheduled append before dropping the buffer, so a straggler can't land
-    (or fail with a Redis stream-id conflict) after it's gone."""
+    after it's gone."""
 
     def __init__(self, store: StateStore, identity: str, response_id: str) -> None:
         self._store = store
@@ -426,14 +443,14 @@ async def tail_background_events(store: StateStore, identity: str, response_id: 
             continue
 
         try:
-            snapshot = await responses_state.read_async(store, identity, response_id)
+            record = await responses_state.read_async(store, identity, response_id)
         except StateStoreUnavailableError:
             logger.exception("State store unavailable tailing response %s", response_id)
             return
-        if snapshot is None:
+        if record is None:
             return
-        snapshot = await reconcile_staleness(store, identity, response_id, snapshot)
-        response = snapshot["response"]
+        record = await reconcile_staleness(store, identity, response_id, record)
+        response = record["response"]
         if response.get("status") in responses_state.TERMINAL_STATUSES:
             if after_sequence < 0:
                 # Nothing has been seen yet (a fresh tail, not a resume from a real
@@ -466,7 +483,12 @@ async def tail_background_events(store: StateStore, identity: str, response_id: 
 
 
 async def start_background(
-    store: StateStore, identity: str, request: ResponsesRequest, req_id: str, input_items: list[Any]
+    store: StateStore,
+    identity: str,
+    request: ResponsesRequest,
+    req_id: str,
+    parent: dict | None,
+    input_items: list[Any],
 ) -> dict:
     """Mint a response id, persist the initial `queued` placeholder, and return
     the serialized `ResponseObject` to send back to the client immediately."""
@@ -484,13 +506,13 @@ async def start_background(
     response_dict = response.model_dump(mode="json")
     try:
         await responses_state.write_background(
-            store, identity, response_id, response=response_dict, input_items=input_items
+            store, identity, response_id, response=response_dict, parent=parent, input_items=input_items
         )
     except StateStoreUnavailableError:
         logger.exception("State store unavailable creating background response %s", response_id)
         raise _store_unavailable_error() from None
     # Best-effort: a failure here just means the first heartbeat tick (up to
-    # _HEARTBEAT_INTERVAL_S later) re-seeds it — the placeholder snapshot above is
+    # _HEARTBEAT_INTERVAL_S later) re-seeds it — the placeholder record above is
     # already the durable source of truth, so this shouldn't fail the whole request.
     with contextlib.suppress(Exception):
         await responses_state.heartbeat(identity, response_id, req_id)
@@ -506,7 +528,6 @@ async def run_background(
     *,
     store: StateStore,
     response_id: str,
-    input_items: list[Any],
     stream_buffer: bool = False,
 ) -> None:
     """Detached-task body for `background:true`: drives the streaming Responses
@@ -527,7 +548,7 @@ async def run_background(
             "DeploymentResponseGenerator[Any]",
             handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity, response_id),
         )
-    piped = persist_response(response_gen, store, identity=identity, input_items=input_items, conditional=True)
+    piped = persist_response(response_gen, store, identity=identity, conditional=True)
     buffer = _StreamBuffer(store, identity, response_id) if stream_buffer else None
     if buffer is not None:
         piped = buffer_stream_events(piped, buffer)
@@ -565,10 +586,10 @@ async def run_background(
             await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed_response)
         elif not saw_ok_terminal:
             # Stream ended with no terminal event (cancel race or actor crash) — don't leave a poller hanging.
-            snapshot = await responses_state.read_async(store, identity, response_id)
-            if snapshot is not None:
+            record = await responses_state.read_async(store, identity, response_id)
+            if record is not None:
                 failed = _mark_failed(
-                    snapshot.get("response") or {}, "Generation ended unexpectedly without a terminal event."
+                    record.get("response") or {}, "Generation ended unexpectedly without a terminal event."
                 )
                 await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
     finally:
@@ -602,7 +623,7 @@ async def _heartbeat_loop(identity: str, response_id: str, req_id: str) -> None:
     """Refresh this run's HeartbeatRegistry entry every `_HEARTBEAT_INTERVAL_S`, and
     stop as soon as `DisconnectRegistry` shows `req_id` cancelled — the same signal
     `cancel_background`/`signal_background_cancel_if_in_progress` already set, so
-    cancellation is detected without ever touching the response snapshot."""
+    cancellation is detected without ever touching the response record."""
     registry = get_disconnect_registry()
     while True:
         await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
@@ -615,10 +636,10 @@ async def _heartbeat_loop(identity: str, response_id: str, req_id: str) -> None:
 
 async def cancel_background(store: StateStore, identity: str, response_id: str) -> dict:
     """Cancel an in-flight background response: signal `DisconnectRegistry` with the
-    run's request id, then mark the snapshot `cancelled`. Idempotent on an already-
+    run's request id, then mark the record `cancelled`. Idempotent on an already-
     terminal response; 400s if it was never a background run."""
-    snapshot = await load_snapshot(store, identity, response_id)
-    response = snapshot["response"]
+    record = await load_record(store, identity, response_id)
+    response = record["response"]
     if not response.get("background"):
         raise _not_background_error(response_id)
     if response.get("status") in responses_state.TERMINAL_STATUSES:
@@ -640,15 +661,15 @@ async def cancel_background(store: StateStore, identity: str, response_id: str) 
         raise _store_unavailable_error() from None
     with contextlib.suppress(StateStoreUnavailableError):
         await responses_state.discard_stream_buffer(store, identity, response_id)
-    updated = await load_snapshot(store, identity, response_id)
+    updated = await load_record(store, identity, response_id)
     return updated["response"]
 
 
-async def signal_background_cancel_if_in_progress(identity: str, response_id: str, snapshot: dict) -> None:
+async def signal_background_cancel_if_in_progress(identity: str, response_id: str, record: dict) -> None:
     """`DELETE /{id}` on an in-flight background run implies cancel: signal the
     registry (same mechanism `cancel_background` uses) before the caller deletes the
-    snapshot, so the drain task's heartbeat loop tears the run down."""
-    response = snapshot.get("response") or {}
+    record, so the drain task's heartbeat loop tears the run down."""
+    response = record.get("response") or {}
     if not response.get("background") or response.get("status") in responses_state.TERMINAL_STATUSES:
         return
     req_id = None
@@ -660,21 +681,21 @@ async def signal_background_cancel_if_in_progress(identity: str, response_id: st
             await registry.set.remote(req_id)
 
 
-async def reconcile_staleness(store: StateStore, identity: str, response_id: str, snapshot: dict) -> dict:
-    """`GET`-time orphan detection: if *snapshot* is a non-terminal background run
+async def reconcile_staleness(store: StateStore, identity: str, response_id: str, record: dict) -> dict:
+    """`GET`-time orphan detection: if *record* is a non-terminal background run
     with a stale heartbeat, transition it to `failed` and persist. No-op otherwise."""
-    response = snapshot.get("response") or {}
+    response = record.get("response") or {}
     if response.get("status") not in ("queued", "in_progress"):
-        return snapshot
+        return record
     try:
         alive = await responses_state.is_alive(identity, response_id)
     except Exception:
         # Registry unreachable: ambiguous, not evidence of staleness — don't risk
         # marking a genuinely healthy run failed over a transient hiccup.
         logger.warning("HeartbeatRegistry unavailable reconciling staleness for response %s", response_id)
-        return snapshot
+        return record
     if alive:
-        return snapshot
+        return record
     failed = _mark_failed(response, "Background response orphaned: its worker stopped reporting progress.")
     try:
         await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
@@ -688,4 +709,4 @@ async def reconcile_staleness(store: StateStore, identity: str, response_id: str
     except StateStoreUnavailableError:
         logger.exception("State store unavailable reconciling staleness for response %s", response_id)
         raise _store_unavailable_error() from None
-    return updated if updated is not None else snapshot
+    return updated if updated is not None else record

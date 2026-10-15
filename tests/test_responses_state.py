@@ -1,9 +1,11 @@
-"""Tests for the /v1/responses conversation-state domain layer — snapshot round-trip,
+"""Tests for the /v1/responses conversation-state domain layer — record round-trip,
 history rebuild, identity scoping, TTL, and availability-vs-absent semantics.
 
 Runs against every backend the store supports, so the layer is proven on the default
 memory:// and on the durable redis:// alike.
 """
+
+import asyncio
 
 import pytest
 
@@ -39,16 +41,30 @@ def _response(response_id: str = "resp_1", output: list | None = None) -> dict:
     }
 
 
+def _without_ids(items: list[dict]) -> list[dict]:
+    return [{k: v for k, v in item.items() if k != "id"} for item in items]
+
+
+async def _write(store, identity="u1", response_id="resp_1", *, response=None, parent=None, input_items=()):
+    await responses_state.write_async(
+        store,
+        identity,
+        response_id,
+        response=response or _response(response_id),
+        parent=parent,
+        input_items=list(input_items),
+    )
+
+
 class TestRoundTrip:
     @pytest.mark.asyncio
     async def test_write_then_read(self, store):
-        await responses_state.write_async(
-            store, "u1", "resp_1", response=_response(), input_items=[{"type": "message", "role": "user"}]
-        )
-        snap = await responses_state.read_async(store, "u1", "resp_1")
-        assert snap is not None
-        assert snap["response"]["id"] == "resp_1"
-        assert snap["input_items"] == [{"type": "message", "role": "user"}]
+        await _write(store, input_items=[{"type": "message", "role": "user"}])
+        record = await responses_state.read_async(store, "u1", "resp_1")
+        assert record is not None
+        assert record["response"] == _response()
+        items = await responses_state.input_items_async(store, "u1", record)
+        assert _without_ids(items) == [{"type": "message", "role": "user"}]
 
     @pytest.mark.asyncio
     async def test_absent_returns_none(self, store):
@@ -56,16 +72,11 @@ class TestRoundTrip:
 
     @pytest.mark.asyncio
     async def test_delete(self, store):
-        await responses_state.write_async(store, "u1", "resp_1", response=_response(), input_items=[])
+        await _write(store)
         await responses_state.delete_async(store, "u1", "resp_1")
         assert await responses_state.read_async(store, "u1", "resp_1") is None
-        # idempotent — deleting an absent snapshot is not an error
+        # idempotent — deleting an absent record is not an error
         await responses_state.delete_async(store, "u1", "resp_1")
-
-    @pytest.mark.asyncio
-    async def test_sync_read_sees_async_write(self, store):
-        await responses_state.write_async(store, "u1", "resp_1", response=_response(), input_items=[])
-        assert responses_state.read(store, "u1", "resp_1") is not None
 
 
 class TestIdentityScoping:
@@ -73,13 +84,13 @@ class TestIdentityScoping:
 
     @pytest.mark.asyncio
     async def test_other_identity_cannot_read(self, store):
-        await responses_state.write_async(store, "u1", "resp_1", response=_response(), input_items=[])
+        await _write(store)
         assert await responses_state.read_async(store, "u2", "resp_1") is None
 
     @pytest.mark.asyncio
     async def test_same_id_different_identities_are_independent(self, store):
-        await responses_state.write_async(store, "u1", "resp_1", response=_response("a"), input_items=[])
-        await responses_state.write_async(store, "u2", "resp_1", response=_response("b"), input_items=[])
+        await _write(store, "u1", response=_response("a"))
+        await _write(store, "u2", response=_response("b"))
         u1 = await responses_state.read_async(store, "u1", "resp_1")
         u2 = await responses_state.read_async(store, "u2", "resp_1")
         assert u1 is not None and u2 is not None
@@ -87,42 +98,109 @@ class TestIdentityScoping:
         assert u2["response"]["id"] == "b"
 
 
-class TestHistoryItems:
-    def test_rebuild_is_input_then_output(self):
-        snapshot = {
-            "input_items": [{"type": "message", "role": "user", "content": "hi"}],
-            "response": {"output": [{"type": "message", "role": "assistant", "content": "yo"}]},
-        }
-        assert responses_state.history_items(snapshot) == [
-            {"type": "message", "role": "user", "content": "hi"},
-            {"type": "message", "role": "assistant", "content": "yo"},
-        ]
+class TestHistory:
+    @pytest.mark.asyncio
+    async def test_rebuild_is_input_then_output(self, store):
+        await _write(
+            store,
+            response=_response(output=[{"type": "message", "role": "assistant", "content": "yo"}]),
+            input_items=[{"type": "message", "role": "user", "content": "hi"}],
+        )
+        record = await responses_state.read_async(store, "u1", "resp_1", with_output=False)
+        history, parent = await responses_state.history_async(store, "u1", record)
+        assert [(item["role"], item["content"]) for item in history] == [("user", "hi"), ("assistant", "yo")]
+        assert parent == {"log": "resp_1", "depth": 1}
 
-    def test_accumulates_across_turns(self):
-        # Turn 2's input_items are turn 1's rebuild, so the snapshot stays self-contained.
-        turn1 = {"input_items": [{"i": 1}], "response": {"output": [{"o": 1}]}}
-        turn2_input = [*responses_state.history_items(turn1), {"i": 2}]
-        turn2 = {"input_items": turn2_input, "response": {"output": [{"o": 2}]}}
-        assert responses_state.history_items(turn2) == [{"i": 1}, {"o": 1}, {"i": 2}, {"o": 2}]
+    @pytest.mark.asyncio
+    async def test_accumulates_across_turns(self, store):
+        await _write(store, response=_response(output=[{"o": 1}]), input_items=[{"i": 1}])
+        await _write(
+            store,
+            response_id="resp_2",
+            response=_response("resp_2", output=[{"o": 2}]),
+            parent={"log": "resp_1", "depth": 1},
+            input_items=[{"i": 2}],
+        )
+        record = await responses_state.read_async(store, "u1", "resp_2", with_output=False)
+        history, _ = await responses_state.history_async(store, "u1", record)
+        assert _without_ids(history) == [{"i": 1}, {"o": 1}, {"i": 2}, {"o": 2}]
 
+
+class TestTerminalRace:
+    @pytest.mark.parametrize("parent", [None, {"log": "resp_0", "depth": 1}])
+    @pytest.mark.asyncio
+    async def test_record_and_output_come_from_one_writer(self, store, monkeypatch, parent):
+        if parent is not None:
+            await _write(store, response_id="resp_0")
+        await responses_state.write_background(
+            store, "u1", "resp_1", response={**_response(output=[]), "status": "queued"}, parent=parent, input_items=[]
+        )
+        both_read = asyncio.Barrier(2)
+        get_async = store.get_async
+
+        async def get_after_both(key):
+            value = await get_async(key)
+            await both_read.wait()
+            return value
+
+        monkeypatch.setattr(store, "get_async", get_after_both)
+        cancelled = {**_response(output=[]), "status": "cancelled"}
+        completed = _response(output=[{"type": "message", "role": "assistant", "content": "done"}])
+        await asyncio.gather(
+            responses_state.write_terminal_if_not_terminal(store, "u1", "resp_1", response=cancelled),
+            responses_state.write_terminal_if_not_terminal(store, "u1", "resp_1", response=completed),
+        )
+        monkeypatch.undo()
+
+        record = await responses_state.read_async(store, "u1", "resp_1")
+        assert record is not None
+        assert record["response"] in (cancelled, completed)
+
+    @pytest.mark.parametrize("parent", [None, {"log": "resp_0", "depth": 1}])
+    @pytest.mark.asyncio
+    async def test_a_record_deleted_after_the_read_stays_deleted(self, store, monkeypatch, parent):
+        if parent is not None:
+            await _write(store, response_id="resp_0")
+        await responses_state.write_background(
+            store, "u1", "resp_1", response={**_response(output=[]), "status": "queued"}, parent=parent, input_items=[]
+        )
+        read, deleted = asyncio.Event(), asyncio.Event()
+        get_async = store.get_async
+
+        async def get_until_deleted(key):
+            value = await get_async(key)
+            read.set()
+            await deleted.wait()
+            return value
+
+        monkeypatch.setattr(store, "get_async", get_until_deleted)
+        write = asyncio.create_task(
+            responses_state.write_terminal_if_not_terminal(store, "u1", "resp_1", response=_response())
+        )
+        await read.wait()
+        await responses_state.delete_async(store, "u1", "resp_1")
+        deleted.set()
+        await write
+        monkeypatch.undo()
+
+        assert await responses_state.read_async(store, "u1", "resp_1") is None
+        assert await store.read_range_async("responses-log/u1/resp_1") == []
+        assert len(await store.read_range_async("responses-log/u1/resp_0")) == (0 if parent is None else 1)
+
+
+class TestMalformedRecord:
     @pytest.mark.parametrize(
-        "snapshot",
+        "value",
         [
-            {},
-            {"input_items": None, "response": {}},
-            {"input_items": "nope", "response": {"output": "nope"}},
+            {"input_items": []},
+            {"response": {"id": "resp_1"}, "input_items": []},
+            {"response": {"id": "resp_1"}, "log": "resp_1"},
         ],
     )
-    def test_malformed_shapes_do_not_raise(self, snapshot):
-        assert responses_state.history_items(snapshot) == []
-
-
-class TestMalformedSnapshot:
     @pytest.mark.asyncio
-    async def test_snapshot_without_response_treated_as_missing(self, store):
-        await store.set_async("responses/u1/resp_1", {"input_items": []})
+    async def test_treated_as_missing(self, store, value):
+        await store.set_async("responses/u1/resp_1", value)
         assert await responses_state.read_async(store, "u1", "resp_1") is None
-        assert responses_state.read(store, "u1", "resp_1") is None
 
 
 class TestUnavailableVsAbsent:
@@ -131,16 +209,11 @@ class TestUnavailableVsAbsent:
     @pytest.mark.asyncio
     async def test_unavailable_propagates(self):
         class Down:
-            def get(self, *a, **k):
-                raise StateStoreUnavailableError("down")
-
             async def get_async(self, *a, **k):
                 raise StateStoreUnavailableError("down")
 
         with pytest.raises(StateStoreUnavailableError):
             await responses_state.read_async(Down(), "u1", "resp_1")
-        with pytest.raises(StateStoreUnavailableError):
-            responses_state.read(Down(), "u1", "resp_1")
 
 
 class TestStreamBuffer:
@@ -204,8 +277,12 @@ class TestTtl:
         assert responses_state.ttl_seconds() == 30 * 24 * 60 * 60
 
     def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "172800")
+        assert responses_state.ttl_seconds() == 172800
+
+    def test_under_a_day_is_raised_to_a_day(self, monkeypatch):
         monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "60")
-        assert responses_state.ttl_seconds() == 60
+        assert responses_state.ttl_seconds() == 86400
 
     def test_non_positive_disables_expiry(self, monkeypatch):
         monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "0")
@@ -216,12 +293,36 @@ class TestTtl:
         assert responses_state.ttl_seconds() == 30 * 24 * 60 * 60
 
     @pytest.mark.asyncio
-    async def test_snapshot_expires(self, monkeypatch):
-        monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "10")
+    async def test_record_expires(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "86400")
         clock = {"t": 1000.0}
         monkeypatch.setattr("time.time", lambda: clock["t"])
         store = _MemoryStore()
-        await responses_state.write_async(store, "u1", "resp_1", response=_response(), input_items=[])
+        await _write(store)
         assert await responses_state.read_async(store, "u1", "resp_1") is not None
-        clock["t"] = 1011.0
+        clock["t"] = 87401.0
         assert await responses_state.read_async(store, "u1", "resp_1") is None
+
+
+async def _resolve(store, response_id):
+    record = await responses_state.read_async(store, "u1", response_id, with_output=False)
+    return None if record is None else await responses_state.history_async(store, "u1", record)
+
+
+class TestRetention:
+    @pytest.fixture
+    def clock(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_RESPONSES_TTL_S", "86400")
+        clock = {"t": 0.0}
+        monkeypatch.setattr("time.time", lambda: clock["t"])
+        return clock
+
+    @pytest.mark.asyncio
+    async def test_the_parent_log_survives_the_childs_generation(self, store, clock):
+        await _write(store, response_id="resp_a")
+        clock["t"] = 19 * 3600.0
+        _, parent = await _resolve(store, "resp_a")
+        clock["t"] = 26 * 3600.0
+        await _write(store, response_id="resp_b", parent=parent)
+        clock["t"] = 29 * 3600.0
+        assert await _resolve(store, "resp_b") is not None
