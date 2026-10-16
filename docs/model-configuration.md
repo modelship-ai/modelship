@@ -327,7 +327,7 @@ Two vLLM settings are **not** keys here, because modelship derives them and sett
 
 ### Tool calling and reasoning
 
-The tool parser is the vLLM parser that reads a tool call as the model's chat template writes it. The reasoning parser is the vLLM parser named in the model's `config.json`; a model with `<think>` markers and no such name gets `deepseek_r1`. The startup log names the parser picked. `tool_call_parser` and `reasoning_parser` name one instead; `enable_auto_tool_choice: false` and `enable_reasoning: false` switch one off.
+The tool parser is the vLLM parser that reads a tool call as the model's chat template writes it. The reasoning parser is the vLLM parser that reads the reasoning the chat template writes, alongside the tool parser. A template that writes no reasoning gets the parser named in the model's `config.json` when the template shows it thinks, or else `deepseek_r1`, vLLM's plain `<think>` parser, when the template uses `<think>`. The startup log names the parser picked. `tool_call_parser` and `reasoning_parser` name one instead; `enable_auto_tool_choice: false` and `enable_reasoning: false` switch one off.
 
 On a model that reasons, `response_format` and a forced `tool_choice` (`required` or a named function) take effect once the reasoning ends: the answer arrives in `content` or `tool_calls` with the reasoning beside it, and `max_tokens` covers both.
 
