@@ -90,7 +90,7 @@ vllm-cpu = [
     "transformers>=5.5.3",
     "vllm==0.31.0+cpu ; sys_platform == 'linux'",
     "vllm[audio]==0.31.0+cpu ; sys_platform == 'linux'",
-    "triton @ https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "triton==3.8.0+cpu ; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 otel = [
     "opentelemetry-sdk>=1.20.0",
@@ -156,6 +156,9 @@ torchaudio = [
 ]
 vllm = [
   { index = "vllm-cpu", extra = "vllm-cpu" },
+]
+triton = [
+  { url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", extra = "vllm-cpu", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
 ]
 
 [tool.uv]
