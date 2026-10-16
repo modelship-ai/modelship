@@ -125,14 +125,13 @@ def reasoning_parsers_reading(
     tool_parser: str | None,
     harmony: bool,
 ) -> list[str]:
-    """Registered parsers that read the replies, narrowed to those sharing the tool parser's engine."""
-    from vllm.parser.abstract_parser import DelegatingParser as VllmDelegatingParser
+    """Registered parsers that read the replies."""
     from vllm.parser.parser_manager import ParserManager as VllmParserManager
     from vllm.reasoning import ReasoningParser as VllmReasoningParser
     from vllm.reasoning import ReasoningParserManager as VllmReasoningParserManager
 
     replies = [(*answer, None)] + ([(*tool_call, [_TOOL])] if tool_call is not None else [])
-    readers = {}
+    readers = []
     with _silenced("vllm.reasoning", "vllm.parser", "vllm.tool_parsers"):
         for name in sorted(VllmReasoningParserManager.list_registered()):
             try:
@@ -146,8 +145,7 @@ def reasoning_parsers_reading(
                     is_harmony=harmony,
                 )
                 if all(_reads(parser_cls, tokenizer, *reply) for reply in replies):
-                    readers[name] = parser_cls
+                    readers.append(name)
             except Exception:
                 continue
-    shared = [name for name, parser_cls in readers.items() if not issubclass(parser_cls, VllmDelegatingParser)]
-    return shared or list(readers)
+    return readers

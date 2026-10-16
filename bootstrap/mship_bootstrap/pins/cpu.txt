@@ -444,9 +444,9 @@ httpx2==2.9.1 \
     # via
     #   mcp
     #   mship-engine
-huggingface-hub==1.30.0 \
-    --hash=sha256:96ae0a8e99a234374a6fe43e989ebd21c04640b91ab2927e7e5773ba1131ca59 \
-    --hash=sha256:e6a6120bc8c8e2723d03648434ee247088cceb55ba7067e7d34d692cad5fdb57
+huggingface-hub==1.33.0 \
+    --hash=sha256:04e434b06e100eddbce9a6e817d72693a7884b10a79bd67ab48080d5c07eb899 \
+    --hash=sha256:367be21a201db9523eddf8aeac7048f2602c1b308691c97640d5e72ed188007e
     # via
     #   mship-engine
     #   tokenizers
@@ -769,21 +769,6 @@ openai==2.52.0 ; sys_platform == 'linux' \
     --hash=sha256:7c736d592f81471ce1f734838390983c4d8c8aecff23dcd36e600a58e5032d9c \
     --hash=sha256:f97e231d9a8fa69ab55897df1080f02d99913fb0a30e3ee56ea16a1eb6c2d434
     # via vllm
-openai-harmony==0.0.8 ; sys_platform == 'linux' \
-    --hash=sha256:007b0476a1f331f8130783f901f1da6f5a7057af1a4891f1b6a31dec364189b5 \
-    --hash=sha256:029ec25ca74abe48fdb58eb9fdd2a8c1618581fc33ce8e5653f8a1ffbfbd9326 \
-    --hash=sha256:0a3a16972aa1cee38ea958470cd04ac9a2d5ac38fdcf77ab686611246220c158 \
-    --hash=sha256:39d44f0d8f466bd56698e7ead708bead3141e27b9b87e3ab7d5a6d0e4a869ee5 \
-    --hash=sha256:5cfcfd963b50a41fc656c84d3440ca6eecdccd6c552158ce790b8f2e33dfb5a9 \
-    --hash=sha256:6e43f98e6c242fa2de6f8ea12eab24af63fa2ed3e89c06341fb9d92632c5cbdf \
-    --hash=sha256:772922a9bd24e133950fad71eb1550836f415a88e8c77870e12d0c3bd688ddc2 \
-    --hash=sha256:8565d4f5a0638da1bffde29832ed63c9e695c558611053add3b2dc0b56c92dbc \
-    --hash=sha256:a9b5f893326b28d9e935ade14b4f655f5a840942473bc89b201c25f7a15af9cf \
-    --hash=sha256:b4d5cfa168e74d08f8ba6d58a7e49bc7daef4d58951ec69b66b0d56f4927a68d \
-    --hash=sha256:c007d277218a50db8839e599ed78e0fffe5130f614c3f6d93ae257f282071a29 \
-    --hash=sha256:cbaa3bda75ef0d8836e1f8cc84af62f971b1d756d740efc95c38c3e04c0bfde2 \
-    --hash=sha256:e4f709815924ec325b9a890e6ab2bbb0ceec8e319a4e257328eb752cf36b2efc
-    # via vllm
 opencensus==0.11.4 \
     --hash=sha256:a18487ce68bc19900336e0ff4655c5a116daf10c1b3685ece8d971bddad6a864 \
     --hash=sha256:cbef87d8b8773064ab60e5c2a1ced58bbaa38a6d052c41aec224958ce544eff2
@@ -864,6 +849,21 @@ opentelemetry-semantic-conventions==0.61b0 \
 opentelemetry-semantic-conventions-ai==0.5.1 ; sys_platform == 'linux' \
     --hash=sha256:153906200d8c1d2f8e09bd78dbef526916023de85ac3dab35912bfafb69ff04c \
     --hash=sha256:25aeb22bd261543b4898a73824026d96770e5351209c7d07a0b1314762b1f6e4
+    # via vllm
+oss-harmony==0.0.11 ; sys_platform == 'linux' \
+    --hash=sha256:036505bfb39c6b50edcf717349518d269bb375207f7f8e95f517e938b8f2e0c8 \
+    --hash=sha256:0d1545203973abb3002dcc6c5cffd14ca4a376b655c14ce190c78eb6aaf5f6fd \
+    --hash=sha256:2221f2790411cfd5d0e517769dc2662b15b2711e44728291961506a367ffc3d1 \
+    --hash=sha256:4db175b6f6264cd60ceb692c0e686937e072ca6ea1239d0d4cace2cfb50f4974 \
+    --hash=sha256:5c7b0cea27e1e4e9fc485bf8039a119d6732718cce6b067d1f7de9e637572348 \
+    --hash=sha256:83ca71b85be6e2f8e93527673cd2eff4da9180608ee5d4197bd4f01afc4fa6be \
+    --hash=sha256:952218411c219dc7ca8ee56eb86271d015d0c347896b2009906096422d7a94cf \
+    --hash=sha256:ccad467b71d61490df1f2204b7a064990833338615ac135536c5b3a8e2d03a15 \
+    --hash=sha256:d877c6b526cdbdf55068bae8f05c60398e929c9e296c7f69a1d533339708be80 \
+    --hash=sha256:e451e5dc28b0d883f33aa17a77c923afcab5d26ef3b95d7593b68a07e399706e \
+    --hash=sha256:f1f74ef7f8be32fa1dcfe1644839af5f0873acce78b5668c2aa39f26d83218ff \
+    --hash=sha256:f215934b05f3a7658e0cf30cf92bc25f4aed125a693529c53dd97325ecfbf7ef \
+    --hash=sha256:fd91609eef825f342ae7ac990651cfebcf28aac6b6ad1186bf37c5b593cdf950
     # via vllm
 outlines-core==0.2.14 ; sys_platform == 'linux' \
     --hash=sha256:0e4c69f0a8565edb56464c4c9b6c291a10805f3a96dff84182980e90ae1a5e2f \
@@ -1081,7 +1081,7 @@ pydantic==2.12.5 \
     #   model-hosting-container-standards
     #   mship-engine
     #   openai
-    #   openai-harmony
+    #   oss-harmony
     #   pydantic-extra-types
     #   pydantic-settings
     #   pydantic-yaml
@@ -1552,7 +1552,7 @@ torchaudio==2.11.0+cpu ; sys_platform == 'linux' \
     # via
     #   mship-engine
     #   vllm
-torchcodec==0.15.0 ; platform_machine != 'ppc64le' and platform_machine != 'riscv64' and platform_machine != 's390x' and sys_platform == 'linux' \
+torchcodec==0.15.0 ; platform_machine != 'ppc64le' and platform_machine != 'riscv64' and sys_platform == 'linux' \
     --hash=sha256:3a4b24012f7a7fe962dfee8f06d9c91e9e3fd1f4b6302fdb5b8884a02aca3f37 \
     --hash=sha256:589e127778870c691d8977c08311bf57c4fecb9eb56fa52cf29d9671fe78eb72 \
     --hash=sha256:5c62f4257b49c6473b0a1006519274b7daef9ef9c1d66b1a6a025dba9df5daac \
@@ -1582,11 +1582,11 @@ transformers==5.14.1 \
     #   mship-engine
     #   vllm
     #   xgrammar
-triton==3.7.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:7e40869937a68206ec70d7f25bb7ec6433cb083f9135e1f36dbd318dc449a728 \
-    --hash=sha256:9497f2e696ee368862a181a90b2dcc03ca978cc4f602abd67c7d81022a6988e1
+triton @ https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:693f657501e6d791e889d5fd880d3b84a9bf4d8f3087dbb685534bb8533361fa
     # via
-    #   torch
+    #   mship-engine
+    #   vllm
     #   xgrammar
 truststore==0.10.4 \
     --hash=sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301 \
@@ -1677,7 +1677,7 @@ virtualenv==20.36.1 \
     --hash=sha256:575a8d6b124ef88f6f51d56d656132389f961062a9177016a50e4f507bbcc19f \
     --hash=sha256:8befb5c81842c641f8ee658481e42641c68b5eab3521d8e092d18320902466ba
     # via ray
-vllm==0.28.0+cpu ; sys_platform == 'linux'
+vllm==0.31.0+cpu ; sys_platform == 'linux'
     # via mship-engine
 watchfiles==1.1.1 \
     --hash=sha256:1db5d7ae38ff20153d542460752ff397fcf5c96090c1230803713cf3147a6803 \
@@ -1726,13 +1726,14 @@ wrapt==2.1.2 \
     --hash=sha256:f8fba1bae256186a83d1875b2b1f4e2d1242e8fac0f58ec0d7e41b26967b965c \
     --hash=sha256:ff2aad9c4cda28a8f0653fc2d487596458c2a3f475e56ba02909e950a9efa6a9
     # via smart-open
-xgrammar==0.2.3 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
-    --hash=sha256:11255f184971489fc72b948b096e2917f482ba2dca975177f5411562cedb9c6d \
-    --hash=sha256:173e167d43a5cf4171eee2be86097decff8803b0a0853d7baaf446c732a7d3a9 \
-    --hash=sha256:aa35f24835a59c822e249ecc80912eea4de03fc8b04afb2f82c8b950a56be6ef \
-    --hash=sha256:e7787dd8321a04f86116b756aa3dadd622e3607a3559b1e986cc5f77da00d68e \
-    --hash=sha256:f76423630ae3ac4e090cb38ce1e30e7bcc69b3dee4d22d94353944386a4c6f18 \
-    --hash=sha256:fdf081fab29694302d41d61dcf52fad7d253879a718bc6afc68db0a0dabd7f19
+xgrammar==0.2.7 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') \
+    --hash=sha256:0a6ca46cfbeb1ab1cb85a6e1a8ff3f24813a27114626813e0432ac54b3a2efe4 \
+    --hash=sha256:2df1a2292f6b1c5cdc4b176ef2f22c58a837ac99fd854d93856160f31f14a4b0 \
+    --hash=sha256:397edf3dc6d9634eba1127f83f5f16aff4f06a17dff55cd4d441f35fb680ed5b \
+    --hash=sha256:4957b0ab6c743ee8e178faa6e7804466f9caadccba551b52600720490d591349 \
+    --hash=sha256:7674afeee5e6eff9672627b62d5ab0aa2347ea51674f4d78a5c160029f92bc3e \
+    --hash=sha256:b46d814ae80ebab5b89eb67a18118256bd94afbeace8f5d6ccf0ff396aa4a6a1 \
+    --hash=sha256:e4397798f73512ab5abccbadf0a7b6aaf0753ccc4f3171c43b14c4d22df1ed28
     # via vllm
 yarl==1.23.0 \
     --hash=sha256:13a563739ae600a631c36ce096615fe307f131344588b0bc0daec108cdb47b25 \

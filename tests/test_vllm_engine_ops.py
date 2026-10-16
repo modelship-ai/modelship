@@ -15,12 +15,12 @@ from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import WhitespaceSplit
 from transformers import PreTrainedTokenizerFast
+from vllm.entrypoints.generate.base.protocol import DeltaFunctionCall as VllmDeltaFunctionCall
+from vllm.entrypoints.generate.base.protocol import DeltaMessage as VllmDeltaMessage
+from vllm.entrypoints.generate.base.protocol import DeltaToolCall as VllmDeltaToolCall
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest as VllmChatCompletionRequest,
 )
-from vllm.entrypoints.openai.engine.protocol import DeltaFunctionCall as VllmDeltaFunctionCall
-from vllm.entrypoints.openai.engine.protocol import DeltaMessage as VllmDeltaMessage
-from vllm.entrypoints.openai.engine.protocol import DeltaToolCall as VllmDeltaToolCall
 from vllm.parser import Parser as VllmParser
 from vllm.parser import ParserManager as VllmParserManager
 from vllm.renderers.online_renderer import OnlineRenderer as VllmOnlineRenderer

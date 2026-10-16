@@ -9,16 +9,16 @@ vLLM version bump's blast radius confined to one file.
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import Any
 
+from vllm.entrypoints.generate.base.protocol import DeltaMessage as VllmDeltaMessage
+from vllm.entrypoints.generate.base.protocol import DeltaToolCall as VllmDeltaToolCall
+from vllm.entrypoints.generate.base.protocol import FunctionCall as VllmFunctionCall
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionNamedToolChoiceParam as VllmChatCompletionNamedToolChoiceParam,
 )
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest as VllmChatCompletionRequest,
 )
-from vllm.entrypoints.openai.engine.protocol import DeltaMessage as VllmDeltaMessage
-from vllm.entrypoints.openai.engine.protocol import DeltaToolCall as VllmDeltaToolCall
-from vllm.entrypoints.openai.engine.protocol import ErrorResponse as VllmErrorResponse
-from vllm.entrypoints.openai.engine.protocol import FunctionCall as VllmFunctionCall
+from vllm.entrypoints.serve.engine.protocol import ErrorResponse as VllmErrorResponse
 from vllm.entrypoints.serve.utils.api_utils import get_max_tokens as vllm_get_max_tokens
 from vllm.inputs import EngineInput as VllmEngineInput
 from vllm.logprobs import Logprob as VllmLogprob

@@ -46,6 +46,9 @@ conflicts = [[
     { package = "mship-engine", extra = "vllm-cpu" },
 ]]
 
+[manifest]
+overrides = [{ name = "protobuf", specifier = "<7.0.0" }]
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -833,7 +836,7 @@ wheels = [
 
 [[package]]
 name = "flashinfer-python"
-version = "0.6.16.post3"
+version = "0.7.0.post1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apache-tvm-ffi" },
@@ -841,6 +844,7 @@ dependencies = [
     { name = "cuda-python" },
     { name = "cuda-tile" },
     { name = "einops" },
+    { name = "nccl-extensions" },
     { name = "nccl4py" },
     { name = "ninja" },
     { name = "numpy" },
@@ -853,9 +857,9 @@ dependencies = [
     { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c2/46/17045cb47b7b93fcb4e5303e398e6b129b86239930ac0875942a83d8b962/flashinfer_python-0.6.16.post3.tar.gz", hash = "sha256:9b146cfcc1454c80f3f99444db48013b3eadaeb32f2a399bd76c9471ecb72f04", size = 11076656, upload-time = "2026-08-08T01:14:16.408Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/b0/2f27f2645056b0e671b3bcf8a934e73ed89ca5c5df9ebe651f21c0d218e2/flashinfer_python-0.7.0.post1.tar.gz", hash = "sha256:2e67b38a9af1d4eedff96f7f5d79c6a4d9f0f97cb4a30f71e4ffd717f1ad9af4", size = 26061698, upload-time = "2026-09-29T23:34:14.797Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/dc/5367cb601fc9190cc75b4c141f5f7e9a224d1c26a1e983151823e02a25b3/flashinfer_python-0.6.16.post3-py3-none-any.whl", hash = "sha256:caf686b9b079abe1c9d65ab505698bd325e8072de40afd822f2c74f2ac3bc601", size = 15836034, upload-time = "2026-08-08T01:14:13.709Z" },
+    { url = "https://files.pythonhosted.org/packages/00/7d/16237087a2af99086ef4ae9808dff9b24f0a4db4cfd673233836821a32e0/flashinfer_python-0.7.0.post1-py3-none-any.whl", hash = "sha256:c7adf826568d61fc1b7d3aadd4cae387a35a138bfc08e2deca2f34ecfa280716", size = 33659854, upload-time = "2026-09-29T23:34:11.137Z" },
 ]
 
 [[package]]
@@ -1073,7 +1077,7 @@ wheels = [
 
 [[package]]
 name = "huggingface-hub"
-version = "1.30.0"
+version = "1.33.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1086,20 +1090,19 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/35/97/2eb4abaa5b969ed385066a0496a3823b3ff467fc1082e2202955f1867d60/huggingface_hub-1.30.0.tar.gz", hash = "sha256:e6a6120bc8c8e2723d03648434ee247088cceb55ba7067e7d34d692cad5fdb57", size = 964291, upload-time = "2026-09-03T10:05:14.053Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/2a/484d112c0d8fc5f665d7b65137ac9cdb2953c982391598c3597968a12ee7/huggingface_hub-1.33.0.tar.gz", hash = "sha256:367be21a201db9523eddf8aeac7048f2602c1b308691c97640d5e72ed188007e", size = 1043548, upload-time = "2026-09-24T09:49:29.971Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/0e/3e45bbe0dd48f4e56b1d46649d342de853cd1c7e815323472ab62687f153/huggingface_hub-1.30.0-py3-none-any.whl", hash = "sha256:96ae0a8e99a234374a6fe43e989ebd21c04640b91ab2927e7e5773ba1131ca59", size = 796795, upload-time = "2026-09-03T10:05:12.21Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/16/963096d224b80909432dc16561a615fd33d2d13beef3ce4c63fa25e40867/huggingface_hub-1.33.0-py3-none-any.whl", hash = "sha256:04e434b06e100eddbce9a6e817d72693a7884b10a79bd67ab48080d5c07eb899", size = 846435, upload-time = "2026-09-24T09:49:28.059Z" },
 ]
 
 [[package]]
 name = "humming-kernels"
-version = "0.1.12"
+version = "0.1.16"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cuda-bindings" },
     { name = "jinja2" },
     { name = "numpy" },
-    { name = "nvidia-ml-py" },
     { name = "safetensors" },
     { name = "tabulate" },
     { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
@@ -1107,10 +1110,10 @@ dependencies = [
     { name = "triton", version = "3.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
     { name = "triton", version = "3.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/93/b9/53797fff4b1b31b4567453a365646d724469b1bb0d76c07f8746617d0cb6/humming_kernels-0.1.12.tar.gz", hash = "sha256:c96c37c95f74379067d2d2d0c5154d12ee9a8cfa29a7c3370a7f3e34f207ca72", size = 259323, upload-time = "2026-07-31T14:28:23.124Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/d2/e286acb9f594f998bbc2d99617966a4f01a603c699d829793a86a42c2440/humming_kernels-0.1.16.tar.gz", hash = "sha256:a5356a63c4adf6c16c46f541749dec90fc2d49cf29ebc33ac05e23c744731809", size = 317590, upload-time = "2026-09-22T02:41:16.516Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/0f/01f871dc26f8d7e1683df9464890d48cfd5c4e46c4a264d7ee0868749197/humming_kernels-0.1.12-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:988e8b9da41e3679ae2816bdfb51acab53c05cc56254b5ca98e847f4efcf24fd", size = 318019, upload-time = "2026-07-31T14:28:19.925Z" },
-    { url = "https://files.pythonhosted.org/packages/ec/a2/f96912ee7d68f56e61c15555657ffa057b8afbaa21241c63342b5969bb74/humming_kernels-0.1.12-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:cd3ef712a93f3a9075ea99de2c72bcd3ec89dab3759b3a248d869f5507b60331", size = 322656, upload-time = "2026-07-31T14:28:21.511Z" },
+    { url = "https://files.pythonhosted.org/packages/71/47/43794faeb47fe2067bef5c7d830fac4244bf872625b0bfddf116fd7a0a0d/humming_kernels-0.1.16-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:fa1a86e31fc3c0fede5bceb3dc2f088e6bdda636a8f405fd71def853f12049e1", size = 417732, upload-time = "2026-09-22T02:41:12.611Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/7f/08aad5a947d549aa21af5b93e711aad3d5689d39e8439c7fa72eab9773de/humming_kernels-0.1.16-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:683212692f5e1339961e4322aff1ba116523e2681b2aafeaf7c081bc4e1f5627", size = 426040, upload-time = "2026-09-22T02:41:14.541Z" },
 ]
 
 [package.optional-dependencies]
@@ -1177,6 +1180,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "instanttensor"
+version = "0.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ca/a1/95d0d4cee908ab0bd8e56b44cdb19e678081c54de52d280b0b3c9f7e4c43/instanttensor-0.2.2.tar.gz", hash = "sha256:aca07c1afe4fde23dcbfb53044e2bef50dad4c0af054317acc669a1c8dc2b325", size = 613106, upload-time = "2026-10-13T15:06:59.034Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ff/08/a28ad4c33e42f45d5617f8feb24137fcc1b7af7a7f0068c3fcf3448a0806/instanttensor-0.2.2-cp312-cp312-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:94dabc13981fe89982a807572593c4f697a3a3bae02fa13cb469960885901247", size = 6439035, upload-time = "2026-10-13T15:06:00.734Z" },
+    { url = "https://files.pythonhosted.org/packages/59/12/0a4b55402ec7f45f223d4cab19c8d6d39f5242d386f4f421e30c34dd8900/instanttensor-0.2.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:382954f2329fc085ff298ce0205a06ce0fc8c67a704fc032613931a5ae9018d5", size = 6522862, upload-time = "2026-10-13T15:06:07.285Z" },
 ]
 
 [[package]]
@@ -1732,7 +1748,7 @@ cuda = [
     { name = "torchaudio", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torchvision", version = "0.28.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "transformers" },
-    { name = "vllm", version = "0.28.0", source = { registry = "https://pypi.org/simple" }, extra = ["audio"], marker = "extra == 'extra-12-mship-engine-cuda'" },
+    { name = "vllm", version = "0.31.0", source = { registry = "https://pypi.org/simple" }, extra = ["audio"], marker = "extra == 'extra-12-mship-engine-cuda'" },
 ]
 dev = [
     { name = "fakeredis" },
@@ -1765,7 +1781,8 @@ vllm-cpu = [
     { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
     { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
     { name = "transformers" },
-    { name = "vllm", version = "0.28.0+cpu", source = { registry = "https://wheels.vllm.ai/0.28.0/cpu" }, extra = ["audio"], marker = "(sys_platform == 'linux' and extra == 'extra-12-mship-engine-cpu') or (sys_platform == 'linux' and extra != 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
+    { name = "triton", version = "3.8.0+cpu", source = { url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "vllm", version = "0.31.0+cpu", source = { registry = "https://wheels.vllm.ai/0.31.0/cpu" }, extra = ["audio"], marker = "(sys_platform == 'linux' and extra == 'extra-12-mship-engine-cpu') or (sys_platform == 'linux' and extra != 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
 ]
 
 [package.metadata]
@@ -1835,10 +1852,11 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'cuda'", specifier = ">=0.25.0", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "mship-engine", extra = "cuda" } },
     { name = "transformers", marker = "extra == 'cuda'", specifier = ">=5.5.3" },
     { name = "transformers", marker = "extra == 'vllm-cpu'", specifier = ">=5.5.3" },
-    { name = "vllm", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==0.28.0+cpu", index = "https://wheels.vllm.ai/0.28.0/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
-    { name = "vllm", marker = "extra == 'cuda'", specifier = "==0.28.0" },
-    { name = "vllm", extras = ["audio"], marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==0.28.0+cpu", index = "https://wheels.vllm.ai/0.28.0/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
-    { name = "vllm", extras = ["audio"], marker = "extra == 'cuda'", specifier = "==0.28.0" },
+    { name = "triton", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'vllm-cpu'", url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" },
+    { name = "vllm", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==0.31.0+cpu", index = "https://wheels.vllm.ai/0.31.0/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
+    { name = "vllm", marker = "extra == 'cuda'", specifier = "==0.31.0" },
+    { name = "vllm", extras = ["audio"], marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==0.31.0+cpu", index = "https://wheels.vllm.ai/0.31.0/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
+    { name = "vllm", extras = ["audio"], marker = "extra == 'cuda'", specifier = "==0.31.0" },
 ]
 provides-extras = ["thin", "metal", "cuda", "cpu", "vllm-cpu", "otel", "docs", "dev"]
 
@@ -1867,6 +1885,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/80/31/0b2517913687895f5904325c2069d6a3b78f66cc641a86a2baf75a05dcbb/multidict-6.7.1-cp312-cp312-win_amd64.whl", hash = "sha256:fcee94dfbd638784645b066074b338bc9cc155d4b4bffa4adce1615c5a426c19", size = 46053, upload-time = "2026-01-26T02:44:15.371Z" },
     { url = "https://files.pythonhosted.org/packages/0c/5b/aba28e4ee4006ae4c7df8d327d31025d760ffa992ea23812a601d226e682/multidict-6.7.1-cp312-cp312-win_arm64.whl", hash = "sha256:ba0a9fb644d0c1a2194cf7ffb043bd852cea63a57f66fbd33959f7dae18517bf", size = 43307, upload-time = "2026-01-26T02:44:16.852Z" },
     { url = "https://files.pythonhosted.org/packages/81/08/7036c080d7117f28a4af526d794aab6a84463126db031b007717c1a6676e/multidict-6.7.1-py3-none-any.whl", hash = "sha256:55d97cc6dae627efa6a6e548885712d4864b81110ac76fa4e534c03819fa4a56", size = 12319, upload-time = "2026-01-26T02:46:44.004Z" },
+]
+
+[[package]]
+name = "nccl-extensions"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cuda-core" },
+    { name = "cuda-pathfinder" },
+    { name = "nccl4py" },
+    { name = "numpy" },
+    { name = "packaging" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/24/77/a02842f3e7d6aef181733f94d313a1ff4b3db2726e2c067d7946e8f34cc3/nccl_extensions-0.1.0-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d85e203e284b50dad3846d6fb0d35560378537689f23d92a16c67f7d854025d7", size = 22282239, upload-time = "2026-09-02T15:38:26.362Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/3c/b043c1f8ca2766d48e30e9cc5a0d65d51aef77e3a8d18dbbaa95fd5386e2/nccl_extensions-0.1.0-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:54d46bee108f0bc18cdc35dbe17bba6452d6a38a270fa5e8ccde03267460fa87", size = 22589285, upload-time = "2026-09-02T15:38:53.213Z" },
 ]
 
 [[package]]
@@ -2065,12 +2099,16 @@ wheels = [
 
 [[package]]
 name = "nvidia-cudnn-frontend"
-version = "1.25.0"
+version = "1.31.0"
 source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "apache-tvm-ffi" },
+    { name = "nvidia-cutlass-dsl", extra = ["cu13"], marker = "extra == 'extra-12-mship-engine-cuda'" },
+]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/0f/df39a194f2529093db737d43cc4cbf594c6a79712a09aa104b999e4d95d4/nvidia_cudnn_frontend-1.25.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:09e6e1bc48ce1235743f89d8ea699c52b3008fd6dae7f2ecadb744bebf272a2b", size = 3263306, upload-time = "2026-06-10T21:07:48.093Z" },
-    { url = "https://files.pythonhosted.org/packages/03/65/3b45941d8a22128b971e910f2e9af6bf5ef453e92cc329c56b6eb53c53de/nvidia_cudnn_frontend-1.25.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9a94a72d736bd79eb35f451aaf26d9493778e02ecabccc92c05425508c9e7a83", size = 3414884, upload-time = "2026-06-10T21:08:08.603Z" },
-    { url = "https://files.pythonhosted.org/packages/2e/45/69517e8f028573a150e82b71205c920e78ebbe83ff0d073eaeee2ada18dc/nvidia_cudnn_frontend-1.25.0-cp312-cp312-win_amd64.whl", hash = "sha256:d1bfdc795a8bda570ca80ef2287e83f00974857a9a086c1653d2a28099496fee", size = 2798190, upload-time = "2026-06-10T21:08:30.506Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/4b/ba084b26c9709b05446642413aa4bbb1056fe00af7f99e356a3cf24774d6/nvidia_cudnn_frontend-1.31.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:47d1a5432f59a2a7d0f903727c0d244e1413a20686b98d8e3890919c5d82a508", size = 9970357, upload-time = "2026-10-08T18:05:50.547Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/24/8ec9de1fd9ea95e1c1cb9e6e2d3a5547aa9c5ece1136d650ffce1bb5d8c5/nvidia_cudnn_frontend-1.31.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3171f102254136418f24b4470dfa5419f34b03d9d792a4b773cf65c7a37e6bf8", size = 10159344, upload-time = "2026-10-08T18:06:15.766Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/b6/caa5b41361034e7884b465afa2214137ec325be8ea099553f6e597f75af1/nvidia_cudnn_frontend-1.31.0-cp312-cp312-win_amd64.whl", hash = "sha256:786c7dc590d436338c55b74e3204fc2adb4739acafb1a5e46ce032282e601e2e", size = 9373760, upload-time = "2026-10-08T18:06:35.091Z" },
 ]
 
 [[package]]
@@ -2145,14 +2183,14 @@ wheels = [
 
 [[package]]
 name = "nvidia-cutlass-dsl"
-version = "4.6.2"
+version = "4.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "nvidia-cutlass-dsl-libs-base" },
     { name = "nvidia-cutlass-dsl-libs-cu12" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/ec/14e6ecbfed31ec35bbd1bb6965ae61f879370906a8f9c2e851e292704ba4/nvidia_cutlass_dsl-4.6.2-py3-none-any.whl", hash = "sha256:06ac62deb182a852dfb053032cf945bf02b9aa1bf502a18b129d280d7babb26c", size = 10460, upload-time = "2026-08-05T14:39:41.657Z" },
+    { url = "https://files.pythonhosted.org/packages/af/ef/903dab832a19e0f1d798c9acc96edbda5dfb29f2e030b46e163946555817/nvidia_cutlass_dsl-4.7.1-py3-none-any.whl", hash = "sha256:765850c74868a0b5a02fefbfc1b380842b64e5f7a1c8b1655e322a3b14c01726", size = 10460, upload-time = "2026-08-26T03:11:56.593Z" },
 ]
 
 [package.optional-dependencies]
@@ -2162,7 +2200,7 @@ cu13 = [
 
 [[package]]
 name = "nvidia-cutlass-dsl-libs-base"
-version = "4.6.2"
+version = "4.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cuda-python" },
@@ -2173,13 +2211,13 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/f3/4be98f2faa283471e355a42ecbc20956fb2c3b6dbc71861f483be277e99a/nvidia_cutlass_dsl_libs_base-4.6.2-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:e129db7155d56ba4478be098c0f819e37690a6ce5d43a9a9a83bf1300d32c57f", size = 3321894, upload-time = "2026-08-05T14:12:30.139Z" },
-    { url = "https://files.pythonhosted.org/packages/54/1b/cf4a0837054bb4b9dc36cdd86f9d2e7fead3629e3373aaa7f7ec1e5e1542/nvidia_cutlass_dsl_libs_base-4.6.2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:24dfaddad6077fd0de14eecaf66a72762f2f5f30ae1872231f5bf8b243ac2eac", size = 2824987, upload-time = "2026-08-05T14:12:49.618Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/6e/5d3f67caba70fe9a5cc21b845d2be35d88049da536185196a2644b0d461c/nvidia_cutlass_dsl_libs_base-4.7.1-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:e86c55a5010a7edfc067648a75cb29d0c5bd67d75210168cf507b0d0e4d15ba7", size = 3329548, upload-time = "2026-08-26T02:53:14.176Z" },
+    { url = "https://files.pythonhosted.org/packages/55/b5/af332a4dbb0dba45828994d9789d1969dfecca006a6221cd8b92e4825d3f/nvidia_cutlass_dsl_libs_base-4.7.1-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:c2b67dacabfc905e4d132784fe4848647f40b0b97b1cdde3ce4a482642536b84", size = 2832971, upload-time = "2026-08-26T02:53:52.164Z" },
 ]
 
 [[package]]
 name = "nvidia-cutlass-dsl-libs-core"
-version = "4.6.2"
+version = "4.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cuda-python" },
@@ -2189,12 +2227,12 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7c/ef/10c0089234a32f1379e1f213f28f8c7521a9ff0154e3acc58f613d5ef3be/nvidia_cutlass_dsl_libs_core-4.6.2-py3-none-any.whl", hash = "sha256:571d4b46fca1bfbb123d0dc348eaa7fd80af0014ddffc07b849e8195b2364333", size = 772393, upload-time = "2026-08-05T14:09:50.76Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/14/b669cc890f7fd74008d7bc52f493d0a7ff256de10f3941c6676249419c07/nvidia_cutlass_dsl_libs_core-4.7.1-py3-none-any.whl", hash = "sha256:c65662abc9ab18fd997c57547895736928e559f4624bbe2aa1aa91418ea014ca", size = 1235214, upload-time = "2026-08-26T02:50:56.241Z" },
 ]
 
 [[package]]
 name = "nvidia-cutlass-dsl-libs-cu12"
-version = "4.6.2"
+version = "4.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cuda-python" },
@@ -2205,13 +2243,13 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/b7/019a8f74ad30ad9b6190dd5963d8921fc2b03777316e47260eb822624a0a/nvidia_cutlass_dsl_libs_cu12-4.6.2-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:ea3b96dd6b627fe20637acfa7876ea1adfa8d81a2b106ffff0bb2d042c0c2731", size = 87013242, upload-time = "2026-08-05T14:18:57.703Z" },
-    { url = "https://files.pythonhosted.org/packages/80/6e/70c545a600b52b3f0fbbe01608aefc4e675c924ba886485ad72541f5c88e/nvidia_cutlass_dsl_libs_cu12-4.6.2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:7f510307369d522da8e7d666557b9b9e7df06b94748bd5dc0198d59dfd0d918a", size = 88454261, upload-time = "2026-08-05T14:21:14.733Z" },
+    { url = "https://files.pythonhosted.org/packages/36/c1/e1202a7d8e3ce5fbb430f1123fd8109e92785a5d18a8749ca8f199318fde/nvidia_cutlass_dsl_libs_cu12-4.7.1-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:f57a3955c17b7dcd5472aa47c46513e5f3914e1325fc308afca1b9063a8f897b", size = 87255991, upload-time = "2026-08-26T02:59:54.308Z" },
+    { url = "https://files.pythonhosted.org/packages/94/39/d847abeeb9a4ced8e11b30b401564c74c692ac9609f5bd921ed9d0a32f43/nvidia_cutlass_dsl_libs_cu12-4.7.1-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:c8a0f93a1cde41404696b3194dd1f589c6f3a7b426bcabe97845f8fe96f949f5", size = 88679788, upload-time = "2026-08-26T03:00:32.28Z" },
 ]
 
 [[package]]
 name = "nvidia-cutlass-dsl-libs-cu13"
-version = "4.6.2"
+version = "4.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cuda-python" },
@@ -2222,8 +2260,8 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/38/bbe5b8f1ef1a15e7bd1e2ea86686c38f15eeee0a4ba440a5d00d8222cb8e/nvidia_cutlass_dsl_libs_cu13-4.6.2-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:b9543257622ce70d696c6a2bda7e9617ef5b1cc9f29bfe66f4b38d1d1e29a8cb", size = 86712108, upload-time = "2026-08-05T14:27:35.488Z" },
-    { url = "https://files.pythonhosted.org/packages/ca/05/7874c37d50e112177a64a96dd6c7eaeacb1661ebb864e0fe5cfd9f706767/nvidia_cutlass_dsl_libs_cu13-4.6.2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:a299a623fad75eb752c1a4e447b924e9049ed396b037509c41a48da82d1f340a", size = 88036030, upload-time = "2026-08-05T14:27:58.991Z" },
+    { url = "https://files.pythonhosted.org/packages/30/ea/c7c2b4da3d6c9818e152e20cd5f797fb6d9ef75c3a5c80d2d6a9cb211489/nvidia_cutlass_dsl_libs_cu13-4.7.1-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:e675bf04dc6c91f7c4d5540699b7a031f2b8b44cd2687b32c20892f112f7e0d9", size = 86957786, upload-time = "2026-08-26T03:07:23.015Z" },
+    { url = "https://files.pythonhosted.org/packages/10/71/e178bb0858fd7b96857e98e3acec70b23f13b88540a2fcc53569f8e8ea34/nvidia_cutlass_dsl_libs_cu13-4.7.1-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:20c14e16125cb8e36bc9947a9f0a57a660f44651365337b911c84abde4967f5f", size = 88260436, upload-time = "2026-08-26T03:07:59.639Z" },
 ]
 
 [[package]]
@@ -2344,29 +2382,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/bb/5a/c45fa035cd72c70ebe67c6e079e3adf871492382634f69e3dff62c43597d/openai-2.52.0.tar.gz", hash = "sha256:7c736d592f81471ce1f734838390983c4d8c8aecff23dcd36e600a58e5032d9c", size = 1098876, upload-time = "2026-07-31T15:13:03.228Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/ac/ceb40c995df49533ad4dcff6c37f0d85cf14446a212363fc9d2f927e60b4/openai-2.52.0-py3-none-any.whl", hash = "sha256:f97e231d9a8fa69ab55897df1080f02d99913fb0a30e3ee56ea16a1eb6c2d434", size = 1659569, upload-time = "2026-07-31T15:13:01.145Z" },
-]
-
-[[package]]
-name = "openai-harmony"
-version = "0.0.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3e/92/2d038d096f29179c7c9571b431f9e739f87a487121901725e23fe338dd9d/openai_harmony-0.0.8.tar.gz", hash = "sha256:6e43f98e6c242fa2de6f8ea12eab24af63fa2ed3e89c06341fb9d92632c5cbdf", size = 284777, upload-time = "2025-11-05T19:07:06.727Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/45/c6/2502f416d46be3ec08bb66d696cccffb57781a499e3ff2e4d7c174af4e8f/openai_harmony-0.0.8-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:029ec25ca74abe48fdb58eb9fdd2a8c1618581fc33ce8e5653f8a1ffbfbd9326", size = 2627806, upload-time = "2025-11-05T19:06:57.063Z" },
-    { url = "https://files.pythonhosted.org/packages/d3/d2/ce6953ca87db9cae3e775024184da7d1c5cb88cead19a2d75b42f00a959c/openai_harmony-0.0.8-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e4f709815924ec325b9a890e6ab2bbb0ceec8e319a4e257328eb752cf36b2efc", size = 2948463, upload-time = "2025-11-05T19:06:48.17Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/4c/b553c9651662d6ce102ca7f3629d268b23df1abe5841e24bed81e8a8e949/openai_harmony-0.0.8-cp38-abi3-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:5cfcfd963b50a41fc656c84d3440ca6eecdccd6c552158ce790b8f2e33dfb5a9", size = 2704083, upload-time = "2025-11-05T19:06:50.205Z" },
-    { url = "https://files.pythonhosted.org/packages/9b/af/4eec8f9ab9c27bcdb444460c72cf43011d176fc44c79d6e113094ca1e152/openai_harmony-0.0.8-cp38-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:0a3a16972aa1cee38ea958470cd04ac9a2d5ac38fdcf77ab686611246220c158", size = 2959765, upload-time = "2025-11-05T19:06:53.62Z" },
-    { url = "https://files.pythonhosted.org/packages/11/3c/33f3374e4624e0e776f6b13b73c45a7ead7f9c4529f8369ed5bfcaa30cac/openai_harmony-0.0.8-cp38-abi3-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:b4d5cfa168e74d08f8ba6d58a7e49bc7daef4d58951ec69b66b0d56f4927a68d", size = 3427031, upload-time = "2025-11-05T19:06:51.829Z" },
-    { url = "https://files.pythonhosted.org/packages/25/3f/1a192b93bb47c6b44cd98ba8cc1d3d2a9308f1bb700c3017e6352da11bda/openai_harmony-0.0.8-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c007d277218a50db8839e599ed78e0fffe5130f614c3f6d93ae257f282071a29", size = 2953260, upload-time = "2025-11-05T19:06:55.406Z" },
-    { url = "https://files.pythonhosted.org/packages/5b/f8/93b582cad3531797c3db7c2db5400fd841538ccddfd9f5e3df61be99a630/openai_harmony-0.0.8-cp38-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:8565d4f5a0638da1bffde29832ed63c9e695c558611053add3b2dc0b56c92dbc", size = 3127044, upload-time = "2025-11-05T19:06:59.553Z" },
-    { url = "https://files.pythonhosted.org/packages/1d/10/4327dbf87f75ae813405fd9a9b4a5cde63d506ffed0a096a440a4cabd89c/openai_harmony-0.0.8-cp38-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:cbaa3bda75ef0d8836e1f8cc84af62f971b1d756d740efc95c38c3e04c0bfde2", size = 2932931, upload-time = "2025-11-05T19:07:01.437Z" },
-    { url = "https://files.pythonhosted.org/packages/8a/c8/1774eec4f6f360ef57618fb8f52e3d3af245b2491bd0297513aa09eec04b/openai_harmony-0.0.8-cp38-abi3-musllinux_1_2_i686.whl", hash = "sha256:772922a9bd24e133950fad71eb1550836f415a88e8c77870e12d0c3bd688ddc2", size = 2996140, upload-time = "2025-11-05T19:07:03.438Z" },
-    { url = "https://files.pythonhosted.org/packages/60/c3/3d1e01e2dba517a91760e4a03e4f20ffc75039a6fe584d0e6f9b5c78fd15/openai_harmony-0.0.8-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:007b0476a1f331f8130783f901f1da6f5a7057af1a4891f1b6a31dec364189b5", size = 3205080, upload-time = "2025-11-05T19:07:05.078Z" },
-    { url = "https://files.pythonhosted.org/packages/14/63/119de431572d7c70a7bf1037034a9be6ed0a7502a7498ba7302bca5b3242/openai_harmony-0.0.8-cp38-abi3-win32.whl", hash = "sha256:a9b5f893326b28d9e935ade14b4f655f5a840942473bc89b201c25f7a15af9cf", size = 2082457, upload-time = "2025-11-05T19:07:09.631Z" },
-    { url = "https://files.pythonhosted.org/packages/40/1f/c83cf5a206c263ee70448a5ae4264682555f4d0b5bed0d2cc6ca1108103d/openai_harmony-0.0.8-cp38-abi3-win_amd64.whl", hash = "sha256:39d44f0d8f466bd56698e7ead708bead3141e27b9b87e3ab7d5a6d0e4a869ee5", size = 2438369, upload-time = "2025-11-05T19:07:08.1Z" },
 ]
 
 [[package]]
@@ -2548,6 +2563,29 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/24/02/10aeacc37a38a3a8fa16ff67bec1ae3bf882539f6f9efb0f70acf802ca2d/opentelemetry_semantic_conventions_ai-0.5.1.tar.gz", hash = "sha256:153906200d8c1d2f8e09bd78dbef526916023de85ac3dab35912bfafb69ff04c", size = 26533, upload-time = "2026-03-26T14:20:38.73Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/22/41fb05f1dc5fda2c468e05a41814c20859016c85117b66c8a257cae814f6/opentelemetry_semantic_conventions_ai-0.5.1-py3-none-any.whl", hash = "sha256:25aeb22bd261543b4898a73824026d96770e5351209c7d07a0b1314762b1f6e4", size = 11250, upload-time = "2026-03-26T14:20:37.108Z" },
+]
+
+[[package]]
+name = "oss-harmony"
+version = "0.0.11"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/88/ca56e5b17df4763bbb552c7be3abe432b51db3c51f6327a3848b88ad7c08/oss_harmony-0.0.11.tar.gz", hash = "sha256:ccad467b71d61490df1f2204b7a064990833338615ac135536c5b3a8e2d03a15", size = 2198780, upload-time = "2026-05-13T20:49:11.767Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8b/4c/400a7e375943ff06447c8cd3920819d2e37c808d0cfea3296b159e961610/oss_harmony-0.0.11-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:83ca71b85be6e2f8e93527673cd2eff4da9180608ee5d4197bd4f01afc4fa6be", size = 3337401, upload-time = "2026-05-13T20:49:00.051Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/e9/0b33d4c592e1422c9faeaf1cfe10731328ecf3504e900dc7921109affd55/oss_harmony-0.0.11-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f1f74ef7f8be32fa1dcfe1644839af5f0873acce78b5668c2aa39f26d83218ff", size = 3493239, upload-time = "2026-05-13T20:48:49.588Z" },
+    { url = "https://files.pythonhosted.org/packages/de/c3/502b7ba6f36645117b58859b250355cba34d7107ec104ea40087b752977b/oss_harmony-0.0.11-cp38-abi3-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:2221f2790411cfd5d0e517769dc2662b15b2711e44728291961506a367ffc3d1", size = 3415967, upload-time = "2026-05-13T20:48:51.731Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/f7/f802d7aba027cd4e1c0ff5509c645de8d70fa674b31d80cdf8fec63ac844/oss_harmony-0.0.11-cp38-abi3-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:f215934b05f3a7658e0cf30cf92bc25f4aed125a693529c53dd97325ecfbf7ef", size = 3707786, upload-time = "2026-05-13T20:48:53.91Z" },
+    { url = "https://files.pythonhosted.org/packages/89/68/001d7429a692b2db0c03bd49b756f834716b64afc0bbbece96824e8f0af8/oss_harmony-0.0.11-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d877c6b526cdbdf55068bae8f05c60398e929c9e296c7f69a1d533339708be80", size = 3567858, upload-time = "2026-05-13T20:48:57.904Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/5d/edf954b0aace872ec137a9ef7b92c29120bd16a4277fd11c5b83e7d1ed16/oss_harmony-0.0.11-cp38-abi3-manylinux_2_5_i686.manylinux1_i686.whl", hash = "sha256:e451e5dc28b0d883f33aa17a77c923afcab5d26ef3b95d7593b68a07e399706e", size = 3633793, upload-time = "2026-05-13T20:48:56.037Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/c9/720aed1527d87f82e07a7f35c3c81c6d9198a8d1223bdbd298b3c66a72db/oss_harmony-0.0.11-cp38-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:036505bfb39c6b50edcf717349518d269bb375207f7f8e95f517e938b8f2e0c8", size = 3695703, upload-time = "2026-05-13T20:49:02.857Z" },
+    { url = "https://files.pythonhosted.org/packages/94/a8/fb8cad33079ee848514ea70688005ef7b6c32ccee788cc18fcb04e24fa74/oss_harmony-0.0.11-cp38-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:952218411c219dc7ca8ee56eb86271d015d0c347896b2009906096422d7a94cf", size = 3703138, upload-time = "2026-05-13T20:49:04.937Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/7d/d71b3ee5abfbf9130eea646b9589e8f00a039514cdca2ab6dbffa22f8351/oss_harmony-0.0.11-cp38-abi3-musllinux_1_2_i686.whl", hash = "sha256:5c7b0cea27e1e4e9fc485bf8039a119d6732718cce6b067d1f7de9e637572348", size = 3790649, upload-time = "2026-05-13T20:49:07.337Z" },
+    { url = "https://files.pythonhosted.org/packages/48/9a/ad24d20ea1e8b3167744f5d357d48a116086258ca58540986a0896781864/oss_harmony-0.0.11-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:0d1545203973abb3002dcc6c5cffd14ca4a376b655c14ce190c78eb6aaf5f6fd", size = 3807882, upload-time = "2026-05-13T20:49:09.767Z" },
+    { url = "https://files.pythonhosted.org/packages/03/33/2917125287b46255cfc6d7e0bc4bc5e5c90f7ad4e02d3922c2f0f95b696b/oss_harmony-0.0.11-cp38-abi3-win32.whl", hash = "sha256:fd91609eef825f342ae7ac990651cfebcf28aac6b6ad1186bf37c5b593cdf950", size = 3135714, upload-time = "2026-05-13T20:49:15.924Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/c9/eedd8d02be8bbaa586f8a323de2fc976e6053582411020b7be1f7c7e1734/oss_harmony-0.0.11-cp38-abi3-win_amd64.whl", hash = "sha256:4db175b6f6264cd60ceb692c0e686937e072ca6ea1239d0d4cace2cfb50f4974", size = 3266750, upload-time = "2026-05-13T20:49:13.404Z" },
 ]
 
 [[package]]
@@ -3209,7 +3247,7 @@ wheels = [
 
 [[package]]
 name = "quack-kernels"
-version = "0.6.4"
+version = "0.6.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apache-tvm-ffi" },
@@ -3218,9 +3256,9 @@ dependencies = [
     { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torch-c-dlpack-ext" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/75/5c/67c4a0d54cbb8d4d05af73132d620d1900a193b33e0d5ea6a25829b941d2/quack_kernels-0.6.4.tar.gz", hash = "sha256:8bf08a0e1a85aecc892ce84f4b6ed7abb6a44ec7c68b83040abe174bc8c2b936", size = 845485, upload-time = "2026-08-07T23:25:31.94Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5f/18/6c2a20d00dff254f154fb3b951f4e5a0377a60122c17385e5f08d5f5b5e1/quack_kernels-0.6.5.tar.gz", hash = "sha256:dd9405a4a6fa35fc3a5a18fe35b46a14b0bf7e3ad9fe2451903e355047ac471d", size = 846876, upload-time = "2026-09-11T05:08:20.621Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/f5/36ec7e075e90bd92bdf30fee0606f189348c2bbb0af6aebaf7382927c622/quack_kernels-0.6.4-py3-none-any.whl", hash = "sha256:e77c5d1f1299b0b38487fe8737df6c6975daa16bca7f7eb883bd1a74d09e7e78", size = 728458, upload-time = "2026-08-07T23:25:30.549Z" },
+    { url = "https://files.pythonhosted.org/packages/73/d8/f5e56c38b286308d115a171e3c5c44f24e9d03980c3cfd22588df40261fa/quack_kernels-0.6.5-py3-none-any.whl", hash = "sha256:df1ddd31366c82eb9692fe087c671209189dcbde53c909c81a865d4ee66b158d", size = 729615, upload-time = "2026-09-11T05:08:19.306Z" },
 ]
 
 [[package]]
@@ -4123,14 +4161,26 @@ name = "triton"
 version = "3.7.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra != 'extra-12-mship-engine-metal' and extra != 'extra-12-mship-engine-vllm-cpu'",
-    "(platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cpu' and extra != 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cpu' and extra != 'extra-12-mship-engine-cuda')",
-    "(platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-12-mship-engine-cpu' and extra != 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-12-mship-engine-cpu' and extra != 'extra-12-mship-engine-cuda')",
+    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/94/fa/f856e24deb462d5f18bd4b5a746957862ab9b6ee5834bda60605ec348366/triton-3.7.1-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:9497f2e696ee368862a181a90b2dcc03ca978cc4f602abd67c7d81022a6988e1", size = 184692359, upload-time = "2026-06-17T20:03:48.288Z" },
     { url = "https://files.pythonhosted.org/packages/c4/6f/fb96d15db6f36d6eae4cafb998c2e0353bf59d7c4ea1662d7497f269134a/triton-3.7.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7e40869937a68206ec70d7f25bb7ec6433cb083f9135e1f36dbd318dc449a728", size = 197719725, upload-time = "2026-06-17T19:53:20.419Z" },
 ]
+
+[[package]]
+name = "triton"
+version = "3.8.0+cpu"
+source = { url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" }
+resolution-markers = [
+    "(platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
+]
+wheels = [
+    { url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:693f657501e6d791e889d5fd880d3b84a9bf4d8f3087dbb685534bb8533361fa" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "importlib-metadata", marker = "python_full_version < '3.10'" }]
 
 [[package]]
 name = "truststore"
@@ -4249,7 +4299,7 @@ wheels = [
 
 [[package]]
 name = "vllm"
-version = "0.28.0"
+version = "0.31.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "sys_platform == 'darwin'",
@@ -4275,6 +4325,7 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "humming-kernels", extra = ["cu13"], marker = "extra == 'extra-12-mship-engine-cuda'" },
     { name = "ijson" },
+    { name = "instanttensor" },
     { name = "jsonschema" },
     { name = "lark" },
     { name = "llguidance", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'" },
@@ -4290,12 +4341,12 @@ dependencies = [
     { name = "nvidia-cutlass-dsl", extra = ["cu13"], marker = "extra == 'extra-12-mship-engine-cuda'" },
     { name = "nvtx" },
     { name = "openai" },
-    { name = "openai-harmony" },
     { name = "opencv-python-headless" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-sdk" },
     { name = "opentelemetry-semantic-conventions-ai" },
+    { name = "oss-harmony" },
     { name = "outlines-core" },
     { name = "partial-json-parser" },
     { name = "pillow" },
@@ -4333,10 +4384,10 @@ dependencies = [
     { name = "watchfiles" },
     { name = "xgrammar", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/22/39/096d88cfe34ee43a8b6e7c957d1ad6338fa5256474d6ff9a32008c6f8cd6/vllm-0.28.0.tar.gz", hash = "sha256:ac96dd0ec5be9c13f2aa4bfb50498c4727110406f6e4980b58a4097e4d18634a", size = 39991441, upload-time = "2026-08-26T10:08:30.56Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/89/11460eaeb96e636f716657d460a6daebc7ddbcd631dd6799f232cae25771/vllm-0.31.0.tar.gz", hash = "sha256:dde46f1efbe846e5bd0c5c4ec6ec71842c42254c7ff3d9bebb2a57028715d380", size = 43419411, upload-time = "2026-10-05T07:47:02.078Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/31/007ac11dc756f7e69600b90b08e39f573eed9aaee6258198f9d9a2b06355/vllm-0.28.0-cp38-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:817b8181f7f61b4a62dc1d5d9ab39f2bfb60a6cb86c29879a78a147b85756787", size = 308873410, upload-time = "2026-08-26T10:08:13.738Z" },
-    { url = "https://files.pythonhosted.org/packages/87/d7/97f6ecc2ae883e601e08d7cef87cb54ececeefcfe6b5e12d5d92f8d06d6b/vllm-0.28.0-cp38-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:addb0ffdaafd8155d75e9b3f5ddb3da28fdee9e8a7097ede91f7db2e9e1a3889", size = 314500103, upload-time = "2026-08-26T10:07:25.091Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/ef/6827a6c74d241ae44bff21c4c770309fe0430231f6f23429a8438f599ae8/vllm-0.31.0-cp38-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:56edd19c798510b6da5ae4dd38b3bdf55ea7ae261b339a906df006dc3faf751d", size = 315390942, upload-time = "2026-10-05T07:41:02.369Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/98/841d1328827dc082492fcbb0f57bdf6a9d35aa0df52bd47b75be3f504804/vllm-0.31.0-cp38-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:39132b433967f0962d03d8a5f633b9bee6b32708f566c7d5637b79f8d0ef3433", size = 320555825, upload-time = "2026-10-05T07:40:41.009Z" },
 ]
 
 [package.optional-dependencies]
@@ -4350,8 +4401,8 @@ audio = [
 
 [[package]]
 name = "vllm"
-version = "0.28.0+cpu"
-source = { registry = "https://wheels.vllm.ai/0.28.0/cpu" }
+version = "0.31.0+cpu"
+source = { registry = "https://wheels.vllm.ai/0.31.0/cpu" }
 resolution-markers = [
     "(platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
     "platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
@@ -4382,15 +4433,15 @@ dependencies = [
     { name = "model-hosting-container-standards", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "msgspec", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "ninja", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
-    { name = "numba", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "numba", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "numpy", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "openai", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
-    { name = "openai-harmony", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "opencv-python-headless", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "opentelemetry-api", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "opentelemetry-exporter-otlp", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "opentelemetry-sdk", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "opentelemetry-semantic-conventions-ai", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "oss-harmony", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "outlines-core", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "partial-json-parser", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "pillow", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
@@ -4416,18 +4467,19 @@ dependencies = [
     { name = "tokenizers", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'ppc64le' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'riscv64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'riscv64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'riscv64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
-    { name = "torchcodec", marker = "(platform_machine != 'aarch64' and platform_machine != 'ppc64le' and platform_machine != 'riscv64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'ppc64le' and platform_machine != 'riscv64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
-    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'riscv64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'riscv64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "torchcodec", marker = "(platform_machine != 'aarch64' and platform_machine != 'ppc64le' and platform_machine != 'riscv64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'ppc64le' and platform_machine != 'riscv64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'riscv64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'riscv64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "tqdm", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "transformers", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "triton", version = "3.8.0+cpu", source = { url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
     { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "watchfiles", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "xgrammar", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'ppc64le' and sys_platform == 'darwin') or (platform_machine == 'arm64' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'ppc64le' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
 ]
 wheels = [
-    { url = "https://wheels.vllm.ai/2cf0a6915ce544dc493a0990f2ea38d81601128a/vllm-0.28.0%2Bcpu-cp312-cp312-macosx_11_0_arm64.whl" },
-    { url = "https://wheels.vllm.ai/2cf0a6915ce544dc493a0990f2ea38d81601128a/vllm-0.28.0%2Bcpu-cp38-abi3-manylinux_2_34_aarch64.whl" },
-    { url = "https://wheels.vllm.ai/2cf0a6915ce544dc493a0990f2ea38d81601128a/vllm-0.28.0%2Bcpu-cp38-abi3-manylinux_2_34_x86_64.whl" },
+    { url = "https://wheels.vllm.ai/db9527a46873454610df6dbedf79a36d6bf1a7f6/vllm-0.31.0%2Bcpu-cp312-cp312-macosx_11_0_arm64.whl" },
+    { url = "https://wheels.vllm.ai/db9527a46873454610df6dbedf79a36d6bf1a7f6/vllm-0.31.0%2Bcpu-cp38-abi3-manylinux_2_39_aarch64.whl" },
+    { url = "https://wheels.vllm.ai/db9527a46873454610df6dbedf79a36d6bf1a7f6/vllm-0.31.0%2Bcpu-cp38-abi3-manylinux_2_39_x86_64.whl" },
 ]
 
 [package.optional-dependencies]
@@ -4533,7 +4585,7 @@ wheels = [
 
 [[package]]
 name = "xgrammar"
-version = "0.2.3"
+version = "0.2.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apache-tvm-ffi", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
@@ -4542,16 +4594,18 @@ dependencies = [
     { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra != 'extra-12-mship-engine-cuda') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
     { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-12-mship-engine-cuda'" },
     { name = "transformers", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
-    { name = "triton", version = "3.7.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "triton", version = "3.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
+    { name = "triton", version = "3.8.0+cpu", source = { url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-12-mship-engine-cpu') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
     { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/81/f4/e71693d8cec60b7e36dab660784ecc5a6aa51e478a83b556011645c58c87/xgrammar-0.2.3.tar.gz", hash = "sha256:f76423630ae3ac4e090cb38ce1e30e7bcc69b3dee4d22d94353944386a4c6f18", size = 2447704, upload-time = "2026-06-27T04:45:24.759Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/e8/21a1661542d541c3c11e56062a213f6405824845a7fc8d3874447d5c6775/xgrammar-0.2.7.tar.gz", hash = "sha256:7674afeee5e6eff9672627b62d5ab0aa2347ea51674f4d78a5c160029f92bc3e", size = 2663916, upload-time = "2026-09-15T15:51:07.444Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/1c/0cdb22fc799e6d158b3243eeb895ae2e086825487b57767838c98d4864ee/xgrammar-0.2.3-cp312-cp312-macosx_10_14_x86_64.whl", hash = "sha256:173e167d43a5cf4171eee2be86097decff8803b0a0853d7baaf446c732a7d3a9", size = 23284489, upload-time = "2026-06-27T04:44:23.927Z" },
-    { url = "https://files.pythonhosted.org/packages/cf/bc/994dc6f222189174840c29a1f5b4c175e69dfe13ed2e25b6dbbe9f200a29/xgrammar-0.2.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:aa35f24835a59c822e249ecc80912eea4de03fc8b04afb2f82c8b950a56be6ef", size = 23240027, upload-time = "2026-06-27T04:44:26.255Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/79/0bb37937bf847c738c64b64dc50ddc12e7c526b34c5ab82cebe58da5ec8f/xgrammar-0.2.3-cp312-cp312-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:11255f184971489fc72b948b096e2917f482ba2dca975177f5411562cedb9c6d", size = 44314481, upload-time = "2026-06-27T04:44:28.875Z" },
-    { url = "https://files.pythonhosted.org/packages/d4/fd/5ebd5d14b8993cb225151bbb8f2011742fc7a7d94a3bdbc3ec3954b9b62d/xgrammar-0.2.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fdf081fab29694302d41d61dcf52fad7d253879a718bc6afc68db0a0dabd7f19", size = 44855110, upload-time = "2026-06-27T04:44:31.586Z" },
-    { url = "https://files.pythonhosted.org/packages/17/66/67239f43b0244f65aec4639f51ab95905db42eb66e532ee2a4e5cdce32de/xgrammar-0.2.3-cp312-cp312-win_amd64.whl", hash = "sha256:e7787dd8321a04f86116b756aa3dadd622e3607a3559b1e986cc5f77da00d68e", size = 15780277, upload-time = "2026-06-27T04:44:34.081Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/b0/d593f522f6a1433f562973df58e22f007a1b74bd5034899c273191d7a6ac/xgrammar-0.2.7-cp312-cp312-macosx_10_14_x86_64.whl", hash = "sha256:b46d814ae80ebab5b89eb67a18118256bd94afbeace8f5d6ccf0ff396aa4a6a1", size = 1460072, upload-time = "2026-09-15T15:50:23.583Z" },
+    { url = "https://files.pythonhosted.org/packages/16/18/f79752cb28baa56a914d6e0d7eb66b334640acb80a987a638775b1e0b4cf/xgrammar-0.2.7-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:4957b0ab6c743ee8e178faa6e7804466f9caadccba551b52600720490d591349", size = 1307383, upload-time = "2026-09-15T15:50:25.091Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/35/5d56e9dbe6f0ccefebcb5212b7ded0af17bec7f2d148dd6403c7d247d063/xgrammar-0.2.7-cp312-cp312-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:2df1a2292f6b1c5cdc4b176ef2f22c58a837ac99fd854d93856160f31f14a4b0", size = 1113117, upload-time = "2026-09-15T15:50:26.492Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/f2/cb90cfbcca316b3fa98b0928ec989f3fb75f6439bc5269c5c2121d361301/xgrammar-0.2.7-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e4397798f73512ab5abccbadf0a7b6aaf0753ccc4f3171c43b14c4d22df1ed28", size = 1265122, upload-time = "2026-09-15T15:50:28.098Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/c7/3f856551d2ec293cbb26e866b0da7862934c1f6ef0e7608f009484f9f8c0/xgrammar-0.2.7-cp312-cp312-win_amd64.whl", hash = "sha256:397edf3dc6d9634eba1127f83f5f16aff4f06a17dff55cd4d441f35fb680ed5b", size = 1071522, upload-time = "2026-09-15T15:50:29.603Z" },
+    { url = "https://files.pythonhosted.org/packages/46/f7/6269f47ef3b33f22eaf324e3734ca1123438bf61dcc2209c3d649d6480db/xgrammar-0.2.7-cp312-cp312-win_arm64.whl", hash = "sha256:0a6ca46cfbeb1ab1cb85a6e1a8ff3f24813a27114626813e0432ac54b3a2efe4", size = 1018916, upload-time = "2026-09-15T15:50:30.948Z" },
 ]
 
 [[package]]
