@@ -32,10 +32,13 @@ _READERS = [
     "deepseek_r1",
     "deepseek_v3",
     "deepseek_v4",
+    "deepseek_v41",
     "ernie45",
     "glm45",
     "glm47",
+    "granite_thinking_parser",
     "holo2",
+    "hy_v4",
     "kimi_k2",
     "ling3",
     "mimo",
@@ -104,12 +107,6 @@ class TestReasoningParsersReading:
         assert (
             reasoning_parsers_reading(_tokenizer(), (_PROMPT, _ANSWER), (_PROMPT, _CALL), "hermes", False) == _READERS
         )
-
-    def test_the_parsers_sharing_the_tool_parsers_engine_narrow_the_readers(self):
-        assert reasoning_parsers_reading(_tokenizer(), (_PROMPT, _ANSWER), None, "qwen3_coder", False) == [
-            "mimo",
-            "qwen3",
-        ]
 
     def test_a_reply_no_parser_reads_gives_nothing(self):
         answer = (_PROMPT, "[[PROBE-REASONING]]PROBE-CONTENT")

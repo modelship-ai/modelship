@@ -56,8 +56,8 @@ cuda = [
     "torchaudio>=2.10.0",
     "transformers>=5.5.3",
     "flashinfer-python>=0.6.1",
-    "vllm==0.28.0",
-    "vllm[audio]==0.28.0",
+    "vllm==0.31.0",
+    "vllm[audio]==0.31.0",
     "bitsandbytes>=0.49.0",
     "diffusers>=0.31.0",
     "stable-diffusion-cpp-python>=0.4.7",
@@ -82,15 +82,15 @@ cpu = [
     "sherpa-onnx>=1.13.4",
     "sherpa-onnx-core==1.13.4",
 ]
-# Adds CPU-only vLLM on top of `cpu`. Pinned to the `+cpu` local version, not a
-# bare `==0.28.0` — see docs/installation.md.
+# Adds CPU-only vLLM on top of `cpu`.
 vllm-cpu = [
     "torch==2.13.0+cpu ; sys_platform == 'linux'",
     "torchvision==0.28.0+cpu ; sys_platform == 'linux'",
     "torchaudio==2.11.0+cpu ; sys_platform == 'linux'",
     "transformers>=5.5.3",
-    "vllm==0.28.0+cpu ; sys_platform == 'linux'",
-    "vllm[audio]==0.28.0+cpu ; sys_platform == 'linux'",
+    "vllm==0.31.0+cpu ; sys_platform == 'linux'",
+    "vllm[audio]==0.31.0+cpu ; sys_platform == 'linux'",
+    "triton @ https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 otel = [
     "opentelemetry-sdk>=1.20.0",
@@ -133,12 +133,9 @@ name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
-# NOTE: this URL embeds the vllm version — a future bump of vllm==0.28.0 above
-# must update this to match, or the cpu extra silently falls back to whatever
-# (if anything) that path resolves to.
 [[tool.uv.index]]
 name = "vllm-cpu"
-url = "https://wheels.vllm.ai/0.28.0/cpu"
+url = "https://wheels.vllm.ai/0.31.0/cpu"
 explicit = true
 
 [tool.uv.sources]
@@ -163,6 +160,7 @@ vllm = [
 
 [tool.uv]
 required-version = "==0.12.23"
+override-dependencies = ["protobuf<7.0.0"]
 conflicts = [
   [
     { extra = "cuda" },

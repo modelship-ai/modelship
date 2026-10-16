@@ -17,15 +17,13 @@ from vllm.entrypoints.chat_utils import ChatTemplateConfig as VllmChatTemplateCo
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest as VllmChatCompletionRequest,
 )
-from vllm.entrypoints.openai.engine.protocol import (
-    ErrorResponse as VllmErrorResponse,
-)
 from vllm.entrypoints.openai.models.protocol import BaseModelPath as VllmBaseModelPath
 from vllm.entrypoints.openai.models.serving import OpenAIServingModels as VllmOpenAIServingModels
 from vllm.entrypoints.pooling.embed.protocol import (
     EmbeddingCompletionRequest as VllmEmbeddingCompletionRequest,
 )
 from vllm.entrypoints.pooling.embed.serving import ServingEmbedding as VllmServingEmbedding
+from vllm.entrypoints.serve.engine.protocol import ErrorResponse as VllmErrorResponse
 from vllm.entrypoints.serve.utils.request_logger import RequestLogger as VllmRequestLogger
 from vllm.entrypoints.speech_to_text.transcription.protocol import (
     TranscriptionRequest as VllmTranscriptionRequest,

@@ -28,7 +28,7 @@ _PICKS = [
     ("google/gemma-4-12B-it-qat-w4a16-ct", "gemma4"),
     ("zai-org/GLM-4.6", "glm45"),
     ("zai-org/GLM-4.7", "glm45"),
-    ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "mimo"),
+    ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron_v3"),
     ("HuggingFaceTB/SmolLM3-3B", "deepseek_r1"),
     ("Qwen/QwQ-32B", "deepseek_r1"),
     ("Qwen/Qwen3-VL-2B-Instruct", None),

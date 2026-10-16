@@ -61,8 +61,8 @@ class TestToolParsersReading:
         assert tool_parsers_reading(_tokenizer(), _HERMES_CALL) == ["hermes"]
 
     def test_every_reader_is_kept_when_no_grammar_accepts(self):
-        call = '[{"name": "get_weather", "arguments": {"city": "Paris"}}]'
-        assert tool_parsers_reading(_tokenizer(), call) == ["granite", "xlam"]
+        call = '[get_weather(city="Paris")]'
+        assert tool_parsers_reading(_tokenizer(), call) == ["llama4_pythonic", "pythonic"]
 
     def test_a_parser_that_leaves_content_is_not_a_reader(self):
         call = "<seed:tool_call>\n<function=get_weather>\n<parameter=city>Paris</parameter>\n</function>\n</seed:tool_call>"

@@ -36,7 +36,7 @@ _PICKS = [
     ("unsloth/Llama-4-Scout-17B-16E-Instruct", "llama4_pythonic"),
     ("unsloth/mistral-7b-instruct-v0.3", "mistral"),
     ("microsoft/Phi-4-mini-instruct", None),
-    ("Salesforce/xLAM-2-1b-fc-r", "granite"),
+    ("Salesforce/xLAM-2-1b-fc-r", "xlam"),
     ("LiquidAI/LFM2-1.2B", "lfm2"),
 ]
 

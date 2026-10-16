@@ -10,8 +10,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from vllm.parser.abstract_parser import DelegatingParser as VllmDelegatingParser
-from vllm.parser.parser_manager import ParserManager as VllmParserManager
 from vllm.reasoning import ReasoningParser as VllmReasoningParser
 from vllm.reasoning import ReasoningParserManager as VllmReasoningParserManager
 from vllm.tool_parsers import ToolParserManager as VllmToolParserManager
@@ -277,10 +275,6 @@ class TestVllmReasoningRegistry:
     def test_a_parser_declares_its_markers(self):
         assert isinstance(VllmReasoningParser.reasoning_start_str, property)
         assert isinstance(VllmReasoningParser.reasoning_end_str, property)
-
-    def test_a_reasoning_parser_sharing_the_tool_parsers_engine_is_not_delegated(self):
-        assert not issubclass(VllmParserManager.get_parser("qwen3_coder", "qwen3", True), VllmDelegatingParser)
-        assert issubclass(VllmParserManager.get_parser("hermes", "qwen3", True), VllmDelegatingParser)
 
 
 class TestDiscoverTemplateVars:
