@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from vllm.parser.abstract_parser import DelegatingParser as VllmDelegatingParser
+from vllm.parser.parser_manager import ParserManager as VllmParserManager
 from vllm.reasoning import ReasoningParser as VllmReasoningParser
 from vllm.reasoning import ReasoningParserManager as VllmReasoningParserManager
 from vllm.tool_parsers import ToolParserManager as VllmToolParserManager
@@ -116,92 +118,152 @@ def registry(monkeypatch) -> dict[str, Any]:
     return parsers
 
 
+@pytest.fixture
+def reasoning_probe(monkeypatch):
+    seen: dict[str, Any] = {}
+
+    def answer(reply: tuple[str, str] | None, readers: tuple[str, ...] = ()) -> dict[str, Any]:
+        def reading(tokenizer, answer, tool_call, tool_parser, harmony):
+            seen.update(tool_call=tool_call, tool_parser=tool_parser, harmony=harmony)
+            return list(readers)
+
+        monkeypatch.setattr(detect, "rendered_reasoning_reply", lambda tokenizer: reply)
+        monkeypatch.setattr(detect, "rendered_reasoning_tool_call", lambda tokenizer, eos_token_id: ("p", "call"))
+        monkeypatch.setattr(detect, "reasoning_parsers_reading", reading)
+        return seen
+
+    return answer
+
+
+class TestResolveReasoningParsersByProbe:
+    def test_explicit_wins_over_the_probe(self, reasoning_probe):
+        reasoning_probe(("p", "reply"), ("glm45",))
+        cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(reasoning_parser="deepseek_r1"))
+        assert resolve_reasoning_parser(cfg, "<think>", None, _hf(), None, None) == "deepseek_r1"
+
+    def test_the_parser_that_reads_the_reply_is_picked(self, reasoning_probe):
+        reasoning_probe(("p", "reply"), ("glm45",))
+        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(), None, None) == "glm45"
+
+    def test_tied_readers_go_to_the_name_closest_to_model_type(self, reasoning_probe):
+        reasoning_probe(("p", "reply"), ("deepseek_r1", "glm45"))
+        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="glm4_moe"), None, None) == "glm45"
+
+    def test_a_reply_no_parser_reads_leaves_none(self, reasoning_probe, registry):
+        reasoning_probe(("p", "reply"))
+        registry["acme9"] = _parser()
+        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(model_type="acme9"), None, None) is None
+
+    def test_the_tool_call_is_probed_with_the_tool_parser(self, reasoning_probe):
+        seen = reasoning_probe(("p", "reply"), ("qwen3",))
+        resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(), "hermes", None)
+        assert (seen["tool_call"], seen["tool_parser"]) == (("p", "call"), "hermes")
+
+    def test_without_a_tool_parser_no_tool_call_is_probed(self, reasoning_probe):
+        seen = reasoning_probe(("p", "reply"), ("qwen3",))
+        resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(), None, None)
+        assert seen["tool_call"] is None
+
+    def test_a_gpt_oss_model_is_probed_as_harmony(self, reasoning_probe):
+        seen = reasoning_probe(("p", "reply"), ("openai_gptoss",))
+        resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="gpt_oss"), None, None)
+        assert seen["harmony"] is True
+
+
 class TestResolveReasoningParsers:
     def test_explicit_parser_stored(self):
         cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(reasoning_parser="deepseek_r1"))
-        assert resolve_reasoning_parser(cfg, None, None, _hf()) == "deepseek_r1"
+        assert resolve_reasoning_parser(cfg, None, None, _hf(), None, None) == "deepseek_r1"
 
     def test_explicit_opt_out_leaves_none(self, registry):
         registry["acme9"] = _parser()
         cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(enable_reasoning=False))
-        assert resolve_reasoning_parser(cfg, "<think>", None, _hf(model_type="acme9")) is None
+        assert resolve_reasoning_parser(cfg, "<think>", None, _hf(model_type="acme9"), None, None) is None
 
     def test_no_template_leaves_none(self, registry):
         registry["acme9"] = _parser(start=None, end=None)
-        assert resolve_reasoning_parser(_make_cfg(), None, None, _hf(model_type="acme9")) is None
+        assert resolve_reasoning_parser(_make_cfg(), None, None, _hf(model_type="acme9"), None, None) is None
 
     def test_explicit_wins_over_auto(self, registry):
         registry.update(acme9=_parser(), other7=_parser())
         cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(reasoning_parser="other7"))
-        assert resolve_reasoning_parser(cfg, "<think>", None, _hf(model_type="acme9")) == "other7"
+        assert resolve_reasoning_parser(cfg, "<think>", None, _hf(model_type="acme9"), None, None) == "other7"
 
     def test_unknown_explicit_raises(self):
         cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(reasoning_parser="not-a-real-parser"))
         with pytest.raises(ValueError, match="not-a-real-parser"):
-            resolve_reasoning_parser(cfg, None, None, _hf())
+            resolve_reasoning_parser(cfg, None, None, _hf(), None, None)
 
     def test_does_not_mutate_default_chat_template_kwargs(self):
         # Toggle defaults are pinned by detect_template_toggle_defaults at init,
         # not here — the resolver is pure name resolution.
         cfg = _make_cfg(vllm_engine_kwargs=VllmEngineConfig(reasoning_parser="gemma4"))
-        resolve_reasoning_parser(cfg, None, None, _hf())
+        resolve_reasoning_parser(cfg, None, None, _hf(), None, None)
         assert cfg.vllm_engine_kwargs.default_chat_template_kwargs is None
 
     def test_the_names_in_models_yaml_are_not_searched(self, registry):
         registry["acme9"] = _parser()
         cfg = _make_cfg(name="acme9", model="org/Acme-9-Chat")
-        assert resolve_reasoning_parser(cfg, "<think>", None, _hf()) is None
+        assert resolve_reasoning_parser(cfg, "<think>", None, _hf(), None, None) is None
 
     def test_model_type_outranks_architecture(self, registry):
         registry.update(acme9=_parser(), other7=_parser())
         hf_config = _hf(model_type="acme9", architecture="Other7ForCausalLM")
-        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, hf_config) == "acme9"
+        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, hf_config, None, None) == "acme9"
 
     def test_a_name_in_the_architecture_is_picked(self, registry):
         registry["other7"] = _parser()
         hf_config = _hf(architecture="Other7ForCausalLM")
-        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, hf_config) == "other7"
+        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, hf_config, None, None) == "other7"
 
     def test_the_longest_name_wins(self, registry):
         registry.update(step3=_parser(), step3p5=_parser())
-        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(model_type="step3p5")) == "step3p5"
+        assert (
+            resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(model_type="step3p5"), None, None) == "step3p5"
+        )
 
     def test_a_parser_whose_markers_are_absent_is_skipped(self, registry):
         registry["acme9"] = _parser()
-        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="acme9")) is None
+        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="acme9"), None, None) is None
 
-    def test_a_parser_without_markers_is_picked_on_its_name(self, registry):
+    def test_a_parser_without_markers_is_picked_on_its_name_with_a_thinking_switch(self, registry, monkeypatch):
         registry["acme9"] = _parser(start=None, end=None)
-        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="acme9")) == "acme9"
+        monkeypatch.setattr(detect, "thinking_switch", lambda tokenizer: True)
+        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="acme9"), None, None) == "acme9"
+
+    def test_a_parser_without_markers_is_skipped_without_a_thinking_switch(self, registry, monkeypatch):
+        registry["acme9"] = _parser(start=None, end=None)
+        monkeypatch.setattr(detect, "thinking_switch", lambda tokenizer: False)
+        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="acme9"), None, None) is None
 
     def test_a_parser_that_does_not_implement_is_reasoning_end_is_skipped(self, registry):
         registry["acme9"] = _parser(start=None, end=None, reports_end=False)
-        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="acme9")) is None
+        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(model_type="acme9"), None, None) is None
 
     def test_a_parser_that_cannot_be_built_is_skipped(self, registry):
         registry.update(step3=_parser(), step3p5=_parser(error=RuntimeError("no think tokens")))
-        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(model_type="step3p5")) == "step3"
+        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(model_type="step3p5"), None, None) == "step3"
 
     def test_a_parser_that_fails_to_load_is_skipped(self, registry):
         registry["acme9"] = ImportError("optional dependency")
-        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(model_type="acme9")) is None
+        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(model_type="acme9"), None, None) is None
 
     def test_fallback_is_deepseek_r1(self, registry):
         registry.update(qwen3=_parser(), deepseek_r1=_parser())
-        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf()) == "deepseek_r1"
+        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(), None, None) == "deepseek_r1"
 
     def test_a_thinking_switch_in_the_template_does_not_change_the_fallback(self, registry):
         registry.update(qwen3=_parser(), deepseek_r1=_parser())
         template = "{% if enable_thinking %}<think>{% endif %}"
-        assert resolve_reasoning_parser(_make_cfg(), template, None, _hf()) == "deepseek_r1"
+        assert resolve_reasoning_parser(_make_cfg(), template, None, _hf(), None, None) == "deepseek_r1"
 
     def test_no_fallback_for_a_template_without_its_markers(self, registry):
         registry.update(qwen3=_parser(), deepseek_r1=_parser())
-        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf()) is None
+        assert resolve_reasoning_parser(_make_cfg(), "plain", None, _hf(), None, None) is None
 
     def test_no_fallback_when_vllm_does_not_register_it(self, registry):
         registry["acme9"] = _parser()
-        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf()) is None
+        assert resolve_reasoning_parser(_make_cfg(), "<think>", None, _hf(), None, None) is None
 
 
 class TestVllmReasoningRegistry:
@@ -215,6 +277,10 @@ class TestVllmReasoningRegistry:
     def test_a_parser_declares_its_markers(self):
         assert isinstance(VllmReasoningParser.reasoning_start_str, property)
         assert isinstance(VllmReasoningParser.reasoning_end_str, property)
+
+    def test_a_reasoning_parser_sharing_the_tool_parsers_engine_is_not_delegated(self):
+        assert not issubclass(VllmParserManager.get_parser("qwen3_coder", "qwen3", True), VllmDelegatingParser)
+        assert issubclass(VllmParserManager.get_parser("hermes", "qwen3", True), VllmDelegatingParser)
 
 
 class TestDiscoverTemplateVars:

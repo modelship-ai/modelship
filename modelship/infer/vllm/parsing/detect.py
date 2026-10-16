@@ -14,6 +14,12 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
+from modelship.infer.vllm.parsing.reasoning_probe import (
+    reasoning_parsers_reading,
+    rendered_reasoning_reply,
+    rendered_reasoning_tool_call,
+    thinking_switch,
+)
 from modelship.infer.vllm.parsing.tool_probe import rendered_tool_call, tool_parsers_reading
 from modelship.logging import get_logger
 
@@ -86,7 +92,7 @@ def _usable(name: str, tokenizer: Any, template: str) -> bool:
     if type(parser).is_reasoning_end is VllmReasoningParser.is_reasoning_end:
         return False
     markers = [marker for marker in (parser.reasoning_start_str, parser.reasoning_end_str) if marker]
-    return not markers or any(marker in template for marker in markers)
+    return any(marker in template for marker in markers) if markers else thinking_switch(tokenizer)
 
 
 def _metadata(hf_config: Any) -> tuple[tuple[str, str | None], ...]:
@@ -275,7 +281,12 @@ def resolve_tool_parser(
 
 
 def resolve_reasoning_parser(
-    cfg: ModelshipModelConfig, template: str | None, tokenizer: Any, hf_config: Any
+    cfg: ModelshipModelConfig,
+    template: str | None,
+    tokenizer: Any,
+    hf_config: Any,
+    tool_parser: str | None,
+    eos_token_id: int | list[int] | None,
 ) -> str | None:
     """Resolve the reasoning parser name to hand to the engine and ``OnlineRenderer``."""
     if _is_reasoning_opt_out(cfg):
@@ -300,7 +311,20 @@ def resolve_reasoning_parser(
         logger.info("No chat template found for '%s'; reasoning detection skipped.", cfg.name)
         return None
 
-    for source, text in _metadata(hf_config):
+    metadata = _metadata(hf_config)
+    answer = rendered_reasoning_reply(tokenizer)
+    if answer is not None:
+        tool_call = rendered_reasoning_tool_call(tokenizer, eos_token_id) if tool_parser is not None else None
+        harmony = hf_config.model_type == "gpt_oss"
+        readers = reasoning_parsers_reading(tokenizer, answer, tool_call, tool_parser, harmony)
+        if not readers:
+            logger.warning("No vLLM reasoning parser reads the reasoning '%s' writes; reasoning not parsed.", cfg.name)
+            return None
+        detected = _closest(readers, [text for _, text in metadata])
+        logger.info("Auto-detected reasoning_parser=%r for '%s' out of %s", detected, cfg.name, readers)
+        return detected
+
+    for source, text in metadata:
         for name in _named_in(registered, text):
             if _usable(name, tokenizer, template):
                 logger.info("Auto-detected reasoning_parser=%r for '%s' from its %s", name, cfg.name, source)

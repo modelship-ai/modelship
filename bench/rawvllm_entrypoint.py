@@ -99,7 +99,7 @@ def main() -> int:
         generation_config = try_get_generation_config(m._resolved_path, k.trust_remote_code)
         eos_token_id = generation_config.eos_token_id if generation_config else None
         tool_parser = resolve_tool_parser(m, template, tokenizer, hf_config, eos_token_id)
-        reasoning_parser = resolve_reasoning_parser(m, template, tokenizer, hf_config)
+        reasoning_parser = resolve_reasoning_parser(m, template, tokenizer, hf_config, tool_parser, eos_token_id)
     print(f"rawvllm parsers: tool={tool_parser} reasoning={reasoning_parser}", flush=True)
 
     # Preflight reads free RAM/VRAM, which moves between the two phases. The

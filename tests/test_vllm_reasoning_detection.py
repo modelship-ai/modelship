@@ -6,25 +6,29 @@ from types import SimpleNamespace
 import pytest
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase
-from modelship.infer.vllm.parsing.detect import resolve_reasoning_parser
+from modelship.infer.vllm.parsing.detect import resolve_reasoning_parser, resolve_tool_parser
 
 _PICKS = [
     ("Qwen/Qwen3-0.6B", "qwen3"),
     ("Qwen/Qwen3-4B-Thinking-2507", "qwen3"),
+    ("cyankiwi/Qwen3.5-9B-AWQ-4bit", "qwen3"),
     ("cyankiwi/Qwen3.8-27B-AWQ-INT4", "qwen3"),
-    ("zai-org/GLM-4.5-Air", "deepseek_r1"),
+    ("zai-org/GLM-4.5-Air", "glm45"),
     ("MiniMaxAI/MiniMax-M2", "minimax_m2"),
     ("allenai/Olmo-3-7B-Think", "olmo3"),
     ("baidu/ERNIE-4.5-21B-A3B-Thinking", "ernie45"),
     ("ByteDance-Seed/Seed-OSS-36B-Instruct", "seed_oss"),
     ("deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", "deepseek_r1"),
+    ("deepseek-ai/DeepSeek-R1-0528", "deepseek_r1"),
+    ("deepseek-ai/DeepSeek-V3-0324", None),
     ("deepseek-ai/DeepSeek-V3.1", "deepseek_v3"),
     ("ibm-granite/granite-3.3-8b-instruct", None),
     ("tencent/Hunyuan-A13B-Instruct", None),
-    ("openai/gpt-oss-20b", None),
+    ("openai/gpt-oss-20b", "openai_gptoss"),
     ("google/gemma-4-12B-it-qat-w4a16-ct", "gemma4"),
-    ("zai-org/GLM-4.6", "deepseek_r1"),
-    ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "deepseek_r1"),
+    ("zai-org/GLM-4.6", "glm45"),
+    ("zai-org/GLM-4.7", "glm45"),
+    ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "mimo"),
     ("HuggingFaceTB/SmolLM3-3B", "deepseek_r1"),
     ("Qwen/QwQ-32B", "deepseek_r1"),
     ("Qwen/Qwen3-VL-2B-Instruct", None),
@@ -37,16 +41,24 @@ _PICKS = [
 @pytest.mark.parametrize(("model", "parser"), _PICKS)
 def test_the_reasoning_parser_detected_for(model: str, parser: str | None) -> None:
     from huggingface_hub import hf_hub_download
-    from transformers import AutoTokenizer
+    from huggingface_hub.errors import EntryNotFoundError
+    from vllm.tokenizers import get_tokenizer as vllm_get_tokenizer
 
     try:
-        tokenizer = AutoTokenizer.from_pretrained(model)
+        tokenizer = vllm_get_tokenizer(model)
         with open(hf_hub_download(model, "config.json")) as f:
             config = json.load(f)
+        try:
+            with open(hf_hub_download(model, "generation_config.json")) as f:
+                eos_token_id = json.load(f).get("eos_token_id")
+        except EntryNotFoundError:
+            eos_token_id = None
     except Exception as e:
         pytest.skip(f"could not fetch the tokenizer and config of {model!r}: {e}")
 
     cfg = ModelshipModelConfig(name="m", model=model, usecase=ModelUsecase.generate, loader=ModelLoader.vllm)
     hf_config = SimpleNamespace(model_type=config.get("model_type"), architectures=config.get("architectures"))
+    template = tokenizer.get_chat_template()
+    tool_parser = resolve_tool_parser(cfg, template, tokenizer, hf_config, eos_token_id)
 
-    assert resolve_reasoning_parser(cfg, tokenizer.get_chat_template(), tokenizer, hf_config) == parser
+    assert resolve_reasoning_parser(cfg, template, tokenizer, hf_config, tool_parser, eos_token_id) == parser
