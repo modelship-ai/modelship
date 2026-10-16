@@ -63,7 +63,7 @@ flag decides what to install; `deploy` is what refuses to run without the hardwa
 
 ## Platform prerequisites
 
-These are not installed for you. A Linux `--cpu` node also needs glibc 2.39 or newer (e.g. Ubuntu 24.04).
+These are not installed for you.
 
 ```bash
 # macOS — compiles stable-diffusion-cpp-python on first install

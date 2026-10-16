@@ -22,7 +22,6 @@ the same cluster.
   — required only when running GPU models in Docker
 - **HuggingFace token** for gated models
 - **glibc** for a native install — Alpine and other musl distros are refused
-- **glibc 2.39+** for a native Linux `cpu` node (e.g. Ubuntu 24.04), required by vLLM's CPU wheels
 
 ## Node roles
 
