@@ -493,7 +493,6 @@ models:
 Both parsers are auto-detected from the model's chat template — no modelship-level override. Gaps are per-model-family, not per-loader, so test against the specific model in use:
 
 - **Named-function forcing is unsupported.** `tool_choice: {"type": "function", "function": {"name": "X"}}` silently falls back to `auto` (llama-server logs a warning; modelship doesn't surface it as an error).
-- **`tool_choice: required` depends on the template family.** Grammar-enforced for harmony-style templates (e.g. gpt-oss); a silent no-op for hermes-style templates (e.g. Qwen3) — the model may answer in free text with no error.
 - **Bare `response_format: {"type": "json_object"}` (no `schema`) is not enforced**, despite llama-server's docs describing it as supported — verified against b9859 and b10200, unconfirmed on the current b10375 pin. `type: json_schema` requests (what modelship sends whenever a schema is given) are unaffected and correctly constrained.
 
 `response_format`/`json_schema` can combine with reasoning in the same request; `logprobs`/`top_logprobs` are forwarded and returned.
