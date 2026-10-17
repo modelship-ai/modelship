@@ -209,18 +209,12 @@ def _run_fit(config: ModelshipModelConfig, args: list[str], parallel: int) -> di
     ctx_total = int(ctx_total_raw)
     ngl = int(ngl_raw)
 
-    rec: dict[str, Any] = {}
-    if ctx_total == 0:
-        # 0 means "model's own maximum, unconstrained"; round-trips as-is since
-        # `_launch` sends `n_ctx * parallel` and llama-server resolves 0 itself.
-        rec["n_ctx"] = 0
-    else:
-        per_slot = (ctx_total // parallel // _NCTX_ALIGNMENT) * _NCTX_ALIGNMENT
-        if per_slot < _MIN_NCTX:
-            raise _FitError(
-                f"fit-params context {ctx_total} across parallel={parallel} yields n_ctx={per_slot} (< {_MIN_NCTX})"
-            )
-        rec["n_ctx"] = per_slot
+    per_slot = (ctx_total // parallel // _NCTX_ALIGNMENT) * _NCTX_ALIGNMENT
+    if per_slot < _MIN_NCTX:
+        raise _FitError(
+            f"fit-params context {ctx_total} across parallel={parallel} yields n_ctx={per_slot} (< {_MIN_NCTX})"
+        )
+    rec: dict[str, Any] = {"n_ctx": per_slot}
     if ngl >= 0:
         rec["n_gpu_layers"] = ngl
     if ts_raw:

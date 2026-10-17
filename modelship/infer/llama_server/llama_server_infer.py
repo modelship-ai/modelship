@@ -383,8 +383,6 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
                 await asyncio.sleep(_HEALTH_POLL_INTERVAL_S)
 
     async def _log_deployed_context(self, probe: httpx.AsyncClient) -> None:
-        """Ground truth, not the preflight guess: reads what llama-server actually
-        resolved `-c 0`/tensor-split/etc. against, from its own `/props`."""
         try:
             resp = await probe.get("/props", timeout=5.0)
             resp.raise_for_status()
