@@ -88,9 +88,10 @@ class TestLlamaServerConfig:
         with pytest.raises(ValidationError):
             LlamaServerConfig(**kwargs)
 
+    @pytest.mark.parametrize("field", ["flash_attn", "reasoning"])
     @pytest.mark.parametrize(("value", "expected"), [(True, "on"), (False, "off")])
-    def test_yaml_booleans_read_as_reasoning_words(self, value, expected):
-        assert LlamaServerConfig(reasoning=value).reasoning == expected
+    def test_yaml_booleans_read_as_on_off(self, field, value, expected):
+        assert getattr(LlamaServerConfig(**{field: value}), field) == expected
 
     def test_unknown_reasoning_value_rejected(self):
         with pytest.raises(ValidationError):

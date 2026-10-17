@@ -164,7 +164,7 @@ class LlamaServerConfig(_StrictModel):
     reasoning_budget_message: str | None = Field(default=None, min_length=1)
     reasoning_preserve: bool | None = None
 
-    @field_validator("reasoning", mode="before")
+    @field_validator("flash_attn", "reasoning", mode="before")
     @classmethod
     def words_for_yaml_booleans(cls, value):
         if isinstance(value, bool):
