@@ -46,6 +46,7 @@ _SERVE_FLAGS = [
     "--cache-reuse",
     "--context-shift",
     "--cache-ram",
+    "--reasoning",
     "--reasoning-budget",
     "--reasoning-budget-message",
     "--reasoning-preserve",

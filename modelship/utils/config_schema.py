@@ -7,7 +7,7 @@ import re
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from modelship.logging import get_logger
 
@@ -159,9 +159,17 @@ class LlamaServerConfig(_StrictModel):
     cache_type_v: Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"
     # Proportional split across GPUs for offloading (`-ts`); None splits evenly.
     tensor_split: list[float] | None = Field(default=None, min_length=1)
+    reasoning: Literal["on", "off", "auto"] | None = None
     reasoning_budget: int | None = Field(default=None, ge=0)
     reasoning_budget_message: str | None = Field(default=None, min_length=1)
     reasoning_preserve: bool | None = None
+
+    @field_validator("reasoning", mode="before")
+    @classmethod
+    def words_for_yaml_booleans(cls, value):
+        if isinstance(value, bool):
+            return "on" if value else "off"
+        return value
 
 
 class WhispercppConfig(_StrictModel):

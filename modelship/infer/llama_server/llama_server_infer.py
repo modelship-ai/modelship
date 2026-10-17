@@ -288,6 +288,8 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             args += ["--cache-reuse", str(self.config.cache_reuse)]
         if self.config.context_shift:
             args += ["--context-shift"]
+        if self.config.reasoning is not None:
+            args += ["--reasoning", self.config.reasoning]
         if self.config.reasoning_budget is not None:
             args += ["--reasoning-budget", str(self.config.reasoning_budget)]
         if self.config.reasoning_budget_message:

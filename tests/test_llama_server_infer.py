@@ -250,6 +250,20 @@ class TestSubprocessLifecycle:
             infer.shutdown()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(("reasoning", "expected"), [(None, None), ("off", "off"), ("auto", "auto")])
+    async def test_reasoning_flag(self, tmp_path, monkeypatch, reasoning, expected):
+        binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
+
+        infer = LlamaServerInfer(_make_config(reasoning=reasoning))
+        await infer.start()
+        try:
+            args = list(infer._proc.args)
+            assert (args[args.index("--reasoning") + 1] if "--reasoning" in args else None) == expected
+        finally:
+            infer.shutdown()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("reasoning_preserve", "expected"),
         [(None, []), (True, ["--reasoning-preserve"]), (False, ["--no-reasoning-preserve"])],

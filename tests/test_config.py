@@ -38,6 +38,7 @@ class TestLlamaServerConfig:
         assert config.cache_type_k == "f16"
         assert config.cache_type_v == "f16"
         assert config.tensor_split is None
+        assert config.reasoning is None
         assert config.reasoning_budget is None
         assert config.reasoning_budget_message is None
         assert config.reasoning_preserve is None
@@ -58,6 +59,7 @@ class TestLlamaServerConfig:
             cache_type_k="q8_0",
             cache_type_v="q8_0",
             tensor_split=[3.0, 1.0],
+            reasoning="off",
             reasoning_budget=512,
             reasoning_budget_message="Time is up.",
             reasoning_preserve=False,
@@ -76,6 +78,7 @@ class TestLlamaServerConfig:
         assert config.cache_type_k == "q8_0"
         assert config.cache_type_v == "q8_0"
         assert config.tensor_split == [3.0, 1.0]
+        assert config.reasoning == "off"
         assert config.reasoning_budget == 512
         assert config.reasoning_budget_message == "Time is up."
         assert config.reasoning_preserve is False
@@ -84,6 +87,14 @@ class TestLlamaServerConfig:
     def test_invalid_reasoning_budget_rejected(self, kwargs):
         with pytest.raises(ValidationError):
             LlamaServerConfig(**kwargs)
+
+    @pytest.mark.parametrize(("value", "expected"), [(True, "on"), (False, "off")])
+    def test_yaml_booleans_read_as_reasoning_words(self, value, expected):
+        assert LlamaServerConfig(reasoning=value).reasoning == expected
+
+    def test_unknown_reasoning_value_rejected(self):
+        with pytest.raises(ValidationError):
+            LlamaServerConfig(reasoning="maybe")
 
     def test_empty_tensor_split_rejected(self):
         with pytest.raises(ValidationError):
