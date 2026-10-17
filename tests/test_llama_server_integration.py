@@ -357,19 +357,14 @@ class TestChatLlamaServerResponseFormat:
     def _deploy(self, model_deployer):
         model_deployer.deploy("chat-llama-server-plain")
 
-    def test_response_format_json_object_without_schema_is_unconstrained(self, client):
-        """Bare `{"type": "json_object"}` (no `schema` key) isn't enforced by
-        llama-server despite its docs; `type: json_schema` with a schema is honored."""
+    def test_response_format_json_object_without_schema_returns_an_object(self, client):
         completion = client.chat.completions.create(
             model="chat-llama-server-plain",
             messages=[{"role": "user", "content": "What is the capital of France?"}],
             response_format={"type": "json_object"},
-            max_tokens=64,
+            max_tokens=128,
         )
-        content = completion.choices[0].message.content
-        assert content
-        with pytest.raises(json.JSONDecodeError):
-            json.loads(content)
+        assert isinstance(json.loads(completion.choices[0].message.content), dict)
 
     def test_response_format_json_schema_constrains_unprompted_output(self, client):
         """A natural-language question + json_schema → schema-conformant output."""
