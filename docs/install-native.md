@@ -100,7 +100,7 @@ wherever you provision — unlike the GPU, which bootstrap does not look for at 
 **Loader coverage on `--cuda`.** `vllm`, `diffusers`, and `llama_server` all get full
 GPU. `llama_server` gets a CUDA ggml backend beside the same binary every other
 platform runs. ggml skips a backend it cannot load without saying so, so if a GGUF
-deploy seems slow, check `"$MSHIP_LLAMA_SERVER_BIN" --list-devices` — it prints
+deploy seems slow, check `"$MSHIP_LLAMA_SERVER_BIN" serve --list-devices` — it prints
 `(none)` instead of a `CUDA0:` line. `stable_diffusion_cpp`, `whispercpp`, and
 `sherpa_onnx` are CPU-only here, same as in the image.
 
