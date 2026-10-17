@@ -161,6 +161,7 @@ class LlamaServerConfig(_StrictModel):
     tensor_split: list[float] | None = Field(default=None, min_length=1)
     reasoning_budget: int | None = Field(default=None, ge=0)
     reasoning_budget_message: str | None = Field(default=None, min_length=1)
+    reasoning_preserve: bool | None = None
 
 
 class WhispercppConfig(_StrictModel):

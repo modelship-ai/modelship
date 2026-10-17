@@ -40,6 +40,7 @@ class TestLlamaServerConfig:
         assert config.tensor_split is None
         assert config.reasoning_budget is None
         assert config.reasoning_budget_message is None
+        assert config.reasoning_preserve is None
 
     def test_custom_values(self):
         config = LlamaServerConfig(
@@ -59,6 +60,7 @@ class TestLlamaServerConfig:
             tensor_split=[3.0, 1.0],
             reasoning_budget=512,
             reasoning_budget_message="Time is up.",
+            reasoning_preserve=False,
         )
         assert config.n_ctx == 4096
         assert config.n_batch == 1024
@@ -76,6 +78,7 @@ class TestLlamaServerConfig:
         assert config.tensor_split == [3.0, 1.0]
         assert config.reasoning_budget == 512
         assert config.reasoning_budget_message == "Time is up."
+        assert config.reasoning_preserve is False
 
     @pytest.mark.parametrize("kwargs", [{"reasoning_budget": -1}, {"reasoning_budget_message": ""}])
     def test_invalid_reasoning_budget_rejected(self, kwargs):
