@@ -4,6 +4,52 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.9.0] - 2026-10-17
+
+### Added
+- llama_server reasoning
+- llama_server reasoning_preserve
+- operators limit how long a llama_server model thinks
+- operators limit how long a vllm model thinks
+
+### Fixed
+- read a YAML boolean flash_attn as on/off
+- require llama_server n_ctx above 0
+- pick the vllm reasoning parser by trying vllm's parsers
+- /v1/responses conversation TTL is at least 24 hours
+- /v1/responses keeps every log a turn depends on alive as long as the turn
+- /v1/responses terminal writes skip a deleted record; memory:// expire drops expired keys
+- /v1/responses stores a turn's record and log entry in one atomic step
+- vllm learns the prompt ending for each request's template kwargs
+- vllm reads the prompt's ending when a message carries reasoning
+- /v1/responses gives the model its reasoning back
+- llama_server reports reasoning tokens in usage
+- /v1/responses/compact summarizes without thinking
+- a request's reasoning effort switches thinking on the vllm loader
+- vllm reasoning tokens are counted on the parser itself
+
+### Changed
+- bare json_object returns an object on llama_server
+- drop the fit-params -c 0 answer
+- drop the llama_server required tool_choice note
+- llama.cpp device check needs the serve subcommand
+- drop the llama_server required tool_choice test, raise the chat test's token cap
+- bump llama.cpp to b11699
+- move the triton-cpu url into tool.uv.sources
+- drop the glibc 2.39 note
+- vllm 0.31.0 pin, reasoning parser tie-break, glibc 2.39 for native cpu
+- bump vllm to 0.31.0
+- describe how the vllm reasoning parser is picked
+- trim the vllm thinking budget's docstrings and docs
+- /v1/responses no longer renews base logs after a turn is stored
+- /v1/responses on memory:// and redis:// with a real model
+- /v1/responses stores each turn once
+- remove the real-Redis store test
+- run the redis:// store against a real redis-server
+- drop the unused drop_reserved_kwargs helper
+- the cancel-seen deploy test waits for its worker
+- the bench results drop the host-RAM row
+
 ## [0.8.1] - 2026-10-11
 
 ### Fixed
