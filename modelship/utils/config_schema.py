@@ -135,7 +135,7 @@ class LlamaServerConfig(_StrictModel):
     """Tunables for the ``llama_server`` loader, which drives a `llama-server`
     subprocess over its native OpenAI-compatible HTTP API."""
 
-    n_ctx: int = 2048
+    n_ctx: int = Field(default=2048, ge=1)
     n_batch: int = 512
     # Preflight recommends a concrete count, so this default rarely launches; any
     # negative value means llama-server's own auto-fit to free device memory.
@@ -285,10 +285,9 @@ class ModelshipModelConfig(_StrictModel):
             key = "vllm_engine_kwargs.max_model_len"
             fixed = self.vllm_engine_kwargs.max_model_len is not None
         elif self.loader == ModelLoader.llama_server:
-            key = "llama_server_config.n_ctx (above 0)"
+            key = "llama_server_config.n_ctx"
             server = self.llama_server_config
-            # n_ctx 0 is the model's own maximum, which llama-server shrinks to fit.
-            fixed = server is not None and "n_ctx" in server.model_fields_set and server.n_ctx > 0
+            fixed = server is not None and "n_ctx" in server.model_fields_set
         else:
             return self
         if not fixed:

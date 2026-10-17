@@ -90,6 +90,10 @@ class TestLlamaServerConfig:
         with pytest.raises(ValidationError):
             LlamaServerConfig(ubatch_size=0)
 
+    def test_non_positive_n_ctx_rejected(self):
+        with pytest.raises(ValidationError):
+            LlamaServerConfig(n_ctx=0)
+
     def _num_gpus_model(self, num_gpus: float) -> ModelshipModelConfig:
         return ModelshipModelConfig(
             name="test-model",
@@ -734,9 +738,9 @@ class TestReplicasShareAContextLength:
     def test_vllm_with_max_model_len_accepted(self):
         assert self._model(num_replicas=2, vllm_engine_kwargs={"max_model_len": 8192}).num_replicas == 2
 
-    @pytest.mark.parametrize("llama_server_config", [None, {}, {"parallel": 2}, {"n_ctx": 0}])
+    @pytest.mark.parametrize("llama_server_config", [None, {}, {"parallel": 2}])
     def test_llama_server_without_n_ctx_rejected(self, llama_server_config):
-        with pytest.raises(ValidationError, match=r"needs llama_server_config\.n_ctx \(above 0\) set"):
+        with pytest.raises(ValidationError, match=r"needs llama_server_config\.n_ctx set"):
             self._model(loader=ModelLoader.llama_server, num_replicas=2, llama_server_config=llama_server_config)
 
     def test_llama_server_with_n_ctx_accepted(self):
