@@ -453,9 +453,9 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `n_ctx` | int | auto (preflight); `2048` when preflight declines | Per-slot context length. The launch command multiplies this by `parallel` for llama-server's total `-c`. A `0` here is a real recommendation, not an absent one — it means the full context fit, and llama-server resolves the model's own maximum from the literal `-c 0`. Preflight shells out to `llama fit-params`, which builds the real KV cache and compute buffers to solve `n_ctx`/`n_gpu_layers`/`tensor_split` together. On `num_gpus: 0` it fits against the node's free RAM (a container memory limit counts), less a reserve of 5% of the node's RAM plus 1 GiB, so each model is sized against what the ones loaded before it left. A model that preflight cannot fit into that, at its smallest context or at a set `n_ctx`, is not loaded and its deploy fails ([Troubleshooting](troubleshooting.md#could-not-be-sized-for-this-node)). A value above `0` is required with `num_replicas` above `1` or `autoscaling_config` ([Scaling a Deployment](#scaling-a-deployment)) |
+| `n_ctx` | int | auto (preflight); `2048` when preflight declines | Per-slot context length. The launch command multiplies this by `parallel` for llama-server's total `-c`. Unset, preflight gives each slot as much of the model's own context length as fits. Preflight shells out to `llama fit-params`, which builds the real KV cache and compute buffers to solve `n_ctx`/`n_gpu_layers`/`tensor_split` together. On `num_gpus: 0` it fits against the node's free RAM (a container memory limit counts), less a reserve of 5% of the node's RAM plus 1 GiB, so each model is sized against what the ones loaded before it left. A model that preflight cannot fit into that, at its smallest context or at a set `n_ctx`, is not loaded and its deploy fails ([Troubleshooting](troubleshooting.md#could-not-be-sized-for-this-node)). A value is required with `num_replicas` above `1` or `autoscaling_config` ([Scaling a Deployment](#scaling-a-deployment)) |
 | `n_batch` | int | `512` | Batch size for prompt processing |
-| `n_gpu_layers` | int | auto (preflight); `-1` when preflight declines or answers negatively | Layers offloaded to GPU when `num_gpus > 0`; forced to `0` when `num_gpus` is `0`. Preflight records a count only when `fit-params` returns a non-negative one, so a `-ngl -1` answer leaves this default in place while its `-c` answer still applies. `-1` hits llama-server's own auto-fit-to-free-memory path — verified for any negative value against b9859, unconfirmed on the current b10375 pin (`--help`'s documented `'auto'`/`'all'` string tokens aren't reachable through this int field) |
+| `n_gpu_layers` | int | auto (preflight); `-1` when preflight declines or answers negatively | Layers offloaded to GPU when `num_gpus > 0`; forced to `0` when `num_gpus` is `0`. Preflight records a count only when `fit-params` returns a non-negative one, so a `-ngl -1` answer leaves this default in place while its `-c` answer still applies. `-1` hits llama-server's own auto-fit-to-free-memory path — verified for any negative value on b11699 (`--help`'s documented `'auto'`/`'all'` string tokens aren't reachable through this int field) |
 | `threads` | int | `None` (llama-server default: all cores) | Compute thread count (`--threads`). Preflight recommends `num_cpus` when the deploy reserves ≥1 whole CPU and it wouldn't undercut `parallel` |
 | `parallel` | int | `1` | Concurrent request slots (`--parallel`). Also becomes `max_ongoing_requests`'s default when that's unset, so overflow queues in Ray Serve rather than inside llama-server |
 | `chat_template` | string | — | Built-in template name (e.g. `chatml`) or a Jinja file path. Omit to use the GGUF's embedded template |
@@ -467,8 +467,10 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 | `flash_attn` | `on`/`off`/`auto` | `auto` | Flash Attention use (`-fa`) |
 | `cache_type_k` / `cache_type_v` | string | `f16` | KV cache quantization (`-ctk`/`-ctv`); also `f32`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1` |
 | `tensor_split` | list[float] | `None` | Proportional offload split across GPUs (`-ts`). Preflight recommends an uneven split on heterogeneous cards |
+| `reasoning` | `on`/`off`/`auto` | `None` (llama-server default: `auto`, from the chat template) | Whether the model thinks (`--reasoning`) |
 | `reasoning_budget` | int | `None` (llama-server default: unlimited) | Most tokens a model may spend thinking (`--reasoning-budget`); `0` skips thinking. The default and the ceiling for a request's own `thinking_budget_tokens` or `reasoning_budget_tokens` |
 | `reasoning_budget_message` | string | — | Text written before the end-of-thinking marker when the budget runs out (`--reasoning-budget-message`). A sentence there gives cleaner answers, as on [vLLM](#limiting-thinking) |
+| `reasoning_preserve` | bool | `None` (the chat template's own default) | `true` keeps the reasoning of past turns in the prompt (`--reasoning-preserve`), `false` drops it (`--no-reasoning-preserve`), on templates that support it |
 
 Each slot keeps the prompt it last processed (`--cache-prompt`, always on), so a follow-up turn, or another chat with the same system prompt, only processes the new tokens. llama-server can also save a conversation to host RAM when an unrelated one takes its slot and restore it when it returns; `cache_ram_mib` caps that cache and defaults to `0` (off), because it grows after load, outside the memory `n_ctx` was sized against. Saved conversations take about as much RAM per token as the context itself. There is no persistent **on-disk** prompt cache; caching is in-memory only and doesn't survive a process restart, unlike modelship's disk cache for other loaders.
 
@@ -492,8 +494,6 @@ models:
 Both parsers are auto-detected from the model's chat template — no modelship-level override. Gaps are per-model-family, not per-loader, so test against the specific model in use:
 
 - **Named-function forcing is unsupported.** `tool_choice: {"type": "function", "function": {"name": "X"}}` silently falls back to `auto` (llama-server logs a warning; modelship doesn't surface it as an error).
-- **`tool_choice: required` depends on the template family.** Grammar-enforced for harmony-style templates (e.g. gpt-oss); a silent no-op for hermes-style templates (e.g. Qwen3) — the model may answer in free text with no error.
-- **Bare `response_format: {"type": "json_object"}` (no `schema`) is not enforced**, despite llama-server's docs describing it as supported — verified against b9859 and b10200, unconfirmed on the current b10375 pin. `type: json_schema` requests (what modelship sends whenever a schema is given) are unaffected and correctly constrained.
 
 `response_format`/`json_schema` can combine with reasoning in the same request; `logprobs`/`top_logprobs` are forwarded and returned.
 
@@ -615,7 +615,7 @@ models:
     num_replicas: 2
 ```
 
-A `vllm` or `llama_server` model with `num_replicas` above `1` or an `autoscaling_config` must set its context length: `vllm_engine_kwargs.max_model_len`, or `llama_server_config.n_ctx` above `0`. The config is rejected without it. Left unset, each replica would fit its own context to the node it lands on, so the same request could succeed on one replica and overflow the context on another. To pick a value, deploy the model with one replica and read the context from its `deployed` log line.
+A `vllm` or `llama_server` model with `num_replicas` above `1` or an `autoscaling_config` must set its context length: `vllm_engine_kwargs.max_model_len`, or `llama_server_config.n_ctx`. The config is rejected without it. Left unset, each replica would fit its own context to the node it lands on, so the same request could succeed on one replica and overflow the context on another. To pick a value, deploy the model with one replica and read the context from its `deployed` log line.
 
 ```yaml
 models:

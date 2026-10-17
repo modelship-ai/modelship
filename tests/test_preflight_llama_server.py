@@ -120,14 +120,12 @@ class TestLlamaServerPreflightParsing:
         assert rec["n_gpu_layers"] == 65
         assert rec["tensor_split"] == [31.0, 34.0]
 
-    def test_zero_ctx_and_negative_ngl_round_trip_as_auto(self, tmp_path, monkeypatch):
-        # A model that fits comfortably gets "-c 0 -ngl -1" back — 0 means "the
-        # model's own maximum" and round-trips; -1 means "let llama decide", omitted.
+    def test_a_negative_ngl_is_not_recorded(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
-        with patch("subprocess.run", return_value=_fit_result("-c 0 -ngl -1\n")):
+        with patch("subprocess.run", return_value=_fit_result("-c 40960 -ngl -1\n")):
             rec = LlamaServerPreflight().recommend(cfg, HardwareProfile())
-        assert rec["n_ctx"] == 0
+        assert rec["n_ctx"] == 40960
         assert "n_gpu_layers" not in rec
 
     def test_ctx_divided_across_parallel_slots(self, tmp_path, monkeypatch):

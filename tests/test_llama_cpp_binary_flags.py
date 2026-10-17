@@ -46,6 +46,11 @@ _SERVE_FLAGS = [
     "--cache-reuse",
     "--context-shift",
     "--cache-ram",
+    "--reasoning",
+    "--reasoning-budget",
+    "--reasoning-budget-message",
+    "--reasoning-preserve",
+    "--no-reasoning-preserve",
 ]
 
 # Every flag modelship/preflight/llama_cpp.py sends to `llama fit-params`.

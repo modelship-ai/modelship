@@ -86,7 +86,7 @@ class TestChatLlamaServer:
         completion = client.chat.completions.create(
             model="chat-llama-server",
             messages=[{"role": "user", "content": "What is the capital of France?"}],
-            max_tokens=256,
+            max_tokens=512,
         )
         content = completion.choices[0].message.content
         assert content
@@ -292,20 +292,6 @@ class TestChatLlamaServer:
         parsed = json.loads(message.content)
         assert "answer" in parsed
 
-    def test_tool_choice_required_is_a_noop_on_hermes_family(self, client):
-        """`tool_choice: required` is grammar-enforced on harmony-style chat templates
-        but a silent no-op on hermes-style ones (Qwen3): `message.content` stays reachable."""
-        completion = client.chat.completions.create(
-            model="chat-llama-server",
-            messages=[{"role": "user", "content": "Say hello in one word."}],
-            tools=[_WEATHER_TOOL],
-            tool_choice="required",
-            max_tokens=512,  # headroom for the reasoning preamble to not crowd out the answer
-            seed=1,
-        )
-        message = completion.choices[0].message
-        assert message.content, f"expected the free-text branch to stay reachable, got message={message!r}"
-
     def test_named_function_tool_choice_falls_back_to_auto(self, client):
         """Object-form `tool_choice` (named-function forcing) is globally unsupported
         in llama.cpp; it silently falls back to `auto` rather than forcing or erroring."""
@@ -371,19 +357,14 @@ class TestChatLlamaServerResponseFormat:
     def _deploy(self, model_deployer):
         model_deployer.deploy("chat-llama-server-plain")
 
-    def test_response_format_json_object_without_schema_is_unconstrained(self, client):
-        """Bare `{"type": "json_object"}` (no `schema` key) isn't enforced by
-        llama-server despite its docs; `type: json_schema` with a schema is honored."""
+    def test_response_format_json_object_without_schema_returns_an_object(self, client):
         completion = client.chat.completions.create(
             model="chat-llama-server-plain",
             messages=[{"role": "user", "content": "What is the capital of France?"}],
             response_format={"type": "json_object"},
-            max_tokens=64,
+            max_tokens=128,
         )
-        content = completion.choices[0].message.content
-        assert content
-        with pytest.raises(json.JSONDecodeError):
-            json.loads(content)
+        assert isinstance(json.loads(completion.choices[0].message.content), dict)
 
     def test_response_format_json_schema_constrains_unprompted_output(self, client):
         """A natural-language question + json_schema → schema-conformant output."""

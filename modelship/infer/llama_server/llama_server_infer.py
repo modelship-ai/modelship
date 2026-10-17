@@ -288,10 +288,14 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             args += ["--cache-reuse", str(self.config.cache_reuse)]
         if self.config.context_shift:
             args += ["--context-shift"]
+        if self.config.reasoning is not None:
+            args += ["--reasoning", self.config.reasoning]
         if self.config.reasoning_budget is not None:
             args += ["--reasoning-budget", str(self.config.reasoning_budget)]
         if self.config.reasoning_budget_message:
             args += ["--reasoning-budget-message", self.config.reasoning_budget_message]
+        if self.config.reasoning_preserve is not None:
+            args += ["--reasoning-preserve" if self.config.reasoning_preserve else "--no-reasoning-preserve"]
 
         logger.info("llama-server launch args for '%s': %s", self.model_config.name, _redact(args))
         self._proc = await loop.run_in_executor(
@@ -379,8 +383,6 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
                 await asyncio.sleep(_HEALTH_POLL_INTERVAL_S)
 
     async def _log_deployed_context(self, probe: httpx.AsyncClient) -> None:
-        """Ground truth, not the preflight guess: reads what llama-server actually
-        resolved `-c 0`/tensor-split/etc. against, from its own `/props`."""
         try:
             resp = await probe.get("/props", timeout=5.0)
             resp.raise_for_status()
@@ -489,7 +491,11 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             return create_error_response(e)
 
         return _build_payload(
-            request, messages, model_name=self.model_config.name, reasoning_budget=self.config.reasoning_budget
+            request,
+            messages,
+            model_name=self.model_config.name,
+            reasoning_budget=self.config.reasoning_budget,
+            reasoning_preserve=self.config.reasoning_preserve,
         )
 
     async def _create_chat_completion_no_stream(
@@ -543,7 +549,11 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
 
         chat_request.stream = bool(request.stream)
         return _build_payload(
-            chat_request, messages, model_name=self.model_config.name, reasoning_budget=self.config.reasoning_budget
+            chat_request,
+            messages,
+            model_name=self.model_config.name,
+            reasoning_budget=self.config.reasoning_budget,
+            reasoning_preserve=self.config.reasoning_preserve,
         )
 
     async def _create_response_no_stream(
@@ -674,7 +684,12 @@ def _redact(args: list[str]) -> list[str]:
 
 
 def _build_payload(
-    request: ChatCompletionRequest, messages: list[dict], *, model_name: str, reasoning_budget: int | None
+    request: ChatCompletionRequest,
+    messages: list[dict],
+    *,
+    model_name: str,
+    reasoning_budget: int | None,
+    reasoning_preserve: bool | None,
 ) -> dict[str, Any]:
     # If request.logprobs is True, we want to forward logprobs and top_logprobs (if > 0) to llama-server.
     exclude_fields = {"messages", "model", "logprobs", "top_logprobs"}
@@ -695,6 +710,11 @@ def _build_payload(
             value = payload.get(key)
             if isinstance(value, int | float) and value >= 0:
                 payload[key] = min(value, reasoning_budget)
+
+    if reasoning_preserve is None:
+        kwargs = payload.get("chat_template_kwargs", {})
+        if isinstance(kwargs, dict):
+            payload["chat_template_kwargs"] = {"preserve_reasoning": None, **kwargs}
 
     return payload
 

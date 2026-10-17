@@ -7,7 +7,7 @@ import re
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from modelship.logging import get_logger
 
@@ -135,7 +135,7 @@ class LlamaServerConfig(_StrictModel):
     """Tunables for the ``llama_server`` loader, which drives a `llama-server`
     subprocess over its native OpenAI-compatible HTTP API."""
 
-    n_ctx: int = 2048
+    n_ctx: int = Field(default=2048, ge=1)
     n_batch: int = 512
     # Preflight recommends a concrete count, so this default rarely launches; any
     # negative value means llama-server's own auto-fit to free device memory.
@@ -159,8 +159,17 @@ class LlamaServerConfig(_StrictModel):
     cache_type_v: Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"
     # Proportional split across GPUs for offloading (`-ts`); None splits evenly.
     tensor_split: list[float] | None = Field(default=None, min_length=1)
+    reasoning: Literal["on", "off", "auto"] | None = None
     reasoning_budget: int | None = Field(default=None, ge=0)
     reasoning_budget_message: str | None = Field(default=None, min_length=1)
+    reasoning_preserve: bool | None = None
+
+    @field_validator("flash_attn", "reasoning", mode="before")
+    @classmethod
+    def words_for_yaml_booleans(cls, value):
+        if isinstance(value, bool):
+            return "on" if value else "off"
+        return value
 
 
 class WhispercppConfig(_StrictModel):
@@ -285,10 +294,9 @@ class ModelshipModelConfig(_StrictModel):
             key = "vllm_engine_kwargs.max_model_len"
             fixed = self.vllm_engine_kwargs.max_model_len is not None
         elif self.loader == ModelLoader.llama_server:
-            key = "llama_server_config.n_ctx (above 0)"
+            key = "llama_server_config.n_ctx"
             server = self.llama_server_config
-            # n_ctx 0 is the model's own maximum, which llama-server shrinks to fit.
-            fixed = server is not None and "n_ctx" in server.model_fields_set and server.n_ctx > 0
+            fixed = server is not None and "n_ctx" in server.model_fields_set
         else:
             return self
         if not fixed:

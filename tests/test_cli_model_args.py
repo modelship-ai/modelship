@@ -248,6 +248,13 @@ class TestNestedFlags:
             node = node[key]
         assert node == expected
 
+    @pytest.mark.parametrize("value", ["on", "off", "auto"])
+    def test_llama_server_reasoning_keeps_llamas_own_words(self, value):
+        raw = _raw(*self._LLAMA, "--llama-server-config.reasoning", value)
+        config = validate_models([raw]).models[0]
+        assert config.llama_server_config is not None
+        assert config.llama_server_config.reasoning == value
+
     def test_unparseable_yaml_value_is_rejected(self, capsys):
         with pytest.raises(SystemExit) as exc:
             _args(*self._VLLM, "--vllm-engine-kwargs.limit-mm-per-prompt", "{image: ")

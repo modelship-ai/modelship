@@ -38,8 +38,10 @@ class TestLlamaServerConfig:
         assert config.cache_type_k == "f16"
         assert config.cache_type_v == "f16"
         assert config.tensor_split is None
+        assert config.reasoning is None
         assert config.reasoning_budget is None
         assert config.reasoning_budget_message is None
+        assert config.reasoning_preserve is None
 
     def test_custom_values(self):
         config = LlamaServerConfig(
@@ -57,8 +59,10 @@ class TestLlamaServerConfig:
             cache_type_k="q8_0",
             cache_type_v="q8_0",
             tensor_split=[3.0, 1.0],
+            reasoning="off",
             reasoning_budget=512,
             reasoning_budget_message="Time is up.",
+            reasoning_preserve=False,
         )
         assert config.n_ctx == 4096
         assert config.n_batch == 1024
@@ -74,13 +78,24 @@ class TestLlamaServerConfig:
         assert config.cache_type_k == "q8_0"
         assert config.cache_type_v == "q8_0"
         assert config.tensor_split == [3.0, 1.0]
+        assert config.reasoning == "off"
         assert config.reasoning_budget == 512
         assert config.reasoning_budget_message == "Time is up."
+        assert config.reasoning_preserve is False
 
     @pytest.mark.parametrize("kwargs", [{"reasoning_budget": -1}, {"reasoning_budget_message": ""}])
     def test_invalid_reasoning_budget_rejected(self, kwargs):
         with pytest.raises(ValidationError):
             LlamaServerConfig(**kwargs)
+
+    @pytest.mark.parametrize("field", ["flash_attn", "reasoning"])
+    @pytest.mark.parametrize(("value", "expected"), [(True, "on"), (False, "off")])
+    def test_yaml_booleans_read_as_on_off(self, field, value, expected):
+        assert getattr(LlamaServerConfig(**{field: value}), field) == expected
+
+    def test_unknown_reasoning_value_rejected(self):
+        with pytest.raises(ValidationError):
+            LlamaServerConfig(reasoning="maybe")
 
     def test_empty_tensor_split_rejected(self):
         with pytest.raises(ValidationError):
@@ -89,6 +104,10 @@ class TestLlamaServerConfig:
     def test_non_positive_ubatch_size_rejected(self):
         with pytest.raises(ValidationError):
             LlamaServerConfig(ubatch_size=0)
+
+    def test_non_positive_n_ctx_rejected(self):
+        with pytest.raises(ValidationError):
+            LlamaServerConfig(n_ctx=0)
 
     def _num_gpus_model(self, num_gpus: float) -> ModelshipModelConfig:
         return ModelshipModelConfig(
@@ -734,9 +753,9 @@ class TestReplicasShareAContextLength:
     def test_vllm_with_max_model_len_accepted(self):
         assert self._model(num_replicas=2, vllm_engine_kwargs={"max_model_len": 8192}).num_replicas == 2
 
-    @pytest.mark.parametrize("llama_server_config", [None, {}, {"parallel": 2}, {"n_ctx": 0}])
+    @pytest.mark.parametrize("llama_server_config", [None, {}, {"parallel": 2}])
     def test_llama_server_without_n_ctx_rejected(self, llama_server_config):
-        with pytest.raises(ValidationError, match=r"needs llama_server_config\.n_ctx \(above 0\) set"):
+        with pytest.raises(ValidationError, match=r"needs llama_server_config\.n_ctx set"):
             self._model(loader=ModelLoader.llama_server, num_replicas=2, llama_server_config=llama_server_config)
 
     def test_llama_server_with_n_ctx_accepted(self):

@@ -250,6 +250,37 @@ class TestSubprocessLifecycle:
             infer.shutdown()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(("reasoning", "expected"), [(None, None), ("off", "off"), ("auto", "auto")])
+    async def test_reasoning_flag(self, tmp_path, monkeypatch, reasoning, expected):
+        binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
+
+        infer = LlamaServerInfer(_make_config(reasoning=reasoning))
+        await infer.start()
+        try:
+            args = list(infer._proc.args)
+            assert (args[args.index("--reasoning") + 1] if "--reasoning" in args else None) == expected
+        finally:
+            infer.shutdown()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("reasoning_preserve", "expected"),
+        [(None, []), (True, ["--reasoning-preserve"]), (False, ["--no-reasoning-preserve"])],
+    )
+    async def test_reasoning_preserve_flag(self, tmp_path, monkeypatch, reasoning_preserve, expected):
+        binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
+
+        infer = LlamaServerInfer(_make_config(reasoning_preserve=reasoning_preserve))
+        await infer.start()
+        try:
+            args = list(infer._proc.args)
+            assert [a for a in args if a in ("--reasoning-preserve", "--no-reasoning-preserve")] == expected
+        finally:
+            infer.shutdown()
+
+    @pytest.mark.asyncio
     async def test_immediate_crash_retries_then_raises(self, tmp_path, monkeypatch):
         binary = _write_fake_executable(tmp_path, _FAKE_CRASHING_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
@@ -509,6 +540,38 @@ class TestNonStreamingProjection:
         payload = captured["payload"]
         sent = {k: payload[k] for k in ("thinking_budget_tokens", "reasoning_budget_tokens") if k in payload}
         assert sent == expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("reasoning_preserve", "requested", "expected"),
+        [
+            (None, {}, {"preserve_reasoning": None}),
+            (
+                None,
+                {"chat_template_kwargs": {"enable_thinking": False}},
+                {"preserve_reasoning": None, "enable_thinking": False},
+            ),
+            (None, {"chat_template_kwargs": {"preserve_reasoning": True}}, {"preserve_reasoning": True}),
+            (True, {}, None),
+            (False, {"chat_template_kwargs": {"enable_thinking": False}}, {"enable_thinking": False}),
+        ],
+    )
+    async def test_an_unset_reasoning_preserve_keeps_the_templates_default(
+        self, reasoning_preserve, requested, expected
+    ):
+        captured = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["payload"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={"choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}}], "usage": {}},
+            )
+
+        infer = _infer_with_client(handler, reasoning_preserve=reasoning_preserve)
+        await infer.create_chat_completion(_request(**requested), RawRequestProxy(None, {}))
+
+        assert captured["payload"].get("chat_template_kwargs") == expected
 
     @pytest.mark.asyncio
     async def test_rejects_unsupported_image_content(self):
