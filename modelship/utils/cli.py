@@ -70,6 +70,7 @@ _USAGE = {
     "join": "mship join --gcs-address HOST[:PORT] [options]",
     "deploy": f"mship deploy [--ray-dashboard-url URL] {_MODEL_USAGE}\n"
     "       mship deploy [--ray-dashboard-url URL] --cancel ID [--wait]",
+    "stop": "mship stop [--timeout SECONDS]",
 }
 _DESCRIPTION = {
     "start": "Start a cluster on this machine: its head node, the API gateway and exactly the models given, or with "
@@ -78,6 +79,8 @@ _DESCRIPTION = {
     "deploy": "Change the models of the cluster running on this machine, or with --ray-dashboard-url, of the cluster "
     "whose Ray dashboard that is: sends the change and exits, or with --wait, waits for it to succeed or fail. With "
     "--cancel ID, cancels a deploy instead, rolling back what it has done so far.",
+    "stop": "Stop every node `mship start` or `mship join` runs on this machine, workers first, and every process "
+    "they started.",
 }
 
 
@@ -143,6 +146,14 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
         )
     if command in ("start", "deploy"):
         _add_model_args(parser)
+    if command == "stop":
+        parser.add_argument(
+            "--timeout",
+            type=float,
+            default=90.0,
+            metavar="SECONDS",
+            help="How long a node may take to shut down before it is killed (default: 90)",
+        )
 
     args = parser.parse_args(argv)
     if command == "join" and not (args.gcs_address or os.environ.get("MSHIP_GCS_ADDRESS")):

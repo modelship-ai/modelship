@@ -227,6 +227,7 @@ markers = [
     "fractional_gpu_sharing: integration test that exercises two loaders sharing one physical GPU via fractional num_gpus",
     "node_logging: integration test that exercises per-node logging on a replica scheduled on a joined node",
     "state_store: integration tests that run the same /v1/responses requests on memory:// and on a real redis-server",
+    "mship_stop: integration tests that run mship stop against their own head and joined node",
 ]
 
 [tool.pyright]

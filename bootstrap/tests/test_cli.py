@@ -34,10 +34,9 @@ class TestUsage:
             cli.main([])
         assert exc.value.code == 2
 
-    @pytest.mark.parametrize("command", ["serve", "stop"])
-    def test_unknown_command_exits_2(self, command):
+    def test_unknown_command_exits_2(self):
         with pytest.raises(SystemExit) as exc:
-            cli.main([command])
+            cli.main(["serve"])
         assert exc.value.code == 2
 
 
@@ -69,6 +68,34 @@ class TestExec:
         monkeypatch.setenv("MSHIP_VARIANT", "cpu")
         cli.main(["deploy", "--config", "x"])
         assert provisioned.called
+
+
+class TestStop:
+    @pytest.fixture
+    def engine_python(self, provisioned):
+        python = paths.venv_python("cuda")
+        os.makedirs(os.path.dirname(python))
+        open(python, "w").close()
+        return python
+
+    def test_execs_the_engine(self, provisioned, engine_python):
+        cli.main(["stop", "--cuda", "--timeout", "30"])
+        python, args, env = provisioned.call_args[0]
+        assert args == [engine_python, "-m", "modelship.launcher", "stop", "--timeout", "30"]
+        assert "MSHIP_LLAMA_SERVER_BIN" not in env
+
+    def test_skips_the_hardware_and_version_checks(self, provisioned, engine_python):
+        cli.engine.is_current.return_value = False
+        cli.main(["stop", "--cuda"])
+        cli.gates.check_hardware.assert_not_called()
+        cli.llama_cpp.warn_if_no_cuda_device.assert_not_called()
+        assert provisioned.called
+
+    def test_needs_a_bootstrapped_environment(self, provisioned):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["stop", "--cuda"])
+        assert "has not been bootstrapped" in str(exc.value)
+        assert not provisioned.called
 
 
 class TestEngineEnvironment:
