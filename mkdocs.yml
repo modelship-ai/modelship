@@ -75,6 +75,7 @@ nav:
       - Docker: install-docker.md
       - Native: install-native.md
       - Helm / Kubernetes: install-helm.md
+  - CLI Reference: cli.md
   - Model Configuration: model-configuration.md
   - Guides:
       - Production Readiness: production-readiness.md
