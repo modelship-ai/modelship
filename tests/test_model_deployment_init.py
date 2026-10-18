@@ -8,7 +8,6 @@ import pytest
 from modelship.infer.infer_config import ModelLoader
 from modelship.infer.model_deployment import (
     ModelDeployment,
-    _reap_child_processes,
     _reject_unsupported_accelerator,
     _reject_unsupported_darwin_loader,
 )
@@ -90,26 +89,6 @@ class TestRejectUnsupportedAccelerator:
             _reject_unsupported_accelerator(config)  # no raise
 
 
-class TestReapChildProcesses:
-    def _reap(self, children, sidecar_pid):
-        psutil = MagicMock(NoSuchProcess=ProcessLookupError)
-        psutil.Process.return_value.children.return_value = children
-        psutil.wait_procs.return_value = (children, [])
-        with patch.dict(sys.modules, {"psutil": psutil}):
-            _reap_child_processes(sidecar_pid)
-
-    def test_terminates_every_child_but_the_sidecar(self, caplog):
-        sidecar, child = MagicMock(pid=11), MagicMock(pid=12)
-        self._reap([sidecar, child], 11)
-        sidecar.terminate.assert_not_called()
-        child.terminate.assert_called_once()
-        assert "Reaping 1 orphan subprocess(es): [12]" in caplog.text
-
-    def test_logs_nothing_when_only_the_sidecar_is_left(self, caplog):
-        self._reap([MagicMock(pid=11)], 11)
-        assert "Reaping" not in caplog.text
-
-
 def _patch_init_globals(**kwargs):
     # @serve.deployment cloudpickles the class, so the unwrapped __init__ carries
     # a reconstructed globals dict; patching the module attribute won't reach it.
@@ -128,7 +107,6 @@ async def test_download_error_does_not_report_fatal():
         _patch_init_globals(
             configure_logging=MagicMock(),
             stamp_gateway=MagicMock(),
-            _spawn_orphan_reaper=MagicMock(return_value=None),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
             MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
@@ -160,7 +138,6 @@ async def test_generic_init_failure_reports_fatal():
         _patch_init_globals(
             configure_logging=MagicMock(),
             stamp_gateway=MagicMock(),
-            _spawn_orphan_reaper=MagicMock(return_value=None),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
             MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
@@ -190,7 +167,6 @@ async def test_a_model_that_could_not_be_sized_is_reported_without_a_traceback()
         _patch_init_globals(
             configure_logging=MagicMock(),
             stamp_gateway=MagicMock(),
-            _spawn_orphan_reaper=MagicMock(return_value=None),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
             MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
@@ -217,7 +193,6 @@ async def test_an_init_failure_without_a_deploy_coordinator_still_raises(caplog)
         _patch_init_globals(
             configure_logging=MagicMock(),
             stamp_gateway=MagicMock(),
-            _spawn_orphan_reaper=MagicMock(return_value=None),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
             MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
@@ -254,7 +229,6 @@ async def test_loads_once_the_lease_is_granted():
         _patch_init_globals(
             configure_logging=MagicMock(),
             stamp_gateway=MagicMock(),
-            _spawn_orphan_reaper=MagicMock(return_value=None),
             reject_unset_cache_roots=MagicMock(),
             _reject_unsupported_darwin_loader=MagicMock(),
             _reject_unsupported_accelerator=MagicMock(),

@@ -112,6 +112,15 @@ def _running(predicate) -> list[psutil.Process]:
     return found
 
 
+def _alive(procs: list[psutil.Process]) -> list[psutil.Process]:
+    alive = []
+    for proc in procs:
+        with contextlib.suppress(psutil.Error):
+            if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                alive.append(proc)
+    return alive
+
+
 def _llama_servers() -> list[psutil.Process]:
     return _running(lambda _name, argv: bool(argv) and os.path.basename(argv[0]).startswith("llama"))
 
@@ -156,3 +165,16 @@ def test_stop_stops_the_worker_first_and_kills_a_head_that_does_not_stop(cluster
     assert "did not stop within 10.0s; killing it" in output
     assert "leaving the Ray cluster" in cluster.log("join")
     assert _poll(lambda: not _left(), deadline_s=30), _left()
+
+
+def test_a_worker_that_loses_its_head_kills_its_models_backends(cluster):
+    cluster.head("--node-num-cpus", "0", "--node-num-gpus", "0")
+    join = cluster.join(RAY_gcs_rpc_server_reconnect_timeout_s="5")
+    cluster.wait_for_the_model()
+    backends = _llama_servers()
+    assert backends
+
+    next(node.owner for node in local_nodes()[0] if node.role == "head").kill()
+
+    assert join.wait(timeout=120) == 1, cluster.logs()
+    assert _poll(lambda: not _alive(backends), deadline_s=20), cluster.logs()

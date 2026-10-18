@@ -1824,6 +1824,32 @@ class TestStartHead:
             serve_utils.start_head(20)
             assert os.environ["RAY_prestart_worker_first_driver"] == expected  # noqa: SIM112 — Ray's spelling.
 
+    @pytest.mark.parametrize("name", ["RAY_kill_child_processes_on_worker_exit", "RAY_process_group_cleanup_enabled"])
+    @pytest.mark.parametrize(("given", "expected"), [(None, "1"), ("0", "0")])
+    def test_ray_cleans_up_worker_processes(self, name, given, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ),
+            patch.object(serve_utils.ray, "init"),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop(name, None)
+            if given is not None:
+                os.environ[name] = given
+            serve_utils.start_head(20)
+            assert os.environ[name] == expected
+
+
+class TestRayReadsTheCleanupSwitches:
+    @pytest.mark.parametrize(
+        ("binary", "name"),
+        [("raylet", b"process_group_cleanup_enabled"), ("_raylet", b"kill_child_processes_on_worker_exit")],
+    )
+    def test_ray_knows_the_switch(self, binary, name):
+        with open(TestRayReadsTheThreadSwitches._binaries()[binary], "rb") as f:
+            assert name in f.read()
+
 
 class TestRayReadsTheThreadSwitches:
     @staticmethod
@@ -2170,6 +2196,22 @@ class TestJoinCluster:
             serve_utils.join_cluster("head:6380")
             assert os.environ["RAY_prestart_worker_first_driver"] == expected  # noqa: SIM112 — Ray's spelling.
 
+    @pytest.mark.parametrize("name", ["RAY_kill_child_processes_on_worker_exit", "RAY_process_group_cleanup_enabled"])
+    @pytest.mark.parametrize(("given", "expected"), [(None, "1"), ("0", "0")])
+    def test_ray_cleans_up_worker_processes(self, name, given, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ),
+            patch.object(serve_utils, "_join_ray_cluster"),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop(name, None)
+            if given is not None:
+                os.environ[name] = given
+            serve_utils.join_cluster("head:6380")
+            assert os.environ[name] == expected
+
 
 class TestLeaveRayCluster:
     @pytest.fixture(autouse=True)
@@ -2234,6 +2276,23 @@ class TestSuperviseJoinNode:
         ):
             serve_utils.supervise_join_node()
         node.kill_all_processes.assert_not_called()
+
+    def test_kills_the_process_groups_of_the_workers_it_last_saw(self):
+        from modelship.deploy import serve_utils
+
+        node = MagicMock()
+        node.dead_processes.side_effect = [[], [("raylet", MagicMock(returncode=1))]]
+        serve_utils._join_node = node
+        with (
+            patch.object(serve_utils.time, "sleep"),
+            patch.object(serve_utils.psutil, "Process") as process,
+            patch.object(serve_utils, "worker_groups", return_value={41, 42}),
+            patch.object(serve_utils, "kill_groups") as kill_groups,
+            pytest.raises(SystemExit),
+        ):
+            process.return_value.children.return_value = [MagicMock(**{"name.return_value": "raylet"})]
+            serve_utils.supervise_join_node()
+        kill_groups.assert_called_once_with({41, 42}, process.return_value.create_time.return_value)
 
 
 class TestStartAuthEnv:

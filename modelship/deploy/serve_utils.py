@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+import psutil
 import ray
 from ray import serve
 from ray._common.utils import get_default_ray_temp_dir
@@ -19,6 +21,7 @@ from ray.serve.config import HTTPOptions, ProxyLocation
 from ray.serve.schema import ApplicationStatus, LoggingConfig
 
 from modelship.deploy.capabilities import node_capability_resources
+from modelship.deploy.local_nodes import kill_groups, worker_groups
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
@@ -289,15 +292,21 @@ def supervise_join_node() -> None:
     handler (leave_ray_cluster), never reaching the failure path here."""
     node = _join_node
     assert node is not None, "supervise_join_node called before a successful join"
+    me = psutil.Process()
+    raylets = [child for child in me.children() if child.name() == "raylet"]
+    groups: set[int] = set()
     while True:
         time.sleep(1)
         unexpected = [(t, p) for t, p in node.dead_processes() if p.returncode not in _GRACEFUL_EXIT_CODES]
         if unexpected:
             for proc_type, proc in unexpected:
                 logger.error("Joined node subprocess %s exited unexpectedly (code %s).", proc_type, proc.returncode)
+            kill_groups(groups, me.create_time())
             node.kill_all_processes(check_alive=False, allow_graceful=False)
             logger.error("Joined Ray node lost a core process; exiting for restart.")
             sys.exit(1)
+        with contextlib.suppress(psutil.Error):
+            groups = {group for raylet in raylets for group in worker_groups(raylet)}
 
 
 def leave_ray_cluster() -> None:
@@ -359,6 +368,8 @@ def start_head(lib_level: int) -> None:
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
     os.environ.setdefault("RAY_prestart_worker_first_driver", "0")
+    os.environ.setdefault("RAY_kill_child_processes_on_worker_exit", "1")
+    os.environ.setdefault("RAY_process_group_cleanup_enabled", "1")
     os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
     # ray.init's only hook for the GCS port; unset, Ray picks a random one per start.
     os.environ.setdefault("RAY_GCS_SERVER_PORT", os.environ.get("MSHIP_GCS_PORT", str(_DEFAULT_RAY_GCS_PORT)))
@@ -375,6 +386,8 @@ def join_cluster(address: str) -> None:
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
     os.environ.setdefault("RAY_prestart_worker_first_driver", "0")
+    os.environ.setdefault("RAY_kill_child_processes_on_worker_exit", "1")
+    os.environ.setdefault("RAY_process_group_cleanup_enabled", "1")
     os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
     prune_ray_sessions()
     _join_ray_cluster(_with_default_port(address, _DEFAULT_RAY_GCS_PORT))
