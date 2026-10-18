@@ -236,6 +236,45 @@ class TestRequestInputTranslation:
             responses_request_to_chat(_req(input=[{"type": "image_generation_call"}]))
 
 
+_TWO_TURNS = [
+    {"role": "user", "content": "hi"},
+    {"type": "reasoning", "summary": [{"type": "summary_text", "text": "greet back"}]},
+    {"type": "message", "role": "assistant", "content": "hello"},
+    {"role": "user", "content": "weather?"},
+    {"type": "reasoning", "summary": [{"type": "summary_text", "text": "need the tool"}]},
+    {"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{}"},
+    {"type": "function_call_output", "call_id": "call_1", "output": "sunny"},
+]
+
+
+class TestReasoningContext:
+    def test_current_turn_drops_reasoning_before_the_last_user_message(self):
+        chat = responses_request_to_chat(_req(input=_TWO_TURNS, reasoning={"context": "current_turn"}))
+        assert chat.messages[1] == {"role": "assistant", "content": "hello"}
+        assert chat.messages[3]["reasoning"] == "need the tool"
+
+    @pytest.mark.parametrize("reasoning", [None, {"context": "auto"}, {"context": "all_turns"}])
+    def test_other_settings_keep_every_turns_reasoning(self, reasoning):
+        chat = responses_request_to_chat(_req(input=_TWO_TURNS, reasoning=reasoning))
+        assert chat.messages[1]["reasoning"] == "greet back"
+        assert chat.messages[3]["reasoning"] == "need the tool"
+
+    def test_current_turn_drops_reasoning_decoded_from_a_compaction_item(self):
+        blob = compaction_crypto.encrypt_items(_TWO_TURNS[:3])
+        chat = responses_request_to_chat(
+            _req(
+                input=[{"type": "compaction", "id": "cmp_1", "encrypted_content": blob}, *_TWO_TURNS[3:]],
+                reasoning={"context": "current_turn"},
+            )
+        )
+        assert chat.messages[1] == {"role": "assistant", "content": "hello"}
+        assert chat.messages[3]["reasoning"] == "need the tool"
+
+    def test_unknown_context_rejected(self):
+        with pytest.raises(UnsupportedResponsesFeatureError, match=r"reasoning\.context"):
+            responses_request_to_chat(_req(reasoning={"context": "last_turn"}))
+
+
 class TestCompactionInputDecode:
     """Round-trip half of ``/v1/responses/compact``: a ``compaction`` input item is
     decrypted back into the items it was built from and spliced into the message list."""

@@ -29,6 +29,8 @@ a warning is logged per dropped tool. Encrypted reasoning
 it. A `reasoning` item, whether sent in `input` or carried by
 `previous_response_id`, goes back to the model with the assistant message that
 follows it; the model's chat template decides whether it is used.
+`reasoning.context: current_turn` drops the reasoning from before the last user
+message first; `auto` and `all_turns` send it all.
 
 ## Continuing a conversation
 

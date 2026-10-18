@@ -51,7 +51,17 @@ def responses_request_to_chat(request: ResponsesRequest) -> ChatCompletionReques
     :class:`UnsupportedResponsesFeatureError` for features the adapter can't fulfill.
     ``background`` is handled entirely at the gateway; here it's just an echoed flag.
     """
+    reasoning = request.reasoning or {}
+    context = reasoning.get("context")
+    if context not in (None, "auto", "current_turn", "all_turns"):
+        raise UnsupportedResponsesFeatureError(
+            f"reasoning.context must be one of 'auto', 'current_turn', 'all_turns', got {context!r}."
+        )
     messages = messages_from_input(request.input, request.instructions)
+    if context == "current_turn":
+        last_user = max((i for i, m in enumerate(messages) if m["role"] == "user"), default=0)
+        for message in messages[:last_user]:
+            message.pop("reasoning", None)
 
     kwargs: dict[str, Any] = {
         "model": request.model,
@@ -84,7 +94,7 @@ def responses_request_to_chat(request: ResponsesRequest) -> ChatCompletionReques
     if response_format is not None:
         kwargs["response_format"] = response_format
 
-    effort = (request.reasoning or {}).get("effort")
+    effort = reasoning.get("effort")
     if effort is not None:
         kwargs["reasoning_effort"] = effort
 
