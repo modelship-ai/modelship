@@ -1,6 +1,6 @@
 # CLI reference
 
-`mship` has five commands. Install and provision with `bootstrap`; run a cluster with `start` and `join`; change its models with `deploy`; inspect with `info`.
+`mship` has six commands. Install and provision with `bootstrap`; run a cluster with `start` and `join`; change its models with `deploy`; shut it down with `stop`; inspect with `info`.
 
 | Command | What it does | Stays running |
 |---|---|---|
@@ -8,6 +8,7 @@
 | [`mship start`](#mship-start) | Starts a cluster on this machine: head node, API gateway and the models given | yes |
 | [`mship join`](#mship-join) | Adds this machine to a running cluster as a worker node | yes |
 | [`mship deploy`](#mship-deploy) | Adds, replaces or removes models on a running cluster, or cancels a deploy request | no |
+| [`mship stop`](#mship-stop) | Stops the nodes running on this machine | no |
 | [`mship info`](#mship-info) | Reports what is provisioned on this host | no |
 
 ## Typical flow
@@ -22,6 +23,9 @@ mship join --gcs-address HEAD:6380     # worker node
 
 # later, from the head's machine (or another one with --ray-dashboard-url):
 mship deploy --config more-models.yaml --wait
+
+# done: on each machine
+mship stop
 ```
 
 Docker images run the same commands: `docker run ghcr.io/modelship-ai/modelship:latest-cuda start --config …` reaches the same CLI, with the node role fixed by the image tag.
@@ -85,6 +89,16 @@ Sends a deploy request to the cluster running on this machine, or with `--ray-da
 
 Exit codes are listed under [CLI Options](model-configuration.md#cli-options).
 
+## `mship stop`
+
+```bash
+mship stop [--timeout SECONDS]
+```
+
+Stops every node that `mship start` or `mship join` runs on this machine, worker nodes first. Each one shuts down as it does on Ctrl+C in its terminal: a head deletes its models (with a Redis-backed GCS it keeps them for the next head) and stops Ray, a worker leaves the cluster. A node still running after `--timeout` seconds (default 90) is killed, with every process it started, model backends included. Ray nodes that `mship` did not start are left alone.
+
+Exits `0` once nothing of the nodes is left, or when none was running, and `1` when a process survived, listing it. In Docker, stop the container with `docker stop` instead: see [Stopping a node](install-docker.md).
+
 ## `mship info`
 
 ```bash
@@ -97,4 +111,4 @@ Plain `mship info` reports the bootstrapper's state: its version, `MSHIP_HOME`, 
 
 Every flag, its environment variable, default and the commands it applies to are in the [CLI Options table](model-configuration.md#cli-options). Per-model flags such as `--llama-server-config.n-ctx 8192` are generated from the `models.yaml` schema: see [Single-model deploys](model-configuration.md#single-model-deploys-no-config-file). Environment variables work as fallbacks; the CLI wins.
 
-`mship start --help`, `mship join --help` and `mship deploy --help` print the usage and flags of that command. `bootstrap` and `info` take only the role flag.
+`mship start --help`, `mship join --help`, `mship deploy --help` and `mship stop --help` print the usage and flags of that command. `bootstrap` and `info` take only the role flag.
