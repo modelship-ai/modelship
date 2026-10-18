@@ -86,6 +86,7 @@ nav:
       - Open WebUI: integrations/open-webui.md
       - Dify: integrations/dify.md
       - n8n: integrations/n8n.md
+      - LiteLLM: integrations/litellm.md
       - Responses-speaking agents: integrations/responses-agents.md
   - Architecture: architecture.md
   - Monitoring: monitoring.md

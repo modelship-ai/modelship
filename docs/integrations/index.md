@@ -15,5 +15,7 @@ OpenAI-compatible clients require *some* value in that field.
 - [Open WebUI](open-webui.md) — a self-hosted chat UI
 - [Dify](dify.md) — a low-code agent/app builder
 - [n8n](n8n.md) — workflow automation
+- [LiteLLM](litellm.md) — an API-key, budget and rate-limit layer in front of
+  Modelship
 - [Responses-speaking agents](responses-agents.md) — agent frameworks and
   custom loops built on `/v1/responses` specifically
