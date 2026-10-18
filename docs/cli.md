@@ -91,10 +91,10 @@ Exit codes are listed under [CLI Options](model-configuration.md#cli-options).
 mship info [--cuda|--cpu|--metal|--thin]
 ```
 
-With no role flag, no `MSHIP_VARIANT` and no recorded role, reports the bootstrapper's state: its version, `MSHIP_HOME`, the recorded role, and each provisioned environment with its size (flagging stale ones, and a missing CUDA toolkit). With a role, it runs inside that environment and reports the engine's view: accelerator, Python, cache directories, Ray version and the `llama-server` binary in use. In a container, `docker run <image> info` gives the engine report.
+Plain `mship info` reports the bootstrapper's state: its version, `MSHIP_HOME`, the recorded role, and each provisioned environment with its size (flagging stale ones, and a missing CUDA toolkit). The recorded role does not select the engine report: that needs an explicit role flag or `MSHIP_VARIANT`, and then it runs inside that environment and reports the engine's view: accelerator, Python, cache directories, Ray version and the `llama-server` binary in use. In a container, `docker run <image> info` gives the bootstrapper report; pass the image's role (`info --cpu`) for the engine's.
 
 ## Flags
 
 Every flag, its environment variable, default and the commands it applies to are in the [CLI Options table](model-configuration.md#cli-options). Per-model flags such as `--llama-server-config.n-ctx 8192` are generated from the `models.yaml` schema: see [Single-model deploys](model-configuration.md#single-model-deploys-no-config-file). Environment variables work as fallbacks; the CLI wins.
 
-`mship <command> --help` prints the usage and flags of one command.
+`mship start --help`, `mship join --help` and `mship deploy --help` print the usage and flags of that command. `bootstrap` and `info` take only the role flag.
