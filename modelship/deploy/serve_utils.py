@@ -364,7 +364,6 @@ def local_ray_clusters() -> set[str]:
 def start_head(lib_level: int) -> None:
     """Start this machine's Ray head in-process, sized from MSHIP_NODE_*."""
     _validate_node_gpu_reservation()
-    os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
     os.environ.setdefault("RAY_prestart_worker_first_driver", "0")
@@ -382,7 +381,6 @@ def start_head(lib_level: int) -> None:
 def join_cluster(address: str) -> None:
     """Start this machine's Ray node as a worker of the cluster at *address*."""
     _validate_node_gpu_reservation()
-    os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
     os.environ.setdefault("RAY_prestart_worker_first_driver", "0")
@@ -400,7 +398,6 @@ def _with_default_port(address: str, port: int) -> str:
 
 def attach_cluster(lib_level: int) -> None:
     """Connect this process as a driver to the cluster of a node on this machine."""
-    os.environ.setdefault("RAY_GCS_RPC_TIMEOUT_S", "30")
     try:
         ray.init(address="auto", ignore_reinit_error=True, logging_level=lib_level)
     # A wrong token raises ConnectionError; a missing one in token mode, AuthenticationError.
