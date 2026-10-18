@@ -51,22 +51,25 @@ LiteLLM and is clamped to the engine's value (see
 
 ## Responses API
 
-Don't use LiteLLM's plain `/v1/responses` route for Modelship. LiteLLM
-re-serializes the response (adding `phase`, `logprobs` and `created_by: null`
-fields, stripping null keys from stream events), and a client that validates
-strictly rejects it; the route also closes WebSockets. Against the Open
-Responses suite it passed 3 of 17 tests.
+`/v1/responses` through LiteLLM's own route (`http://<litellm-host>:4000/v1/responses`)
+works for plain calls, but as of LiteLLM 1.105.0 it re-serializes the response:
+it adds `phase`, `logprobs` and `created_by: null` fields and drops null keys
+from stream events, so a client that validates the output strictly can reject
+it. That route also closes WebSockets. Against the Open Responses suite it
+passed 3 of 17 tests. This is LiteLLM's behavior and may change in a later
+release.
 
-Use LiteLLM's OpenAI passthrough route instead, which forwards the request
-untouched (17 of 17, WebSockets included). Point LiteLLM at Modelship through
-its environment, with no `/v1` on the base:
+If your client needs the response exactly as Modelship sends it, LiteLLM's
+OpenAI passthrough route forwards the request untouched (17 of 17, WebSockets
+included). Point LiteLLM at Modelship through its environment, with no `/v1`
+on the base:
 
 ```bash
 OPENAI_API_BASE=http://<modelship-host>:8000/modelship
 OPENAI_API_KEY=none
 ```
 
-and give clients `http://<litellm-host>:4000/openai_passthrough/v1` as their
+and give the client `http://<litellm-host>:4000/openai_passthrough/v1` as its
 base URL. For WebSockets, also set this in the config (under
 `general_settings`, not `litellm_settings`):
 
@@ -74,6 +77,9 @@ base URL. For WebSockets, also set this in the config (under
 general_settings:
   enable_openai_websocket_passthrough: true
 ```
+
+The passthrough route talks to the one backend in `OPENAI_API_BASE`, not to
+the `model_list`.
 
 ## Multiple users
 
