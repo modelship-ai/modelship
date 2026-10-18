@@ -192,12 +192,14 @@ def prune_ray_sessions() -> None:
         temp_root = Path(get_default_ray_temp_dir())
         if not temp_root.is_dir():
             return
+        latest = temp_root / "session_latest"
+        kept = latest.readlink().name if latest.is_symlink() else None
         removed = 0
         for entry in temp_root.iterdir():
             match = _RAY_SESSION_DIR_RE.match(entry.name)
             if not match or entry.is_symlink() or not entry.is_dir():
                 continue
-            if _pid_alive(int(match.group(1))):
+            if entry.name == kept or _pid_alive(int(match.group(1))):
                 continue
             try:
                 shutil.rmtree(entry)
