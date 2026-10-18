@@ -4,6 +4,8 @@ Reference for `models.yaml`, the file `--config` takes. Each entry under `models
 
 ## CLI Options
 
+For a one-page summary of every command, see the [CLI reference](cli.md).
+
 `mship start` starts a cluster on this machine — its head node, the API gateway and any models
 given — and stays running. `mship join` adds this machine to a running cluster as a worker node
 and stays running. `mship deploy` changes the models of the cluster running on this machine, or with

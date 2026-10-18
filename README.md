@@ -205,6 +205,7 @@ mship start --config models.yaml
 Full docs are hosted at **[docs.model-ship.ai](https://docs.model-ship.ai/)**. The same source files are browsable in this repo:
 
 - [Installation](docs/installation.md) — requirements, node roles, and the Docker / native / Helm guides
+- [CLI Reference](docs/cli.md) — every `mship` command at a glance
 - [Model Configuration](docs/model-configuration.md) — full `models.yaml` reference, GPU pinning, environment variables
 - [Architecture](docs/architecture.md) — system design, request lifecycle, loaders
 - [Production Readiness](docs/production-readiness.md) — verified cluster behaviour and the hardening roadmap
