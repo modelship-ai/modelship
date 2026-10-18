@@ -2406,10 +2406,29 @@ class TestPruneRaySessions:
             patch.object(serve_utils, "_pid_alive", return_value=False),
         ):
             serve_utils.prune_ray_sessions()
-        assert not dead.exists()
-        assert latest.is_symlink()  # survives, now dangling
+        assert dead.exists()
+        assert latest.is_symlink()
         assert marker.exists()
         assert unrelated.exists()
+
+    def test_removes_dead_sessions_session_latest_does_not_point_to(self, tmp_path):
+        from modelship.deploy import serve_utils
+
+        root = self._temp_root(tmp_path)
+        older = self._make_session(root, 555)
+        newer = self._make_session(root, 666)
+        (root / "session_latest").symlink_to(newer)
+        with (
+            patch.dict(
+                os.environ,
+                {"RAY_TMPDIR": str(tmp_path), "MSHIP_PRUNE_RAY_SESSIONS": "true"},
+                clear=False,
+            ),
+            patch.object(serve_utils, "_pid_alive", return_value=False),
+        ):
+            serve_utils.prune_ray_sessions()
+        assert not older.exists()
+        assert newer.exists()
 
     def test_disabled_via_env_keeps_everything(self, tmp_path):
         from modelship.deploy import serve_utils
