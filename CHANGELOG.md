@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.9.1] - 2026-10-19
+
+### Added
+- mship stop
+- Responses reasoning.context
+
+### Fixed
+- mship stop reports what the group cleanup could not kill
+- keep the Ray session session_latest points to
+
+### Changed
+- post PR, issue and release events to Discord
+- drop RAY_GCS_RPC_TIMEOUT_S, which Ray no longer reads
+- mship stop and Ray's process cleanup
+- Ray cleans up a replica's processes
+- correct mship info and --help guidance in the CLI reference
+- add a CLI reference page listing every mship command
+- describe LiteLLM's Responses routes neutrally
+- LiteLLM integration
+
 ## [0.9.0] - 2026-10-17
 
 ### Added
