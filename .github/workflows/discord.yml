@@ -1,0 +1,48 @@
+name: Discord
+
+# pull_request_target so PRs from forks can read the webhook secret. Nothing is checked out,
+# and event fields reach the script only through env, never interpolated into it.
+on:
+  pull_request_target:
+    types: [opened, closed]
+  issues:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  notify:
+    # A closed PR only counts when it merged.
+    if: >-
+      github.event_name == 'issues' ||
+      github.event.action == 'opened' ||
+      github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Discord
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          TITLE: ${{ github.event.pull_request.title || github.event.issue.title }}
+          URL: ${{ github.event.pull_request.html_url || github.event.issue.html_url }}
+          AUTHOR: ${{ github.event.pull_request.user.login || github.event.issue.user.login }}
+          AVATAR: ${{ github.event.pull_request.user.avatar_url || github.event.issue.user.avatar_url }}
+          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+        run: |
+          if [ "$EVENT" = issues ]; then
+            label="Issue opened"; color=15105570
+          elif [ "$ACTION" = closed ]; then
+            label="PR merged"; color=8311585
+          else
+            label="PR opened"; color=3447003
+          fi
+          footer="${MERGED_BY:+merged by $MERGED_BY}"
+          jq -n \
+            --arg title "$label: #$NUMBER $TITLE" --arg url "$URL" --argjson color "$color" \
+            --arg author "$AUTHOR" --arg avatar "$AVATAR" --arg footer "$footer" \
+            '{embeds: [{title: $title, url: $url, color: $color,
+                        author: {name: $author, icon_url: $avatar}}
+                       + (if $footer == "" then {} else {footer: {text: $footer}} end)]}' \
+            | curl -fsS -H 'Content-Type: application/json' -d @- "$WEBHOOK_URL"
