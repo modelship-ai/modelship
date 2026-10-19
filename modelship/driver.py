@@ -76,7 +76,7 @@ def _start(args) -> None:
     if running := local_ray_clusters():
         sys.exit(
             f"error: a Ray cluster is already running on this machine (GCS at {', '.join(sorted(running))}). "
-            "Change its models with `mship deploy`, or stop it before starting a new one."
+            "Change its models with `mship deploy`, or stop it with `mship stop` before starting a new one."
         )
     lib_level, serve_logging_config = _serve_logging()
     # Inherited by job shells on this head, which run `mship deploy` for a remote one.

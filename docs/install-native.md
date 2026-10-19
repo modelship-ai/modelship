@@ -19,6 +19,8 @@ Then, with no variant flag:
 mship start --config models.yaml
 ```
 
+`mship stop`, from any shell on the machine, stops it again (see the [CLI reference](cli.md#mship-stop)).
+
 Bootstrapping with no variant is an error that lists these options; there is no
 default and no auto-detection, so a node's role is always something you stated.
 `MSHIP_VARIANT` is the environment-variable equivalent, for systemd units and CI,

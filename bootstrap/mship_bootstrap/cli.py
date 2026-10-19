@@ -1,5 +1,5 @@
 """Entry point. `bootstrap` provisions a variant's environment; everything else
-resolves one, checks it is current, and execs the engine inside it."""
+resolves one and execs the engine inside it."""
 
 from __future__ import annotations
 
@@ -10,14 +10,15 @@ from . import __version__, engine, gates, llama_cpp, paths, uv_binary, variants
 from .variants import VariantError, split_variant_flag
 from .variants import resolve as resolve_variant
 
-_COMMANDS = ("bootstrap", "start", "join", "deploy", "info")
+_COMMANDS = ("bootstrap", "start", "join", "deploy", "stop", "info")
 
-_USAGE = """usage: mship {bootstrap,start,join,deploy,info} [--cuda|--cpu|--metal|--thin] [args]
+_USAGE = """usage: mship {bootstrap,start,join,deploy,stop,info} [--cuda|--cpu|--metal|--thin] [args]
 
   bootstrap   install the engine environment for a variant (run once)
   start       start a cluster on this machine and serve models; stays running
   join        add this machine to a running cluster as a worker; stays running
   deploy      change the models of the cluster running on this machine, or cancel a deploy (--cancel ID)
+  stop        stop every node running on this machine
   info        report bootstrapper state, or the engine's own report with a variant
 """
 
@@ -45,14 +46,18 @@ def main(argv: list[str] | None = None) -> None:
         if command == "bootstrap":
             _bootstrap(variant, rest)
             return
-        gates.check_hardware(variant.requires_accelerator)
-        if not engine.is_current(variant, __version__):
-            sys.exit(engine.describe_staleness(variant, __version__))
+        if command == "stop":
+            if not os.path.isfile(paths.venv_python(variant.name)):
+                sys.exit(engine.describe_staleness(variant, __version__))
+        else:
+            gates.check_hardware(variant.requires_accelerator)
+            if not engine.is_current(variant, __version__):
+                sys.exit(engine.describe_staleness(variant, __version__))
     except (VariantError, gates.GateError, uv_binary.UvError, engine.EngineError) as e:
         sys.exit(str(e))
 
     python = paths.venv_python(variant.name)
-    env = _engine_env(variant)
+    env = dict(os.environ) if command == "stop" else _engine_env(variant)
     os.execve(python, [python, "-m", "modelship.launcher", command, *rest], env)
 
 

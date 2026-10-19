@@ -230,7 +230,7 @@ class TestMain:
             launcher.main([])
         assert exc.value.code == 2
 
-    @pytest.mark.parametrize("command", ["bogus", "bootstrap", "stop"])
+    @pytest.mark.parametrize("command", ["bogus", "bootstrap"])
     def test_unknown_command_exits_2(self, command):
         with pytest.raises(SystemExit) as exc:
             launcher.main([command])
@@ -246,6 +246,17 @@ class TestMain:
         with patch.object(launcher, "_cmd_info") as mock_cmd:
             launcher.main(["info"])
         mock_cmd.assert_called_once()
+
+    @pytest.mark.parametrize(("argv", "timeout", "code"), [([], 90.0, 0), (["--timeout", "5"], 5.0, 1)])
+    def test_stop_stops_the_local_nodes_and_exits_with_the_outcome(self, argv, timeout, code):
+        with (
+            patch("modelship.logging.configure_logging"),
+            patch("modelship.deploy.local_nodes.stop_local_nodes", return_value=code) as stop,
+            pytest.raises(SystemExit) as exc,
+        ):
+            launcher.main(["stop", *argv])
+        stop.assert_called_once_with(timeout)
+        assert exc.value.code == code
 
     def test_defaults_to_sys_argv(self):
         with (

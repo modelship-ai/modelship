@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 _REQUIRED_PYTHON = (3, 12, 10)
 
 
-_COMMANDS = ("start", "join", "deploy", "info")
+_COMMANDS = ("start", "join", "deploy", "stop", "info")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -39,8 +39,20 @@ def main(argv: list[str] | None = None) -> None:
     command, rest = argv[0], argv[1:]
     if command == "info":
         _cmd_info()
+    elif command == "stop":
+        _cmd_stop(rest)
     else:
         _cmd_run(command, rest)
+
+
+def _cmd_stop(argv: list[str]) -> None:
+    from modelship.deploy.local_nodes import stop_local_nodes
+    from modelship.logging import configure_logging
+    from modelship.utils.cli import parse_args
+
+    args = parse_args("stop", argv)
+    configure_logging()
+    sys.exit(stop_local_nodes(args.timeout))
 
 
 def _cmd_run(command: str, argv: list[str]) -> None:
