@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import time
+from unittest.mock import patch
 
 import psutil
 import pytest
@@ -123,6 +124,22 @@ def test_kills_a_node_that_ignores_sigterm_and_its_workers_groups(spawn):
     assert _stop([_node_of(owner)], timeout_s=1) == []
     assert _alive(tree) == []
     assert time.monotonic() - started < 30
+
+
+def test_kills_what_the_group_cleanup_left_running(spawn):
+    owner = spawn("start", on_sigterm="ignore")
+    late = subprocess.Popen(["sleep", "600"])
+    survivor = psutil.Process(late.pid)
+    try:
+        with patch(
+            "modelship.deploy.local_nodes.kill_groups",
+            side_effect=lambda groups, since: [*kill_groups(groups, since), survivor],
+        ):
+            assert _stop([_node_of(owner)], timeout_s=1) == []
+        assert _alive([survivor]) == []
+    finally:
+        late.kill()
+        late.wait()
 
 
 def test_imports_no_ray():

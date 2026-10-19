@@ -59,14 +59,14 @@ def worker_groups(raylet: psutil.Process) -> set[int]:
     return groups
 
 
-def kill_groups(groups: set[int], since: float) -> None:
+def kill_groups(groups: set[int], since: float) -> list[psutil.Process]:
     """SIGTERM, then SIGKILL, every process in *groups* started at or after *since*."""
     members = []
     for proc in psutil.process_iter(["create_time"]):
         with contextlib.suppress(OSError):
             if os.getpgid(proc.pid) in groups and (proc.info["create_time"] or 0) >= since:
                 members.append(proc)
-    _terminate(members)
+    return _terminate(members)
 
 
 def _running(procs: list[psutil.Process]) -> list[psutil.Process]:
@@ -112,7 +112,8 @@ def _stop(nodes: list[LocalNode], timeout_s: float) -> list[psutil.Process]:
             "The %s node (pid %s) did not stop within %ss; killing it.", node.role, node.owner.pid, timeout_s
         )
         with contextlib.suppress(psutil.Error):
-            kill_groups(worker_groups(node.raylet), node.owner.create_time())
+            survivors = kill_groups(worker_groups(node.raylet), node.owner.create_time())
+            trees += [proc for proc in survivors if proc not in trees]
         with contextlib.suppress(psutil.Error):
             node.owner.kill()
     return _terminate(_wait(trees, 10))
