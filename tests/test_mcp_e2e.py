@@ -15,13 +15,14 @@ import pytest
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 
+from modelship.openai.mcp import client as mcp_client
 from modelship.openai.mcp import loop as mcp_loop
 from modelship.openai.protocol.responses.schemas import ResponsesRequest
 
 _PORT = 8933
 
 
-def _recording(app, seen: list[str], expire_first_session_call: bool):
+def _recording(app, seen: list[str], expire_first_session_call: bool, stall_first_call: bool):
     async def wrapped(scope, receive, send):
         if scope["type"] != "http":
             await app(scope, receive, send)
@@ -32,6 +33,8 @@ def _recording(app, seen: list[str], expire_first_session_call: bool):
         body = b"".join(message.get("body", b"") for message in messages)
         method = json.loads(body).get("method") if body else scope["method"]
         seen.append(method)
+        if stall_first_call and method == "tools/call" and seen.count("tools/call") == 1:
+            await asyncio.sleep(2)
         has_session = b"mcp-session-id" in dict(scope["headers"])
         if expire_first_session_call and (
             method == "server/discover" or (method == "tools/call" and has_session and "expired" not in seen)
@@ -51,7 +54,7 @@ def _recording(app, seen: list[str], expire_first_session_call: bool):
 
 
 @contextlib.contextmanager
-def serve_dice(port: int, seen: list[str], *, expire_first_session_call: bool = False):
+def serve_dice(port: int, seen: list[str], *, expire_first_session_call: bool = False, stall_first_call: bool = False):
     server = MCPServer("dice")
 
     @server.tool()
@@ -59,7 +62,7 @@ def serve_dice(port: int, seen: list[str], *, expire_first_session_call: bool = 
         """Roll num_dice six-sided dice."""
         return f"total: {num_dice * 3}"
 
-    app = _recording(server.streamable_http_app(), seen, expire_first_session_call)
+    app = _recording(server.streamable_http_app(), seen, expire_first_session_call, stall_first_call)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     uv_server = uvicorn.Server(config)
 
@@ -102,6 +105,13 @@ def dice_requests(_dice):
 def expiring_dice():
     seen: list[str] = []
     with serve_dice(8935, seen, expire_first_session_call=True) as url:
+        yield url, seen
+
+
+@pytest.fixture
+def stalling_dice():
+    seen: list[str] = []
+    with serve_dice(8936, seen, stall_first_call=True) as url:
         yield url, seen
 
 
@@ -341,3 +351,16 @@ class TestConnectionsAndStoredListings:
         assert output[1]["output"] == "total: 6"
         assert seen.count("expired") == 1
         assert seen.count("initialize") == 2
+
+    @pytest.mark.asyncio
+    async def test_a_timed_out_call_leaves_the_next_call_a_new_connection(self, stalling_dice, monkeypatch):
+        server_url, seen = stalling_dice
+        monkeypatch.setattr(mcp_client, "CALL_TOOL_TIMEOUT_S", 0.5)
+        handle = FakeHandle([_roll_call_turn(), _roll_call_turn(), _final_answer_turn()])
+
+        output = await _output(handle, _request(server_url))
+
+        assert [o["status"] for o in output[1:3]] == ["failed", "completed"]
+        assert "timed out" in output[1]["error"]
+        assert output[2]["output"] == "total: 6"
+        assert seen.count("server/discover") == 2
