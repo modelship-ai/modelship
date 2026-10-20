@@ -92,6 +92,7 @@ class ChatCompletionRequest(OpenAIBaseModel):
     tool_choice: str | dict[str, Any] | None = None
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     parallel_tool_calls: bool | None = True
+    prompt_cache_key: str | None = None
     user: str | None = None
 
     @model_validator(mode="after")
