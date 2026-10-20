@@ -16,6 +16,7 @@ from modelship.deploy.serve_utils import local_ray_clusters
 from openai import NotFoundError, OpenAI
 from tests.conftest import MODEL_CONFIGS
 from tests.test_cluster_join import _poll, _terminate_process_group
+from tests.test_mcp_e2e import serve_dice
 
 _GCS_PORT = 6496
 _DASHBOARD_PORT = 6497
@@ -278,6 +279,52 @@ def test_another_identity_cannot_read_or_continue(head):
         _create(head, "Go on.", mine.id, identity="bob")
     assert httpx.get(f"{_API}/responses/{mine.id}", headers={_IDENTITY_HEADER: "bob"}, timeout=30).status_code == 404
     assert _create(head, "Go on.", mine.id, identity="alice").previous_response_id == mine.id
+
+
+@pytest.fixture(scope="module")
+def dice():
+    seen: list[str] = []
+    with serve_dice(_free_port(), seen) as server_url:
+        yield server_url, seen
+
+
+def test_an_mcp_tool_list_is_fetched_once_per_conversation(head, dice):
+    server_url, seen = dice
+    seen.clear()
+    tool = {"type": "mcp", "server_label": "dice", "server_url": server_url, "require_approval": "never"}
+    approved = {**tool, "require_approval": "always"}
+    headers = {_IDENTITY_HEADER: "alice"}
+
+    def respond(text, previous_response_id=None, tools=(tool,), **kwargs):
+        return head.client.responses.create(
+            model=_MODEL["name"],
+            input=text,
+            previous_response_id=previous_response_id,
+            tools=list(tools),
+            max_output_tokens=128,
+            max_tool_calls=1,
+            temperature=0,
+            extra_headers=headers,
+            **kwargs,
+        )
+
+    def retrieve(response_id):
+        return head.client.responses.retrieve(response_id, extra_headers=headers)
+
+    first = respond("Roll 2 dice.", tool_choice="required")
+    queued = respond("Roll 3 dice.", first.id, tool_choice="required", background=True)
+    assert _poll(lambda: retrieve(queued.id).status not in ("queued", "in_progress"), deadline_s=120)
+    second = retrieve(queued.id)
+    third = respond("Roll 4 dice.", second.id, tools=(approved,), tool_choice="required")
+    [approval] = [item for item in third.output if item.type == "mcp_approval_request"]
+    approval_response = {"type": "mcp_approval_response", "approval_request_id": approval.id, "approve": True}
+    fourth = respond([approval_response], third.id, tools=(approved,))
+    fifth = respond("Roll 5 dice.", fourth.id, tools=({**tool, "allowed_tools": ["roll"]},), tool_choice="required")
+
+    turns = [[item.type for item in turn.output] for turn in (first, second, third, fourth, fifth)]
+    assert ["mcp_list_tools" in types for types in turns] == [True, False, False, False, True], turns
+    assert ["mcp_call" in types for types in turns] == [True, True, False, True, True], turns
+    assert seen.count("server/discover") == seen.count("tools/list") == 4, seen
 
 
 def test_a_restarted_head_keeps_conversations_only_on_redis(head):

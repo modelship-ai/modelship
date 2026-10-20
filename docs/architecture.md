@@ -70,6 +70,8 @@ Discovered and executed entirely at the gateway (`modelship/openai/mcp/`), never
 
 Loop: list the server's tools over streamable HTTP (official `mcp` SDK), expose them to the model as plain `function` tools, run turns, execute resulting `tools/call` calls itself, append results and loop — up to 10 turns or `max_tool_calls` — then return a completed response. A `require_approval` tool instead emits `mcp_approval_request` and ends the turn; the client resumes with `previous_response_id` + `mcp_approval_response`.
 
+A response keeps one connection per MCP server for its whole loop. A continued conversation (`previous_response_id`, or a `store: false` WebSocket turn on the same socket) reuses the newest tool list the conversation stored for a `server_label` while that tool's `server_url` and `allowed_tools` are unchanged: no new `mcp_list_tools` item is emitted, and the server is contacted only when the model calls one of its tools. A changed tool, a failed listing or a new conversation lists again; a list the client sends in `input` is never reused.
+
 One logical response can span N loader turns, so a gateway-side stitcher (`mcp.loop.Stitcher`) owns the outer envelope: renumbers `sequence_number`/`output_index` per turn, accumulates output, rewrites matched tool-call events into `mcp_call` events (unmatched calls pass through as plain `function_call`). The client always sees one `response.created` and one terminal event.
 
 Egress is permissive by default (plain HTTP, localhost, private IPs allowed) except cloud metadata endpoints, blocked unconditionally. Lock down with `MSHIP_MCP_ALLOWED_HOSTS` and `MSHIP_MCP_REQUIRE_HTTPS=true`.

@@ -226,7 +226,9 @@ def as_input_items(input_: str | list[Any]) -> list[Any]:
     return list(input_)
 
 
-async def resolve_previous(store: StateStore, identity: str, previous_response_id: str) -> tuple[list[Any], dict]:
+async def resolve_previous(
+    store: StateStore, identity: str, previous_response_id: str
+) -> tuple[list[Any], dict, dict[str, dict]]:
     """History stored up to *previous_response_id*, and its log position. 404 if unknown, 503 if the store is down."""
     if not RESPONSE_ID_RE.match(previous_response_id):
         raise _not_found_error(previous_response_id, previous=True)
@@ -529,6 +531,7 @@ async def run_background(
     store: StateStore,
     response_id: str,
     stream_buffer: bool = False,
+    mcp_listings: dict[str, dict] | None = None,
 ) -> None:
     """Detached-task body for `background:true`: drives the streaming Responses
     generator to completion, persisting every terminal transition. `stream_buffer=True`
@@ -541,7 +544,7 @@ async def run_background(
 
     if mcp_loop.wants_mcp(request):
         response_gen = mcp_loop.run_mcp_response(
-            handle, request, headers, registry, req_id, identity, response_id=response_id
+            handle, request, headers, registry, req_id, identity, response_id=response_id, mcp_listings=mcp_listings
         )
     else:
         response_gen = cast(

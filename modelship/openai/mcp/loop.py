@@ -23,9 +23,10 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import Any, cast
 
+from pydantic import ValidationError
 from ray.serve.handle import DeploymentHandle, DeploymentResponseGenerator
 
-from modelship.openai.mcp.client import McpCallError, call_mcp_tool, list_mcp_tools
+from modelship.openai.mcp.client import McpCallError, McpConnections
 from modelship.openai.mcp.egress import validate_server_url
 from modelship.openai.mcp.spec import (
     McpToolSpec,
@@ -332,11 +333,12 @@ async def _execute_mcp_call(
     name: str,
     arguments: str,
     spec: McpToolSpec,
+    connections: McpConnections,
     approval_request_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], McpCallItem]:
     events: list[dict[str, Any]] = [stitcher.stamped("response.mcp_call.in_progress", abs_oi, item_id=outer_id)]
     try:
-        output = await call_mcp_tool(spec, name, arguments)
+        output = await connections.call_tool(spec, name, arguments)
         item = McpCallItem(
             id=outer_id,
             name=name,
@@ -371,9 +373,11 @@ async def run_mcp_response(
     identity: str,
     *,
     response_id: str | None = None,
+    mcp_listings: dict[str, dict] | None = None,
 ) -> AsyncGenerator[Any, None]:
     is_stream = bool(request.stream)
-    gen = _events(handle, request, headers, registry, req_id, identity, response_id)
+    connections = McpConnections()
+    gen = _events(handle, request, headers, registry, req_id, identity, response_id, connections, mcp_listings or {})
     try:
         if is_stream:
             async for event in gen:
@@ -398,6 +402,17 @@ async def run_mcp_response(
         # (which cancels the in-flight inner Ray generator) runs deterministically.
         with contextlib.suppress(Exception):
             await gen.aclose()
+        connections.close()
+
+
+def _stored_tools(spec: McpToolSpec, listing: dict | None) -> list[McpListToolsTool] | None:
+    if listing is None or (listing["server_url"], listing["allowed_tools"]) != (spec.server_url, spec.allowed_tools):
+        return None
+    try:
+        tools = [McpListToolsTool.model_validate(tool) for tool in listing["tools"]]
+    except ValidationError:
+        return None
+    return filter_tools(spec, tools)
 
 
 async def _events(
@@ -408,6 +423,8 @@ async def _events(
     req_id: str,
     identity: str,
     response_id: str | None,
+    connections: McpConnections,
+    mcp_listings: dict[str, dict],
 ) -> AsyncGenerator[dict[str, Any] | ErrorResponse, None]:
     response_id = response_id or f"resp_{random_uuid()}"
     created_at = int(time.time())
@@ -482,29 +499,33 @@ async def _events(
     # filtered out, or that doesn't exist on the server at all.
     discovered: dict[str, list[McpListToolsTool]] = {}
     for spec in specs:
-        oi = stitcher.claim_slot()
-        list_item_id = f"mcpl_{random_uuid()}"
-        placeholder = McpListToolsItem(id=list_item_id, server_label=spec.server_label, tools=[])
-        yield stitcher.stamped("response.output_item.added", oi, item=placeholder.model_dump(mode="json"))
-        yield stitcher.stamped("response.mcp_list_tools.in_progress", oi, item_id=list_item_id)
-        try:
-            tools = await list_mcp_tools(spec)
-        except McpCallError as exc:
-            failed_item = McpListToolsItem(id=list_item_id, server_label=spec.server_label, tools=[], error=str(exc))
-            yield stitcher.stamped("response.mcp_list_tools.failed", oi, item_id=list_item_id)
-            yield stitcher.stamped("response.output_item.done", oi, item=failed_item.model_dump(mode="json"))
-            accumulator.append(failed_item.model_dump(mode="json"))
-            yield _failed_event(f"mcp server {spec.server_label!r} discovery failed: {exc}")
-            return
+        tools = _stored_tools(spec, mcp_listings.get(spec.server_label))
+        if tools is None:
+            oi = stitcher.claim_slot()
+            list_item_id = f"mcpl_{random_uuid()}"
+            placeholder = McpListToolsItem(id=list_item_id, server_label=spec.server_label, tools=[])
+            yield stitcher.stamped("response.output_item.added", oi, item=placeholder.model_dump(mode="json"))
+            yield stitcher.stamped("response.mcp_list_tools.in_progress", oi, item_id=list_item_id)
+            try:
+                tools = await connections.list_tools(spec)
+            except McpCallError as exc:
+                failed_item = McpListToolsItem(
+                    id=list_item_id, server_label=spec.server_label, tools=[], error=str(exc)
+                )
+                yield stitcher.stamped("response.mcp_list_tools.failed", oi, item_id=list_item_id)
+                yield stitcher.stamped("response.output_item.done", oi, item=failed_item.model_dump(mode="json"))
+                accumulator.append(failed_item.model_dump(mode="json"))
+                yield _failed_event(f"mcp server {spec.server_label!r} discovery failed: {exc}")
+                return
 
-        tools = filter_tools(spec, tools)
+            tools = filter_tools(spec, tools)
+            ok_item = McpListToolsItem(id=list_item_id, server_label=spec.server_label, tools=tools)
+            yield stitcher.stamped("response.mcp_list_tools.completed", oi, item_id=list_item_id)
+            yield stitcher.stamped("response.output_item.done", oi, item=ok_item.model_dump(mode="json"))
+            accumulator.append(ok_item.model_dump(mode="json"))
         discovered[spec.server_label] = tools
         for tool in tools:
             tool_index[tool.name] = (spec, tool)
-        ok_item = McpListToolsItem(id=list_item_id, server_label=spec.server_label, tools=tools)
-        yield stitcher.stamped("response.mcp_list_tools.completed", oi, item_id=list_item_id)
-        yield stitcher.stamped("response.output_item.done", oi, item=ok_item.model_dump(mode="json"))
-        accumulator.append(ok_item.model_dump(mode="json"))
 
     try:
         check_collisions(specs, discovered, other_tools)
@@ -565,6 +586,7 @@ async def _events(
                 name=name,
                 arguments=arguments,
                 spec=spec,
+                connections=connections,
                 approval_request_id=approval_request_id,
             )
             for e in events:
@@ -665,6 +687,7 @@ async def _events(
                         name=buf.name,
                         arguments=buf.arguments,
                         spec=buf.spec,
+                        connections=connections,
                     )
                     for e in events:
                         yield e
