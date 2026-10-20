@@ -82,6 +82,7 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "request_in_progress",
         "client_disconnects_total",
         "stream_chunks_total",
+        "affinity_routed_total",
         "gateway_reconciles_total",
         "gateway_watch_errors_total",
         "gateway_routing_generation",
@@ -148,6 +149,7 @@ def _build_metrics():
             "request_in_progress": _NoOpGauge(),
             "client_disconnects_total": _NoOpCounter(),
             "stream_chunks_total": _NoOpCounter(),
+            "affinity_routed_total": _NoOpCounter(),
             # Gateway HA routing (watch loop)
             "gateway_reconciles_total": _NoOpCounter(),
             "gateway_watch_errors_total": _NoOpCounter(),
@@ -202,6 +204,11 @@ def _build_metrics():
             "modelship_stream_chunks_total",
             description="Total streaming chunks emitted.",
             tag_keys=("model", "gateway"),  # type: ignore[arg-type]
+        ),
+        "affinity_routed_total": Counter(
+            "modelship_affinity_routed_total",
+            description="Requests routed to a model replica: its key's first choice, spilled, or no key.",
+            tag_keys=("model", "choice", "gateway"),  # type: ignore[arg-type]
         ),
         # -- Gateway HA routing (watch loop) --
         # Emitted per gateway replica so divergence between replicas is visible:
@@ -346,6 +353,7 @@ REQUEST_ERRORS_TOTAL = _metrics["request_errors_total"]
 REQUEST_IN_PROGRESS = _metrics["request_in_progress"]
 CLIENT_DISCONNECTS_TOTAL = _metrics["client_disconnects_total"]
 STREAM_CHUNKS_TOTAL = _metrics["stream_chunks_total"]
+AFFINITY_ROUTED_TOTAL = _metrics["affinity_routed_total"]
 
 # -- Gateway HA routing (watch loop) --
 GATEWAY_RECONCILES_TOTAL = _metrics["gateway_reconciles_total"]
