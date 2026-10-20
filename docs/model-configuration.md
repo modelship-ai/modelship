@@ -607,7 +607,7 @@ See `config/examples/sherpa-onnx.yaml` for the local-directory form.
 
 ## Scaling a Deployment
 
-Use `num_replicas` to run several identical copies; Ray Serve load-balances across them.
+Use `num_replicas` to run several identical copies. The gateway sends a conversation's turns to the same replica while it isn't much busier than the others ([Conversation-affinity routing](architecture.md#conversation-affinity-routing)).
 
 ```yaml
 models:
