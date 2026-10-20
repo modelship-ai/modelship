@@ -1,12 +1,14 @@
 """End-to-end test for the MCP loop against a real MCP server (an in-process
-`MCPServer` served over streamable HTTP via uvicorn), unlike test_mcp_loop.py
-which mocks list_mcp_tools/call_mcp_tool. Only the loader side is scripted.
+`MCPServer` served over streamable HTTP via uvicorn), unlike test_mcp_loop.py.
+Only the loader side is scripted.
 
 No external network or GPU/Ray, so this runs in the default (non-integration)
 suite.
 """
 
 import asyncio
+import contextlib
+import json
 import threading
 
 import pytest
@@ -19,8 +21,37 @@ from modelship.openai.protocol.responses.schemas import ResponsesRequest
 _PORT = 8933
 
 
-@pytest.fixture(scope="module")
-def dice_server():
+def _recording(app, seen: list[str], expire_first_session_call: bool):
+    async def wrapped(scope, receive, send):
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        messages = [await receive()]
+        while messages[-1].get("more_body"):
+            messages.append(await receive())
+        body = b"".join(message.get("body", b"") for message in messages)
+        method = json.loads(body).get("method") if body else scope["method"]
+        seen.append(method)
+        has_session = b"mcp-session-id" in dict(scope["headers"])
+        if expire_first_session_call and (
+            method == "server/discover" or (method == "tools/call" and has_session and "expired" not in seen)
+        ):
+            if method == "tools/call":
+                seen.append("expired")
+            await send({"type": "http.response.start", "status": 404, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        async def replay():
+            return messages.pop(0) if messages else await receive()
+
+        await app(scope, replay, send)
+
+    return wrapped
+
+
+@contextlib.contextmanager
+def serve_dice(port: int, seen: list[str], *, expire_first_session_call: bool = False):
     server = MCPServer("dice")
 
     @server.tool()
@@ -28,8 +59,8 @@ def dice_server():
         """Roll num_dice six-sided dice."""
         return f"total: {num_dice * 3}"
 
-    app = server.streamable_http_app()
-    config = uvicorn.Config(app, host="127.0.0.1", port=_PORT, log_level="warning")
+    app = _recording(server.streamable_http_app(), seen, expire_first_session_call)
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     uv_server = uvicorn.Server(config)
 
     def run():
@@ -42,9 +73,36 @@ def dice_server():
             break
         threading.Event().wait(0.05)
     assert uv_server.started, "test MCP server failed to start"
-    yield f"http://127.0.0.1:{_PORT}/mcp"
-    uv_server.should_exit = True
-    thread.join(timeout=5)
+    try:
+        yield f"http://127.0.0.1:{port}/mcp"
+    finally:
+        uv_server.should_exit = True
+        thread.join(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def _dice():
+    seen: list[str] = []
+    with serve_dice(_PORT, seen) as url:
+        yield url, seen
+
+
+@pytest.fixture
+def dice_server(_dice):
+    return _dice[0]
+
+
+@pytest.fixture
+def dice_requests(_dice):
+    _dice[1].clear()
+    return _dice[1]
+
+
+@pytest.fixture
+def expiring_dice():
+    seen: list[str] = []
+    with serve_dice(8935, seen, expire_first_session_call=True) as url:
+        yield url, seen
 
 
 def _created(inner_id: str):
@@ -153,6 +211,7 @@ class FakeHandle:
     def __init__(self, turns: list[list]):
         self._turns = turns
         self.calls = 0
+        self.requests: list[ResponsesRequest] = []
 
     @property
     def respond(self):
@@ -164,6 +223,7 @@ class FakeHandle:
     def remote(self, *args, **kwargs):
         items = self._turns[self.calls]
         self.calls += 1
+        self.requests.append(args[0])
         return FakeGen(items)
 
 
@@ -213,3 +273,71 @@ class TestRealMcpServer:
         assert len(failed) == 1
         assert "dice" in failed[0]["response"]["error"]["message"]
         assert handle.calls == 0
+
+
+def _request(server_url: str) -> ResponsesRequest:
+    tool = {"type": "mcp", "server_label": "dice", "server_url": server_url, "require_approval": "never"}
+    return ResponsesRequest(model="m", input="roll 2 dice", stream=True, tools=[tool])
+
+
+def _stored(server_url: str, overrides: dict | None = None) -> dict[str, dict]:
+    tools = [{"name": "roll", "input_schema": {"type": "object"}, "description": "Roll num_dice six-sided dice."}]
+    return {"dice": {"server_url": server_url, "allowed_tools": None, "tools": tools, **(overrides or {})}}
+
+
+async def _output(handle: FakeHandle, request: ResponsesRequest, **kwargs) -> list[dict]:
+    events = [e async for e in mcp_loop.run_mcp_response(handle, request, {}, None, "req_1", "unscoped", **kwargs)]
+    return next(e for e in events if e["type"] == "response.completed")["response"]["output"]
+
+
+class TestConnectionsAndStoredListings:
+    @pytest.mark.asyncio
+    async def test_one_connection_serves_discovery_and_every_call(self, dice_server, dice_requests):
+        handle = FakeHandle([_roll_call_turn(), _roll_call_turn(), _final_answer_turn()])
+
+        output = await _output(handle, _request(dice_server))
+
+        assert [o["type"] for o in output] == ["mcp_list_tools", "mcp_call", "mcp_call", "message"]
+        assert dice_requests == ["server/discover", "tools/list", "tools/call", "tools/call"]
+
+    @pytest.mark.asyncio
+    async def test_a_stored_listing_is_reused_without_contacting_the_server(self, dice_server, dice_requests):
+        handle = FakeHandle([_final_answer_turn()])
+
+        output = await _output(handle, _request(dice_server), mcp_listings=_stored(dice_server))
+
+        assert [o["type"] for o in output] == ["message"]
+        assert [tool["name"] for tool in handle.requests[0].tools] == ["roll"]
+        assert dice_requests == []
+
+    @pytest.mark.asyncio
+    async def test_a_reused_listing_still_executes_calls(self, dice_server, dice_requests):
+        handle = FakeHandle([_roll_call_turn(), _final_answer_turn()])
+
+        output = await _output(handle, _request(dice_server), mcp_listings=_stored(dice_server))
+
+        assert [o["type"] for o in output] == ["mcp_call", "message"]
+        assert output[0]["output"] == "total: 6"
+        assert sorted(dice_requests) == ["server/discover", "tools/call", "tools/list"]
+
+    @pytest.mark.parametrize("changed", [{"server_url": "http://127.0.0.1:1/mcp"}, {"allowed_tools": ["roll"]}])
+    @pytest.mark.asyncio
+    async def test_a_listing_stored_under_other_settings_is_fetched_again(self, dice_server, dice_requests, changed):
+        handle = FakeHandle([_final_answer_turn()])
+
+        output = await _output(handle, _request(dice_server), mcp_listings=_stored(dice_server, changed))
+
+        assert [o["type"] for o in output] == ["mcp_list_tools", "message"]
+        assert dice_requests == ["server/discover", "tools/list"]
+
+    @pytest.mark.asyncio
+    async def test_an_expired_session_is_retried_on_a_new_connection(self, expiring_dice):
+        server_url, seen = expiring_dice
+        handle = FakeHandle([_roll_call_turn(), _final_answer_turn()])
+
+        output = await _output(handle, _request(server_url))
+
+        assert output[1]["status"] == "completed"
+        assert output[1]["output"] == "total: 6"
+        assert seen.count("expired") == 1
+        assert seen.count("initialize") == 2

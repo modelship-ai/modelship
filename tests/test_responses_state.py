@@ -107,7 +107,7 @@ class TestHistory:
             input_items=[{"type": "message", "role": "user", "content": "hi"}],
         )
         record = await responses_state.read_async(store, "u1", "resp_1", with_output=False)
-        history, parent = await responses_state.history_async(store, "u1", record)
+        history, parent, _ = await responses_state.history_async(store, "u1", record)
         assert [(item["role"], item["content"]) for item in history] == [("user", "hi"), ("assistant", "yo")]
         assert parent == {"log": "resp_1", "depth": 1}
 
@@ -122,8 +122,52 @@ class TestHistory:
             input_items=[{"i": 2}],
         )
         record = await responses_state.read_async(store, "u1", "resp_2", with_output=False)
-        history, _ = await responses_state.history_async(store, "u1", record)
+        history, _, _ = await responses_state.history_async(store, "u1", record)
         assert _without_ids(history) == [{"i": 1}, {"o": 1}, {"i": 2}, {"o": 2}]
+
+
+_LISTING = {"type": "mcp_list_tools", "server_label": "dice", "tools": [{"name": "roll", "input_schema": {}}]}
+
+
+def _mcp_turn(response_id: str, output: list[dict], **tool) -> dict:
+    mcp_tool = {"type": "mcp", "server_label": "dice", "server_url": "http://dice/mcp", **tool}
+    return {**_response(response_id, output=output), "tools": [mcp_tool]}
+
+
+class TestMcpListings:
+    @pytest.mark.asyncio
+    async def test_the_newest_listing_comes_with_the_tool_that_produced_it(self, store):
+        await _write(store, response=_mcp_turn("resp_1", [_LISTING], allowed_tools=["roll"]))
+        await _write(
+            store, response_id="resp_2", response=_mcp_turn("resp_2", []), parent={"log": "resp_1", "depth": 1}
+        )
+        await _write(store, response_id="resp_3", parent={"log": "resp_1", "depth": 2})
+
+        _, _, listings = await _resolve(store, "resp_3")
+
+        assert listings == {
+            "dice": {"server_url": "http://dice/mcp", "allowed_tools": ["roll"], "tools": _LISTING["tools"]}
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_failed_listing_hides_the_older_one(self, store):
+        await _write(store, response=_mcp_turn("resp_1", [_LISTING]))
+        failed = {**_LISTING, "tools": [], "error": "unreachable"}
+        await _write(
+            store, response_id="resp_2", response=_mcp_turn("resp_2", [failed]), parent={"log": "resp_1", "depth": 1}
+        )
+
+        _, _, listings = await _resolve(store, "resp_2")
+
+        assert listings == {}
+
+    @pytest.mark.asyncio
+    async def test_a_listing_sent_in_the_input_is_ignored(self, store):
+        await _write(store, response=_mcp_turn("resp_1", []), input_items=[_LISTING])
+
+        _, _, listings = await _resolve(store, "resp_1")
+
+        assert listings == {}
 
 
 class TestTerminalRace:
@@ -321,7 +365,7 @@ class TestRetention:
     async def test_the_parent_log_survives_the_childs_generation(self, store, clock):
         await _write(store, response_id="resp_a")
         clock["t"] = 19 * 3600.0
-        _, parent = await _resolve(store, "resp_a")
+        _, parent, _ = await _resolve(store, "resp_a")
         clock["t"] = 26 * 3600.0
         await _write(store, response_id="resp_b", parent=parent)
         clock["t"] = 29 * 3600.0

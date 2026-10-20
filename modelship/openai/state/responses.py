@@ -267,12 +267,51 @@ def _items(entries: list[dict]) -> list[dict]:
     return [item for entry in entries for item in (*entry["input"], *entry["output"])]
 
 
-async def history_async(store: StateStore, identity: str, record: dict) -> tuple[list[dict], dict] | None:
+def mcp_listings_in(response: dict) -> dict[str, dict | None]:
+    tools = {tool.get("server_label"): tool for tool in response.get("tools") or [] if tool.get("type") == "mcp"}
+    listings: dict[str, dict | None] = {}
+    for item in response.get("output") or []:
+        if item.get("type") != "mcp_list_tools":
+            continue
+        tool = tools.get(item.get("server_label"))
+        listings[item.get("server_label")] = (
+            None
+            if item.get("error") or tool is None
+            else {
+                "server_url": tool.get("server_url"),
+                "allowed_tools": tool.get("allowed_tools"),
+                "tools": item.get("tools") or [],
+            }
+        )
+    return listings
+
+
+async def _mcp_listings(store: StateStore, identity: str, record: dict, entries: list[dict]) -> dict[str, dict]:
+    found: dict[str, dict | None] = {}
+    for entry in reversed(entries):
+        labels = {item.get("server_label") for item in entry["output"] if item.get("type") == "mcp_list_tools"}
+        if labels <= found.keys():
+            continue
+        response_id = entry.get("response_id")
+        if response_id == record["response"].get("id"):
+            origin = record
+        else:
+            origin = await _read_record(store, identity, response_id) if response_id else None
+        tools = origin["response"].get("tools") if origin else None
+        for label, listing in mcp_listings_in({"output": entry["output"], "tools": tools}).items():
+            found.setdefault(label, listing)
+    return {label: listing for label, listing in found.items() if listing is not None}
+
+
+async def history_async(
+    store: StateStore, identity: str, record: dict
+) -> tuple[list[dict], dict, dict[str, dict]] | None:
     await _refresh(store, identity, record["log"])
     entries = await _entries(store, identity, record["log"], record["depth"])
     if entries is None:
         return None
-    return _items(entries), {"log": record["log"], "depth": record["depth"]}
+    position = {"log": record["log"], "depth": record["depth"]}
+    return _items(entries), position, await _mcp_listings(store, identity, record, entries)
 
 
 async def input_items_async(store: StateStore, identity: str, record: dict) -> list[dict] | None:

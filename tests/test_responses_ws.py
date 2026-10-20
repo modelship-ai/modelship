@@ -303,6 +303,28 @@ class TestPreviousResponseIdResolution:
         assert ws.events[-1]["error"]["code"] == "previous_response_not_found"
         handle3.respond.options.return_value.remote.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_a_store_false_continuation_gets_the_mcp_tool_list_of_an_earlier_turn(self, api):
+        tool = {"type": "mcp", "server_label": "dice", "server_url": "http://dice/mcp", "require_approval": "never"}
+        listing = {"type": "mcp_list_tools", "server_label": "dice", "tools": [{"name": "roll", "input_schema": {}}]}
+        received = []
+
+        def run_mcp_response(*args, mcp_listings, **kwargs):
+            received.append(mcp_listings)
+            output = [listing] if len(received) == 1 else []
+            return _events(_terminal(f"resp_{len(received)}", output=output, tools=[tool]))
+
+        _wire(api, "m", _events())
+        ws = _FakeWebSocket()
+        conn_cache: dict = {}
+        with patch("modelship.openai.api.mcp_loop.run_mcp_response", side_effect=run_mcp_response):
+            for n, previous in enumerate([None, "resp_1", "resp_2"]):
+                frame = _frame(store=False, tools=[tool], previous_response_id=previous)
+                await api._run_ws_turn(ws, "unscoped", {}, frame, conn_cache, MagicMock(), f"req-{n}")
+
+        stored = {"dice": {"server_url": "http://dice/mcp", "allowed_tools": None, "tools": listing["tools"]}}
+        assert received == [{}, stored, stored]
+
 
 class TestMidStreamFailures:
     @pytest.mark.asyncio

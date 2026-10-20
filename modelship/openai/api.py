@@ -65,6 +65,7 @@ from modelship.openai.protocol import (
     frame_sse,
 )
 from modelship.openai.protocol.responses.adapter import UnsupportedResponsesFeatureError
+from modelship.openai.state.responses import mcp_listings_in
 from modelship.openai.utils import responses as responses_utils
 from modelship.openai.utils.chat import encode_error_sse
 from modelship.state import get_state_store
@@ -638,9 +639,10 @@ class ModelshipAPI:
         # work starts. Costs nothing when previous_response_id is unset.
         input_items_for_turn = responses_utils.as_input_items(request.input)
         parent = None
+        mcp_listings: dict[str, dict] = {}
         if request.previous_response_id is not None:
             try:
-                history, parent = await responses_utils.resolve_previous(
+                history, parent, mcp_listings = await responses_utils.resolve_previous(
                     self._state_store, identity, request.previous_response_id
                 )
             except BaseException:
@@ -679,6 +681,7 @@ class ModelshipAPI:
                     store=self._state_store,
                     response_id=response_dict["id"],
                     stream_buffer=wants_stream,
+                    mcp_listings=mcp_listings,
                 )
             )
             self._background_tasks.add(task)
@@ -691,7 +694,9 @@ class ModelshipAPI:
             return JSONResponse(content=response_dict, status_code=200)
 
         if mcp_loop.wants_mcp(request):
-            response_gen = mcp_loop.run_mcp_response(handle, request, headers, watcher.registry, req_id, identity)
+            response_gen = mcp_loop.run_mcp_response(
+                handle, request, headers, watcher.registry, req_id, identity, mcp_listings=mcp_listings
+            )
         else:
             # Under stream=True the remote() result is an async-iterable
             # DeploymentResponseGenerator; Ray's stub widens it to a union because it
@@ -721,7 +726,7 @@ class ModelshipAPI:
         await websocket.accept()
         identity = self._set_identity(websocket)
         headers = dict(websocket.headers)
-        conn_cache: dict[str, list] = {}
+        conn_cache: dict[str, tuple[list, dict[str, dict]]] = {}
         registry = get_disconnect_registry()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         current_req_id: str | None = None
@@ -764,7 +769,7 @@ class ModelshipAPI:
         identity: str,
         headers: dict[str, str],
         raw: str,
-        conn_cache: dict[str, list],
+        conn_cache: dict[str, tuple[list, dict[str, dict]]],
         registry: Any,
         req_id: str,
     ) -> None:
@@ -809,13 +814,17 @@ class ModelshipAPI:
         prev_id = request.previous_response_id
         input_items_for_turn = responses_utils.as_input_items(request.input) if request.input is not None else []
         parent = None
+        mcp_listings: dict[str, dict] = {}
         try:
             if prev_id is not None and prev_id in conn_cache:
                 # A continuation this socket itself produced with store:false.
-                request.input = [*conn_cache[prev_id], *input_items_for_turn]
+                cached_items, mcp_listings = conn_cache[prev_id]
+                request.input = [*cached_items, *input_items_for_turn]
                 input_items_for_turn = request.input
             elif prev_id is not None:
-                history, parent = await responses_utils.resolve_previous(self._state_store, identity, prev_id)
+                history, parent, mcp_listings = await responses_utils.resolve_previous(
+                    self._state_store, identity, prev_id
+                )
                 request.input = [*history, *input_items_for_turn]
         except responses_utils.ResponsesApiError as exc:
             await websocket.send_text(error_ws_frame(exc.err))
@@ -842,7 +851,9 @@ class ModelshipAPI:
         terminal_response: dict[str, Any] | None = None
         try:
             if mcp_loop.wants_mcp(request):
-                response_gen = mcp_loop.run_mcp_response(handle, request, headers, registry, req_id, identity)
+                response_gen = mcp_loop.run_mcp_response(
+                    handle, request, headers, registry, req_id, identity, mcp_listings=mcp_listings
+                )
             else:
                 response_gen = cast(
                     "DeploymentResponseGenerator[Any]",
@@ -909,10 +920,14 @@ class ModelshipAPI:
         if request.store is False and terminal_response is not None:
             response_id = terminal_response.get("id")
             if response_id:
-                conn_cache[response_id] = [
-                    *responses_utils.as_input_items(request.input),
-                    *(terminal_response.get("output") or []),
-                ]
+                conn_cache[response_id] = (
+                    [*responses_utils.as_input_items(request.input), *(terminal_response.get("output") or [])],
+                    {
+                        label: listing
+                        for label, listing in {**mcp_listings, **mcp_listings_in(terminal_response)}.items()
+                        if listing is not None
+                    },
+                )
                 while len(conn_cache) > _WS_CONN_CACHE_MAX:
                     conn_cache.pop(next(iter(conn_cache)))
 
@@ -989,7 +1004,7 @@ class ModelshipAPI:
         try:
             items = responses_utils.as_input_items(request.input) if request.input is not None else []
             if request.previous_response_id is not None:
-                history, _ = await responses_utils.resolve_previous(
+                history, _, _ = await responses_utils.resolve_previous(
                     self._state_store, identity, request.previous_response_id
                 )
                 items = [*history, *items]

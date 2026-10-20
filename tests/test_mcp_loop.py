@@ -2,7 +2,7 @@
 
 Inner loader turns are scripted as plain async generators of event dicts (the same
 shape ResponsesStreamTranslator produces), fed through a fake Ray handle — no real
-Ray cluster, no real MCP network calls (list_mcp_tools/call_mcp_tool are patched).
+Ray cluster, no real MCP network calls.
 """
 
 from unittest.mock import patch
@@ -180,10 +180,10 @@ async def _run(handle, request, **kwargs) -> list:
 
 @pytest.fixture(autouse=True)
 def _mcp_tools():
-    async def fake_list(_spec):
+    async def fake_list(_self, _spec):
         return [McpListToolsTool(name="roll", input_schema={"type": "object"}, description="Roll dice.")]
 
-    with patch("modelship.openai.mcp.loop.list_mcp_tools", fake_list):
+    with patch("modelship.openai.mcp.loop.McpConnections.list_tools", fake_list):
         yield
 
 
@@ -219,7 +219,7 @@ class TestMcpCallExecutesAndContinues:
 
         handle = FakeHandle([turn1, turn2])
 
-        with patch("modelship.openai.mcp.loop.call_mcp_tool", return_value="9"):
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
             result = await _run(handle, _req())
 
         seqs = [e["sequence_number"] for e in result]
@@ -264,7 +264,7 @@ class TestMcpCallExecutesAndContinues:
 
         handle = FakeHandle([turn1, turn2])
 
-        with patch("modelship.openai.mcp.loop.call_mcp_tool", return_value="9"):
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
             result = await _run(handle, _req())
 
         terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
@@ -286,7 +286,7 @@ class TestMcpCallExecutesAndContinues:
         turn2 = [_created("i2"), _in_progress("i2"), *msg_events, _terminal("i2", [msg_item], seq=seq2)]
         handle = FakeHandle([turn1, turn2])
 
-        with patch("modelship.openai.mcp.loop.call_mcp_tool", return_value="9"):
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
             await _run(handle, _req(tool_choice="required"))
 
         first_inner_request = handle.remote_calls[0][0][0]
@@ -304,7 +304,7 @@ class TestMcpCallExecutesAndContinues:
         turn2 = [_created("i2"), _in_progress("i2"), *msg_events, _terminal("i2", [msg_item], seq=seq2)]
         handle = FakeHandle([turn1, turn2])
 
-        with patch("modelship.openai.mcp.loop.call_mcp_tool", side_effect=McpCallError("boom")):
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", side_effect=McpCallError("boom")):
             result = await _run(handle, _req())
 
         terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
@@ -325,7 +325,7 @@ class TestApprovalRequired:
         turn1 = [_created("i1"), _in_progress("i1"), *tc_events, _terminal("i1", [tc_item], seq=seq)]
         handle = FakeHandle([turn1])
 
-        with patch("modelship.openai.mcp.loop.call_mcp_tool") as mock_call:
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool") as mock_call:
             result = await _run(
                 handle, _req(tools=[{"type": "mcp", "server_label": "dice", "server_url": "http://fake/mcp"}])
             )
@@ -364,7 +364,7 @@ class TestApprovalRequired:
                 {"type": "mcp_approval_response", "approval_request_id": "mcpr_1", "approve": True},
             ],
         )
-        with patch("modelship.openai.mcp.loop.call_mcp_tool", return_value="9"):
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
             result = await _run(handle, request)
 
         terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
@@ -412,7 +412,7 @@ class TestApprovalRequired:
                 },
             ],
         )
-        with patch("modelship.openai.mcp.loop.call_mcp_tool") as mock_call:
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool") as mock_call:
             result = await _run(handle, request)
 
         mock_call.assert_not_called()
@@ -450,7 +450,7 @@ class TestApprovalRequired:
                 {"type": "mcp_approval_response", "approval_request_id": "mcpr_1", "approve": True},
             ],
         )
-        with patch("modelship.openai.mcp.loop.call_mcp_tool") as mock_call:
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool") as mock_call:
             result = await _run(handle, request)
 
         mock_call.assert_not_called()
@@ -491,15 +491,15 @@ class TestApprovalRequired:
             ],
         )
 
-        async def fake_list_two_tools(_spec):
+        async def fake_list_two_tools(_self, _spec):
             return [
                 McpListToolsTool(name="roll", input_schema={"type": "object"}, description="Roll dice."),
                 McpListToolsTool(name="peek_secrets", input_schema={"type": "object"}, description="Leak secrets."),
             ]
 
         with (
-            patch("modelship.openai.mcp.loop.list_mcp_tools", fake_list_two_tools),
-            patch("modelship.openai.mcp.loop.call_mcp_tool") as mock_call,
+            patch("modelship.openai.mcp.loop.McpConnections.list_tools", fake_list_two_tools),
+            patch("modelship.openai.mcp.loop.McpConnections.call_tool") as mock_call,
         ):
             result = await _run(handle, request)
 
@@ -544,7 +544,7 @@ class TestApprovalRequired:
             ],
         )
 
-        with patch("modelship.openai.mcp.loop.call_mcp_tool") as mock_call:
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool") as mock_call:
             result = await _run(handle, request)
 
         mock_call.assert_not_called()
@@ -594,7 +594,7 @@ class TestCaps:
             turns.append([_created(f"i{i}"), _in_progress(f"i{i}"), *tc_events, _terminal(f"i{i}", [tc_item], seq=seq)])
         handle = FakeHandle(turns)
 
-        with patch("modelship.openai.mcp.loop.call_mcp_tool", return_value="9"):
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
             result = await _run(handle, _req())
 
         terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
@@ -611,7 +611,7 @@ class TestCaps:
         turn1 = [_created("i1"), _in_progress("i1"), *tc_events, _terminal("i1", [tc_item], seq=seq)]
         handle = FakeHandle([turn1])
 
-        with patch("modelship.openai.mcp.loop.call_mcp_tool", return_value="9"):
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
             result = await _run(handle, _req(max_tool_calls=1))
 
         terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
@@ -674,7 +674,7 @@ class TestDiscoveryFailure:
     @pytest.mark.asyncio
     async def test_discovery_failure_yields_response_failed(self):
         handle = FakeHandle([[]])
-        with patch("modelship.openai.mcp.loop.list_mcp_tools", side_effect=McpCallError("unreachable")):
+        with patch("modelship.openai.mcp.loop.McpConnections.list_tools", side_effect=McpCallError("unreachable")):
             result = await _run(handle, _req())
 
         failed = [e for e in result if e["type"] == "response.failed"]
@@ -688,13 +688,23 @@ class TestDiscoveryFailure:
         # completed/incomplete, or the generator yields nothing and _await_first
         # surfaces a generic 500.
         handle = FakeHandle([[]])
-        with patch("modelship.openai.mcp.loop.list_mcp_tools", side_effect=McpCallError("unreachable")):
+        with patch("modelship.openai.mcp.loop.McpConnections.list_tools", side_effect=McpCallError("unreachable")):
             result = await _run(handle, _req(stream=False))
 
         assert len(result) == 1
         assert isinstance(result[0], ResponseObject)
         assert result[0].status == "failed"
         assert "unreachable" in result[0].error["message"]
+
+    @pytest.mark.asyncio
+    async def test_discovery_failure_closes_the_connections(self):
+        with (
+            patch("modelship.openai.mcp.loop.McpConnections.list_tools", side_effect=McpCallError("unreachable")),
+            patch("modelship.openai.mcp.loop.McpConnections.close") as close,
+        ):
+            await _run(FakeHandle([[]]), _req())
+
+        close.assert_called_once_with()
 
 
 class TestInnerFailurePassthrough:
