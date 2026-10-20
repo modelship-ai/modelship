@@ -30,6 +30,7 @@ jobs:
           AUTHOR: ${{ github.event.pull_request.user.login || github.event.issue.user.login }}
           AVATAR: ${{ github.event.pull_request.user.avatar_url || github.event.issue.user.avatar_url }}
           MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+          BODY: ${{ github.event.pull_request.body || github.event.issue.body }}
         run: |
           if [ "$EVENT" = issues ]; then
             label="Issue opened"; color=15105570
@@ -39,10 +40,17 @@ jobs:
             label="PR opened"; color=3447003
           fi
           footer="${MERGED_BY:+merged by $MERGED_BY}"
+          description=""
+          if [ "$ACTION" != closed ]; then
+            description=$(printf '%s' "$BODY" | perl -0pe 's/<!--.*?-->//gs; s/^\s+|\s+$//g')
+            if [ "${#description}" -gt 800 ]; then description="${description:0:800}…"; fi
+          fi
           jq -n \
             --arg title "$label: #$NUMBER $TITLE" --arg url "$URL" --argjson color "$color" \
             --arg author "$AUTHOR" --arg avatar "$AVATAR" --arg footer "$footer" \
+            --arg description "$description" \
             '{embeds: [{title: $title, url: $url, color: $color,
                         author: {name: $author, icon_url: $avatar}}
+                       + (if $description == "" then {} else {description: $description} end)
                        + (if $footer == "" then {} else {footer: {text: $footer}} end)]}' \
             | curl -fsS -H 'Content-Type: application/json' -d @- "$WEBHOOK_URL"
