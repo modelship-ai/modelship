@@ -49,6 +49,7 @@ from modelship.openai.protocol.responses.schemas import (
     ResponsesRequest,
     ResponseUsage,
 )
+from modelship.openai.utils import affinity
 from modelship.openai.utils.responses import ResponsesApiError, as_input_items
 
 # Loader turns per response; matches LocalAI's agent.max_iterations default.
@@ -642,7 +643,9 @@ async def _events(
             )
             inner_gen = cast(
                 "DeploymentResponseGenerator[Any]",
-                handle.respond.options(stream=True).remote(inner_request, headers, registry, req_id, identity),
+                handle.respond.options(stream=True, session_id=affinity.responses_key(inner_request, identity)).remote(
+                    inner_request, headers, registry, req_id, identity
+                ),
             )
             active_inner_gen = inner_gen
             async for event in stitcher.run_turn(inner_gen):
