@@ -244,6 +244,30 @@ class TestPreviousResponseIdResolution:
         assert "resp_2" in conn_cache
 
     @pytest.mark.asyncio
+    async def test_a_cached_continuation_routes_with_its_first_turns_key(self, api):
+        first = _wire(
+            api, "m", _events(_terminal("resp_1", output=[{"type": "message", "role": "assistant", "content": "hey"}]))
+        )
+        ws = _FakeWebSocket()
+        conn_cache: dict = {}
+        await api._run_ws_turn(
+            ws, "unscoped", {}, _frame(input="turn one", store=False), conn_cache, MagicMock(), "req-1"
+        )
+        second = _wire(api, "m", _events(_terminal("resp_2")))
+        await api._run_ws_turn(
+            ws,
+            "unscoped",
+            {},
+            _frame(input="turn two", previous_response_id="resp_1", store=False),
+            conn_cache,
+            MagicMock(),
+            "req-2",
+        )
+
+        key = first.respond.options.call_args.kwargs["session_id"]
+        assert key and second.respond.options.call_args.kwargs["session_id"] == key
+
+    @pytest.mark.asyncio
     async def test_reconnect_on_a_fresh_socket_misses_a_store_false_response(self, api):
         # Socket B is a different connection with its own, empty, conn_cache — a miss
         # even though resp_1 is real on socket A.

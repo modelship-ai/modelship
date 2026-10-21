@@ -13,6 +13,7 @@ from modelship.openai.mcp import loop as mcp_loop
 from modelship.openai.mcp.client import McpCallError
 from modelship.openai.protocol import ErrorResponse, create_error_response
 from modelship.openai.protocol.responses.schemas import McpListToolsTool, ResponseObject, ResponsesRequest
+from modelship.openai.utils import affinity
 
 
 def _created(inner_id: str):
@@ -144,12 +145,14 @@ class FakeHandle:
         self._calls = 0
         self.generators: list[FakeGen] = []
         self.remote_calls: list[tuple[tuple, dict]] = []
+        self.session_ids: list[str] = []
 
     @property
     def respond(self):
         return self
 
-    def options(self, stream=True):
+    def options(self, stream=True, session_id=""):
+        self.session_ids.append(session_id)
         return self
 
     def remote(self, *args, **kwargs):
@@ -241,6 +244,24 @@ class TestMcpCallExecutesAndContinues:
             "response.mcp_call.in_progress",
             "response.mcp_call.completed",
         ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payload", [{}, {"input": [], "instructions": "Roll when asked."}])
+    async def test_every_round_routes_with_the_requests_key(self, payload):
+        tc_events, tc_item, seq = _tool_call_events(
+            call_id="call_1", fc_id="fc_1", name="roll", arguments='{"n":2}', oi=0, start_seq=2
+        )
+        turn1 = [_created("i1"), _in_progress("i1"), *tc_events, _terminal("i1", [tc_item], seq=seq)]
+        msg_events, msg_item, seq2 = _message_events(oi=0, text="You rolled a 9.", start_seq=2)
+        turn2 = [_created("i2"), _in_progress("i2"), *msg_events, _terminal("i2", [msg_item], seq=seq2)]
+        handle = FakeHandle([turn1, turn2])
+        request = _req(**payload)
+        key = affinity.responses_key(request, "unscoped")
+
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
+            await _run(handle, request)
+
+        assert handle.session_ids == [key, key]
 
     @pytest.mark.asyncio
     async def test_tool_call_sandwiched_between_messages_keeps_output_order(self):
