@@ -166,7 +166,7 @@ scrape_configs:
 
 Otherwise pin `--metrics-port` on every node and list the nodes as static targets. The Helm chart pins it, and its PodMonitor scrapes each pod's `metrics` port.
 
-The alert rules expect the scrape job to be named `modelship`. The examples above use it, and the chart's PodMonitor takes the job name from the chart name (`nameOverride` included).
+The alert rules expect the scrape job to be named `modelship`. The examples above use it, and the chart's PodMonitor sets it on every target whatever the release or `nameOverride`.
 
 ## Connecting to Grafana
 
