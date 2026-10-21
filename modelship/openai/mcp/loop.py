@@ -624,6 +624,7 @@ async def _events(
     final_status = "completed"
     incomplete_reason: str | None = None
     active_inner_gen: DeploymentResponseGenerator[Any] | None = None
+    session_id = affinity.responses_key(request, identity)
 
     try:
         for turn_index in range(DEFAULT_TURN_CAP):
@@ -643,7 +644,7 @@ async def _events(
             )
             inner_gen = cast(
                 "DeploymentResponseGenerator[Any]",
-                handle.respond.options(stream=True, session_id=affinity.responses_key(inner_request, identity)).remote(
+                handle.respond.options(stream=True, session_id=session_id).remote(
                     inner_request, headers, registry, req_id, identity
                 ),
             )

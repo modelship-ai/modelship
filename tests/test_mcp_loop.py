@@ -246,7 +246,8 @@ class TestMcpCallExecutesAndContinues:
         ]
 
     @pytest.mark.asyncio
-    async def test_every_round_routes_with_the_requests_key(self):
+    @pytest.mark.parametrize("payload", [{}, {"input": [], "instructions": "Roll when asked."}])
+    async def test_every_round_routes_with_the_requests_key(self, payload):
         tc_events, tc_item, seq = _tool_call_events(
             call_id="call_1", fc_id="fc_1", name="roll", arguments='{"n":2}', oi=0, start_seq=2
         )
@@ -254,7 +255,7 @@ class TestMcpCallExecutesAndContinues:
         msg_events, msg_item, seq2 = _message_events(oi=0, text="You rolled a 9.", start_seq=2)
         turn2 = [_created("i2"), _in_progress("i2"), *msg_events, _terminal("i2", [msg_item], seq=seq2)]
         handle = FakeHandle([turn1, turn2])
-        request = _req()
+        request = _req(**payload)
         key = affinity.responses_key(request, "unscoped")
 
         with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
