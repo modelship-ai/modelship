@@ -12,6 +12,7 @@ metadata:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
+  jobLabel: app.kubernetes.io/name
   # Every Ray pod (head + workers) carries this label and exports on the metrics
   # port, so a single PodMonitor scrapes the whole cluster.
   selector:
