@@ -48,7 +48,6 @@ JSON format example:
 |---|---|
 | `modelship.startup` | Application initialization and shutdown |
 | `modelship.api` | API gateway endpoints |
-| `modelship.api.auth` | Authentication middleware |
 | `modelship.infer` | Base inference layer |
 | `modelship.infer.deployment` | Ray Serve model deployment actor |
 | `modelship.infer.vllm` | vLLM inference backend |
@@ -185,7 +184,7 @@ The dashboard has 9 rows:
 
 | Row | What it shows | Metric sources |
 |---|---|---|
-| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects, auth failures | `ray_modelship_*` |
+| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*` |
 | **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed) | `ray_modelship_*` |
 | **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `ray_vllm_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory (cluster aggregate) | `ray_node_*` |
@@ -287,7 +286,7 @@ Use `/health` for Kubernetes liveness probes and `/readyz` for readiness probes 
 
 ## Modelship Metrics Reference
 
-Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the gateway coordinator, state store, and deploy driver, which are not Serve replicas).
+Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the gateway coordinator, state store, and deploy worker, which are not Serve replicas).
 
 ### The `gateway` dimension
 
