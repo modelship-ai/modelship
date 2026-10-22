@@ -317,6 +317,7 @@ class TestWaitForChange:
 class TestWaitSwitched:
     async def _two_replicas(self, cluster):
         cluster.apps["gw"] = _app(running=2)
+        cluster.running["gw"] = {"r1", "r2"}
         seq = cluster.configure(NEW)
         coord = _coordinator("gw")
         await _pass(coord)
@@ -344,6 +345,16 @@ class TestWaitSwitched:
         await asyncio.sleep(0.02)
         await coord.wait_for_change("gw", 0, timeout=0.01, replica_id="r2", routing=seq)
         assert await waiting
+
+    @pytest.mark.asyncio
+    async def test_a_stopping_replica_on_the_seq_does_not_stand_in_for_a_running_one(self, cluster):
+        coord, seq = await self._two_replicas(cluster)
+        cluster.apps["gw"] = _app(running=1)
+        cluster.running["gw"] = {"r1"}
+        await _pass(coord)
+        await coord.wait_for_change("gw", 0, timeout=0.01, replica_id="r1", routing=seq - 1)
+        await coord.wait_for_change("gw", 0, timeout=0.01, replica_id="r2", routing=seq)
+        assert not await coord.wait_switched("gw", seq, 0.05)
 
     @pytest.mark.asyncio
     async def test_a_stale_report_does_not_count(self, cluster, monkeypatch):

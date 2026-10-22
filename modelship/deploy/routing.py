@@ -30,15 +30,6 @@ def can_serve(app: ApplicationStatusOverview) -> bool:
     )
 
 
-def running_replicas(app: ApplicationStatusOverview) -> int:
-    return sum(
-        count
-        for deployment in app.deployments.values()
-        for state, count in deployment.replica_states.items()
-        if state == _RUNNING
-    )
-
-
 def running_replica_ids(app: ApplicationDetails) -> set[str]:
     return {
         replica.replica_id

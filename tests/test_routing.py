@@ -11,7 +11,7 @@ from ray.serve.schema import (
     ServeInstanceDetails,
 )
 
-from modelship.deploy.routing import can_serve, compute_routing, running_replica_ids, running_replicas
+from modelship.deploy.routing import can_serve, compute_routing, running_replica_ids
 from tests.conftest import serve_details
 
 OLD, NEW = "gw.m-aaaaaaaaaa", "gw.m-bbbbbbbbbb"
@@ -92,14 +92,6 @@ class TestExpected:
 
     def test_a_model_whose_target_cannot_serve_is_expected(self):
         assert _route({NEW: _app(ApplicationStatus.DEPLOYING, running=0)}, {"m": NEW}).expected == ["m"]
-
-
-class TestRunningReplicas:
-    def test_counts_running_replicas_across_deployments(self):
-        assert running_replicas(_app(running=2, starting=1)) == 2
-
-    def test_none_running(self):
-        assert running_replicas(_app(running=0, starting=1)) == 0
 
 
 class TestRunningReplicaIds:
