@@ -117,7 +117,7 @@ def _lease_key(node_id: str) -> str:
     return f"{_LEASE_NAMESPACE}/{node_id}"
 
 
-def replica_states() -> dict[tuple[str, str, str], str]:
+def _replica_states() -> dict[tuple[str, str, str], str]:
     """(app, deployment, replica id) -> state, for every replica Serve lists."""
     from ray.serve.context import _get_global_client
 
@@ -220,7 +220,7 @@ class DeployCoordinator:
         if not self._leases:
             return
         try:
-            states = await asyncio.to_thread(replica_states)
+            states = await asyncio.to_thread(_replica_states)
         except Exception as e:
             logger.warning("Could not read Serve's replicas to check the deploy leases: %s", e)
             return

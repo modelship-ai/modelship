@@ -15,10 +15,11 @@ import time
 from typing import Any
 
 import ray
-from ray import serve
+from ray.serve.context import _get_global_client
+from ray.serve.schema import ApplicationStatusOverview, ServeInstanceDetails
 
 from modelship.deploy.routing import Routing, compute_routing, running_replica_ids, running_replicas
-from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator, replica_states
+from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import GATEWAY_REPLICAS_BEHIND
 from modelship.utils import head_node_options
@@ -38,6 +39,15 @@ _REPORT_TTL_S = 2 * _WATCH_TIMEOUT_S
 _FIRST_PASS_TIMEOUT_S = 5.0
 _SWITCH_POLL_S = 0.1
 _RPC_TIMEOUT_S = 10.0
+
+
+def _read_serve() -> tuple[dict[str, ApplicationStatusOverview], dict[str, set[str]]]:
+    client = _get_global_client(raise_if_no_controller_running=False)
+    if client is None:
+        return {}, {}
+    details = ServeInstanceDetails(**client.get_serve_details())
+    running = {name: running_replica_ids(app) for name, app in details.applications.items()}
+    return dict(details._get_status().applications), running
 
 
 @ray.remote(num_cpus=0)
@@ -82,8 +92,7 @@ class GatewayCoordinator:
 
     async def _compute(self) -> None:
         """One pass: the table of every gateway whose routing version is known."""
-        apps = dict((await asyncio.to_thread(serve.status)).applications)
-        states = await asyncio.to_thread(replica_states)
+        apps, running = await asyncio.to_thread(_read_serve)
         gateways = set(self._watched)
         for name in apps:
             if (parsed := parse_deployment_name(name)) is not None:
@@ -100,7 +109,7 @@ class GatewayCoordinator:
             current = self._generation[gateway]
             reports = self._fresh_reports(gateway)
             holding = {replica for replica, (_, generation) in reports.items() if generation == current}
-            behind = running_replica_ids(states, gateway) - holding
+            behind = running.get(gateway, set()) - holding
             GATEWAY_REPLICAS_BEHIND.set(len(behind), tags={"gateway": gateway})
         self._computed.set()
 

@@ -8,9 +8,11 @@ from ray.serve.schema import (
     DeploymentStatus,
     DeploymentStatusOverview,
     DeploymentStatusTrigger,
+    ServeInstanceDetails,
 )
 
 from modelship.deploy.routing import can_serve, compute_routing, running_replica_ids, running_replicas
+from tests.conftest import serve_details
 
 OLD, NEW = "gw.m-aaaaaaaaaa", "gw.m-bbbbbbbbbb"
 OTHER = "gw.x-dddddddddd"
@@ -101,11 +103,6 @@ class TestRunningReplicas:
 
 
 class TestRunningReplicaIds:
-    def test_only_the_apps_running_replicas(self):
-        states = {
-            ("gw", "d", "r1"): "RUNNING",
-            ("gw", "d", "r2"): "STOPPING",
-            ("gw", "e", "r3"): "RUNNING",
-            ("other", "d", "r4"): "RUNNING",
-        }
-        assert running_replica_ids(states, "gw") == {"r1", "r3"}
+    def test_only_the_running_replicas(self):
+        details = ServeInstanceDetails(**serve_details({"gw": {"r1": "RUNNING", "r2": "STOPPING", "r3": "STARTING"}}))
+        assert running_replica_ids(details.applications["gw"]) == {"r1"}

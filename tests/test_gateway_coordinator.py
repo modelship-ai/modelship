@@ -4,21 +4,25 @@ undecorated class in-process, with Serve's status and the deploy coordinator fak
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
+from ray.serve._private.client import ServeControllerClient
+from ray.serve.context import _get_global_client
 from ray.serve.schema import (
     ApplicationStatus,
     ApplicationStatusOverview,
     DeploymentStatus,
     DeploymentStatusOverview,
     DeploymentStatusTrigger,
+    ServeInstanceDetails,
 )
 
 from modelship.deploy.ledger import Version
 from modelship.infer import gateway_coordinator
 from modelship.infer.gateway_coordinator import GatewayCoordinator
 from modelship.infer.infer_config import ModelshipModelConfig
+from tests.conftest import serve_details
 
 # The plain class behind @ray.remote — its async methods are ordinary coroutines,
 # so it can be exercised in-process without a Ray cluster.
@@ -61,11 +65,10 @@ class _Cluster:
     def __init__(self, monkeypatch):
         self.apps = {"gw": _app()}
         self.versions: dict[str, dict] = {}
-        self.replicas: dict[tuple[str, str, str], str] = {}
+        self.running: dict[str, set[str]] = {}
         self.unreachable = False
         self._seq = 0
-        monkeypatch.setattr(gateway_coordinator.serve, "status", lambda: SimpleNamespace(applications=dict(self.apps)))
-        monkeypatch.setattr(gateway_coordinator, "replica_states", lambda: dict(self.replicas))
+        monkeypatch.setattr(gateway_coordinator, "_read_serve", lambda: (dict(self.apps), dict(self.running)))
         self.exists = True
         monkeypatch.setattr(gateway_coordinator, "find_coordinator", lambda: self if self.exists else None)
 
@@ -166,7 +169,7 @@ class TestTables:
         def unavailable():
             raise RuntimeError("controller restarting")
 
-        monkeypatch.setattr(gateway_coordinator.serve, "status", unavailable)
+        monkeypatch.setattr(gateway_coordinator, "_read_serve", unavailable)
         with pytest.raises(RuntimeError):
             await coord._compute()
         assert (await coord.get_routing("gw"))["models"] == {_app_name(NEW): "a"}
@@ -379,7 +382,7 @@ class TestReplicasBehind:
 
     async def _two_replicas(self, cluster):
         cluster.apps["gw"] = _app(running=2)
-        cluster.replicas = {("gw", "d", "r1"): "RUNNING", ("gw", "d", "r2"): "RUNNING"}
+        cluster.running["gw"] = {"r1", "r2"}
         seq = cluster.configure(NEW)
         coord = _coordinator("gw")
         await _pass(coord)
@@ -438,7 +441,7 @@ class TestReplicasBehind:
         for replica in ("r1", "r2"):
             await coord.wait_for_change("gw", generation, timeout=0.01, replica_id=replica, routing=seq)
         cluster.apps["gw"] = _app(running=1)
-        del cluster.replicas[("gw", "d", "r2")]
+        cluster.running["gw"] = {"r1"}
         await _pass(coord)
         behind.set.assert_called_with(0, tags={"gateway": "gw"})
 
@@ -448,7 +451,7 @@ class TestReplicasBehind:
     ):
         coord, seq, generation = await self._two_replicas(cluster)
         cluster.apps["gw"] = _app(running=1)
-        cluster.replicas[("gw", "d", "r2")] = "STOPPING"
+        cluster.running["gw"] = {"r1"}
         await coord.wait_for_change("gw", generation - 1, timeout=0.01, replica_id="r1", routing=seq)
         await coord.wait_for_change("gw", generation, timeout=0.01, replica_id="r2", routing=seq)
         await _pass(coord)
@@ -461,6 +464,38 @@ class TestReplicasBehind:
         del cluster.apps["gw"]
         await _pass(coord)
         behind.set.assert_called_with(0, tags={"gateway": "gw"})
+
+
+class TestReadServe:
+    @pytest.fixture
+    def client(self, monkeypatch):
+        client = MagicMock()
+        monkeypatch.setattr(
+            gateway_coordinator, "_get_global_client", create_autospec(_get_global_client, return_value=client)
+        )
+        return client
+
+    def test_each_apps_status_and_running_replicas_come_from_one_call(self, client):
+        client.get_serve_details.return_value = serve_details({"gw": {"r1": "RUNNING", "r2": "STOPPING"}})
+        apps, running = gateway_coordinator._read_serve()
+        assert apps["gw"].deployments["d"].replica_states == {"RUNNING": 1, "STOPPING": 1}
+        assert running == {"gw": {"r1"}}
+        client.get_serve_details.assert_called_once_with()
+
+    def test_nothing_before_serve_has_started(self, monkeypatch):
+        monkeypatch.setattr(gateway_coordinator, "_get_global_client", lambda **_: None)
+        assert gateway_coordinator._read_serve() == ({}, {})
+
+    @pytest.mark.asyncio
+    async def test_a_pass_reads_serve_once(self, monkeypatch):
+        reads = []
+        monkeypatch.setattr(gateway_coordinator, "_read_serve", lambda: reads.append(1) or ({}, {}))
+        await _pass(_coordinator("gw"))
+        assert reads == [1]
+
+    def test_serve_still_has_the_calls_it_reads(self):
+        assert hasattr(ServeControllerClient, "get_serve_details")
+        assert callable(ServeInstanceDetails._get_status)
 
 
 def test_get_or_create_sets_max_restarts(monkeypatch):

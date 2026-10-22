@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview
+from ray.serve.schema import ApplicationDetails, ApplicationStatus, ApplicationStatusOverview
 
 # Serve reports replica states as plain strings, though typed as its ReplicaState enum.
 _RUNNING = "RUNNING"
@@ -39,8 +39,13 @@ def running_replicas(app: ApplicationStatusOverview) -> int:
     )
 
 
-def running_replica_ids(states: Mapping[tuple[str, str, str], str], app: str) -> set[str]:
-    return {replica for (name, _, replica), state in states.items() if name == app and state == _RUNNING}
+def running_replica_ids(app: ApplicationDetails) -> set[str]:
+    return {
+        replica.replica_id
+        for deployment in app.deployments.values()
+        for replica in deployment.replicas
+        if replica.state == _RUNNING
+    }
 
 
 def compute_routing(
