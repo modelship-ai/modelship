@@ -2,7 +2,7 @@
 
 import asyncio
 from contextlib import ExitStack
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -521,8 +521,8 @@ class TestHandleResponse:
 
     @pytest.mark.asyncio
     async def test_streaming_duration_observed_after_stream_drains(self, api):
-        """Records REQUEST_DURATION_SECONDS and resets REQUEST_IN_PROGRESS only after the
-        stream fully drains, not when _handle_response returns the StreamingResponse."""
+        """Records REQUEST_DURATION_SECONDS only after the stream fully drains, not when
+        _handle_response returns the StreamingResponse."""
         import asyncio
 
         from fastapi.responses import StreamingResponse
@@ -535,29 +535,22 @@ class TestHandleResponse:
                 yield f"data: chunk{i}\n\n"
 
         watcher = MagicMock()
-        dur, in_progress = MagicMock(), MagicMock()
-        with _patch_api_metrics(api, REQUEST_DURATION_SECONDS=dur, REQUEST_IN_PROGRESS=in_progress):
+        dur = MagicMock()
+        with _patch_api_metrics(api, REQUEST_DURATION_SECONDS=dur):
             result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
             assert isinstance(result, StreamingResponse)
 
             # Returning the StreamingResponse must not have timed the request yet.
             dur.observe.assert_not_called()
-            assert (
-                call(0, tags={"model": "test-model", "endpoint": "test-endpoint"}) not in in_progress.set.call_args_list
-            )
 
             # Drain the stream the way Starlette would.
             chunks = [chunk async for chunk in result.body_iterator]
             assert len(chunks) == 3
 
-        # Now duration is observed exactly once, with at least the summed delay,
-        # and in-progress has been reset to 0 exactly once.
+        # Now duration is observed exactly once, with at least the summed delay.
         dur.observe.assert_called_once()
         observed = dur.observe.call_args.args[0]
         assert observed >= delay * 3
-        reset = call(0, tags={"model": "test-model", "endpoint": "test-endpoint"})
-        assert in_progress.set.call_args_list.count(reset) == 1
-        assert in_progress.set.call_args == reset  # the reset is the final set
 
     @pytest.mark.asyncio
     async def test_non_streaming_duration_observed_on_return(self, api):
@@ -567,14 +560,11 @@ class TestHandleResponse:
             yield JSONResponse(content={"data": "test"})
 
         watcher = MagicMock()
-        dur, in_progress = MagicMock(), MagicMock()
-        with _patch_api_metrics(api, REQUEST_DURATION_SECONDS=dur, REQUEST_IN_PROGRESS=in_progress):
+        dur = MagicMock()
+        with _patch_api_metrics(api, REQUEST_DURATION_SECONDS=dur):
             result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
             assert isinstance(result, JSONResponse)
             dur.observe.assert_called_once()
-            reset = call(0, tags={"model": "test-model", "endpoint": "test-endpoint"})
-            assert in_progress.set.call_args_list.count(reset) == 1
-            assert in_progress.set.call_args == reset
 
     @pytest.mark.asyncio
     async def test_cancellation_during_first_chunk_stops_watcher(self, api):

@@ -97,8 +97,8 @@
       },
       "targets": [
         {
-          "expr": "ray_modelship_request_in_progress{gateway=~\"$gateway\", model=~\"$model\"}",
-          "legendFormat": "{{ model }}"
+          "expr": "sum(ray_serve_replica_processing_queries{application=~\"$gateway\", application!~\".*[.].*\"}) by (application)",
+          "legendFormat": "{{ application }}"
         }
       ]
     },

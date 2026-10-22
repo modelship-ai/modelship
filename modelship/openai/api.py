@@ -28,7 +28,6 @@ from modelship.metrics import (
     MODELS_LOADED,
     REQUEST_DURATION_SECONDS,
     REQUEST_ERRORS_TOTAL,
-    REQUEST_IN_PROGRESS,
     REQUEST_TOTAL,
     STREAM_CHUNKS_TOTAL,
     stamp_gateway,
@@ -451,7 +450,6 @@ class ModelshipAPI:
     ):
         start = time.monotonic()
         streaming = False
-        REQUEST_IN_PROGRESS.set(1, tags={"model": model, "endpoint": endpoint})
         try:
             first = await self._await_first(response_gen, model, endpoint)
             if isinstance(first, JSONResponse):
@@ -516,7 +514,6 @@ class ModelshipAPI:
                     REQUEST_DURATION_SECONDS.observe(
                         time.monotonic() - start, tags={"model": model, "endpoint": endpoint}
                     )
-                    REQUEST_IN_PROGRESS.set(0, tags={"model": model, "endpoint": endpoint})
                     watcher.stop()
 
             streaming = True
@@ -533,7 +530,6 @@ class ModelshipAPI:
             if not streaming:
                 duration = time.monotonic() - start
                 REQUEST_DURATION_SECONDS.observe(duration, tags={"model": model, "endpoint": endpoint})
-                REQUEST_IN_PROGRESS.set(0, tags={"model": model, "endpoint": endpoint})
                 watcher.stop()
 
     async def check_health(self) -> None:
@@ -844,7 +840,6 @@ class ModelshipAPI:
             return
 
         start = time.monotonic()
-        REQUEST_IN_PROGRESS.set(1, tags={"model": model, "endpoint": endpoint})
         failed = False
         terminal_response: dict[str, Any] | None = None
         try:
@@ -904,7 +899,6 @@ class ModelshipAPI:
             failed = True
         finally:
             REQUEST_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": model, "endpoint": endpoint})
-            REQUEST_IN_PROGRESS.set(0, tags={"model": model, "endpoint": endpoint})
 
         if failed:
             REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "inference_error"})
@@ -998,7 +992,6 @@ class ModelshipAPI:
         headers = dict(raw_request.headers)
 
         start = time.monotonic()
-        REQUEST_IN_PROGRESS.set(1, tags={"model": model, "endpoint": endpoint})
         try:
             items = responses_utils.as_input_items(request.input) if request.input is not None else []
             if request.previous_response_id is not None:
@@ -1059,7 +1052,6 @@ class ModelshipAPI:
             return JSONResponse(content=resource.model_dump(mode="json"))
         finally:
             REQUEST_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": model, "endpoint": endpoint})
-            REQUEST_IN_PROGRESS.set(0, tags={"model": model, "endpoint": endpoint})
             watcher.stop()
 
     @app.post("/v1/embeddings")

@@ -79,7 +79,6 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "request_total",
         "request_duration_seconds",
         "request_errors_total",
-        "request_in_progress",
         "client_disconnects_total",
         "stream_chunks_total",
         "gateway_reconciles_total",
@@ -144,7 +143,6 @@ def _build_metrics():
             "request_total": _NoOpCounter(),
             "request_duration_seconds": _NoOpHistogram(),
             "request_errors_total": _NoOpCounter(),
-            "request_in_progress": _NoOpGauge(),
             "client_disconnects_total": _NoOpCounter(),
             "stream_chunks_total": _NoOpCounter(),
             # Gateway HA routing (watch loop)
@@ -185,11 +183,6 @@ def _build_metrics():
             "modelship_request_errors_total",
             description="Total inference errors by model, endpoint, and error type.",
             tag_keys=("model", "endpoint", "error_type", "gateway"),  # type: ignore[arg-type]
-        ),
-        "request_in_progress": Gauge(
-            "modelship_request_in_progress",
-            description="Number of requests currently being processed per model.",
-            tag_keys=("model", "endpoint", "gateway"),  # type: ignore[arg-type]
         ),
         "client_disconnects_total": Counter(
             "modelship_client_disconnects_total",
@@ -334,7 +327,6 @@ _util_metrics = _build_util_metrics()
 REQUEST_TOTAL = _metrics["request_total"]
 REQUEST_DURATION_SECONDS = _metrics["request_duration_seconds"]
 REQUEST_ERRORS_TOTAL = _metrics["request_errors_total"]
-REQUEST_IN_PROGRESS = _metrics["request_in_progress"]
 CLIENT_DISCONNECTS_TOTAL = _metrics["client_disconnects_total"]
 STREAM_CHUNKS_TOTAL = _metrics["stream_chunks_total"]
 

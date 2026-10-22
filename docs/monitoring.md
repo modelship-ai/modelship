@@ -301,7 +301,6 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 | `ray_modelship_request_total` | Counter | `model`, `endpoint`, `status`, `gateway` | Total requests by model and API method |
 | `ray_modelship_request_duration_seconds` | Histogram | `model`, `endpoint`, `gateway` | End-to-end request latency |
 | `ray_modelship_request_errors_total` | Counter | `model`, `endpoint`, `error_type`, `gateway` | Errors: `validation_error`, `inference_error`, `stream_error`, `unhandled` |
-| `ray_modelship_request_in_progress` | Gauge | `model`, `endpoint`, `gateway` | Currently processing requests |
 | `ray_modelship_client_disconnects_total` | Counter | `model`, `endpoint`, `gateway` | Client disconnected before response completed |
 | `ray_modelship_stream_chunks_total` | Counter | `model`, `gateway` | Streaming chunks emitted |
 
