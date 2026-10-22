@@ -191,7 +191,7 @@ The dashboard has 9 rows:
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
 | **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*` |
 | **Alerts** | Error rate %, KV cache usage, queue depth, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_node_*` |
-| **Cluster / HA** | Model app status, gateway reconciles, Serve requests per model, gateway coordinator vs. gateway replica routing generation, gateway watch errors, state-store latency/errors, deploy duration & model changes | `ray_modelship_*`, `ray_serve_*` |
+| **Cluster / HA** | Model app status, gateway reconciles, Serve requests per model, gateway replicas behind the routing generation, gateway watch errors, state-store latency/errors, deploy duration & model changes | `ray_modelship_*`, `ray_serve_*` |
 | **Per-Node Resources** | GPU utilization/memory, CPU, system memory broken out by node (filtered by the Node dropdown) | `ray_node_*` |
 
 > **Deploying via the Helm chart:** set `grafanaDashboard.enabled=true` to ship this dashboard as a ConfigMap the Grafana sidecar auto-imports (and `prometheusRule.enabled=true` for the alert rules below) — no manual import needed. See the chart README.
@@ -238,7 +238,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
 | `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
 | `ModelshipDeployStuck` | `ray_serve_application_status` == 5 (DEPLOYING) | 30m | A Serve application is waiting for capacity or a slow model load |
-| `ModelshipGatewayRoutingDivergence` | Replica generation < coordinator for 10m | 10m | A gateway replica is routing from a stale table |
+| `ModelshipGatewayRoutingDivergence` | `gateway_replicas_behind` > 0 | 10m | A gateway replica is routing from a stale table |
 | `ModelshipRayWorkerDown` | Ray worker pod not running or crash-looping | 5m | Cluster capacity degraded (needs kube-state-metrics); a worker hosting no replica is NotReady by design |
 
 ### Tuning Thresholds
@@ -331,14 +331,13 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 
 ### HA Control Plane
 
-These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first six carry a `gateway` tag; the rest are cluster-scoped.
+These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first five carry a `gateway` tag; the rest are cluster-scoped.
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
 | `ray_modelship_gateway_reconciles_total` | Counter | `gateway` | Routing reconciles a gateway replica applied from the coordinator |
 | `ray_modelship_gateway_watch_errors_total` | Counter | `gateway` | Errors in a gateway replica's coordinator watch loop (retried) |
-| `ray_modelship_gateway_routing_generation` | Gauge | `gateway` | Routing generation a gateway replica has reconciled to |
-| `ray_modelship_coordinator_generation` | Gauge | `gateway` | Coordinator's current routing generation (compare to the replica gauge to spot lag) |
+| `ray_modelship_gateway_replicas_behind` | Gauge | `gateway` | Running gateway replicas not on the gateway coordinator's current routing generation |
 | `ray_modelship_deploy_duration_seconds` | Histogram | `gateway` | Wall-clock time for a deploy request to succeed |
 | `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a deploy request (`action`: `add`, `remove` and `rescale` on success, `fail` once per failed request) |
 | `ray_modelship_state_store_operations_total` | Counter | `backend`, `op`, `result` | State-store ops (`op`: `get`/`set`/`delete`; `result`: `ok`/`error`) |

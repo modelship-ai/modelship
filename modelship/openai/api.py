@@ -24,7 +24,6 @@ from modelship.infer.infer_config import RequestWatcher, get_disconnect_registry
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
     GATEWAY_RECONCILES_TOTAL,
-    GATEWAY_ROUTING_GENERATION,
     GATEWAY_WATCH_ERRORS_TOTAL,
     MODELS_LOADED,
     REQUEST_DURATION_SECONDS,
@@ -311,7 +310,6 @@ class ModelshipAPI:
         self._routing_seq = snapshot.get("routing")
         MODELS_LOADED.set(len(self.models))
         GATEWAY_RECONCILES_TOTAL.inc()
-        GATEWAY_ROUTING_GENERATION.set(new_gen)
 
     def _coord(self):
         if self._gateway_coord is None:

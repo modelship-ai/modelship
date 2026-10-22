@@ -4,6 +4,7 @@ undecorated class in-process, with Serve's status and the deploy coordinator fak
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from ray.serve.schema import (
@@ -302,10 +303,10 @@ class TestWaitForChange:
         assert await coord.wait_for_change("gw", 7, timeout=0.01) == 7
 
     @pytest.mark.asyncio
-    async def test_records_the_replicas_routing_seq(self, cluster):
+    async def test_records_the_replicas_routing_seq_and_generation(self, cluster):
         coord = _coordinator()
         await coord.wait_for_change("gw", 7, timeout=0.01, replica_id="r1", routing=3)
-        assert coord._reports["gw"]["r1"][0] == 3
+        assert coord._reports["gw"]["r1"][:2] == (3, 7)
 
 
 class TestWaitSwitched:
@@ -344,8 +345,8 @@ class TestWaitSwitched:
         coord, seq = await self._two_replicas(cluster)
         for replica in ("r1", "r2"):
             await coord.wait_for_change("gw", 0, timeout=0.01, replica_id=replica, routing=seq)
-        at = coord._reports["gw"]["r2"][1]
-        coord._reports["gw"]["r2"] = (seq, at - gateway_coordinator._REPORT_TTL_S - 1)
+        _, generation, at = coord._reports["gw"]["r2"]
+        coord._reports["gw"]["r2"] = (seq, generation, at - gateway_coordinator._REPORT_TTL_S - 1)
         assert not await coord.wait_switched("gw", seq, 0.05)
 
     @pytest.mark.asyncio
@@ -365,6 +366,85 @@ class TestWaitSwitched:
         coord = _coordinator("gw")
         await _pass(coord)
         assert await coord.wait_switched("gw", seq, 0.05)
+
+
+class TestReplicasBehind:
+    @pytest.fixture
+    def behind(self, monkeypatch):
+        gauge = MagicMock()
+        monkeypatch.setattr(gateway_coordinator, "GATEWAY_REPLICAS_BEHIND", gauge)
+        return gauge
+
+    async def _two_replicas(self, cluster):
+        cluster.apps["gw"] = _app(running=2)
+        seq = cluster.configure(NEW)
+        coord = _coordinator("gw")
+        await _pass(coord)
+        return coord, seq, (await coord.get_routing("gw"))["generation"]
+
+    @pytest.mark.asyncio
+    async def test_zero_when_every_running_replica_holds_the_current_generation(self, cluster, behind):
+        coord, seq, generation = await self._two_replicas(cluster)
+        for replica in ("r1", "r2"):
+            await coord.wait_for_change("gw", generation, timeout=0.01, replica_id=replica, routing=seq)
+        await _pass(coord)
+        behind.set.assert_called_with(0, tags={"gateway": "gw"})
+
+    @pytest.mark.asyncio
+    async def test_counts_a_replica_on_an_older_generation(self, cluster, behind):
+        coord, seq, generation = await self._two_replicas(cluster)
+        await coord.wait_for_change("gw", generation, timeout=0.01, replica_id="r1", routing=seq)
+        await coord.wait_for_change("gw", generation - 1, timeout=0.01, replica_id="r2", routing=seq)
+        await _pass(coord)
+        behind.set.assert_called_with(1, tags={"gateway": "gw"})
+
+    @pytest.mark.asyncio
+    async def test_counts_a_replica_that_has_not_reported(self, cluster, behind):
+        coord, seq, generation = await self._two_replicas(cluster)
+        await coord.wait_for_change("gw", generation, timeout=0.01, replica_id="r1", routing=seq)
+        await _pass(coord)
+        behind.set.assert_called_with(1, tags={"gateway": "gw"})
+
+    @pytest.mark.asyncio
+    async def test_counts_a_replica_whose_report_is_stale(self, cluster, behind):
+        coord, seq, generation = await self._two_replicas(cluster)
+        for replica in ("r1", "r2"):
+            await coord.wait_for_change("gw", generation, timeout=0.01, replica_id=replica, routing=seq)
+        _, held, at = coord._reports["gw"]["r2"]
+        coord._reports["gw"]["r2"] = (seq, held, at - gateway_coordinator._REPORT_TTL_S - 1)
+        await _pass(coord)
+        behind.set.assert_called_with(1, tags={"gateway": "gw"})
+
+    @pytest.mark.asyncio
+    async def test_a_new_generation_leaves_every_replica_behind_until_it_polls_again(self, cluster, behind):
+        coord, seq, generation = await self._two_replicas(cluster)
+        for replica in ("r1", "r2"):
+            await coord.wait_for_change("gw", generation, timeout=0.01, replica_id=replica, routing=seq)
+        newer = cluster.configure(OLD)
+        await _pass(coord)
+        behind.set.assert_called_with(2, tags={"gateway": "gw"})
+        current = (await coord.get_routing("gw"))["generation"]
+        for replica in ("r1", "r2"):
+            await coord.wait_for_change("gw", current, timeout=0.01, replica_id=replica, routing=newer)
+        await _pass(coord)
+        behind.set.assert_called_with(0, tags={"gateway": "gw"})
+
+    @pytest.mark.asyncio
+    async def test_is_never_negative(self, cluster, behind):
+        coord, seq, generation = await self._two_replicas(cluster)
+        for replica in ("r1", "r2"):
+            await coord.wait_for_change("gw", generation, timeout=0.01, replica_id=replica, routing=seq)
+        cluster.apps["gw"] = _app(running=1)
+        await _pass(coord)
+        behind.set.assert_called_with(0, tags={"gateway": "gw"})
+
+    @pytest.mark.asyncio
+    async def test_a_gateway_missing_from_serve_is_no_longer_set(self, cluster, behind):
+        coord, _, _ = await self._two_replicas(cluster)
+        behind.set.reset_mock()
+        del cluster.apps["gw"]
+        await _pass(coord)
+        behind.set.assert_not_called()
 
 
 def test_get_or_create_sets_max_restarts(monkeypatch):

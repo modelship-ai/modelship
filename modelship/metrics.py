@@ -84,7 +84,6 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "stream_chunks_total",
         "gateway_reconciles_total",
         "gateway_watch_errors_total",
-        "gateway_routing_generation",
         "models_loaded",
         "model_load_duration_seconds",
         "model_load_failures_total",
@@ -151,7 +150,6 @@ def _build_metrics():
             # Gateway HA routing (watch loop)
             "gateway_reconciles_total": _NoOpCounter(),
             "gateway_watch_errors_total": _NoOpCounter(),
-            "gateway_routing_generation": _NoOpGauge(),
             # Model deployment
             "model_load_duration_seconds": _NoOpHistogram(),
             "model_load_failures_total": _NoOpCounter(),
@@ -204,8 +202,6 @@ def _build_metrics():
             tag_keys=("model", "gateway"),  # type: ignore[arg-type]
         ),
         # -- Gateway HA routing (watch loop) --
-        # Emitted per gateway replica so divergence between replicas is visible:
-        # a replica stuck on a stale generation is routing from an old table.
         "gateway_reconciles_total": Counter(
             "modelship_gateway_reconciles_total",
             description="Routing reconciles applied by a gateway replica from the coordinator.",
@@ -214,11 +210,6 @@ def _build_metrics():
         "gateway_watch_errors_total": Counter(
             "modelship_gateway_watch_errors_total",
             description="Errors in a gateway replica's coordinator watch loop (retried).",
-            tag_keys=("gateway",),
-        ),
-        "gateway_routing_generation": Gauge(
-            "modelship_gateway_routing_generation",
-            description="Coordinator routing generation this gateway replica has reconciled to.",
             tag_keys=("gateway",),
         ),
         # -- Model deployment layer --
@@ -291,7 +282,7 @@ def _build_util_metrics():
     if not _ENABLED:
         return {
             # Gateway coordinator
-            "coordinator_generation": _NoOpGauge(),
+            "gateway_replicas_behind": _NoOpGauge(),
             # State store
             "state_store_operations_total": _NoOpCounter(),
             "state_store_operation_duration_seconds": _NoOpHistogram(),
@@ -304,9 +295,9 @@ def _build_util_metrics():
 
     return {
         # -- Gateway coordinator --
-        "coordinator_generation": Gauge(
-            "modelship_coordinator_generation",
-            description="Coordinator's current routing generation per gateway.",
+        "gateway_replicas_behind": Gauge(
+            "modelship_gateway_replicas_behind",
+            description="Running gateway replicas not on the gateway coordinator's current routing generation.",
             tag_keys=("gateway",),
         ),
         # -- State store (durable HA state: deploy versions, conversations) --
@@ -350,7 +341,6 @@ STREAM_CHUNKS_TOTAL = _metrics["stream_chunks_total"]
 # -- Gateway HA routing (watch loop) --
 GATEWAY_RECONCILES_TOTAL = _metrics["gateway_reconciles_total"]
 GATEWAY_WATCH_ERRORS_TOTAL = _metrics["gateway_watch_errors_total"]
-GATEWAY_ROUTING_GENERATION = _metrics["gateway_routing_generation"]
 
 # -- Model deployment --
 MODEL_LOAD_DURATION_SECONDS = _metrics["model_load_duration_seconds"]
@@ -369,7 +359,7 @@ RESOURCE_CLEANUP_ERRORS_TOTAL = _metrics["resource_cleanup_errors_total"]
 
 # -- HA control plane (ray.util.metrics — non-Serve emitters) --
 # Gateway coordinator
-COORDINATOR_GENERATION = _util_metrics["coordinator_generation"]
+GATEWAY_REPLICAS_BEHIND = _util_metrics["gateway_replicas_behind"]
 # State store
 STATE_STORE_OPERATIONS_TOTAL = _util_metrics["state_store_operations_total"]
 STATE_STORE_OPERATION_DURATION_SECONDS = _util_metrics["state_store_operation_duration_seconds"]
