@@ -94,7 +94,7 @@ class TestLeaseChecks:
     @pytest.fixture
     def replicas(self, monkeypatch) -> dict:
         states: dict = {}
-        monkeypatch.setattr(deploy_coordinator, "_replica_states", lambda: states)
+        monkeypatch.setattr(deploy_coordinator, "replica_states", lambda: states)
         return states
 
     async def test_a_running_replica_frees_its_lease(self, replicas):
@@ -139,14 +139,14 @@ class TestLeaseChecks:
         def unreadable():
             raise RuntimeError("controller restarting")
 
-        monkeypatch.setattr(deploy_coordinator, "_replica_states", unreadable)
+        monkeypatch.setattr(deploy_coordinator, "replica_states", unreadable)
         await coord._check_leases()
         await coord._check_leases()
         assert await coord.acquire("node", _holder("r2")) == "held by a/r1"
 
     async def test_serve_is_not_read_while_no_lease_is_held(self, monkeypatch):
         reads = []
-        monkeypatch.setattr(deploy_coordinator, "_replica_states", lambda: reads.append(1) or {})
+        monkeypatch.setattr(deploy_coordinator, "replica_states", lambda: reads.append(1) or {})
         await (await _loaded())._check_leases()
         assert reads == []
 
@@ -187,7 +187,7 @@ class TestReplicaStates:
         monkeypatch.setattr(
             "ray.serve.context._get_global_client", create_autospec(_get_global_client, return_value=client)
         )
-        assert deploy_coordinator._replica_states() == {
+        assert deploy_coordinator.replica_states() == {
             ("g.a-1", "ModelDeployment", "r1"): "RUNNING",
             ("g.a-1", "ModelDeployment", "r2"): "STARTING",
         }
