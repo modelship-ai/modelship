@@ -74,7 +74,6 @@ class GatewayCoordinator:
         self._watched: set[str] = set()
         # gateway -> RUNNING replicas of its own app, as of the last pass
         self._replicas: dict[str, set[str]] = {}
-        # gateway -> replica id -> (routing seq, generation, monotonic time of the report)
         self._reports: dict[str, dict[str, tuple[int, int, float]]] = {}
         self._versions_unreachable = False
         self._passes = asyncio.create_task(self._compute_forever())
