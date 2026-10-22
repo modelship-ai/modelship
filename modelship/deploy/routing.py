@@ -1,12 +1,13 @@
 """A gateway's model table, computed from its routing version and Serve's application statuses."""
 
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from ray.serve.schema import ApplicationDetails, ApplicationStatus, ApplicationStatusOverview
+from ray.serve._private.common import ReplicaState
+from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview, DeploymentStatusOverview
 
-# Serve reports replica states as plain strings, though typed as its ReplicaState enum.
-_RUNNING = "RUNNING"
+_RUNNING = ReplicaState.RUNNING
 
 
 @dataclass
@@ -30,12 +31,29 @@ def can_serve(app: ApplicationStatusOverview) -> bool:
     )
 
 
-def running_replica_ids(app: ApplicationDetails) -> set[str]:
+def status_overview(app: dict) -> ApplicationStatusOverview:
+    return ApplicationStatusOverview(
+        status=app["status"],
+        message=app["message"],
+        last_deployed_time_s=app["last_deployed_time_s"],
+        deployments={
+            name: DeploymentStatusOverview(
+                status=deployment["status"],
+                status_trigger=deployment["status_trigger"],
+                replica_states=dict(Counter(ReplicaState(r["state"]) for r in deployment["replicas"])),
+                message=deployment["message"],
+            )
+            for name, deployment in app["deployments"].items()
+        },
+    )
+
+
+def running_replica_ids(app: dict) -> set[str]:
     return {
-        replica.replica_id
-        for deployment in app.deployments.values()
-        for replica in deployment.replicas
-        if replica.state == _RUNNING
+        replica["replica_id"]
+        for deployment in app["deployments"].values()
+        for replica in deployment["replicas"]
+        if replica["state"] == _RUNNING
     }
 
 

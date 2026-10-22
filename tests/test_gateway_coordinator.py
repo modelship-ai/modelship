@@ -15,7 +15,6 @@ from ray.serve.schema import (
     DeploymentStatus,
     DeploymentStatusOverview,
     DeploymentStatusTrigger,
-    ServeInstanceDetails,
 )
 
 from modelship.deploy.ledger import Version
@@ -506,7 +505,6 @@ class TestReadServe:
 
     def test_serve_still_has_the_calls_it_reads(self):
         assert hasattr(ServeControllerClient, "get_serve_details")
-        assert callable(ServeInstanceDetails._get_status)
 
 
 def test_get_or_create_sets_max_restarts(monkeypatch):

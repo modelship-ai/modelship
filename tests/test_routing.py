@@ -11,7 +11,7 @@ from ray.serve.schema import (
     ServeInstanceDetails,
 )
 
-from modelship.deploy.routing import can_serve, compute_routing, running_replica_ids
+from modelship.deploy.routing import can_serve, compute_routing, running_replica_ids, status_overview
 from tests.conftest import serve_details
 
 OLD, NEW = "gw.m-aaaaaaaaaa", "gw.m-bbbbbbbbbb"
@@ -96,5 +96,12 @@ class TestExpected:
 
 class TestRunningReplicaIds:
     def test_only_the_running_replicas(self):
-        details = ServeInstanceDetails(**serve_details({"gw": {"r1": "RUNNING", "r2": "STOPPING", "r3": "STARTING"}}))
-        assert running_replica_ids(details.applications["gw"]) == {"r1"}
+        details = serve_details({"gw": {"r1": "RUNNING", "r2": "STOPPING", "r3": "STARTING"}})
+        assert running_replica_ids(details["applications"]["gw"]) == {"r1"}
+
+
+class TestStatusOverview:
+    def test_matches_serves_own_status(self):
+        details = serve_details({"gw": {"r1": "RUNNING", "r2": "STOPPING"}, OLD: {"r3": "STARTING"}})
+        overviews = {name: status_overview(app) for name, app in details["applications"].items()}
+        assert overviews == ServeInstanceDetails(**details)._get_status().applications

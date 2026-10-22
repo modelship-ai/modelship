@@ -16,9 +16,9 @@ from typing import Any
 
 import ray
 from ray.serve.context import _get_global_client
-from ray.serve.schema import ApplicationStatusOverview, ServeInstanceDetails
+from ray.serve.schema import ApplicationStatusOverview
 
-from modelship.deploy.routing import Routing, compute_routing, running_replica_ids
+from modelship.deploy.routing import Routing, compute_routing, running_replica_ids, status_overview
 from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import GATEWAY_REPLICAS_BEHIND
@@ -45,9 +45,11 @@ def _read_serve() -> tuple[dict[str, ApplicationStatusOverview], dict[str, set[s
     client = _get_global_client(raise_if_no_controller_running=False)
     if client is None:
         return {}, {}
-    details = ServeInstanceDetails(**client.get_serve_details())
-    running = {name: running_replica_ids(app) for name, app in details.applications.items()}
-    return dict(details._get_status().applications), running
+    apps = client.get_serve_details().get("applications", {})
+    return (
+        {name: status_overview(app) for name, app in apps.items()},
+        {name: running_replica_ids(app) for name, app in apps.items()},
+    )
 
 
 @ray.remote(num_cpus=0)
