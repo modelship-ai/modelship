@@ -30,6 +30,7 @@ def api():
         patch.dict(_ModelshipAPI._handle_response.__globals__, {"configure_logging": lambda: None}),
     ):
         mock_ctx.return_value.app_name = "test-gateway"
+        mock_ctx.return_value.replica_id.unique_id = "test-replica"
         inst = build_gateway("test-gateway")
         inst._watch_task = MagicMock()
         return inst

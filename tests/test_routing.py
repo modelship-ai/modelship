@@ -10,7 +10,7 @@ from ray.serve.schema import (
     DeploymentStatusTrigger,
 )
 
-from modelship.deploy.routing import can_serve, compute_routing, running_replicas
+from modelship.deploy.routing import can_serve, compute_routing, running_replica_ids, running_replicas
 
 OLD, NEW = "gw.m-aaaaaaaaaa", "gw.m-bbbbbbbbbb"
 OTHER = "gw.x-dddddddddd"
@@ -98,3 +98,14 @@ class TestRunningReplicas:
 
     def test_none_running(self):
         assert running_replicas(_app(running=0, starting=1)) == 0
+
+
+class TestRunningReplicaIds:
+    def test_only_the_apps_running_replicas(self):
+        states = {
+            ("gw", "d", "r1"): "RUNNING",
+            ("gw", "d", "r2"): "STOPPING",
+            ("gw", "e", "r3"): "RUNNING",
+            ("other", "d", "r4"): "RUNNING",
+        }
+        assert running_replica_ids(states, "gw") == {"r1", "r3"}

@@ -61,9 +61,11 @@ class _Cluster:
     def __init__(self, monkeypatch):
         self.apps = {"gw": _app()}
         self.versions: dict[str, dict] = {}
+        self.replicas: dict[tuple[str, str, str], str] = {}
         self.unreachable = False
         self._seq = 0
         monkeypatch.setattr(gateway_coordinator.serve, "status", lambda: SimpleNamespace(applications=dict(self.apps)))
+        monkeypatch.setattr(gateway_coordinator, "replica_states", lambda: dict(self.replicas))
         self.exists = True
         monkeypatch.setattr(gateway_coordinator, "find_coordinator", lambda: self if self.exists else None)
 
@@ -377,6 +379,7 @@ class TestReplicasBehind:
 
     async def _two_replicas(self, cluster):
         cluster.apps["gw"] = _app(running=2)
+        cluster.replicas = {("gw", "d", "r1"): "RUNNING", ("gw", "d", "r2"): "RUNNING"}
         seq = cluster.configure(NEW)
         coord = _coordinator("gw")
         await _pass(coord)
@@ -430,13 +433,26 @@ class TestReplicasBehind:
         behind.set.assert_called_with(0, tags={"gateway": "gw"})
 
     @pytest.mark.asyncio
-    async def test_is_never_negative(self, cluster, behind):
+    async def test_ignores_a_report_from_a_replica_serve_no_longer_lists(self, cluster, behind):
         coord, seq, generation = await self._two_replicas(cluster)
         for replica in ("r1", "r2"):
             await coord.wait_for_change("gw", generation, timeout=0.01, replica_id=replica, routing=seq)
         cluster.apps["gw"] = _app(running=1)
+        del cluster.replicas[("gw", "d", "r2")]
         await _pass(coord)
         behind.set.assert_called_with(0, tags={"gateway": "gw"})
+
+    @pytest.mark.asyncio
+    async def test_a_stopping_replica_on_the_current_generation_does_not_hide_a_running_one_behind(
+        self, cluster, behind
+    ):
+        coord, seq, generation = await self._two_replicas(cluster)
+        cluster.apps["gw"] = _app(running=1)
+        cluster.replicas[("gw", "d", "r2")] = "STOPPING"
+        await coord.wait_for_change("gw", generation - 1, timeout=0.01, replica_id="r1", routing=seq)
+        await coord.wait_for_change("gw", generation, timeout=0.01, replica_id="r2", routing=seq)
+        await _pass(coord)
+        behind.set.assert_called_with(1, tags={"gateway": "gw"})
 
     @pytest.mark.asyncio
     async def test_a_gateway_missing_from_serve_is_set_to_zero(self, cluster, behind):

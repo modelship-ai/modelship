@@ -39,6 +39,10 @@ def running_replicas(app: ApplicationStatusOverview) -> int:
     )
 
 
+def running_replica_ids(states: Mapping[tuple[str, str, str], str], app: str) -> set[str]:
+    return {replica for (name, _, replica), state in states.items() if name == app and state == _RUNNING}
+
+
 def compute_routing(
     gateway_name: str, targets: Mapping[str, str], apps: Mapping[str, ApplicationStatusOverview]
 ) -> Routing | None:

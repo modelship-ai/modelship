@@ -217,7 +217,7 @@ class ModelshipAPI:
         self._gen = 0  # last coordinator generation this replica reconciled to
         # the routing seq that snapshot came from, reported back with this replica's id on every poll
         self._routing_seq: int | None = None
-        self._replica_id = random_uuid()
+        self._replica_id = serve.get_replica_context().replica_id.unique_id
         self._watch_task: asyncio.Task | None = None
         self._gateway_coord = None  # cached gateway-coordinator handle
         # Timing state — the first sync with a non-empty expected set stamps a start;

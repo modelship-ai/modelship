@@ -17,8 +17,8 @@ from typing import Any
 import ray
 from ray import serve
 
-from modelship.deploy.routing import Routing, compute_routing, running_replicas
-from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator
+from modelship.deploy.routing import Routing, compute_routing, running_replica_ids, running_replicas
+from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator, replica_states
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import GATEWAY_REPLICAS_BEHIND
 from modelship.utils import head_node_options
@@ -83,6 +83,7 @@ class GatewayCoordinator:
     async def _compute(self) -> None:
         """One pass: the table of every gateway whose routing version is known."""
         apps = dict((await asyncio.to_thread(serve.status)).applications)
+        states = await asyncio.to_thread(replica_states)
         gateways = set(self._watched)
         for name in apps:
             if (parsed := parse_deployment_name(name)) is not None:
@@ -97,8 +98,10 @@ class GatewayCoordinator:
             self._replicas[gateway] = running_replicas(apps[gateway])
             self._publish(gateway, routing, version["seq"])
             current = self._generation[gateway]
-            holding = sum(1 for _, generation in self._fresh_reports(gateway) if generation == current)
-            GATEWAY_REPLICAS_BEHIND.set(max(self._replicas[gateway] - holding, 0), tags={"gateway": gateway})
+            reports = self._fresh_reports(gateway)
+            holding = {replica for replica, (_, generation) in reports.items() if generation == current}
+            behind = running_replica_ids(states, gateway) - holding
+            GATEWAY_REPLICAS_BEHIND.set(len(behind), tags={"gateway": gateway})
         self._computed.set()
 
     async def _fetch_versions(self, gateways: list[str]) -> None:
@@ -185,16 +188,16 @@ class GatewayCoordinator:
     def _switched(self, gateway_name: str, routing: int) -> bool:
         if not self._computed.is_set() or self._seqs.get(gateway_name) != routing:
             return False
-        holding = sum(1 for seq, _ in self._fresh_reports(gateway_name) if seq == routing)
+        holding = sum(1 for seq, _ in self._fresh_reports(gateway_name).values() if seq == routing)
         return holding >= self._replicas.get(gateway_name, 0)
 
-    def _fresh_reports(self, gateway_name: str) -> list[tuple[int, int]]:
+    def _fresh_reports(self, gateway_name: str) -> dict[str, tuple[int, int]]:
         now = time.monotonic()
         reports = self._reports.get(gateway_name, {})
         for replica, (_, _, at) in list(reports.items()):
             if now - at > _REPORT_TTL_S:
                 del reports[replica]
-        return [(seq, generation) for seq, generation, _ in reports.values()]
+        return {replica: (seq, generation) for replica, (seq, generation, _) in reports.items()}
 
 
 def get_or_create_gateway_coordinator():
