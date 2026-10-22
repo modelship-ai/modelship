@@ -188,7 +188,6 @@ class GatewayCoordinator:
         return holding >= self._replicas.get(gateway_name, 0)
 
     def _fresh_reports(self, gateway_name: str) -> list[tuple[int, int]]:
-        """(routing seq, generation) of each replica that reported within `_REPORT_TTL_S`; drops the older ones."""
         now = time.monotonic()
         reports = self._reports.get(gateway_name, {})
         for replica, (_, _, at) in list(reports.items()):
