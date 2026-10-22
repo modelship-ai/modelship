@@ -92,6 +92,7 @@ class GatewayCoordinator:
             if (version := self._versions.get(gateway)) is None:
                 continue
             if (routing := compute_routing(gateway, version["apps"], apps)) is None:
+                GATEWAY_REPLICAS_BEHIND.set(0, tags={"gateway": gateway})
                 continue
             self._replicas[gateway] = running_replicas(apps[gateway])
             self._publish(gateway, routing, version["seq"])

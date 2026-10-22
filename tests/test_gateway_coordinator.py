@@ -439,12 +439,12 @@ class TestReplicasBehind:
         behind.set.assert_called_with(0, tags={"gateway": "gw"})
 
     @pytest.mark.asyncio
-    async def test_a_gateway_missing_from_serve_is_no_longer_set(self, cluster, behind):
+    async def test_a_gateway_missing_from_serve_is_set_to_zero(self, cluster, behind):
         coord, _, _ = await self._two_replicas(cluster)
-        behind.set.reset_mock()
+        behind.set.assert_called_with(2, tags={"gateway": "gw"})
         del cluster.apps["gw"]
         await _pass(coord)
-        behind.set.assert_not_called()
+        behind.set.assert_called_with(0, tags={"gateway": "gw"})
 
 
 def test_get_or_create_sets_max_restarts(monkeypatch):
