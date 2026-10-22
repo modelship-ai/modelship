@@ -236,7 +236,7 @@ podMonitor:
   labels: {}
 
 # -- Prometheus Operator PrometheusRule with the modelship alert rules (request
-# errors, latency, model-load failures, plus the HA control-plane and KubeRay
+# errors, latency, Serve app health, plus the HA control-plane and KubeRay
 # alerts). Needs the Prometheus Operator CRDs; rules are synced from
 # docs/prometheus-alerts.yml. `labels` should match your Prometheus's ruleSelector.
 prometheusRule:

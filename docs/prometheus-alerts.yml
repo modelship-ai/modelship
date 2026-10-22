@@ -24,6 +24,21 @@ groups:
             Error rate is {{ $value | humanizePercentage }} of total traffic
             over the last 5 minutes.
 
+      - alert: ModelshipHTTP5xxRatio
+        expr: |
+          sum by (application) (rate(ray_serve_num_http_requests_total{status_code=~"5..", application!="", route!~".*/(health|readyz)"}[5m]))
+          / sum by (application) (rate(ray_serve_num_http_requests_total{application!="", route!~".*/(health|readyz)"}[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HTTP 5xx ratio > 5% ({{ $labels.application }})"
+          description: >-
+            {{ $value | humanizePercentage }} of the HTTP requests to
+            {{ $labels.application }} answered 5xx over the last 5 minutes,
+            not counting its /health and /readyz routes.
+
       - alert: ModelshipNoModelsLoaded
         expr: ray_modelship_models_loaded == 0
         for: 2m
@@ -35,16 +50,6 @@ groups:
             ray_modelship_models_loaded has been 0 for 2 minutes.
             The server is running but cannot serve any requests.
 
-      - alert: ModelshipModelLoadFailure
-        expr: increase(ray_modelship_model_load_failures_total[5m]) > 0
-        for: 0m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Model load failure detected"
-          description: >-
-            {{ $labels.model }} ({{ $labels.loader }}) failed to load.
-
       - alert: ModelshipKVCacheExhausted
         expr: ray_vllm_kv_cache_usage_perc > 0.95
         for: 5m
@@ -55,6 +60,28 @@ groups:
           description: >-
             KV cache usage is {{ $value | humanizePercentage }}.
             Requests will queue or be preempted.
+
+      - alert: ModelshipAppUnhealthy
+        expr: ray_serve_application_status == 2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Serve application unhealthy ({{ $labels.application }})"
+          description: >-
+            Ray Serve reports {{ $labels.application }} as UNHEALTHY: one or
+            more of its deployments are unhealthy.
+
+      - alert: ModelshipTargetDown
+        expr: up{job="modelship"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Metrics target down ({{ $labels.instance }})"
+          description: >-
+            Prometheus has not been able to scrape {{ $labels.instance }} for
+            5 minutes — the node may be down or its metrics port unreachable.
 
   - name: modelship-warning
     rules:
@@ -70,6 +97,21 @@ groups:
           summary: "Request latency P99 > 30s"
           description: >-
             P99 gateway latency is {{ $value | humanizeDuration }}.
+
+      - alert: ModelshipModelHighErrorRate
+        expr: |
+          sum by (gateway, model) (rate(ray_modelship_request_errors_total[5m]))
+          / sum by (gateway, model) (rate(ray_modelship_request_total[5m])) > 0.05
+          and sum by (gateway, model) (rate(ray_modelship_request_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate for {{ $labels.model }} ({{ $labels.gateway }})"
+          description: >-
+            {{ $labels.model }} failed {{ $value | humanizePercentage }} of its
+            requests over the last 5 minutes. Only evaluated above 0.05
+            requests/s.
 
       - alert: ModelshipHighQueueDepth
         expr: ray_vllm_num_requests_waiting > 10
@@ -125,6 +167,17 @@ groups:
           description: >-
             TTFT P99 is {{ $value | humanizeDuration }} — users are waiting
             too long for the first token.
+
+      - alert: ModelshipDeployStuck
+        expr: ray_serve_application_status == 5
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Serve application still deploying ({{ $labels.application }})"
+          description: >-
+            {{ $labels.application }} has been DEPLOYING for 30 minutes — it
+            may be waiting for capacity or for a model to finish loading.
 
   # HA control-plane alerts. These cover the coordinator, state store, and gateway
   # routing introduced with the Helm chart — failures here don't fail requests

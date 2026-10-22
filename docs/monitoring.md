@@ -48,7 +48,6 @@ JSON format example:
 |---|---|
 | `modelship.startup` | Application initialization and shutdown |
 | `modelship.api` | API gateway endpoints |
-| `modelship.api.auth` | Authentication middleware |
 | `modelship.infer` | Base inference layer |
 | `modelship.infer.deployment` | Ray Serve model deployment actor |
 | `modelship.infer.vllm` | vLLM inference backend |
@@ -167,6 +166,8 @@ scrape_configs:
 
 Otherwise pin `--metrics-port` on every node and list the nodes as static targets. The Helm chart pins it, and its PodMonitor scrapes each pod's `metrics` port.
 
+The alert rules expect the scrape job to be named `modelship`. The examples above use it, and the chart's PodMonitor sets it on every target whatever the release or `nameOverride`.
+
 ## Connecting to Grafana
 
 A pre-built Grafana dashboard is included at [`docs/grafana-dashboard.json`](grafana-dashboard.json).
@@ -183,14 +184,14 @@ The dashboard has 9 rows:
 
 | Row | What it shows | Metric sources |
 |---|---|---|
-| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects, auth failures | `ray_modelship_*` |
+| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*` |
 | **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed) | `ray_modelship_*` |
 | **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `ray_vllm_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory (cluster aggregate) | `ray_node_*` |
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
 | **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*` |
 | **Alerts** | Error rate %, KV cache usage, queue depth, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_node_*` |
-| **Cluster / HA** | Gateway coordinator vs. gateway replica routing generation, gateway watch errors, state-store latency/errors, deploy duration & model changes | `ray_modelship_*` |
+| **Cluster / HA** | Model app status, gateway reconciles, Serve requests per model, gateway coordinator vs. gateway replica routing generation, gateway watch errors, state-store latency/errors, deploy duration & model changes | `ray_modelship_*`, `ray_serve_*` |
 | **Per-Node Resources** | GPU utilization/memory, CPU, system memory broken out by node (filtered by the Node dropdown) | `ray_node_*` |
 
 > **Deploying via the Helm chart:** set `grafanaDashboard.enabled=true` to ship this dashboard as a ConfigMap the Grafana sidecar auto-imports (and `prometheusRule.enabled=true` for the alert rules below) — no manual import needed. See the chart README.
@@ -217,9 +218,11 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | Alert | Condition | For | Description |
 |---|---|---|---|
 | `ModelshipHighErrorRate` | Error rate > 5% of traffic | 5m | Significant portion of requests are failing |
+| `ModelshipHTTP5xxRatio` | 5xx > 5% of a gateway's HTTP requests, `/health` and `/readyz` excluded | 5m | Gateway is answering server errors |
 | `ModelshipNoModelsLoaded` | `models_loaded` == 0 | 2m | Server is running but cannot serve requests |
-| `ModelshipModelLoadFailure` | Any increase in `model_load_failures_total` | 0m | A model failed to initialize |
 | `ModelshipKVCacheExhausted` | KV cache usage > 95% | 5m | Requests will queue or be preempted |
+| `ModelshipAppUnhealthy` | `ray_serve_application_status` == 2 (UNHEALTHY) | 5m | A Serve application has an unhealthy deployment |
+| `ModelshipTargetDown` | `up{job="modelship"}` == 0 | 5m | Prometheus cannot scrape a node |
 | `ModelshipStateStoreErrors` | Any state-store op errors | 5m | Durable HA state failing — self-heal at risk |
 | `ModelshipDeployJobFailed` | `kube_job_failed` (condition true) > 0 | 0m | Deploy Job failed; last upgrade may not be applied (needs kube-state-metrics) |
 
@@ -228,11 +231,13 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | Alert | Condition | For | Description |
 |---|---|---|---|
 | `ModelshipHighP99Latency` | Gateway P99 > 30s | 5m | End-to-end latency is very high |
+| `ModelshipModelHighErrorRate` | One model's error rate > 5%, above 0.05 requests/s | 5m | A model is failing while the cluster-wide rate may look fine |
 | `ModelshipHighQueueDepth` | Waiting requests > 10 | 5m | vLLM engine is falling behind |
 | `ModelshipPreemptions` | Preemption rate > 0 | 5m | GPU memory pressure causing request eviction |
 | `ModelshipClientDisconnects` | Disconnect rate > 1/min | 5m | Clients timing out or dropping connections |
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
 | `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
+| `ModelshipDeployStuck` | `ray_serve_application_status` == 5 (DEPLOYING) | 30m | A Serve application is waiting for capacity or a slow model load |
 | `ModelshipGatewayRoutingDivergence` | Replica generation < coordinator for 10m | 10m | A gateway replica is routing from a stale table |
 | `ModelshipRayWorkerDown` | Ray worker pod not running or crash-looping | 5m | Cluster capacity degraded (needs kube-state-metrics); a worker hosting no replica is NotReady by design |
 
@@ -281,7 +286,7 @@ Use `/health` for Kubernetes liveness probes and `/readyz` for readiness probes 
 
 ## Modelship Metrics Reference
 
-Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the gateway coordinator, state store, and deploy driver, which are not Serve replicas).
+Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the gateway coordinator, state store, and deploy worker, which are not Serve replicas).
 
 ### The `gateway` dimension
 
@@ -366,6 +371,9 @@ Full reference: [vLLM Metrics Documentation](https://docs.vllm.ai/en/stable/desi
 - `ray_serve_handle_request_counter_total` — request count by deployment
 - `ray_serve_deployment_processing_latency_ms` — per-replica processing time
 - `ray_serve_health_check_latency_ms` — health check latency histogram
+- `ray_serve_application_status` — status of each application: 0=UNKNOWN, 1=DEPLOY_FAILED, 2=UNHEALTHY, 3=NOT_STARTED, 4=DELETING, 5=DEPLOYING, 6=RUNNING. A model's application is named `<gateway>.<model>-<fingerprint>`.
+- `ray_serve_replica_processing_queries` — requests each replica is processing
+- `ray_serve_deployment_queued_queries` — requests queued at the caller (the gateway replica, for a model's application)
 
 Full reference: [Ray Serve Monitoring](https://docs.ray.io/en/latest/serve/monitoring.html)
 

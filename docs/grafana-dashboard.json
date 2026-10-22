@@ -1231,6 +1231,175 @@
       "panels": []
     },
     {
+      "title": "Model App Status",
+      "type": "table",
+      "id": 121,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 80
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "label_replace(label_replace(ray_serve_application_status{application=~\"($gateway)\\\\..+\"}, \"gateway\", \"$1\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\"), \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "gateway",
+                "model",
+                "Value"
+              ]
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Value": "Status"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "model",
+            "desc": false
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "index": 0,
+                  "text": "UNKNOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "index": 1,
+                  "text": "DEPLOY_FAILED",
+                  "color": "red"
+                },
+                "2": {
+                  "index": 2,
+                  "text": "UNHEALTHY",
+                  "color": "red"
+                },
+                "3": {
+                  "index": 3,
+                  "text": "NOT_STARTED",
+                  "color": "yellow"
+                },
+                "4": {
+                  "index": 4,
+                  "text": "DELETING",
+                  "color": "yellow"
+                },
+                "5": {
+                  "index": 5,
+                  "text": "DEPLOYING",
+                  "color": "yellow"
+                },
+                "6": {
+                  "index": 6,
+                  "text": "RUNNING",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Status"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "title": "Gateway Reconciles/s",
+      "type": "timeseries",
+      "id": 122,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 80
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(ray_modelship_gateway_reconciles_total{gateway=~\"$gateway\"}[5m])) by (gateway)",
+          "legendFormat": "{{ gateway }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "title": "Serve Requests per Model",
+      "type": "timeseries",
+      "id": 123,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 80
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "label_replace(sum(ray_serve_replica_processing_queries{application=~\"($gateway)\\\\..+\"}) by (application), \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")",
+          "legendFormat": "processing {{ model }}"
+        },
+        {
+          "expr": "label_replace(sum(ray_serve_deployment_queued_queries{application=~\"($gateway)\\\\..+\"}) by (application), \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")",
+          "legendFormat": "queued {{ model }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {}
+      }
+    },
+    {
       "title": "Routing Generation: coordinator vs gateway replicas",
       "type": "timeseries",
       "id": 111,
