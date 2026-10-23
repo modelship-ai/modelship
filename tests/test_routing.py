@@ -8,9 +8,11 @@ from ray.serve.schema import (
     DeploymentStatus,
     DeploymentStatusOverview,
     DeploymentStatusTrigger,
+    ServeInstanceDetails,
 )
 
-from modelship.deploy.routing import can_serve, compute_routing, running_replicas
+from modelship.deploy.routing import can_serve, compute_routing, running_replica_ids, status_overview
+from tests.conftest import serve_details
 
 OLD, NEW = "gw.m-aaaaaaaaaa", "gw.m-bbbbbbbbbb"
 OTHER = "gw.x-dddddddddd"
@@ -92,9 +94,14 @@ class TestExpected:
         assert _route({NEW: _app(ApplicationStatus.DEPLOYING, running=0)}, {"m": NEW}).expected == ["m"]
 
 
-class TestRunningReplicas:
-    def test_counts_running_replicas_across_deployments(self):
-        assert running_replicas(_app(running=2, starting=1)) == 2
+class TestRunningReplicaIds:
+    def test_only_the_running_replicas(self):
+        details = serve_details({"gw": {"r1": "RUNNING", "r2": "STOPPING", "r3": "STARTING"}})
+        assert running_replica_ids(details["applications"]["gw"]) == {"r1"}
 
-    def test_none_running(self):
-        assert running_replicas(_app(running=0, starting=1)) == 0
+
+class TestStatusOverview:
+    def test_matches_serves_own_status(self):
+        details = serve_details({"gw": {"r1": "RUNNING", "r2": "STOPPING"}, OLD: {"r3": "STARTING"}})
+        overviews = {name: status_overview(app) for name, app in details["applications"].items()}
+        assert overviews == ServeInstanceDetails(**details)._get_status().applications

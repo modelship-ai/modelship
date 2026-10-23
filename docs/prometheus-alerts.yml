@@ -197,17 +197,15 @@ groups:
             cleanup of replaced deployments, and self-heal.
 
       - alert: ModelshipGatewayRoutingDivergence
-        expr: |
-          (max by (gateway) (ray_modelship_coordinator_generation)
-           - min by (gateway) (ray_modelship_gateway_routing_generation)) > 0
+        expr: max by (gateway) (ray_modelship_gateway_replicas_behind) > 0
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Gateway replicas lagging coordinator routing ({{ $labels.gateway }})"
+          summary: "Gateway replicas lagging gateway coordinator routing ({{ $labels.gateway }})"
           description: >-
-            A gateway replica has not reconciled to the coordinator's routing
-            generation for 10m — it may be routing from a stale table.
+            A gateway replica has not reconciled to the gateway coordinator's
+            routing generation for 10m — it may be routing from a stale table.
 
   # KubeRay / cluster-health alerts. These require kube-state-metrics and the
   # KubeRay operator metrics endpoint to be scraped — adjust label selectors to

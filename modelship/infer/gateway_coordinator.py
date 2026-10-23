@@ -15,12 +15,13 @@ import time
 from typing import Any
 
 import ray
-from ray import serve
+from ray.serve.context import _get_global_client
+from ray.serve.schema import ApplicationStatusOverview
 
-from modelship.deploy.routing import Routing, compute_routing, running_replicas
+from modelship.deploy.routing import Routing, compute_routing, running_replica_ids, status_overview
 from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator
 from modelship.logging import configure_logging, get_logger
-from modelship.metrics import COORDINATOR_GENERATION
+from modelship.metrics import GATEWAY_REPLICAS_BEHIND
 from modelship.utils import head_node_options
 from modelship.utils.config_schema import parse_deployment_name
 from modelship.utils.runtime_env import cluster_env_vars
@@ -38,6 +39,17 @@ _REPORT_TTL_S = 2 * _WATCH_TIMEOUT_S
 _FIRST_PASS_TIMEOUT_S = 5.0
 _SWITCH_POLL_S = 0.1
 _RPC_TIMEOUT_S = 10.0
+
+
+def _read_serve() -> tuple[dict[str, ApplicationStatusOverview], dict[str, set[str]]]:
+    client = _get_global_client(raise_if_no_controller_running=False)
+    if client is None:
+        return {}, {}
+    apps = client.get_serve_details().get("applications", {})
+    return (
+        {name: status_overview(app) for name, app in apps.items()},
+        {name: running_replica_ids(app) for name, app in apps.items()},
+    )
 
 
 @ray.remote(num_cpus=0)
@@ -61,9 +73,8 @@ class GatewayCoordinator:
         # gateways whose replicas asked for a table; the rest are found through their apps
         self._watched: set[str] = set()
         # gateway -> RUNNING replicas of its own app, as of the last pass
-        self._replicas: dict[str, int] = {}
-        # gateway -> replica id -> (routing seq, monotonic time of the report)
-        self._reports: dict[str, dict[str, tuple[int, float]]] = {}
+        self._replicas: dict[str, set[str]] = {}
+        self._reports: dict[str, dict[str, tuple[int, int, float]]] = {}
         self._versions_unreachable = False
         self._passes = asyncio.create_task(self._compute_forever())
 
@@ -82,7 +93,7 @@ class GatewayCoordinator:
 
     async def _compute(self) -> None:
         """One pass: the table of every gateway whose routing version is known."""
-        apps = dict((await asyncio.to_thread(serve.status)).applications)
+        apps, running = await asyncio.to_thread(_read_serve)
         gateways = set(self._watched)
         for name in apps:
             if (parsed := parse_deployment_name(name)) is not None:
@@ -93,8 +104,12 @@ class GatewayCoordinator:
                 continue
             if (routing := compute_routing(gateway, version["apps"], apps)) is None:
                 continue
-            self._replicas[gateway] = running_replicas(apps[gateway])
+            self._replicas[gateway] = running.get(gateway, set())
             self._publish(gateway, routing, version["seq"])
+            current = self._generation[gateway]
+            reports = self._fresh_reports(gateway)
+            holding = {replica for replica, (_, generation) in reports.items() if generation == current}
+            GATEWAY_REPLICAS_BEHIND.set(len(self._replicas[gateway] - holding), tags={"gateway": gateway})
         self._computed.set()
 
     async def _fetch_versions(self, gateways: list[str]) -> None:
@@ -126,7 +141,6 @@ class GatewayCoordinator:
     def _bump(self, gateway: str) -> None:
         """Advance the gateway's generation and wake its waiting replicas."""
         self._generation[gateway] = self._generation.get(gateway, self._first_generation) + 1
-        COORDINATOR_GENERATION.set(self._generation[gateway], tags={"gateway": gateway})
         if (event := self._change.pop(gateway, None)) is not None:
             event.set()
 
@@ -156,7 +170,7 @@ class GatewayCoordinator:
         reports since_gen. A replica passes its id and the routing seq its table was built from."""
         self._watched.add(gateway_name)
         if replica_id is not None and routing is not None:
-            self._reports.setdefault(gateway_name, {})[replica_id] = (routing, time.monotonic())
+            self._reports.setdefault(gateway_name, {})[replica_id] = (routing, since_gen, time.monotonic())
         if not self._computed.is_set():
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._computed.wait(), timeout)
@@ -182,13 +196,16 @@ class GatewayCoordinator:
     def _switched(self, gateway_name: str, routing: int) -> bool:
         if not self._computed.is_set() or self._seqs.get(gateway_name) != routing:
             return False
+        holding = {replica for replica, (seq, _) in self._fresh_reports(gateway_name).items() if seq == routing}
+        return holding >= self._replicas.get(gateway_name, set())
+
+    def _fresh_reports(self, gateway_name: str) -> dict[str, tuple[int, int]]:
         now = time.monotonic()
         reports = self._reports.get(gateway_name, {})
-        for replica, (_, at) in list(reports.items()):
+        for replica, (_, _, at) in list(reports.items()):
             if now - at > _REPORT_TTL_S:
                 del reports[replica]
-        holding = sum(1 for seq, _ in reports.values() if seq == routing)
-        return holding >= self._replicas.get(gateway_name, 0)
+        return {replica: (seq, generation) for replica, (seq, generation, _) in reports.items()}
 
 
 def get_or_create_gateway_coordinator():

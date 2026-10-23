@@ -52,6 +52,48 @@ def build_gateway(gateway_name: str):
     raise RuntimeError("ModelshipAPI.__init__ awaited; build it in an event loop")
 
 
+def serve_details(apps: dict[str, dict[str, str]]) -> dict:
+    from ray.serve.schema import (
+        ApplicationDetails,
+        ApplicationStatus,
+        DeploymentDetails,
+        DeploymentSchema,
+        DeploymentStatus,
+        DeploymentStatusTrigger,
+        ReplicaDetails,
+        ServeInstanceDetails,
+    )
+
+    return ServeInstanceDetails(
+        proxies={},
+        applications={
+            name: ApplicationDetails(
+                name=name,
+                route_prefix=f"/{name}",
+                docs_path=None,
+                status=ApplicationStatus.RUNNING,
+                message=f"{name} app",
+                last_deployed_time_s=1.5,
+                source="declarative",
+                external_scaler_enabled=False,
+                deployments={
+                    "d": DeploymentDetails(
+                        name="d",
+                        status=DeploymentStatus.HEALTHY,
+                        status_trigger=DeploymentStatusTrigger.CONFIG_UPDATE_COMPLETED,
+                        message=f"{name} deployment",
+                        deployment_config=DeploymentSchema(name="d"),
+                        target_num_replicas=len(replicas),
+                        required_resources={},
+                        replicas=[ReplicaDetails(replica_id=r, state=s, start_time_s=0.0) for r, s in replicas.items()],
+                    )
+                },
+            )
+            for name, replicas in apps.items()
+        },
+    ).model_dump(exclude_unset=True)
+
+
 # ---------------------------------------------------------------------------
 # Integration suite: real Ray cluster + real models, `@pytest.mark.integration`.
 # ---------------------------------------------------------------------------

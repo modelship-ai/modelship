@@ -97,8 +97,8 @@
       },
       "targets": [
         {
-          "expr": "ray_modelship_request_in_progress{gateway=~\"$gateway\", model=~\"$model\"}",
-          "legendFormat": "{{ model }}"
+          "expr": "sum(ray_serve_replica_processing_queries{application=~\"$gateway\", application!~\".*[.].*\"}) by (application)",
+          "legendFormat": "{{ application }}"
         }
       ]
     },
@@ -1400,7 +1400,7 @@
       }
     },
     {
-      "title": "Routing Generation: coordinator vs gateway replicas",
+      "title": "Gateway Replicas Behind Routing",
       "type": "timeseries",
       "id": 111,
       "gridPos": {
@@ -1415,12 +1415,8 @@
       },
       "targets": [
         {
-          "expr": "max(ray_modelship_coordinator_generation{gateway=~\"$gateway\"}) by (gateway)",
-          "legendFormat": "coordinator {{ gateway }}"
-        },
-        {
-          "expr": "min(ray_modelship_gateway_routing_generation{gateway=~\"$gateway\"}) by (gateway)",
-          "legendFormat": "gateway min {{ gateway }}"
+          "expr": "max(ray_modelship_gateway_replicas_behind{gateway=~\"$gateway\"}) by (gateway)",
+          "legendFormat": "{{ gateway }}"
         }
       ],
       "fieldConfig": {

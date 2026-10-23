@@ -24,12 +24,10 @@ from modelship.infer.infer_config import RequestWatcher, get_disconnect_registry
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
     GATEWAY_RECONCILES_TOTAL,
-    GATEWAY_ROUTING_GENERATION,
     GATEWAY_WATCH_ERRORS_TOTAL,
     MODELS_LOADED,
     REQUEST_DURATION_SECONDS,
     REQUEST_ERRORS_TOTAL,
-    REQUEST_IN_PROGRESS,
     REQUEST_TOTAL,
     STREAM_CHUNKS_TOTAL,
     stamp_gateway,
@@ -219,7 +217,7 @@ class ModelshipAPI:
         self._gen = 0  # last coordinator generation this replica reconciled to
         # the routing seq that snapshot came from, reported back with this replica's id on every poll
         self._routing_seq: int | None = None
-        self._replica_id = random_uuid()
+        self._replica_id = serve.get_replica_context().replica_id.unique_id
         self._watch_task: asyncio.Task | None = None
         self._gateway_coord = None  # cached gateway-coordinator handle
         # Timing state — the first sync with a non-empty expected set stamps a start;
@@ -311,7 +309,6 @@ class ModelshipAPI:
         self._routing_seq = snapshot.get("routing")
         MODELS_LOADED.set(len(self.models))
         GATEWAY_RECONCILES_TOTAL.inc()
-        GATEWAY_ROUTING_GENERATION.set(new_gen)
 
     def _coord(self):
         if self._gateway_coord is None:
@@ -453,7 +450,6 @@ class ModelshipAPI:
     ):
         start = time.monotonic()
         streaming = False
-        REQUEST_IN_PROGRESS.set(1, tags={"model": model, "endpoint": endpoint})
         try:
             first = await self._await_first(response_gen, model, endpoint)
             if isinstance(first, JSONResponse):
@@ -518,7 +514,6 @@ class ModelshipAPI:
                     REQUEST_DURATION_SECONDS.observe(
                         time.monotonic() - start, tags={"model": model, "endpoint": endpoint}
                     )
-                    REQUEST_IN_PROGRESS.set(0, tags={"model": model, "endpoint": endpoint})
                     watcher.stop()
 
             streaming = True
@@ -535,7 +530,6 @@ class ModelshipAPI:
             if not streaming:
                 duration = time.monotonic() - start
                 REQUEST_DURATION_SECONDS.observe(duration, tags={"model": model, "endpoint": endpoint})
-                REQUEST_IN_PROGRESS.set(0, tags={"model": model, "endpoint": endpoint})
                 watcher.stop()
 
     async def check_health(self) -> None:
@@ -846,7 +840,6 @@ class ModelshipAPI:
             return
 
         start = time.monotonic()
-        REQUEST_IN_PROGRESS.set(1, tags={"model": model, "endpoint": endpoint})
         failed = False
         terminal_response: dict[str, Any] | None = None
         try:
@@ -906,7 +899,6 @@ class ModelshipAPI:
             failed = True
         finally:
             REQUEST_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": model, "endpoint": endpoint})
-            REQUEST_IN_PROGRESS.set(0, tags={"model": model, "endpoint": endpoint})
 
         if failed:
             REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "inference_error"})
@@ -1000,7 +992,6 @@ class ModelshipAPI:
         headers = dict(raw_request.headers)
 
         start = time.monotonic()
-        REQUEST_IN_PROGRESS.set(1, tags={"model": model, "endpoint": endpoint})
         try:
             items = responses_utils.as_input_items(request.input) if request.input is not None else []
             if request.previous_response_id is not None:
@@ -1061,7 +1052,6 @@ class ModelshipAPI:
             return JSONResponse(content=resource.model_dump(mode="json"))
         finally:
             REQUEST_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": model, "endpoint": endpoint})
-            REQUEST_IN_PROGRESS.set(0, tags={"model": model, "endpoint": endpoint})
             watcher.stop()
 
     @app.post("/v1/embeddings")
