@@ -220,33 +220,24 @@ class ModelshipAPI:
         self._replica_id = serve.get_replica_context().replica_id.unique_id
         self._watch_task: asyncio.Task | None = None
         self._gateway_coord = None  # cached gateway-coordinator handle
-        # Timing state — the first sync with a non-empty expected set stamps a start;
-        # each model's first appearance records the gap since the previous arrival as
-        # an approximate load duration.
-        self._expected_set_at: float | None = None
-        self._last_model_at: float | None = None
-        self._all_ready_at: float | None = None
-        self._model_load_times: dict[str, float] = {}
 
-    def _register_deployment(self, app_name: str, model_name: str) -> bool:
-        """Wire one deployment handle into the routing table. Returns True iff the
-        model was newly added. Raises if the app handle isn't resolvable yet (e.g.
-        controller lag / app not ready) so the caller can retry this generation
-        instead of skipping the model. Sync so the reconcile applies atomically."""
+    def _register_deployment(self, app_name: str, model_name: str) -> None:
+        """Wire one deployment handle into the routing table. Raises if the app handle
+        isn't resolvable yet (e.g. controller lag / app not ready) so the caller can
+        retry this generation instead of skipping the model. Sync so the reconcile
+        applies atomically."""
         handle = serve.get_app_handle(app_name)
-        newly_added = model_name not in self.models
-        if newly_added:
+        if model_name not in self.models:
             self.models[model_name] = {}
             self.model_list.append(OpenAiModelCard(id=model_name))
         self.models[model_name][app_name] = handle
         logger.info("Registered deployment: %s (model: %s)", app_name, model_name)
-        return newly_added
 
     def _drop_apps(self, app_names: list[str]) -> list[str]:
         """Drop the given deployment app names from the routing tables. The owning
         model is found by reverse lookup. When a model loses its last deployment its
-        model entry, card and load-time entry are also dropped. Returns the names of
-        fully-removed models."""
+        model entry and card are also dropped. Returns the names of fully-removed
+        models."""
         removed_models: list[str] = []
         for app_name in app_names:
             model_name = next((m for m, handles in self.models.items() if app_name in handles), None)
@@ -258,7 +249,6 @@ class ModelshipAPI:
             if not handles:
                 del self.models[model_name]
                 self.model_list = [c for c in self.model_list if c.id != model_name]
-                self._model_load_times.pop(model_name, None)
                 removed_models.append(model_name)
         return removed_models
 
@@ -278,15 +268,10 @@ class ModelshipAPI:
             if app_name in routed:
                 continue
             try:
-                newly_added = self._register_deployment(app_name, model_name)
+                self._register_deployment(app_name, model_name)
             except Exception:
                 logger.warning("gateway: deferring registration of %s (not ready yet)", app_name, exc_info=True)
                 failed.append(app_name)
-                continue
-            if newly_added:
-                base = self._last_model_at or self._started_at
-                self._model_load_times[model_name] = round(time.time() - base, 2)
-                self._last_model_at = time.time()
 
         stale = [app for app in routed if app not in desired]
         if stale:
@@ -301,10 +286,6 @@ class ModelshipAPI:
         # before the routes, which raise when an app isn't resolvable yet
         self.expected_models = list(snapshot.get("expected", []))
         self._apply_routing(snapshot.get("models", {}))
-        if self.expected_models and self._expected_set_at is None:
-            self._expected_set_at = self._last_model_at or time.time()
-        if self.expected_models and self._all_ready_at is None and all(m in self.models for m in self.expected_models):
-            self._all_ready_at = time.time()
         self._gen = new_gen
         self._routing_seq = snapshot.get("routing")
         MODELS_LOADED.set(len(self.models))
@@ -548,18 +529,13 @@ class ModelshipAPI:
         expected = list(self.expected_models)
         pending = [m for m in expected if m not in self.models] if expected else []
         ready = bool(expected) and len(pending) == 0
-        time_to_ready: float | None = None
-        if self._all_ready_at is not None and self._expected_set_at is not None:
-            time_to_ready = round(self._all_ready_at - self._expected_set_at, 2)
         return {
             "status": "ok",
             "ready": ready,
             "uptime_s": round(time.time() - self._started_at, 1),
-            "time_to_ready_s": time_to_ready,
             "models_loaded": sorted(self.models.keys()),
             "models_expected": expected,
             "models_pending": pending,
-            "model_load_times_s": dict(self._model_load_times),
         }
 
     @app.get("/readyz")

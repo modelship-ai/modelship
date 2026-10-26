@@ -53,7 +53,7 @@ with GPU-aware probes and gateway-level rate limiting next.
 
 #### Health & Readiness
 
-- [x] **Detailed readiness probe** — `/readyz` returns 200 only when every expected model is routed by the gateway; 503 with loaded/pending lists while loading. `/health` stays as a cheap liveness endpoint. Per-model load times and total time-to-ready are exposed via `/readyz` for observability.
+- [x] **Detailed readiness probe** — `/readyz` returns 200 only when every expected model is routed by the gateway; 503 with loaded/pending lists while loading. `/health` stays as a cheap liveness endpoint.
 - [ ] **Model-specific health checks** — per-model liveness status (vLLM engine, Ray actor state)
 - [ ] **GPU memory checks** — detect and report memory pressure before OOM
 

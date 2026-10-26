@@ -116,30 +116,16 @@ class TestApplyRouting:
         assert "kokoro" not in api.models
         assert api._gen == 0
 
-    def test_records_per_model_load_times_and_ready_timestamp(self, api):
-        _apply(api, {"qwen-a3f9k": "qwen"}, expected=["qwen", "kokoro"])
-        assert api._expected_set_at is not None
-        assert "qwen" in api._model_load_times
-        assert api._model_load_times["qwen"] >= 0
-        assert api._all_ready_at is None  # kokoro still pending
-
-        _apply(api, {"qwen-a3f9k": "qwen", "kokoro-c1m4n": "kokoro"}, expected=["qwen", "kokoro"], gen=2)
-        assert "kokoro" in api._model_load_times
-        assert api._all_ready_at is not None
-
     def test_readyz_body_ready_flag(self, api):
         _apply(api, {}, expected=["qwen"])
         body = api._readyz_body()
         assert body["ready"] is False
         assert body["models_pending"] == ["qwen"]
-        assert body["time_to_ready_s"] is None
 
         _apply(api, {"qwen-a3f9k": "qwen"}, expected=["qwen"], gen=2)
         body = api._readyz_body()
         assert body["ready"] is True
         assert body["models_pending"] == []
-        assert body["time_to_ready_s"] is not None
-        assert "qwen" in body["model_load_times_s"]
 
 
 class TestReconcileRemovals:
