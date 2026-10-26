@@ -5,7 +5,7 @@ import asyncio
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import create_autospec
+from unittest.mock import ANY, MagicMock, call, create_autospec
 
 import pytest
 from ray.exceptions import RayActorError
@@ -29,6 +29,19 @@ _MemoryStore = MemoryStoreActor.__ray_metadata__.modified_class
 def no_logging_setup(monkeypatch):
     # the actor configures logging for its whole process, here pytest's
     monkeypatch.setattr(deploy_coordinator, "configure_logging", lambda: None)
+
+
+@pytest.fixture
+def metrics(monkeypatch) -> SimpleNamespace:
+    mocks = SimpleNamespace(
+        requests=MagicMock(), duration=MagicMock(), changed=MagicMock(), load_failures=MagicMock(), deaths=MagicMock()
+    )
+    monkeypatch.setattr(deploy_coordinator, "DEPLOY_REQUESTS_TOTAL", mocks.requests)
+    monkeypatch.setattr(deploy_coordinator, "DEPLOY_DURATION_SECONDS", mocks.duration)
+    monkeypatch.setattr(deploy_coordinator, "DEPLOY_MODELS_CHANGED_TOTAL", mocks.changed)
+    monkeypatch.setattr(deploy_coordinator, "MODEL_LOAD_FAILURES_TOTAL", mocks.load_failures)
+    monkeypatch.setattr(deploy_coordinator, "BACKEND_DEATHS_TOTAL", mocks.deaths)
+    return mocks
 
 
 def _fresh():
@@ -244,6 +257,28 @@ class TestReplicaDeathCounting:
         for _ in range(deploy_coordinator._DEATHS_PER_REPLICA + 2):
             await coord.report_replica_death("qwen-aaaa", 1, "engine died")
 
+    async def test_a_death_is_counted_for_its_gateway_and_model(self, metrics):
+        await _fresh().report_replica_death(_app_name(_raw("qwen")), 1, "engine died")
+        metrics.deaths.inc.assert_called_once_with(tags={"gateway": "g", "model": "qwen"})
+
+
+@pytest.mark.asyncio
+class TestLoadFailures:
+    @pytest.mark.parametrize(("fatal", "label"), [(True, "true"), (False, "false")])
+    async def test_counted_for_its_gateway_model_and_loader(self, metrics, fatal, label):
+        _fresh().report_load_failure(_app_name(_raw("qwen")), "llama_server", "boom", fatal)
+        metrics.load_failures.inc.assert_called_once_with(
+            tags={"gateway": "g", "model": "qwen", "loader": "llama_server", "fatal": label}
+        )
+
+    async def test_only_a_fatal_reason_is_kept_for_the_worker(self, metrics):
+        coord = _fresh()
+        app = _app_name(_raw("qwen"))
+        coord.report_load_failure(app, "llama_server", "network blip", False)
+        assert coord.pop_fatal_error(app) is None
+        coord.report_load_failure(app, "llama_server", "bad weights", True)
+        assert coord.pop_fatal_error(app) == "bad weights"
+
 
 def _raw(name: str, **overrides) -> dict:
     return {"name": name, "model": f"org/{name}", "usecase": "generate", "loader": "llama_server", **overrides}
@@ -271,8 +306,16 @@ class _Worker:
         self.runs.append(request)
         return self.run_future
 
-    def finish(self, state: str = "succeeded") -> None:
-        outcome = {"id": self.runs[0].id, "state": state, "reason": "", "models": {}, "diff": [], "version": None}
+    def finish(self, state: str = "succeeded", actions: dict | None = None) -> None:
+        outcome = {
+            "id": self.runs[0].id,
+            "state": state,
+            "reason": "",
+            "models": {},
+            "diff": [],
+            "version": None,
+            "actions": actions or {},
+        }
         self.run_future.set_result(outcome)
 
 
@@ -411,6 +454,47 @@ class TestQueue:
         await _settle()
         assert workers.rollbacks == [("g", True, 60.0)]
         assert len(workers.created) == 2
+
+
+@pytest.mark.asyncio
+class TestDeployMetrics:
+    @pytest.mark.parametrize("state", ["succeeded", "failed", "cancelled"])
+    async def test_each_outcome_is_counted_once_with_how_long_it_ran(self, workers, metrics, state):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        workers.created[0].finish(state)
+        await receipt["outcome"]
+        tags = {"gateway": "g", "outcome": state}
+        metrics.requests.inc.assert_called_once_with(tags=tags)
+        metrics.duration.observe.assert_called_once_with(ANY, tags=tags)
+
+    async def test_a_request_cancelled_in_the_queue_is_counted_without_a_duration(self, workers, metrics):
+        coord = _ledger()
+        await coord.submit(_request())
+        queued = await coord.submit(_request())
+        await coord.cancel(queued["id"])
+        metrics.requests.inc.assert_called_once_with(tags={"gateway": "g", "outcome": "cancelled"})
+        metrics.duration.observe.assert_not_called()
+
+    async def test_a_request_whose_worker_dies_is_counted_as_failed(self, workers, metrics):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        workers.kill(workers.created[0])
+        await receipt["outcome"]
+        metrics.requests.inc.assert_called_once_with(tags={"gateway": "g", "outcome": "failed"})
+
+    async def test_the_workers_model_changes_are_counted_by_action(self, workers, metrics):
+        coord = _ledger()
+        receipt = await coord.submit(_request())
+        await _settle()
+        workers.created[0].finish(actions={"add": 1, "remove": 2})
+        await receipt["outcome"]
+        assert metrics.changed.inc.call_args_list == [
+            call(1, tags={"gateway": "g", "action": "add"}),
+            call(2, tags={"gateway": "g", "action": "remove"}),
+        ]
 
 
 @pytest.mark.asyncio

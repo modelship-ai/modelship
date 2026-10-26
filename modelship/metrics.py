@@ -85,7 +85,6 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "gateway_watch_errors_total",
         "models_loaded",
         "model_load_duration_seconds",
-        "model_load_failures_total",
         "generation_duration_seconds",
         "tts_generation_duration_seconds",
         "image_generation_duration_seconds",
@@ -150,7 +149,6 @@ def _build_metrics():
             "gateway_watch_errors_total": _NoOpCounter(),
             # Model deployment
             "model_load_duration_seconds": _NoOpHistogram(),
-            "model_load_failures_total": _NoOpCounter(),
             "models_loaded": _NoOpGauge(),
             # Inference timing
             "generation_duration_seconds": _NoOpHistogram(),
@@ -210,11 +208,6 @@ def _build_metrics():
             "modelship_model_load_duration_seconds",
             description="Model initialization time in seconds.",
             boundaries=_MODEL_LOAD_BOUNDARIES,
-            tag_keys=("model", "loader", "gateway"),  # type: ignore[arg-type]
-        ),
-        "model_load_failures_total": Counter(
-            "modelship_model_load_failures_total",
-            description="Total failed model deployments.",
             tag_keys=("model", "loader", "gateway"),  # type: ignore[arg-type]
         ),
         "models_loaded": Gauge(
@@ -279,9 +272,12 @@ def _build_util_metrics():
             # State store
             "state_store_operations_total": _NoOpCounter(),
             "state_store_operation_duration_seconds": _NoOpHistogram(),
-            # Deploy worker
+            # Deploy coordinator
+            "deploy_requests_total": _NoOpCounter(),
             "deploy_duration_seconds": _NoOpHistogram(),
             "deploy_models_changed_total": _NoOpCounter(),
+            "model_load_failures_total": _NoOpCounter(),
+            "backend_deaths_total": _NoOpCounter(),
         }
 
     from ray.util.metrics import Counter, Gauge, Histogram
@@ -305,17 +301,32 @@ def _build_util_metrics():
             boundaries=_STATE_STORE_BOUNDARIES,
             tag_keys=("backend", "op"),
         ),
-        # -- Deploy worker (one per deploy request) --
+        # -- Deploy coordinator --
+        "deploy_requests_total": Counter(
+            "modelship_deploy_requests_total",
+            description="Deploy requests finished, by outcome.",
+            tag_keys=("gateway", "outcome"),
+        ),
         "deploy_duration_seconds": Histogram(
             "modelship_deploy_duration_seconds",
-            description="Wall-clock time for a deploy request to succeed, in seconds.",
+            description="Wall-clock time a deploy request ran, by outcome, in seconds.",
             boundaries=_MODEL_LOAD_BOUNDARIES,
-            tag_keys=("gateway",),
+            tag_keys=("gateway", "outcome"),
         ),
         "deploy_models_changed_total": Counter(
             "modelship_deploy_models_changed_total",
-            description="Models changed by a deploy request, by action.",
-            tag_keys=("gateway", "action"),  # action: add | remove | rescale | fail
+            description="Models changed by a successful deploy request, by action.",
+            tag_keys=("gateway", "action"),
+        ),
+        "model_load_failures_total": Counter(
+            "modelship_model_load_failures_total",
+            description="Failed model loads reported by model replicas.",
+            tag_keys=("gateway", "model", "loader", "fatal"),
+        ),
+        "backend_deaths_total": Counter(
+            "modelship_backend_deaths_total",
+            description="Backend process deaths reported by model replicas.",
+            tag_keys=("gateway", "model"),
         ),
     }
 
@@ -336,7 +347,6 @@ GATEWAY_WATCH_ERRORS_TOTAL = _metrics["gateway_watch_errors_total"]
 
 # -- Model deployment --
 MODEL_LOAD_DURATION_SECONDS = _metrics["model_load_duration_seconds"]
-MODEL_LOAD_FAILURES_TOTAL = _metrics["model_load_failures_total"]
 MODELS_LOADED = _metrics["models_loaded"]
 
 # -- Inference timing --
@@ -355,6 +365,9 @@ GATEWAY_REPLICAS_BEHIND = _util_metrics["gateway_replicas_behind"]
 # State store
 STATE_STORE_OPERATIONS_TOTAL = _util_metrics["state_store_operations_total"]
 STATE_STORE_OPERATION_DURATION_SECONDS = _util_metrics["state_store_operation_duration_seconds"]
-# Deploy worker
+# Deploy coordinator
+DEPLOY_REQUESTS_TOTAL = _util_metrics["deploy_requests_total"]
 DEPLOY_DURATION_SECONDS = _util_metrics["deploy_duration_seconds"]
 DEPLOY_MODELS_CHANGED_TOTAL = _util_metrics["deploy_models_changed_total"]
+MODEL_LOAD_FAILURES_TOTAL = _util_metrics["model_load_failures_total"]
+BACKEND_DEATHS_TOTAL = _util_metrics["backend_deaths_total"]

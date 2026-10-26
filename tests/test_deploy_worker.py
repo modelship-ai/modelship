@@ -243,6 +243,7 @@ class TestSucceeds:
             "models": {"a": "up"},
             "diff": ["4. add a", "6. switch the gateway and commit"],
             "version": 1,
+            "actions": {"add": 1},
         }
         assert cluster.serve.events == [("submit", _app_name(A)), ("switch", "1"), ("commit", "1")]
         assert cluster.ledger.commits == [[A]]
@@ -350,8 +351,15 @@ class TestSucceeds:
 
     def test_a_request_that_changes_nothing_submits_nothing(self, cluster):
         _existing(cluster, A)
-        assert _run(cluster, [A], committed=[A])["state"] == "succeeded"
+        outcome = _run(cluster, [A], committed=[A])
+        assert outcome["state"] == "succeeded"
+        assert outcome["actions"] == {}
         assert cluster.serve.events == []
+
+    def test_the_outcome_counts_the_apps_added_removed_and_rescaled(self, cluster):
+        _existing(cluster, A, B, C)
+        outcome = _run(cluster, [A2, C2], committed=[A, B, C], mode="reconcile")
+        assert outcome["actions"] == {"add": 1, "remove": 2, "rescale": 1}
 
     def test_leftovers_are_deleted_before_anything_else(self, cluster):
         _existing(cluster, A, B)
@@ -401,6 +409,7 @@ class TestRollsBack:
         assert outcome["state"] == "failed"
         assert outcome["reason"] == "model 'a': bad weights"
         assert outcome["models"] == {"a": "failed: bad weights"}
+        assert outcome["actions"] == {}
         assert cluster.ledger.commits == []
         assert ("delete", _app_name(A2)) in cluster.serve.events
         assert ("delete", _app_name(A)) not in cluster.serve.events

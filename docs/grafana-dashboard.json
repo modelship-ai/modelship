@@ -1517,7 +1517,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_deploy_duration_seconds_bucket{gateway=~\"$gateway\"}[1h])) by (le, gateway))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_deploy_duration_seconds_bucket{gateway=~\"$gateway\", outcome=\"succeeded\"}[1h])) by (le, gateway))",
           "legendFormat": "p95 {{ gateway }}"
         },
         {

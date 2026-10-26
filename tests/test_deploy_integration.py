@@ -308,6 +308,29 @@ class TestDeployCoordinatorRestart:
         )
 
 
+def _counted(metric: str, **labels: str) -> float:
+    lines = httpx.get("http://localhost:8079/metrics", timeout=10).text.splitlines()
+    wanted = [f'{key}="{value}"' for key, value in labels.items()]
+    return sum(
+        float(line.split("} ", 1)[1].split()[0])
+        for line in lines
+        if line.startswith(metric + "{") and all(label in line for label in wanted)
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+@pytest.mark.deploy
+class TestDeployMetrics:
+    def test_a_failed_deploy_and_its_load_failure_are_scraped(self, model_deployer):
+        failed = partial(_counted, "ray_modelship_deploy_requests_total", gateway="modelship", outcome="failed")
+        load_failures = partial(_counted, "ray_modelship_model_load_failures_total", model="load-failure", fatal="true")
+        before = failed()
+        model_deployer.run(*_flags("load-failure", broken=True), log_name="load-failure", expect_code=1)
+        assert _poll(lambda: failed() > before, deadline_s=30), "the failed deploy was not scraped"
+        assert _poll(lambda: load_failures() > 0, deadline_s=30), "the load failure was not scraped"
+
+
 def _deploy_remote(url: str, config: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         [*MSHIP, "deploy", "--ray-dashboard-url", url, "--config", str(config), "--wait"],
