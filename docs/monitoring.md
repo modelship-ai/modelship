@@ -263,7 +263,7 @@ curl http://localhost:8000/modelship/health
 # {"status": "ok", "uptime_s": 12.3}
 ```
 
-**`/readyz`** — readiness + timing. Returns 200 when at least one model is expected and every expected model has a deployment the gateway routes to; 503 with the same JSON body while any model is still pending. **A gateway with no models configured at all is never ready — `/readyz` stays 503 indefinitely**, even though `models_expected` and `models_pending` are both empty (there is nothing to be "pending" on, but nothing to serve either, so it never reports ready). This matters for a genuinely model-less control-plane node (e.g. a k8s head-only install with an empty `models.yaml`) or an external LB/Ingress health check pointed at `/readyz` before any model is configured — both stay permanently unhealthy by design, not by bug. Bodies carry full state so a single poll tells you what's loaded, what's outstanding, and how long each model took to come up:
+**`/readyz`** — readiness. Returns 200 when at least one model is expected and every expected model has a deployment the gateway routes to; 503 with the same JSON body while any model is still pending. **A gateway with no models configured at all is never ready — `/readyz` stays 503 indefinitely**, even though `models_expected` and `models_pending` are both empty (there is nothing to be "pending" on, but nothing to serve either, so it never reports ready). This matters for a genuinely model-less control-plane node (e.g. a k8s head-only install with an empty `models.yaml`) or an external LB/Ingress health check pointed at `/readyz` before any model is configured — both stay permanently unhealthy by design, not by bug. Bodies carry full state so a single poll tells you what's loaded and what's outstanding:
 
 ```bash
 curl http://localhost:8000/modelship/readyz
@@ -272,15 +272,11 @@ curl http://localhost:8000/modelship/readyz
 #   "status": "ok",
 #   "ready": true,
 #   "uptime_s": 420.5,
-#   "time_to_ready_s": 215.3,
 #   "models_loaded":   ["kokoro", "llm", "nomic-embed", "whisper"],
 #   "models_expected": ["llm", "kokoro", "whisper", "nomic-embed"],
-#   "models_pending":  [],
-#   "model_load_times_s": {"llm": 50.2, "kokoro": 8.1, "whisper": 120.5, "nomic-embed": 36.5}
+#   "models_pending":  []
 # }
 ```
-
-Per-model timings are gateway-measured: the gap between one model becoming routable and the one before it. That matches load time only when models load one after another, as they do on a single node; the first model's entry includes any framework-level setup time preceding it.
 
 Use `/health` for Kubernetes liveness probes and `/readyz` for readiness probes — `/readyz` returning 503 prevents a service from flipping traffic onto the pod before models are loaded.
 
