@@ -1,5 +1,6 @@
 """ModelDeployment.__init__: which failures are fatal, and the order of a successful load."""
 
+import logging
 import sys
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -112,7 +113,6 @@ async def test_a_download_error_is_reported_as_not_fatal():
             stamp_gateway=MagicMock(),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
-            MODEL_LOAD_DURATION_SECONDS=MagicMock(),
         ),
         patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
         patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
@@ -142,7 +142,6 @@ async def test_generic_init_failure_reports_fatal():
             stamp_gateway=MagicMock(),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
-            MODEL_LOAD_DURATION_SECONDS=MagicMock(),
         ),
         patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
         patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
@@ -170,7 +169,6 @@ async def test_a_model_that_could_not_be_sized_is_reported_without_a_traceback()
             stamp_gateway=MagicMock(),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
-            MODEL_LOAD_DURATION_SECONDS=MagicMock(),
         ),
         patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
         patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
@@ -197,7 +195,6 @@ async def test_an_init_failure_without_a_deploy_coordinator_still_raises(caplog)
             stamp_gateway=MagicMock(),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
-            MODEL_LOAD_DURATION_SECONDS=MagicMock(),
         ),
         patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=None),
         pytest.raises(RuntimeError, match="bad config"),
@@ -235,10 +232,75 @@ async def test_loads_once_the_lease_is_granted():
             _reject_unsupported_accelerator=MagicMock(),
             BaseInfer=base_infer,
             wait_for_deploy_lease=lease,
-            MODEL_LOAD_DURATION_SECONDS=MagicMock(),
         ),
         patch.dict(sys.modules, {"modelship.infer.llama_server.llama_server_infer": loader_module}),
     ):
         await _ModelDeployment.__init__(inst, config)
 
     assert events == ["download", "lease", "load", "warmup"]
+
+
+@pytest.mark.asyncio
+async def test_a_load_records_its_phases(caplog):
+    inst = _ModelDeployment.__new__(_ModelDeployment)
+    config = _make_config()
+    config.loader = ModelLoader.llama_server
+    infer = MagicMock(start=AsyncMock(), warmup=AsyncMock())
+    loader_module = MagicMock(LlamaServerInfer=MagicMock(return_value=infer))
+    download_seconds = MagicMock()
+    engine_seconds = MagicMock()
+
+    with (
+        _patch_init_globals(
+            configure_logging=MagicMock(),
+            stamp_gateway=MagicMock(),
+            reject_unset_cache_roots=MagicMock(),
+            _reject_unsupported_darwin_loader=MagicMock(),
+            _reject_unsupported_accelerator=MagicMock(),
+            BaseInfer=MagicMock(ensure_downloaded=AsyncMock()),
+            wait_for_deploy_lease=AsyncMock(),
+            time=MagicMock(monotonic=MagicMock(side_effect=[0.0, 40.0, 43.0, 63.0])),
+            MODEL_DOWNLOAD_DURATION_SECONDS=download_seconds,
+            MODEL_ENGINE_LOAD_DURATION_SECONDS=engine_seconds,
+        ),
+        patch.dict(sys.modules, {"modelship.infer.llama_server.llama_server_infer": loader_module}),
+        caplog.at_level(logging.INFO, logger="modelship.infer.deployment"),
+    ):
+        await _ModelDeployment.__init__(inst, config)
+
+    tags = {"model": "test-model", "loader": "llama_server"}
+    download_seconds.observe.assert_called_once_with(40.0, tags=tags)
+    engine_seconds.observe.assert_called_once_with(20.0, tags=tags)
+    assert "Loaded 'test-model' in 63.0s: download 40.0s, lease wait 3.0s, engine 20.0s" in caplog.messages
+
+
+@pytest.mark.asyncio
+async def test_a_failed_load_records_no_phases():
+    inst = _ModelDeployment.__new__(_ModelDeployment)
+    config = _make_config()
+    config.loader = ModelLoader.llama_server
+    infer = MagicMock(start=AsyncMock(side_effect=RuntimeError("engine died")), warmup=AsyncMock())
+    loader_module = MagicMock(LlamaServerInfer=MagicMock(return_value=infer))
+    download_seconds = MagicMock()
+    engine_seconds = MagicMock()
+
+    with (
+        _patch_init_globals(
+            configure_logging=MagicMock(),
+            stamp_gateway=MagicMock(),
+            reject_unset_cache_roots=MagicMock(),
+            _reject_unsupported_darwin_loader=MagicMock(),
+            _reject_unsupported_accelerator=MagicMock(),
+            BaseInfer=MagicMock(ensure_downloaded=AsyncMock()),
+            wait_for_deploy_lease=AsyncMock(),
+            MODEL_DOWNLOAD_DURATION_SECONDS=download_seconds,
+            MODEL_ENGINE_LOAD_DURATION_SECONDS=engine_seconds,
+        ),
+        patch.dict(sys.modules, {"modelship.infer.llama_server.llama_server_infer": loader_module}),
+        patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=None),
+        pytest.raises(RuntimeError, match="engine died"),
+    ):
+        await _ModelDeployment.__init__(inst, config)
+
+    download_seconds.observe.assert_not_called()
+    engine_seconds.observe.assert_not_called()
