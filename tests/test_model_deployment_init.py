@@ -113,9 +113,9 @@ async def test_a_download_error_is_reported_as_not_fatal():
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
-            serve=MagicMock(get_replica_context=MagicMock(return_value=MagicMock(app_name="app"))),
         ),
         patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
+        patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
         pytest.raises(ModelDownloadError),
     ):
         await _ModelDeployment.__init__(inst, config)
@@ -143,9 +143,9 @@ async def test_generic_init_failure_reports_fatal():
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
-            serve=MagicMock(get_replica_context=MagicMock(return_value=MagicMock(app_name="app"))),
         ),
         patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
+        patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
         pytest.raises(RuntimeError),
     ):
         await _ModelDeployment.__init__(inst, config)
@@ -171,9 +171,9 @@ async def test_a_model_that_could_not_be_sized_is_reported_without_a_traceback()
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
-            serve=MagicMock(get_replica_context=MagicMock(return_value=MagicMock(app_name="app"))),
         ),
         patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
+        patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
         pytest.raises(RuntimeError, match=r"^model 'test-model' could not be sized for this node$"),
     ):
         await _ModelDeployment.__init__(inst, config)
