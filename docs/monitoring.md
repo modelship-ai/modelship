@@ -222,6 +222,8 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | `ModelshipNoModelsLoaded` | `models_loaded` == 0 | 2m | Server is running but cannot serve requests |
 | `ModelshipKVCacheExhausted` | KV cache usage > 95% | 5m | Requests will queue or be preempted |
 | `ModelshipAppUnhealthy` | `ray_serve_application_status` == 2 (UNHEALTHY) | 5m | A Serve application has an unhealthy deployment |
+| `ModelshipModelLoadFailure` | A model replica failed to load in the last 15m | 0m | A model can't come up; its replica log has the reason |
+| `ModelshipBackendCrashLooping` | A model's backend died 3+ times in 15m | 0m | `llama-server` or vLLM's engine keeps crashing |
 | `ModelshipTargetDown` | `up{job="modelship"}` == 0 | 5m | Prometheus cannot scrape a node |
 | `ModelshipStateStoreErrors` | Any state-store op errors | 5m | Durable HA state failing — self-heal at risk |
 | `ModelshipDeployJobFailed` | `kube_job_failed` (condition true) > 0 | 0m | Deploy Job failed; last upgrade may not be applied (needs kube-state-metrics) |
@@ -238,6 +240,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
 | `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
 | `ModelshipDeployStuck` | `ray_serve_application_status` == 5 (DEPLOYING) | 30m | A Serve application is waiting for capacity or a slow model load |
+| `ModelshipDeployFailed` | A deploy request failed in the last 15m | 0m | The request was rolled back; the gateway serves its last committed models |
 | `ModelshipGatewayRoutingDivergence` | `gateway_replicas_behind` > 0 | 10m | A gateway replica is routing from a stale table |
 | `ModelshipRayWorkerDown` | Ray worker pod not running or crash-looping | 5m | Cluster capacity degraded (needs kube-state-metrics); a worker hosting no replica is NotReady by design |
 
@@ -282,7 +285,7 @@ Use `/health` for Kubernetes liveness probes and `/readyz` for readiness probes 
 
 ## Modelship Metrics Reference
 
-Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the gateway coordinator, state store, and deploy worker, which are not Serve replicas).
+Custom metrics are exported through Ray's metrics agent with a `ray_` prefix. Per-model/per-gateway metrics use `ray.serve.metrics` (they're emitted inside Serve replicas); the HA control-plane metrics use `ray.util.metrics` (emitted by the gateway coordinator, state store, and deploy coordinator, which are not Serve replicas).
 
 ### The `gateway` dimension
 
@@ -305,7 +308,8 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 | Metric | Type | Tags | Description |
 |---|---|---|---|
 | `ray_modelship_model_load_duration_seconds` | Histogram | `model`, `loader`, `gateway` | Time to initialize a model |
-| `ray_modelship_model_load_failures_total` | Counter | `model`, `loader`, `gateway` | Failed model initializations |
+| `ray_modelship_model_load_failures_total` | Counter | `model`, `loader`, `fatal`, `gateway` | Failed model loads, reported by the replica to the deploy coordinator (`fatal`: `true` when the deploy doesn't retry it) |
+| `ray_modelship_backend_deaths_total` | Counter | `model`, `gateway` | Deaths of a model's backend process (`llama-server`, vLLM's engine), reported by its replica |
 | `ray_modelship_models_loaded` | Gauge | `gateway` | Number of loaded and ready models |
 
 ### Inference Timing
@@ -326,15 +330,16 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 
 ### HA Control Plane
 
-These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first five carry a `gateway` tag; the rest are cluster-scoped.
+These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first six carry a `gateway` tag; the rest are cluster-scoped.
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
 | `ray_modelship_gateway_reconciles_total` | Counter | `gateway` | Routing reconciles a gateway replica applied from the coordinator |
 | `ray_modelship_gateway_watch_errors_total` | Counter | `gateway` | Errors in a gateway replica's coordinator watch loop (retried) |
 | `ray_modelship_gateway_replicas_behind` | Gauge | `gateway` | Running gateway replicas not on the gateway coordinator's current routing generation |
-| `ray_modelship_deploy_duration_seconds` | Histogram | `gateway` | Wall-clock time for a deploy request to succeed |
-| `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a deploy request (`action`: `add`, `remove` and `rescale` on success, `fail` once per failed request) |
+| `ray_modelship_deploy_requests_total` | Counter | `gateway`, `outcome` | Deploy requests finished (`outcome`: `succeeded`, `failed`, `cancelled`), including those cancelled while queued |
+| `ray_modelship_deploy_duration_seconds` | Histogram | `gateway`, `outcome` | Wall-clock time a deploy request ran, from its start to its outcome |
+| `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a successful deploy request (`action`: `add`, `remove`, `rescale`) |
 | `ray_modelship_state_store_operations_total` | Counter | `backend`, `op`, `result` | State-store ops (`op`: `get`/`set`/`delete`; `result`: `ok`/`error`) |
 | `ray_modelship_state_store_operation_duration_seconds` | Histogram | `backend`, `op` | State-store operation latency |
 

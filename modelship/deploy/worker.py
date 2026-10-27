@@ -21,7 +21,6 @@ from modelship.deploy.ledger import DeployRequest, to_config
 from modelship.deploy.strategy import live_app, rescale_app, submit_app
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.logging import configure_logging, get_logger, serve_logging_config
-from modelship.metrics import DEPLOY_DURATION_SECONDS, DEPLOY_MODELS_CHANGED_TOTAL
 from modelship.state import state_store_env_var
 from modelship.utils import head_node_options
 from modelship.utils.runtime_env import cluster_env_vars
@@ -220,11 +219,10 @@ class Run:
         self._results: dict[str, str] = {}
         self._lines: list[str] = []
         self._version: int | None = None
+        self._actions: dict[str, int] = {}
 
     def execute(self) -> dict:
         request = self._request
-        started = time.monotonic()
-        tags = {"gateway": request.gateway}
         try:
             diff = self._apply()
         except RequestCancelledError:
@@ -232,11 +230,9 @@ class Run:
             return self._rolled_back("cancelled", "cancelled")
         except RequestFailedError as e:
             logger.error("Deploy %s failed: %s; rolling back", request.id, e)
-            DEPLOY_MODELS_CHANGED_TOTAL.inc(1, tags={**tags, "action": "fail"})
             return self._rolled_back("failed", str(e))
         except Exception as e:
             logger.exception("Deploy %s failed; rolling back", request.id)
-            DEPLOY_MODELS_CHANGED_TOTAL.inc(1, tags={**tags, "action": "fail"})
             return self._rolled_back("failed", f"{type(e).__name__}: {e}")
 
         if request.strategy == "blue_green":
@@ -244,8 +240,7 @@ class Run:
         rescaled = sum(action == "rescale" for action in diff.actions.values())
         for action, count in (("add", len(diff.deploys)), ("remove", len(diff.retired)), ("rescale", rescaled)):
             if count:
-                DEPLOY_MODELS_CHANGED_TOTAL.inc(count, tags={**tags, "action": action})
-        DEPLOY_DURATION_SECONDS.observe(time.monotonic() - started, tags=tags)
+                self._actions[action] = count
         logger.info("Deploy %s succeeded", request.id)
         return self._outcome("succeeded", "")
 
@@ -483,6 +478,7 @@ class Run:
             "models": dict(self._results),
             "diff": list(self._lines),
             "version": self._version,
+            "actions": dict(self._actions),
         }
 
 

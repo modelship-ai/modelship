@@ -17,7 +17,6 @@ from modelship.metrics import (
     GENERATION_DURATION_SECONDS,
     IMAGE_GENERATION_DURATION_SECONDS,
     MODEL_LOAD_DURATION_SECONDS,
-    MODEL_LOAD_FAILURES_TOTAL,
     TRANSCRIPTION_DURATION_SECONDS,
     TTS_GENERATION_DURATION_SECONDS,
     stamp_gateway,
@@ -73,6 +72,19 @@ def _reject_unsupported_accelerator(config: ModelshipModelConfig) -> None:
         )
 
 
+async def _report_load_failure(config: ModelshipModelConfig, reason: str, fatal: bool) -> None:
+    try:
+        from modelship.infer.deploy_coordinator import find_coordinator
+
+        if (coordinator := find_coordinator()) is None:
+            logger.error("No deploy coordinator to report the load failure of '%s' to", config.name)
+        else:
+            app_name = serve.get_replica_context().app_name
+            await coordinator.report_load_failure.remote(app_name, config.loader.value, reason, fatal)
+    except Exception:
+        logger.exception("Failed to report the load failure of '%s' to the deploy coordinator", config.name)
+
+
 @serve.deployment
 class ModelDeployment:
     async def __init__(self, config: ModelshipModelConfig):
@@ -126,12 +138,11 @@ class ModelDeployment:
             await self.infer.warmup()
         except (ModelDownloadError, DeployLeaseError) as e:
             # Not reported as fatal, so the driver retries the deployment.
-            MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})
             self._graceful_teardown()
             logger.warning("Load failed for '%s', will be retried: %s", config.name, e)
+            await _report_load_failure(config, str(e), fatal=False)
             raise
         except Exception as e:
-            MODEL_LOAD_FAILURES_TOTAL.inc(tags={"model": config.name, "loader": config.loader.value})
             self._graceful_teardown()
 
             if isinstance(e, ModelNotSizedError):
@@ -142,16 +153,7 @@ class ModelDeployment:
                 logger.exception("Engine init failed for '%s'", config.name)
                 err_msg = f"{config.loader.value} engine init failed for '{config.name}': {e}"
                 reason = f"{err_msg}\n{traceback.format_exc()}"
-            try:
-                from modelship.infer.deploy_coordinator import find_coordinator
-
-                if (coordinator := find_coordinator()) is None:
-                    logger.error("No deploy coordinator to report the fatal error of '%s' to", config.name)
-                else:
-                    app_name = serve.get_replica_context().app_name
-                    await coordinator.report_fatal_error.remote(app_name, reason)
-            except Exception:
-                logger.exception("Failed to report fatal error to the deploy coordinator for %s", config.name)
+            await _report_load_failure(config, reason, fatal=True)
 
             raise RuntimeError(err_msg) from e
         finally:

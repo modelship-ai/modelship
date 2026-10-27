@@ -1,7 +1,7 @@
 """ModelDeployment.__init__: which failures are fatal, and the order of a successful load."""
 
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -96,12 +96,15 @@ def _patch_init_globals(**kwargs):
 
 
 @pytest.mark.asyncio
-async def test_download_error_does_not_report_fatal():
+async def test_a_download_error_is_reported_as_not_fatal():
     inst = _ModelDeployment.__new__(_ModelDeployment)
     config = _make_config()
 
     mock_base_infer = MagicMock()
     mock_base_infer.ensure_downloaded = AsyncMock(side_effect=ModelDownloadError("network blip"))
+
+    coordinator = MagicMock()
+    coordinator.report_load_failure.remote = AsyncMock()
 
     with (
         _patch_init_globals(
@@ -109,16 +112,15 @@ async def test_download_error_does_not_report_fatal():
             stamp_gateway=MagicMock(),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
-            MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
         ),
-        patch("modelship.infer.deploy_coordinator.find_coordinator") as mock_find_coordinator,
+        patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
+        patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
         pytest.raises(ModelDownloadError),
     ):
         await _ModelDeployment.__init__(inst, config)
 
-    # No deploy coordinator lookup/report happens on this path.
-    mock_find_coordinator.assert_not_called()
+    coordinator.report_load_failure.remote.assert_called_once_with("app", "vllm", "network blip", False)
 
 
 @pytest.mark.asyncio
@@ -132,7 +134,7 @@ async def test_generic_init_failure_reports_fatal():
     mock_base_infer.ensure_downloaded = AsyncMock(side_effect=ValueError("bad config"))
 
     coordinator = MagicMock()
-    coordinator.report_fatal_error.remote = AsyncMock()
+    coordinator.report_load_failure.remote = AsyncMock()
 
     with (
         _patch_init_globals(
@@ -140,16 +142,15 @@ async def test_generic_init_failure_reports_fatal():
             stamp_gateway=MagicMock(),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
-            MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
-            serve=MagicMock(get_replica_context=MagicMock(return_value=MagicMock(app_name="app"))),
         ),
         patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
+        patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
         pytest.raises(RuntimeError),
     ):
         await _ModelDeployment.__init__(inst, config)
 
-    coordinator.report_fatal_error.remote.assert_called_once()
+    coordinator.report_load_failure.remote.assert_called_once_with("app", "vllm", ANY, True)
 
 
 @pytest.mark.asyncio
@@ -161,7 +162,7 @@ async def test_a_model_that_could_not_be_sized_is_reported_without_a_traceback()
     mock_base_infer.ensure_downloaded = AsyncMock(side_effect=ModelNotSizedError("could not be sized for this node"))
 
     coordinator = MagicMock()
-    coordinator.report_fatal_error.remote = AsyncMock()
+    coordinator.report_load_failure.remote = AsyncMock()
 
     with (
         _patch_init_globals(
@@ -169,16 +170,17 @@ async def test_a_model_that_could_not_be_sized_is_reported_without_a_traceback()
             stamp_gateway=MagicMock(),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
-            MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
-            serve=MagicMock(get_replica_context=MagicMock(return_value=MagicMock(app_name="app"))),
         ),
         patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
+        patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
         pytest.raises(RuntimeError, match=r"^model 'test-model' could not be sized for this node$"),
     ):
         await _ModelDeployment.__init__(inst, config)
 
-    coordinator.report_fatal_error.remote.assert_called_once_with("app", "could not be sized for this node")
+    coordinator.report_load_failure.remote.assert_called_once_with(
+        "app", "vllm", "could not be sized for this node", True
+    )
 
 
 @pytest.mark.asyncio
@@ -195,7 +197,6 @@ async def test_an_init_failure_without_a_deploy_coordinator_still_raises(caplog)
             stamp_gateway=MagicMock(),
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
-            MODEL_LOAD_FAILURES_TOTAL=MagicMock(),
             MODEL_LOAD_DURATION_SECONDS=MagicMock(),
         ),
         patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=None),
@@ -203,7 +204,7 @@ async def test_an_init_failure_without_a_deploy_coordinator_still_raises(caplog)
     ):
         await _ModelDeployment.__init__(inst, config)
 
-    assert f"No deploy coordinator to report the fatal error of '{config.name}' to" in caplog.messages
+    assert f"No deploy coordinator to report the load failure of '{config.name}' to" in caplog.messages
 
 
 @pytest.mark.asyncio

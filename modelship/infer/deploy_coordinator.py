@@ -35,6 +35,13 @@ from ray.exceptions import RayActorError
 from modelship.deploy.gateway_sizing import GATEWAY_SIZING_ENV_VARS, gateway_sizing
 from modelship.deploy.ledger import DeployRequest, Version, commit_version, read_versions
 from modelship.logging import configure_logging, get_logger, serve_logging_config
+from modelship.metrics import (
+    BACKEND_DEATHS_TOTAL,
+    DEPLOY_DURATION_SECONDS,
+    DEPLOY_MODELS_CHANGED_TOTAL,
+    DEPLOY_REQUESTS_TOTAL,
+    MODEL_LOAD_FAILURES_TOTAL,
+)
 from modelship.state import get_state_store, state_store_env_var
 from modelship.utils import head_node_options, random_uuid
 from modelship.utils.config_schema import parse_deployment_name
@@ -110,7 +117,20 @@ def _routing(seq: int, models: list[dict] | None, gateway_name: str) -> _Routing
 
 
 def _outcome(entry: _Entry, state: str, reason: str) -> dict:
-    return {"id": entry.request.id, "state": state, "reason": reason, "models": {}, "diff": [], "version": None}
+    return {
+        "id": entry.request.id,
+        "state": state,
+        "reason": reason,
+        "models": {},
+        "diff": [],
+        "version": None,
+        "actions": {},
+    }
+
+
+def _model_tags(deployment_name: str) -> dict[str, str] | None:
+    parsed = parse_deployment_name(deployment_name)
+    return {"gateway": parsed[0], "model": parsed[1]} if parsed is not None else None
 
 
 def _lease_key(node_id: str) -> str:
@@ -279,6 +299,7 @@ class DeployCoordinator:
             return {"cancelled": False, "message": f"no queued or running deploy {request_id}"}
         if entry.state == "queued":
             self._queues[entry.request.gateway].remove(entry)
+            DEPLOY_REQUESTS_TOTAL.inc(tags={"gateway": entry.request.gateway, "outcome": "cancelled"})
             entry.done.set_result(_outcome(entry, "cancelled", "cancelled before it started"))
             logger.info("Deploy %s cancelled before it started", request_id)
             return {"cancelled": True, "message": f"deploy {request_id} cancelled", "outcome": entry.outcome}
@@ -418,6 +439,7 @@ class DeployCoordinator:
                 entry = queue.popleft()
                 self._running[gateway_name] = entry
                 entry.state = "applying"
+                started = time.monotonic()
                 try:
                     outcome = await self._apply(entry)
                 except Exception as e:
@@ -425,6 +447,11 @@ class DeployCoordinator:
                     outcome = _outcome(entry, "failed", f"{type(e).__name__}: {e}")
                 finally:
                     del self._running[gateway_name]
+                tags = {"gateway": gateway_name, "outcome": outcome["state"]}
+                DEPLOY_REQUESTS_TOTAL.inc(tags=tags)
+                DEPLOY_DURATION_SECONDS.observe(time.monotonic() - started, tags=tags)
+                for action, count in outcome["actions"].items():
+                    DEPLOY_MODELS_CHANGED_TOTAL.inc(count, tags={"gateway": gateway_name, "action": action})
                 entry.done.set_result(outcome)
         finally:
             del self._drainers[gateway_name]
@@ -496,6 +523,8 @@ class DeployCoordinator:
         """Count one backend death against `deployment_name`; past `_DEATHS_PER_REPLICA * replica_ceiling`
         a deploy bringing it up fails. Only a deploy resets the count. The reporting replica exits whatever
         this returns."""
+        if (tags := _model_tags(deployment_name)) is not None:
+            BACKEND_DEATHS_TOTAL.inc(tags=tags)
         deaths = self._deaths.get(deployment_name, 0) + 1
         self._deaths[deployment_name] = deaths
         limit = _DEATHS_PER_REPLICA * max(replica_ceiling, 1)
@@ -518,8 +547,11 @@ class DeployCoordinator:
             self._deaths.pop(name, None)
             self._last_deaths.pop(name, None)
 
-    def report_fatal_error(self, deployment_name: str, reason: str) -> None:
-        self._fatal_errors[deployment_name] = reason
+    def report_load_failure(self, deployment_name: str, loader: str, reason: str, fatal: bool) -> None:
+        if (tags := _model_tags(deployment_name)) is not None:
+            MODEL_LOAD_FAILURES_TOTAL.inc(tags={**tags, "loader": loader, "fatal": str(fatal).lower()})
+        if fatal:
+            self._fatal_errors[deployment_name] = reason
 
     def pop_fatal_error(self, deployment_name: str) -> str | None:
         return self._fatal_errors.pop(deployment_name, None)

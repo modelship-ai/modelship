@@ -72,6 +72,36 @@ groups:
             Ray Serve reports {{ $labels.application }} as UNHEALTHY: one or
             more of its deployments are unhealthy.
 
+      - alert: ModelshipModelLoadFailure
+        expr: |
+          sum by (gateway, model) (increase(ray_modelship_model_load_failures_total[15m])) > 0
+          or sum by (gateway, model) (
+            ray_modelship_model_load_failures_total unless ray_modelship_model_load_failures_total offset 15m
+          )
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Model failed to load ({{ $labels.model }}, {{ $labels.gateway }})"
+          description: >-
+            A replica of {{ $labels.model }} failed to load in the last 15
+            minutes; its replica log has the reason.
+
+      - alert: ModelshipBackendCrashLooping
+        expr: |
+          sum by (gateway, model) (increase(ray_modelship_backend_deaths_total[15m])) >= 3
+          or sum by (gateway, model) (
+            ray_modelship_backend_deaths_total unless ray_modelship_backend_deaths_total offset 15m
+          ) >= 3
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Model backend crash-looping ({{ $labels.model }}, {{ $labels.gateway }})"
+          description: >-
+            The backend process of {{ $labels.model }} died at least 3 times
+            in the last 15 minutes.
+
       - alert: ModelshipTargetDown
         expr: up{job="modelship"} == 0
         for: 5m
@@ -178,6 +208,23 @@ groups:
           description: >-
             {{ $labels.application }} has been DEPLOYING for 30 minutes — it
             may be waiting for capacity or for a model to finish loading.
+
+      - alert: ModelshipDeployFailed
+        expr: |
+          sum by (gateway) (increase(ray_modelship_deploy_requests_total{outcome="failed"}[15m])) > 0
+          or sum by (gateway) (
+            ray_modelship_deploy_requests_total{outcome="failed"}
+            unless ray_modelship_deploy_requests_total{outcome="failed"} offset 15m
+          )
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Deploy request failed ({{ $labels.gateway }})"
+          description: >-
+            A deploy request to {{ $labels.gateway }} failed in the last 15
+            minutes and was rolled back; the gateway still serves its last
+            committed models.
 
   # HA control-plane alerts. These cover the coordinator, state store, and gateway
   # routing introduced with the Helm chart — failures here don't fail requests
