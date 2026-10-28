@@ -184,7 +184,7 @@ The dashboard has 9 rows:
 
 | Row | What it shows | Metric sources |
 |---|---|---|
-| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*` |
+| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*`, `ray_serve_*` |
 | **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed) | `ray_modelship_*` |
 | **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `ray_vllm_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory (cluster aggregate) | `ray_node_*` |
@@ -219,9 +219,8 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 |---|---|---|---|
 | `ModelshipHighErrorRate` | Error rate > 5% of traffic | 5m | Significant portion of requests are failing |
 | `ModelshipHTTP5xxRatio` | 5xx > 5% of a gateway's HTTP requests, `/health` and `/readyz` excluded | 5m | Gateway is answering server errors |
-| `ModelshipNoModelsLoaded` | `models_loaded` == 0 | 2m | Server is running but cannot serve requests |
+| `ModelshipModelDown` | A model's `ray_serve_application_status` is 1 (DEPLOY_FAILED) or 2 (UNHEALTHY) and none of its replicas is healthy | 5m | A model cannot serve requests |
 | `ModelshipKVCacheExhausted` | KV cache usage > 95% | 5m | Requests will queue or be preempted |
-| `ModelshipAppUnhealthy` | `ray_serve_application_status` == 2 (UNHEALTHY) | 5m | A Serve application has an unhealthy deployment |
 | `ModelshipModelLoadFailure` | A model replica failed to load in the last 15m | 0m | A model can't come up; its replica log has the reason |
 | `ModelshipBackendCrashLooping` | A model's backend died 3+ times in 15m | 0m | `llama-server` or vLLM's engine keeps crashing |
 | `ModelshipTargetDown` | `up{job="modelship"}` == 0 | 5m | Prometheus cannot scrape a node |
@@ -239,6 +238,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | `ModelshipClientDisconnects` | Disconnect rate > 1/min | 5m | Clients timing out or dropping connections |
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
 | `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
+| `ModelshipAppUnhealthy` | `ray_serve_application_status` == 2 (UNHEALTHY) | 5m | A Serve application has an unhealthy deployment |
 | `ModelshipDeployStuck` | `ray_serve_application_status` == 5 (DEPLOYING) | 30m | A Serve application is waiting for capacity or a slow model load |
 | `ModelshipDeployFailed` | A deploy request failed in the last 15m | 0m | The request was rolled back; the gateway serves its last committed models |
 | `ModelshipGatewayRoutingDivergence` | `gateway_replicas_behind` > 0 | 10m | A gateway replica is routing from a stale table |
@@ -309,7 +309,6 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 |---|---|---|---|
 | `ray_modelship_model_load_failures_total` | Counter | `model`, `loader`, `fatal`, `gateway` | Failed model loads, reported by the replica to the deploy coordinator (`fatal`: `true` when the deploy doesn't retry it) |
 | `ray_modelship_backend_deaths_total` | Counter | `model`, `gateway` | Deaths of a model's backend process (`llama-server`, vLLM's engine), reported by its replica |
-| `ray_modelship_models_loaded` | Gauge | `gateway` | Number of loaded and ready models |
 
 ### Inference Timing
 
@@ -369,6 +368,7 @@ Full reference: [vLLM Metrics Documentation](https://docs.vllm.ai/en/stable/desi
 - `ray_serve_deployment_processing_latency_ms` — per-replica processing time
 - `ray_serve_health_check_latency_ms` — health check latency histogram
 - `ray_serve_application_status` — status of each application: 0=UNKNOWN, 1=DEPLOY_FAILED, 2=UNHEALTHY, 3=NOT_STARTED, 4=DELETING, 5=DEPLOYING, 6=RUNNING. A model's application is named `<gateway>.<model>-<fingerprint>`.
+- `ray_serve_deployment_replica_healthy` — whether each replica passes its health checks (1 or 0)
 - `ray_serve_replica_processing_queries` — requests each replica is processing
 - `ray_serve_deployment_queued_queries` — requests queued at the caller (the gateway replica, for a model's application)
 - `ray_serve_replica_startup_latency_ms` — time from a replica's creation to ready, including the wait for capacity

@@ -82,7 +82,6 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "stream_chunks_total",
         "gateway_reconciles_total",
         "gateway_watch_errors_total",
-        "models_loaded",
         "generation_duration_seconds",
         "tts_generation_duration_seconds",
         "image_generation_duration_seconds",
@@ -145,8 +144,6 @@ def _build_metrics():
             # Gateway HA routing (watch loop)
             "gateway_reconciles_total": _NoOpCounter(),
             "gateway_watch_errors_total": _NoOpCounter(),
-            # Model deployment
-            "models_loaded": _NoOpGauge(),
             # Inference timing
             "generation_duration_seconds": _NoOpHistogram(),
             "tts_generation_duration_seconds": _NoOpHistogram(),
@@ -157,7 +154,7 @@ def _build_metrics():
             "resource_cleanup_errors_total": _NoOpCounter(),
         }
 
-    from ray.serve.metrics import Counter, Gauge, Histogram
+    from ray.serve.metrics import Counter, Histogram
 
     # Ray's type stubs over-constrain tag_keys (Tuple[str] instead of variable-length
     # tuples) and boundaries (List[float] vs int literals). Suppressed with type: ignore.
@@ -198,12 +195,6 @@ def _build_metrics():
         "gateway_watch_errors_total": Counter(
             "modelship_gateway_watch_errors_total",
             description="Errors in a gateway replica's coordinator watch loop (retried).",
-            tag_keys=("gateway",),
-        ),
-        # -- Model deployment layer --
-        "models_loaded": Gauge(
-            "modelship_models_loaded",
-            description="Number of models currently loaded.",
             tag_keys=("gateway",),
         ),
         # -- Inference timing --
@@ -328,9 +319,6 @@ STREAM_CHUNKS_TOTAL = _metrics["stream_chunks_total"]
 # -- Gateway HA routing (watch loop) --
 GATEWAY_RECONCILES_TOTAL = _metrics["gateway_reconciles_total"]
 GATEWAY_WATCH_ERRORS_TOTAL = _metrics["gateway_watch_errors_total"]
-
-# -- Model deployment --
-MODELS_LOADED = _metrics["models_loaded"]
 
 # -- Inference timing --
 GENERATION_DURATION_SECONDS = _metrics["generation_duration_seconds"]

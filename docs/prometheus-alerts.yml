@@ -39,16 +39,22 @@ groups:
             {{ $labels.application }} answered 5xx over the last 5 minutes,
             not counting its /health and /readyz routes.
 
-      - alert: ModelshipNoModelsLoaded
-        expr: ray_modelship_models_loaded == 0
-        for: 2m
+      - alert: ModelshipModelDown
+        expr: |
+          (
+            max by (application) (ray_serve_application_status{application=~"[^.]+\\..+-[0-9a-f]{10}"}) == 1
+            or max by (application) (ray_serve_application_status{application=~"[^.]+\\..+-[0-9a-f]{10}"}) == 2
+          )
+          unless on (application) sum by (application) (ray_serve_deployment_replica_healthy) > 0
+        for: 5m
         labels:
           severity: critical
         annotations:
-          summary: "No models loaded"
+          summary: "Model down ({{ $labels.application }})"
           description: >-
-            ray_modelship_models_loaded has been 0 for 2 minutes.
-            The server is running but cannot serve any requests.
+            Ray Serve reports {{ $labels.application }} as DEPLOY_FAILED or
+            UNHEALTHY and none of its replicas is healthy, so its model
+            cannot serve requests.
 
       - alert: ModelshipKVCacheExhausted
         expr: ray_vllm_kv_cache_usage_perc > 0.95
@@ -60,17 +66,6 @@ groups:
           description: >-
             KV cache usage is {{ $value | humanizePercentage }}.
             Requests will queue or be preempted.
-
-      - alert: ModelshipAppUnhealthy
-        expr: ray_serve_application_status == 2
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Serve application unhealthy ({{ $labels.application }})"
-          description: >-
-            Ray Serve reports {{ $labels.application }} as UNHEALTHY: one or
-            more of its deployments are unhealthy.
 
       - alert: ModelshipModelLoadFailure
         expr: |
@@ -197,6 +192,17 @@ groups:
           description: >-
             TTFT P99 is {{ $value | humanizeDuration }} — users are waiting
             too long for the first token.
+
+      - alert: ModelshipAppUnhealthy
+        expr: ray_serve_application_status == 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Serve application unhealthy ({{ $labels.application }})"
+          description: >-
+            Ray Serve reports {{ $labels.application }} as UNHEALTHY: one or
+            more of its deployments are unhealthy.
 
       - alert: ModelshipDeployStuck
         expr: ray_serve_application_status == 5

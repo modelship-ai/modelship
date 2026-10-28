@@ -118,7 +118,8 @@
       },
       "targets": [
         {
-          "expr": "ray_modelship_models_loaded{gateway=~\"$gateway\"}"
+          "expr": "count(label_replace(ray_serve_application_status{application=~\"($gateway)\\\\..+\"} == 6, \"gateway\", \"$1\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")) by (gateway)",
+          "legendFormat": "{{ gateway }}"
         }
       ]
     },
