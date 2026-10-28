@@ -806,11 +806,11 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(label_replace(rate(ray_serve_replica_initialization_latency_ms_bucket{application=~\"($gateway)\\\\.($model)-[0-9a-f]{10}\"}[1h]), \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")) by (le, model)) / 1000",
+          "expr": "histogram_quantile(0.95, sum(label_replace(ray_serve_replica_initialization_latency_ms_bucket{application=~\"($gateway)\\\\.($model)-[0-9a-f]{10}\"}, \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")) by (le, model)) / 1000",
           "legendFormat": "p95 Serve initialization {{ model }}"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(label_replace(rate(ray_serve_replica_startup_latency_ms_bucket{application=~\"($gateway)\\\\.($model)-[0-9a-f]{10}\"}[1h]), \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")) by (le, model)) / 1000",
+          "expr": "histogram_quantile(0.95, sum(label_replace(ray_serve_replica_startup_latency_ms_bucket{application=~\"($gateway)\\\\.($model)-[0-9a-f]{10}\"}, \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")) by (le, model)) / 1000",
           "legendFormat": "p95 Serve startup {{ model }}"
         }
       ],
