@@ -217,7 +217,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 
 | Alert | Condition | For | Description |
 |---|---|---|---|
-| `ModelshipHighErrorRate` | Error rate > 5% of traffic | 5m | Significant portion of requests are failing |
+| `ModelshipHighErrorRate` | Errors > 5% of requests, cancelled ones excluded | 5m | Significant portion of requests are failing |
 | `ModelshipHTTP5xxRatio` | 5xx > 5% of a gateway's HTTP requests, `/health` and `/readyz` excluded | 5m | Gateway is answering server errors |
 | `ModelshipModelDown` | `ray_modelship_model_up` == 0 | 5m | A gateway has no running replica of a model to route to; the model answers 503 |
 | `ModelshipKVCacheExhausted` | KV cache usage > 95% | 5m | Requests will queue or be preempted |
@@ -231,11 +231,11 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 
 | Alert | Condition | For | Description |
 |---|---|---|---|
-| `ModelshipHighP99Latency` | Gateway P99 > 30s | 5m | End-to-end latency is very high |
-| `ModelshipModelHighErrorRate` | One model's error rate > 5%, above 0.05 requests/s | 5m | A model is failing while the cluster-wide rate may look fine |
+| `ModelshipHighP99Latency` | P99 of one model's successful requests of one operation > 30s | 5m | End-to-end latency is very high |
+| `ModelshipModelHighErrorRate` | One model's errors > 5% of its requests, cancelled ones excluded, above 0.05 requests/s | 5m | A model is failing while the cluster-wide rate may look fine |
 | `ModelshipHighQueueDepth` | Waiting requests > 10 | 5m | vLLM engine is falling behind |
 | `ModelshipPreemptions` | Preemption rate > 0 | 5m | GPU memory pressure causing request eviction |
-| `ModelshipClientDisconnects` | Disconnect rate > 1/min | 5m | Clients timing out or dropping connections |
+| `ModelshipClientDisconnects` | Cancelled requests > 1/min | 5m | Clients timing out or dropping connections |
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
 | `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
 | `ModelshipAppUnhealthy` | `ray_serve_application_status` == 2 (UNHEALTHY) | 5m | A Serve application has an unhealthy deployment |
@@ -249,7 +249,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 All thresholds are starting points. Adjust based on your deployment:
 
 - **Error rate**: 5% is aggressive — if you run small models that occasionally OOM, raise to 10%.
-- **P99 latency**: 30s works for chat completions with long outputs. For embeddings or TTS, consider lowering to 5-10s by adding per-endpoint rules.
+- **P99 latency**: 30s works for chat completions with long outputs. For embeddings or TTS, consider lowering to 5-10s by adding rules for their `operation`.
 - **Queue depth**: 10 assumes a single vLLM instance. Scale proportionally with replicas.
 - **KV cache**: 95% is the danger zone. If you use prefix caching heavily, 90% may be more appropriate.
 - **TTFT**: 5s is generous. For interactive chat, consider 2-3s.
@@ -297,11 +297,12 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `ray_modelship_request_total` | Counter | `model`, `endpoint`, `status`, `gateway` | Total requests by model and API method |
-| `ray_modelship_request_duration_seconds` | Histogram | `model`, `endpoint`, `gateway` | End-to-end request latency |
-| `ray_modelship_request_errors_total` | Counter | `model`, `endpoint`, `error_type`, `gateway` | Errors: `validation_error`, `inference_error`, `stream_error`, `unhandled` |
-| `ray_modelship_client_disconnects_total` | Counter | `model`, `endpoint`, `gateway` | Client disconnected before response completed |
+| `ray_modelship_request_total` | Counter | `model`, `operation`, `status`, `gateway` | Requests by model and API method (`status`: `ok`, `error`, `cancelled` when the client left first) |
+| `ray_modelship_request_duration_seconds` | Histogram | `model`, `operation`, `status`, `gateway` | End-to-end request latency |
+| `ray_modelship_request_errors_total` | Counter | `model`, `operation`, `error_type`, `gateway` | Errors: `validation_error`, `inference_error`, `stream_error` (a failure after the stream started), `model_not_found`, `model_not_ready`, `http_<status>` (rejected before dispatch), `unhandled` |
 | `ray_modelship_stream_chunks_total` | Counter | `model`, `gateway` | Streaming chunks emitted |
+
+`operation` is the API method: `create_chat_completion`, `create_response` (background runs included, counted when they end), `create_response_ws` (one per WebSocket turn), `compact_response`, `create_embeddings`, `create_transcriptions`, `create_translations`, `create_speech`, `create_image`, `create_image_edit`, `create_image_variation`. A request for a model the gateway doesn't serve is counted with `model=""`.
 
 ### Model Deployment
 

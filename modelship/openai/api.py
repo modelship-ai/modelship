@@ -18,6 +18,7 @@ from ray.exceptions import RayActorError, RayTaskError
 from ray.serve.handle import DeploymentHandle, DeploymentResponseGenerator
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
+from starlette.websockets import WebSocketState
 
 from modelship.infer import gateway_coordinator
 from modelship.infer.infer_config import RequestWatcher, get_disconnect_registry
@@ -25,10 +26,8 @@ from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
     GATEWAY_RECONCILES_TOTAL,
     GATEWAY_WATCH_ERRORS_TOTAL,
-    REQUEST_DURATION_SECONDS,
-    REQUEST_ERRORS_TOTAL,
-    REQUEST_TOTAL,
     STREAM_CHUNKS_TOTAL,
+    RequestTracker,
     stamp_gateway,
 )
 from modelship.openai.auth import resolve_identity
@@ -62,9 +61,10 @@ from modelship.openai.protocol import (
     frame_sse,
 )
 from modelship.openai.protocol.responses.adapter import UnsupportedResponsesFeatureError
+from modelship.openai.protocol.responses.streaming import RESPONSE_FAILED_SSE_PREFIX
 from modelship.openai.state.responses import mcp_listings_in
 from modelship.openai.utils import responses as responses_utils
-from modelship.openai.utils.chat import encode_error_sse
+from modelship.openai.utils.chat import ERROR_SSE_PREFIX, encode_error_sse
 from modelship.state import get_state_store
 from modelship.utils import random_uuid
 
@@ -162,6 +162,18 @@ def _stream_error_chunk(endpoint: str, model: str, created_frame: Any, last_fram
         return encode_sse_event(failure_event_from_frames(created_frame, last_frame, message, model=model))
     error = create_error_response(message=message, err_type="api_error", status_code=500)
     return encode_error_sse(error)
+
+
+def _is_failure_chunk(chunk: Any) -> bool:
+    return isinstance(chunk, str) and chunk.startswith((ERROR_SSE_PREFIX, RESPONSE_FAILED_SSE_PREFIX))
+
+
+def _outcome_of(exc: BaseException) -> tuple[str, str | None]:
+    if isinstance(exc, HTTPException):
+        return "error", f"http_{exc.status_code}"
+    if isinstance(exc, asyncio.CancelledError):
+        return "cancelled", None
+    return "error", "unhandled"
 
 
 def _validation_error_from_cause(cause: BaseException) -> ErrorResponse:
@@ -382,61 +394,56 @@ class ModelshipAPI:
         identity_tier_var.set(tier)
         return identity
 
-    def _get_handle(self, model_name: str | None) -> DeploymentHandle:
+    def _get_handle(self, model_name: str | None, tracker: RequestTracker) -> DeploymentHandle:
         self._ensure_watching()
         if model_name is None or model_name not in self.models:
             if model_name in self.expected_models:
+                tracker.finish("error", "model_not_ready")
                 raise HTTPException(status_code=HTTPStatus.SERVICE_UNAVAILABLE.value, detail="model not ready")
+            tracker.model = ""
+            tracker.finish("error", "model_not_found")
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
         # The gateway coordinator's table maps each model to one app.
         return next(reversed(self.models[model_name].values()))
 
-    async def _await_first(self, response_gen, model: str, endpoint: str):
+    async def _await_first(self, response_gen, model: str) -> tuple[Any, str | None]:
         """Await *response_gen*'s first item, translating a Ray-boundary failure into
         a clean 4xx/5xx ``JSONResponse``. Shared by ``_handle_response`` and
-        ``compact_response`` — a caller must check ``isinstance(result, JSONResponse)``
-        before treating the result as a payload item."""
+        ``compact_response``."""
         try:
-            return await response_gen.__anext__()
+            return await response_gen.__anext__(), None
         except RayTaskError as e:
             # Loader code raised across the Ray boundary. Treat ValueError-family
             # causes (e.g. vLLM's VLLMValidationError on context overflow) as
             # OpenAI-style 400s rather than masking them as 500s.
             cause = e.cause if isinstance(e.cause, BaseException) else None
             if isinstance(cause, ValueError | TypeError | OverflowError):
-                REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "validation_error"})
-                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
                 logger.info("Validation error for model=%s: %s", model, cause)
-                return _error_response(_validation_error_from_cause(cause))
-            REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "unhandled"})
-            REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
+                return _error_response(_validation_error_from_cause(cause)), "validation_error"
             logger.exception("Initial response generation failed for model=%s", model)
-            return JSONResponse(status_code=500, content={"detail": str(e)})
+            return JSONResponse(status_code=500, content={"detail": str(e)}), "unhandled"
         except Exception as e:
             # Catch failures during initial generator creation or the very first yield
-            REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "unhandled"})
-            REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
             logger.exception("Initial response generation failed for model=%s", model)
-            return JSONResponse(status_code=500, content={"detail": str(e)})
+            return JSONResponse(status_code=500, content={"detail": str(e)}), "unhandled"
 
     async def _handle_response(
         self,
         response_gen,
         watcher: RequestWatcher,
-        model: str,
-        endpoint: str,
+        tracker: RequestTracker,
         stream_media_type: str = "text/event-stream",
     ):
-        start = time.monotonic()
+        model, endpoint = tracker.model, tracker.operation
         streaming = False
         try:
-            first = await self._await_first(response_gen, model, endpoint)
-            if isinstance(first, JSONResponse):
+            first, error_type = await self._await_first(response_gen, model)
+            if error_type is not None:
+                tracker.finish("error", error_type)
                 return first
 
             if isinstance(first, ErrorResponse):
-                REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "inference_error"})
-                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
+                tracker.finish("error", "inference_error")
                 logger.info(
                     "Inference error endpoint=%s model=%s type=%s code=%s param=%s message=%.200s",
                     endpoint,
@@ -449,11 +456,11 @@ class ModelshipAPI:
                 return _error_response(first)
 
             if isinstance(first, Response):
-                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
+                tracker.finish("ok")
                 return first
 
             if isinstance(first, RawSpeechResponse):
-                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
+                tracker.finish("ok")
                 return Response(content=first.audio, media_type=first.media_type)
 
             if isinstance(
@@ -467,7 +474,7 @@ class ModelshipAPI:
                 | TranslationResponseVerbose
                 | ImageGenerationResponse,
             ):
-                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
+                tracker.finish("ok")
                 return JSONResponse(content=first.model_dump(mode="json"))
 
             # streaming — first chunk already consumed, chain it back
@@ -475,40 +482,37 @@ class ModelshipAPI:
                 # Held for _stream_error_chunk: opening frame carries the Responses
                 # envelope, last one the sequence number. Parsed only on the error path.
                 last = first
+                status, error_type = "ok", None
                 try:
                     STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
+                    if _is_failure_chunk(first):
+                        status, error_type = "error", "stream_error"
                     yield first
                     async for chunk in response_gen:
                         STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
+                        if _is_failure_chunk(chunk):
+                            status, error_type = "error", "stream_error"
                         last = chunk
                         yield chunk
-                    REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
                 except Exception:
-                    REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "stream_error"})
-                    REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
+                    status, error_type = "error", "stream_error"
                     logger.exception("stream failed mid-response endpoint=%s model=%s", endpoint, model)
                     yield _stream_error_chunk(endpoint, model, first, last)
                     yield "data: [DONE]\n\n"
+                except BaseException:
+                    status, error_type = "cancelled", None
+                    raise
                 finally:
-                    REQUEST_DURATION_SECONDS.observe(
-                        time.monotonic() - start, tags={"model": model, "endpoint": endpoint}
-                    )
+                    tracker.finish(status, error_type)
                     watcher.stop()
 
             streaming = True
             return StreamingResponse(content=_stream(), media_type=stream_media_type)
-        except Exception:
-            # Fallback for anything else not caught above
-            REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "unhandled"})
-            REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
+        except BaseException as exc:
+            tracker.finish(*_outcome_of(exc))
             raise
         finally:
-            # Non-streaming paths (including CancelledError — a BaseException that
-            # skips the except clauses above) finalize on return/raise here; the
-            # streaming path does it in _stream()'s finally after the stream drains.
             if not streaming:
-                duration = time.monotonic() - start
-                REQUEST_DURATION_SECONDS.observe(duration, tags={"model": model, "endpoint": endpoint})
                 watcher.stop()
 
     async def check_health(self) -> None:
@@ -562,8 +566,9 @@ class ModelshipAPI:
         self._set_request_id(req_id)
         identity = self._set_identity(raw_request)
         model = request.model or ""
-        handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request, req_id, model=model, endpoint="create_chat_completion")
+        tracker = RequestTracker(model, "create_chat_completion")
+        handle = self._get_handle(request.model, tracker)
+        watcher = RequestWatcher(raw_request, req_id)
         headers = dict(raw_request.headers)
         # Materialize any lazy pydantic ValidatorIterators (from Iterable-typed fields
         # like tool_calls) in place — they can't be pickled across the Ray boundary.
@@ -583,7 +588,7 @@ class ModelshipAPI:
         )
         logger.debug("chat_completion full request: %s", request.model_dump_json())
         response_gen = handle.generate.options(stream=True).remote(request, headers, watcher.registry, req_id, identity)
-        return await self._handle_response(response_gen, watcher, model, "create_chat_completion")
+        return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/responses")
     async def create_response(self, request: ResponsesRequest, raw_request: Request):
@@ -591,8 +596,9 @@ class ModelshipAPI:
         self._set_request_id(req_id)
         identity = self._set_identity(raw_request)
         model = request.model or ""
-        handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request, req_id, model=model, endpoint="create_response")
+        tracker = RequestTracker(model, "create_response")
+        handle = self._get_handle(request.model, tracker)
+        watcher = RequestWatcher(raw_request, req_id)
         headers = dict(raw_request.headers)
 
         if request.background:
@@ -600,7 +606,9 @@ class ModelshipAPI:
             # would self-abort it once the HTTP response closes.
             watcher.stop()
             if request.store is False:
-                raise responses_utils.background_store_false_error()
+                error = responses_utils.background_store_false_error()
+                tracker.finish("error", f"http_{error.status_code}")
+                raise error
 
         # Resolve conversation history here, before the Ray hop: the loader only ever
         # sees a flat `input`, and a store outage fails the request before any GPU
@@ -613,11 +621,12 @@ class ModelshipAPI:
                 history, parent, mcp_listings = await responses_utils.resolve_previous(
                     self._state_store, identity, request.previous_response_id
                 )
-            except BaseException:
+            except BaseException as exc:
                 # Any failure here — not just the expected 404/503 HTTPException — must
                 # still stop the watcher: _handle_response hasn't taken ownership of it
                 # yet, so nothing else will cancel its polling task.
                 watcher.stop()
+                tracker.finish(*_outcome_of(exc))
                 raise
             request.input = [*history, *input_items_for_turn]
 
@@ -636,9 +645,13 @@ class ModelshipAPI:
         if request.background:
             # Captured before run_background forces request.stream=True on its own copy.
             wants_stream = bool(request.stream)
-            response_dict = await responses_utils.start_background(
-                self._state_store, identity, request, req_id, parent, input_items_for_turn
-            )
+            try:
+                response_dict = await responses_utils.start_background(
+                    self._state_store, identity, request, req_id, parent, input_items_for_turn
+                )
+            except BaseException as exc:
+                tracker.finish(*_outcome_of(exc))
+                raise
             task = asyncio.ensure_future(
                 responses_utils.run_background(
                     handle,
@@ -648,6 +661,7 @@ class ModelshipAPI:
                     identity,
                     store=self._state_store,
                     response_id=response_dict["id"],
+                    tracker=tracker,
                     stream_buffer=wants_stream,
                     mcp_listings=mcp_listings,
                 )
@@ -683,7 +697,7 @@ class ModelshipAPI:
             )
         # SSE-frame + [DONE] happen here, after persistence, so persist_response still sees plain event dicts.
         response_gen = frame_sse(response_gen)
-        return await self._handle_response(response_gen, watcher, model, "create_response")
+        return await self._handle_response(response_gen, watcher, tracker)
 
     @app.websocket("/v1/responses")
     async def responses_ws(self, websocket: WebSocket):
@@ -777,7 +791,22 @@ class ModelshipAPI:
             return
         request.stream = True
         model = request.model or ""
-        endpoint = "create_response_ws"
+        tracker = RequestTracker(model, "create_response_ws")
+
+        try:
+            handle = self._get_handle(request.model, tracker)
+        except HTTPException as exc:
+            err = (
+                exc.err
+                if isinstance(exc, responses_utils.ResponsesApiError)
+                else create_error_response(
+                    str(exc.detail),
+                    err_type="invalid_request_error" if exc.status_code < 500 else "api_error",
+                    status_code=exc.status_code,
+                )
+            )
+            await websocket.send_text(error_ws_frame(err))
+            return
 
         prev_id = request.previous_response_id
         input_items_for_turn = responses_utils.as_input_items(request.input) if request.input is not None else []
@@ -795,26 +824,12 @@ class ModelshipAPI:
                 )
                 request.input = [*history, *input_items_for_turn]
         except responses_utils.ResponsesApiError as exc:
+            tracker.finish("error", f"http_{exc.status_code}")
             await websocket.send_text(error_ws_frame(exc.err))
             return
 
-        try:
-            handle = self._get_handle(request.model)
-        except HTTPException as exc:
-            err = (
-                exc.err
-                if isinstance(exc, responses_utils.ResponsesApiError)
-                else create_error_response(
-                    str(exc.detail),
-                    err_type="invalid_request_error" if exc.status_code < 500 else "api_error",
-                    status_code=exc.status_code,
-                )
-            )
-            await websocket.send_text(error_ws_frame(err))
-            return
-
-        start = time.monotonic()
-        failed = False
+        status, error_type = "ok", None
+        err: ErrorResponse | None = None
         terminal_response: dict[str, Any] | None = None
         try:
             if mcp_loop.wants_mcp(request):
@@ -835,54 +850,56 @@ class ModelshipAPI:
             async for item in response_gen:
                 STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
                 if isinstance(item, ErrorResponse):
+                    status, error_type = "error", "inference_error"
                     await websocket.send_text(error_ws_frame(item))
-                    failed = True
                     continue
                 if not isinstance(item, dict):
                     continue  # pragma: no cover - ResponseObject is unreachable; WS always forces stream=True
                 await websocket.send_text(json.dumps(item))
                 event_type = item.get("type")
                 if event_type == "response.failed":
-                    failed = True
+                    status, error_type = "error", "stream_error"
                 elif event_type in TERMINAL_EVENT_TYPES:
                     terminal_response = item.get("response")
+        except WebSocketDisconnect:
+            status, error_type = "cancelled", None
         except RayTaskError as exc:
             cause = exc.cause if isinstance(exc.cause, BaseException) else None
             if isinstance(cause, ValueError | TypeError | OverflowError):
+                status, error_type = "error", "validation_error"
                 err = _validation_error_from_cause(cause)
             else:
                 logger.exception("responses request %s failed over websocket", req_id)
+                status, error_type = "error", "unhandled"
                 err = create_error_response(
                     "Internal error during generation",
                     err_type="api_error",
                     status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
-            await websocket.send_text(error_ws_frame(err))
-            failed = True
         except Exception:
             logger.exception("responses request %s failed over websocket", req_id)
-            await websocket.send_text(
-                error_ws_frame(
-                    create_error_response(
-                        "Internal error during generation",
-                        err_type="api_error",
-                        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-                    )
-                )
+            status, error_type = "error", "unhandled"
+            err = create_error_response(
+                "Internal error during generation",
+                err_type="api_error",
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
-            failed = True
+        except BaseException:
+            status, error_type = "cancelled", None
+            raise
         finally:
-            REQUEST_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": model, "endpoint": endpoint})
+            if websocket.client_state == WebSocketState.DISCONNECTED:
+                status, error_type = "cancelled", None
+            tracker.finish(status, error_type)
 
-        if failed:
-            REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "inference_error"})
-            REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
+        if err is not None:
+            await websocket.send_text(error_ws_frame(err))
+        if status != "ok":
             # Evict so a retry of the same previous_response_id gets a clean 404, not a replay of what broke it.
             if prev_id is not None:
                 conn_cache.pop(prev_id, None)
             return
 
-        REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
         if request.store is False and terminal_response is not None:
             response_id = terminal_response.get("id")
             if response_id:
@@ -960,12 +977,11 @@ class ModelshipAPI:
         self._set_request_id(req_id)
         identity = self._set_identity(raw_request)
         model = request.model
-        endpoint = "compact_response"
-        handle = self._get_handle(model)
-        watcher = RequestWatcher(raw_request, req_id, model=model, endpoint=endpoint)
+        tracker = RequestTracker(model, "compact_response")
+        handle = self._get_handle(model, tracker)
+        watcher = RequestWatcher(raw_request, req_id)
         headers = dict(raw_request.headers)
 
-        start = time.monotonic()
         try:
             items = responses_utils.as_input_items(request.input) if request.input is not None else []
             if request.previous_response_id is not None:
@@ -988,44 +1004,44 @@ class ModelshipAPI:
             try:
                 chat_request = responses_utils.build_summarization_request(model, items, request.instructions)
             except UnsupportedResponsesFeatureError as e:
-                REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "validation_error"})
-                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
+                tracker.finish("error", "validation_error")
                 return _error_response(create_error_response(str(e), err_type="invalid_request_error"))
 
             async def _summarize(chat_request: ChatCompletionRequest):
                 response_gen = handle.generate.options(stream=True).remote(
                     chat_request, headers, watcher.registry, req_id, identity
                 )
-                first = await self._await_first(response_gen, model, endpoint)
+                first, error_type = await self._await_first(response_gen, model)
                 if not isinstance(first, ErrorResponse):
-                    return first
-                REQUEST_ERRORS_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "error_type": "inference_error"})
-                REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "error"})
+                    return first, error_type
                 logger.info(
                     "Inference error endpoint=%s model=%s type=%s code=%s param=%s message=%.200s",
-                    endpoint,
+                    tracker.operation,
                     model,
                     first.error.type,
                     first.error.code,
                     first.error.param,
                     first.error.message,
                 )
-                return _error_response(first)
+                return _error_response(first), "inference_error"
 
-            first = await _summarize(chat_request)
+            first, error_type = await _summarize(chat_request)
             if isinstance(first, JSONResponse) and first.status_code == HTTPStatus.BAD_REQUEST:
-                first = await _summarize(chat_request.model_copy(update={"reasoning_effort": None}))
+                first, error_type = await _summarize(chat_request.model_copy(update={"reasoning_effort": None}))
             if isinstance(first, JSONResponse):
+                tracker.finish("error", error_type)
                 return first
 
             assert isinstance(first, ChatCompletionResponse)
             summary_text = first.choices[0].message.content or ""
             summary_items = [{"type": "message", "role": "assistant", "content": summary_text}]
             resource = responses_utils.build_compaction(summary_items=summary_items, usage=first.usage)
-            REQUEST_TOTAL.inc(tags={"model": model, "endpoint": endpoint, "status": "ok"})
+            tracker.finish("ok")
             return JSONResponse(content=resource.model_dump(mode="json"))
+        except BaseException as exc:
+            tracker.finish(*_outcome_of(exc))
+            raise
         finally:
-            REQUEST_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": model, "endpoint": endpoint})
             watcher.stop()
 
     @app.post("/v1/embeddings")
@@ -1034,12 +1050,13 @@ class ModelshipAPI:
         self._set_request_id(req_id)
         identity = self._set_identity(raw_request)
         model = request.model or ""
-        handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request, req_id, model=model, endpoint="create_embeddings")
+        tracker = RequestTracker(model, "create_embeddings")
+        handle = self._get_handle(request.model, tracker)
+        watcher = RequestWatcher(raw_request, req_id)
         headers = dict(raw_request.headers)
         logger.info("embeddings model=%s", model)
         response_gen = handle.embed.options(stream=True).remote(request, headers, watcher.registry, req_id, identity)
-        return await self._handle_response(response_gen, watcher, model, "create_embeddings")
+        return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/audio/transcriptions")
     async def create_transcriptions(self, request: Annotated[TranscriptionRequest, Form()], raw_request: Request):
@@ -1047,8 +1064,9 @@ class ModelshipAPI:
         self._set_request_id(req_id)
         identity = self._set_identity(raw_request)
         model = request.model or ""
-        handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request, req_id, model=model, endpoint="create_transcriptions")
+        tracker = RequestTracker(model, "create_transcriptions")
+        handle = self._get_handle(request.model, tracker)
+        watcher = RequestWatcher(raw_request, req_id)
         headers = dict(raw_request.headers)
         logger.info("transcription model=%s", model)
         # Read audio bytes before crossing process boundary — UploadFile is not serializable.
@@ -1061,7 +1079,7 @@ class ModelshipAPI:
         response_gen = handle.transcribe.options(stream=True).remote(
             audio_data, request_no_file, headers, watcher.registry, req_id, identity
         )
-        return await self._handle_response(response_gen, watcher, model, "create_transcriptions")
+        return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/audio/translations")
     async def create_translations(self, request: Annotated[TranslationRequest, Form()], raw_request: Request):
@@ -1069,8 +1087,9 @@ class ModelshipAPI:
         self._set_request_id(req_id)
         identity = self._set_identity(raw_request)
         model = request.model or ""
-        handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request, req_id, model=model, endpoint="create_translations")
+        tracker = RequestTracker(model, "create_translations")
+        handle = self._get_handle(request.model, tracker)
+        watcher = RequestWatcher(raw_request, req_id)
         headers = dict(raw_request.headers)
         logger.info("translation model=%s", model)
         # Read audio bytes before crossing process boundary — UploadFile is not serializable.
@@ -1083,7 +1102,7 @@ class ModelshipAPI:
         response_gen = handle.translate.options(stream=True).remote(
             audio_data, request_no_file, headers, watcher.registry, req_id, identity
         )
-        return await self._handle_response(response_gen, watcher, model, "create_translations")
+        return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/audio/speech")
     async def create_speech(self, request: SpeechRequest, raw_request: Request):
@@ -1092,11 +1111,12 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         logger.info("speech model=%s voice=%s format=%s", request.model, request.voice, request.response_format)
         logger.debug("speech full request: %s", request.model_dump_json())
-        handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request, req_id, model=request.model, endpoint="create_speech")
+        tracker = RequestTracker(request.model, "create_speech")
+        handle = self._get_handle(request.model, tracker)
+        watcher = RequestWatcher(raw_request, req_id)
         headers = dict(raw_request.headers)
         response_gen = handle.speak.options(stream=True).remote(request, headers, watcher.registry, req_id, identity)
-        return await self._handle_response(response_gen, watcher, request.model, "create_speech")
+        return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/images/generations")
     async def create_image(self, request: ImageGenerationRequest, raw_request: Request):
@@ -1106,11 +1126,12 @@ class ModelshipAPI:
         logger.info(
             "image_generation model=%s prompt=%r n=%d size=%s", request.model, request.prompt, request.n, request.size
         )
-        handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request, req_id, model=request.model, endpoint="create_image")
+        tracker = RequestTracker(request.model, "create_image")
+        handle = self._get_handle(request.model, tracker)
+        watcher = RequestWatcher(raw_request, req_id)
         headers = dict(raw_request.headers)
         response_gen = handle.imagine.options(stream=True).remote(request, headers, watcher.registry, req_id, identity)
-        return await self._handle_response(response_gen, watcher, request.model, "create_image")
+        return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/images/edits")
     async def create_image_edit(self, request: Annotated[ImageEditRequest, Form()], raw_request: Request):
@@ -1125,8 +1146,9 @@ class ModelshipAPI:
             request.size,
             request.mask is not None,
         )
-        handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request, req_id, model=request.model, endpoint="create_image_edit")
+        tracker = RequestTracker(request.model, "create_image_edit")
+        handle = self._get_handle(request.model, tracker)
+        watcher = RequestWatcher(raw_request, req_id)
         headers = dict(raw_request.headers)
         # Read image bytes before crossing the process boundary — UploadFile is not serializable.
         # The bytes are passed separately; the request is reconstructed without the file fields.
@@ -1144,7 +1166,7 @@ class ModelshipAPI:
         response_gen = handle.edit_image.options(stream=True).remote(
             image_data, mask_data, request_no_file, headers, watcher.registry, req_id, identity
         )
-        return await self._handle_response(response_gen, watcher, request.model, "create_image_edit")
+        return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/images/variations")
     async def create_image_variation(self, request: Annotated[ImageVariationRequest, Form()], raw_request: Request):
@@ -1152,8 +1174,9 @@ class ModelshipAPI:
         self._set_request_id(req_id)
         identity = self._set_identity(raw_request)
         logger.info("image_variation model=%s n=%d size=%s", request.model, request.n, request.size)
-        handle = self._get_handle(request.model)
-        watcher = RequestWatcher(raw_request, req_id, model=request.model, endpoint="create_image_variation")
+        tracker = RequestTracker(request.model, "create_image_variation")
+        handle = self._get_handle(request.model, tracker)
+        watcher = RequestWatcher(raw_request, req_id)
         headers = dict(raw_request.headers)
         # Read image bytes before crossing the process boundary — UploadFile is not serializable.
         # `image` is Optional on the model (to accept the `image[]` alias) but the validator
@@ -1167,4 +1190,4 @@ class ModelshipAPI:
         response_gen = handle.vary_image.options(stream=True).remote(
             image_data, request_no_file, headers, watcher.registry, req_id, identity
         )
-        return await self._handle_response(response_gen, watcher, request.model, "create_image_variation")
+        return await self._handle_response(response_gen, watcher, tracker)

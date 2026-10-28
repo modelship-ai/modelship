@@ -290,6 +290,9 @@ def encode_chat_sse_chunk(chunk: ChatCompletionStreamResponse) -> str:
     return f"data: {chunk.model_dump_json()}\n\n"
 
 
+ERROR_SSE_PREFIX = 'data: {"error"'
+
+
 def encode_error_sse(error: ErrorResponse) -> str:
     """Encode a mid-stream `ErrorResponse` as an SSE `data:` line.
 

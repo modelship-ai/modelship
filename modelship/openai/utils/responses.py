@@ -16,6 +16,7 @@ from ray.serve.handle import DeploymentHandle, DeploymentResponseGenerator
 
 from modelship.infer.infer_config import get_disconnect_registry
 from modelship.logging import get_logger
+from modelship.metrics import RequestTracker
 from modelship.openai import compaction_crypto
 from modelship.openai.protocol import (
     ChatCompletionRequest,
@@ -530,6 +531,7 @@ async def run_background(
     *,
     store: StateStore,
     response_id: str,
+    tracker: RequestTracker,
     stream_buffer: bool = False,
     mcp_listings: dict[str, dict] | None = None,
 ) -> None:
@@ -563,6 +565,7 @@ async def run_background(
             done, _pending = await asyncio.wait({drain_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED)
             if drain_task not in done:
                 # Heartbeat found this run cancelled: stop draining, no further write.
+                tracker.finish("cancelled")
                 drain_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await drain_task
@@ -585,9 +588,14 @@ async def run_background(
                 await heartbeat_task
 
         if failed_response is not None:
+            tracker.finish("error", "stream_error")
             # persist_response doesn't persist response.failed events; the poller needs it stored.
             await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed_response)
         elif not saw_ok_terminal:
+            with contextlib.suppress(Exception):
+                if await registry.is_set.remote(req_id):
+                    tracker.finish("cancelled")
+            tracker.finish("error", "stream_error")
             # Stream ended with no terminal event (cancel race or actor crash) — don't leave a poller hanging.
             record = await responses_state.read_async(store, identity, response_id)
             if record is not None:
@@ -595,6 +603,8 @@ async def run_background(
                     record.get("response") or {}, "Generation ended unexpectedly without a terminal event."
                 )
                 await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
+        else:
+            tracker.finish("ok")
     finally:
         # Idempotent: the terminal path already flushed via buffer_stream_events; this
         # is what covers the abnormal exits above, which never reach a terminal event.

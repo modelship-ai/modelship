@@ -355,7 +355,7 @@ class TestCompactResponseRoute:
     @pytest.mark.parametrize(
         "rejection", [lambda: _raising_gen(ValueError("rejected")), lambda: _error_gen(400)], ids=["raised", "returned"]
     )
-    async def test_a_400_is_retried_without_the_effort(self, api, rejection):
+    async def test_a_400_is_retried_without_the_effort(self, api, rejection, request_outcomes):
         handle = _wire(api, rejection(), _chat_response_gen(text="the gist"))
 
         result = await api.compact_response(CompactRequest(model="m", input="hi"), _raw_request())
@@ -364,6 +364,7 @@ class TestCompactResponseRoute:
         assert [call.args[0].reasoning_effort for call in calls] == ["none", None]
         item = json.loads(bytes(result.body))["output"][0]
         assert compaction_crypto.decrypt_items(item["encrypted_content"])[0]["content"] == "the gist"
+        assert request_outcomes() == [("m", "compact_response", "ok", None)]
 
     @pytest.mark.asyncio
     async def test_a_500_is_not_retried(self, api):

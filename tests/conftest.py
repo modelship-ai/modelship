@@ -37,6 +37,22 @@ def neutralize_request_watcher():
         yield
 
 
+@pytest.fixture
+def request_outcomes():
+    from modelship import metrics
+
+    with patch.object(metrics, "REQUEST_TOTAL") as total, patch.object(metrics, "REQUEST_ERRORS_TOTAL") as errors:
+
+        def outcomes():
+            error_types = iter(c.kwargs["tags"]["error_type"] for c in errors.inc.call_args_list)
+            return [
+                (t["model"], t["operation"], t["status"], next(error_types) if t["status"] == "error" else None)
+                for t in (c.kwargs["tags"] for c in total.inc.call_args_list)
+            ]
+
+        yield outcomes
+
+
 def build_gateway(gateway_name: str):
     """A ModelshipAPI instance outside Serve, whose ingress wrapper makes __init__ a coroutine."""
     from modelship.openai.api import ModelshipAPI

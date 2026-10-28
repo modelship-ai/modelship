@@ -45,8 +45,8 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ray_modelship_request_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (endpoint)",
-          "legendFormat": "{{ endpoint }}"
+          "expr": "sum(rate(ray_modelship_request_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (operation)",
+          "legendFormat": "{{ operation }}"
         }
       ],
       "fieldConfig": {
@@ -139,7 +139,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ray_modelship_client_disconnects_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (model)",
+          "expr": "sum(rate(ray_modelship_request_total{gateway=~\"$gateway\", model=~\"$model\", status=\"cancelled\"}[5m])) by (model)",
           "legendFormat": "{{ model }}"
         }
       ],
@@ -177,16 +177,16 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_modelship_request_duration_seconds_bucket{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (le, endpoint))",
-          "legendFormat": "p50 {{ endpoint }}"
+          "expr": "histogram_quantile(0.50, sum(rate(ray_modelship_request_duration_seconds_bucket{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (le, operation))",
+          "legendFormat": "p50 {{ operation }}"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_request_duration_seconds_bucket{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (le, endpoint))",
-          "legendFormat": "p95 {{ endpoint }}"
+          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_request_duration_seconds_bucket{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (le, operation))",
+          "legendFormat": "p95 {{ operation }}"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_modelship_request_duration_seconds_bucket{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (le, endpoint))",
-          "legendFormat": "p99 {{ endpoint }}"
+          "expr": "histogram_quantile(0.99, sum(rate(ray_modelship_request_duration_seconds_bucket{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (le, operation))",
+          "legendFormat": "p99 {{ operation }}"
         }
       ],
       "fieldConfig": {
@@ -949,7 +949,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ray_modelship_request_errors_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])) / clamp_min(sum(rate(ray_modelship_request_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])), 1) * 100",
+          "expr": "sum(rate(ray_modelship_request_total{gateway=~\"$gateway\", model=~\"$model\", status=\"error\"}[5m])) / clamp_min(sum(rate(ray_modelship_request_total{gateway=~\"$gateway\", model=~\"$model\", status=~\"ok|error\"}[5m])), 1) * 100",
           "legendFormat": "error %"
         }
       ],
@@ -1143,7 +1143,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ray_modelship_client_disconnects_total{gateway=~\"$gateway\", model=~\"$model\"}[5m]))",
+          "expr": "sum(rate(ray_modelship_request_total{gateway=~\"$gateway\", model=~\"$model\", status=\"cancelled\"}[5m]))",
           "legendFormat": "disconnects/s"
         }
       ],

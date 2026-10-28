@@ -6,17 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from modelship import metrics
+from modelship.metrics import RequestTracker
 from modelship.openai.api import ModelshipAPI
 from tests.conftest import build_gateway
 
 # Access the underlying class, bypassing the @serve.deployment wrapper.
 _ModelshipAPI = ModelshipAPI.func_or_class
-
-
-def _patch_api_metrics(api, **mocks):
-    """Patches module-level metrics through the cloudpickled method's own __globals__,
-    since patching the live module attribute wouldn't reach it."""
-    return patch.dict(type(api)._handle_response.__globals__, mocks)
 
 
 @pytest.fixture
@@ -282,37 +278,39 @@ class TestGetHandle:
     def test_returns_the_deployment(self, api):
         handle = MagicMock()
         _apply(api, {"qwen-a3f9k": "qwen"}, handles=[handle])
-        assert api._get_handle("qwen") is handle
+        assert api._get_handle("qwen", MagicMock()) is handle
 
     def test_prefers_the_most_recently_registered(self, api):
         # Two entries under one model name is a transient state the coordinator
         # no longer produces, but the gateway still resolves it deterministically.
         ha, hb = MagicMock(), MagicMock()
         _apply(api, {"qwen-a3f9k": "qwen", "qwen-b7x2p": "qwen"}, handles=[ha, hb])
-        assert api._get_handle("qwen") is hb
+        assert api._get_handle("qwen", MagicMock()) is hb
 
-    def test_unknown_model_is_404(self, api):
+    def test_unknown_model_is_404(self, api, request_outcomes):
         from fastapi import HTTPException
 
         _apply(api, {}, expected=["qwen"])
         with pytest.raises(HTTPException) as exc_info:
-            api._get_handle("nonexistent")
+            api._get_handle("nonexistent", RequestTracker("nonexistent", "create_chat_completion"))
         assert exc_info.value.status_code == 404
+        assert request_outcomes() == [("", "create_chat_completion", "error", "model_not_found")]
 
     def test_none_model_is_404(self, api):
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc_info:
-            api._get_handle(None)
+            api._get_handle(None, MagicMock())
         assert exc_info.value.status_code == 404
 
-    def test_an_expected_model_with_nothing_routed_is_503(self, api):
+    def test_an_expected_model_with_nothing_routed_is_503(self, api, request_outcomes):
         from fastapi import HTTPException
 
         _apply(api, {}, expected=["qwen"])
         with pytest.raises(HTTPException) as exc_info:
-            api._get_handle("qwen")
+            api._get_handle("qwen", RequestTracker("qwen", "create_chat_completion"))
         assert exc_info.value.status_code == 503
+        assert request_outcomes() == [("qwen", "create_chat_completion", "error", "model_not_ready")]
 
 
 class TestImageEditRoutes:
@@ -465,7 +463,7 @@ class TestHandleResponse:
             yield JSONResponse(content={"data": "test"})
 
         watcher = MagicMock()
-        result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+        result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "test-endpoint"))
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -487,7 +485,7 @@ class TestHandleResponse:
             yield resp
 
         watcher = MagicMock()
-        result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+        result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "test-endpoint"))
 
         assert isinstance(result, JSONResponse)
         assert b'"model":"test"' in result.body
@@ -502,7 +500,7 @@ class TestHandleResponse:
             yield "data: [DONE]\n\n"
 
         watcher = MagicMock()
-        result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+        result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "test-endpoint"))
 
         assert isinstance(result, StreamingResponse)
 
@@ -522,9 +520,8 @@ class TestHandleResponse:
                 yield f"data: chunk{i}\n\n"
 
         watcher = MagicMock()
-        dur = MagicMock()
-        with _patch_api_metrics(api, REQUEST_DURATION_SECONDS=dur):
-            result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+        with patch.object(metrics, "REQUEST_DURATION_SECONDS") as dur:
+            result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "test-endpoint"))
             assert isinstance(result, StreamingResponse)
 
             # Returning the StreamingResponse must not have timed the request yet.
@@ -547,9 +544,8 @@ class TestHandleResponse:
             yield JSONResponse(content={"data": "test"})
 
         watcher = MagicMock()
-        dur = MagicMock()
-        with _patch_api_metrics(api, REQUEST_DURATION_SECONDS=dur):
-            result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+        with patch.object(metrics, "REQUEST_DURATION_SECONDS") as dur:
+            result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "test-endpoint"))
             assert isinstance(result, JSONResponse)
             dur.observe.assert_called_once()
 
@@ -565,7 +561,7 @@ class TestHandleResponse:
 
         watcher = MagicMock()
         with pytest.raises(asyncio.CancelledError):
-            await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+            await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "test-endpoint"))
         watcher.stop.assert_called_once()
 
     @pytest.mark.asyncio
@@ -579,7 +575,7 @@ class TestHandleResponse:
             yield "data: [DONE]\n\n"
 
         watcher = MagicMock()
-        result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+        result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "test-endpoint"))
         assert isinstance(result, StreamingResponse)
         watcher.stop.assert_not_called()  # not stopped yet — stream hasn't been consumed
 
@@ -609,7 +605,7 @@ class TestHandleResponse:
             raise err
 
         watcher = MagicMock()
-        result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+        result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "test-endpoint"))
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 400
@@ -633,7 +629,7 @@ class TestHandleResponse:
             raise err
 
         watcher = MagicMock()
-        result = await api._handle_response(mock_gen(), watcher, "test-model", "test-endpoint")
+        result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "test-endpoint"))
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
@@ -652,7 +648,7 @@ class TestHandleResponse:
             yield  # pragma: no cover — unreachable, keeps this an async generator
 
         watcher = MagicMock()
-        result = await api._handle_response(mock_gen(), watcher, "test-model", "create_chat_completion")
+        result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "create_chat_completion"))
         assert isinstance(result, StreamingResponse)
 
         chunks = [chunk async for chunk in result.body_iterator]
@@ -686,7 +682,7 @@ class TestHandleResponse:
             yield  # pragma: no cover — unreachable, keeps this an async generator
 
         watcher = MagicMock()
-        result = await api._handle_response(mock_gen(), watcher, "test-model", "create_response")
+        result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "create_response"))
         assert isinstance(result, StreamingResponse)
 
         chunks = [chunk async for chunk in result.body_iterator]
@@ -715,7 +711,7 @@ class TestHandleResponse:
             yield  # pragma: no cover — unreachable, keeps this an async generator
 
         watcher = MagicMock()
-        result = await api._handle_response(mock_gen(), watcher, "test-model", "create_response")
+        result = await api._handle_response(mock_gen(), watcher, RequestTracker("test-model", "create_response"))
         assert isinstance(result, StreamingResponse)
 
         chunks = [chunk async for chunk in result.body_iterator]
@@ -725,3 +721,44 @@ class TestHandleResponse:
         assert event["response"]["id"].startswith("resp_")
         assert event["response"]["output"] == []
         assert event["response"]["status"] == "failed"
+
+
+class TestRequestOutcomes:
+    @pytest.mark.asyncio
+    async def test_a_client_leaving_mid_stream_is_recorded_once_as_cancelled(self, api, request_outcomes):
+        async def mock_gen():
+            yield "data: chunk1\n\n"
+            yield "data: chunk2\n\n"
+
+        result = await api._handle_response(mock_gen(), MagicMock(), RequestTracker("m", "create_chat_completion"))
+        body = result.body_iterator
+        await anext(body)
+        await body.aclose()
+
+        assert request_outcomes() == [("m", "create_chat_completion", "cancelled", None)]
+
+    @pytest.mark.asyncio
+    async def test_an_error_chunk_mid_stream_is_recorded_as_a_stream_error(self, api, request_outcomes):
+        from modelship.openai.protocol import create_error_response
+        from modelship.openai.utils.chat import encode_error_sse
+
+        async def mock_gen():
+            yield "data: chunk1\n\n"
+            yield encode_error_sse(create_error_response("engine died", err_type="api_error", status_code=500))
+            yield "data: [DONE]\n\n"
+
+        result = await api._handle_response(mock_gen(), MagicMock(), RequestTracker("m", "create_chat_completion"))
+        [chunk async for chunk in result.body_iterator]
+
+        assert request_outcomes() == [("m", "create_chat_completion", "error", "stream_error")]
+
+    @pytest.mark.asyncio
+    async def test_a_client_leaving_before_the_first_item_is_recorded_once_as_cancelled(self, api, request_outcomes):
+        async def mock_gen():
+            raise asyncio.CancelledError
+            yield
+
+        with pytest.raises(asyncio.CancelledError):
+            await api._handle_response(mock_gen(), MagicMock(), RequestTracker("m", "create_chat_completion"))
+
+        assert request_outcomes() == [("m", "create_chat_completion", "cancelled", None)]

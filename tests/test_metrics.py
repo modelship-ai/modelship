@@ -3,7 +3,10 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from modelship import metrics
-from modelship.metrics import _CreatedStampedCounter
+from modelship.metrics import RequestTracker, _CreatedStampedCounter
+from modelship.openai.protocol import create_error_response, encode_sse_event
+from modelship.openai.protocol.responses.streaming import RESPONSE_FAILED_SSE_PREFIX
+from modelship.openai.utils.chat import ERROR_SSE_PREFIX, encode_error_sse
 
 
 def test_a_series_is_stamped_with_its_creation_time_before_its_first_count():
@@ -41,3 +44,31 @@ def test_each_series_is_stamped_once():
 )
 def test_the_deploy_coordinators_counters_are_stamped(name):
     assert isinstance(getattr(metrics, name), _CreatedStampedCounter)
+
+
+def test_a_request_is_recorded_once(request_outcomes):
+    tracker = RequestTracker("m", "create_chat_completion")
+
+    tracker.finish("error", "stream_error")
+    tracker.finish("ok")
+
+    assert request_outcomes() == [("m", "create_chat_completion", "error", "stream_error")]
+
+
+def test_a_requests_duration_carries_its_status():
+    with patch.object(metrics, "REQUEST_DURATION_SECONDS") as duration:
+        RequestTracker("m", "create_embeddings").finish("cancelled")
+
+    assert duration.observe.call_args.kwargs["tags"] == {
+        "model": "m",
+        "operation": "create_embeddings",
+        "status": "cancelled",
+    }
+
+
+def test_an_error_chunk_starts_with_the_prefix_the_gateway_detects():
+    assert encode_error_sse(create_error_response("boom")).startswith(ERROR_SSE_PREFIX)
+
+
+def test_a_failed_event_starts_with_the_prefix_the_gateway_detects():
+    assert encode_sse_event({"type": "response.failed", "response": {}}).startswith(RESPONSE_FAILED_SSE_PREFIX)

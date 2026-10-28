@@ -222,12 +222,13 @@ class TestBackgroundCreate:
         await _drain_background_tasks(api)
 
     @pytest.mark.asyncio
-    async def test_drains_to_completed(self, api):
+    async def test_drains_to_completed(self, api, request_outcomes):
         _wire(api, _background_gen_factory(text="hello background!"))
         request = ResponsesRequest(model="m", input="hi", background=True)
 
         result = await api.create_response(request, _raw_request())
         response_id = json.loads(bytes(result.body))["id"]
+        assert request_outcomes() == []
 
         await _drain_background_tasks(api)
 
@@ -236,6 +237,7 @@ class TestBackgroundCreate:
         assert body["status"] == "completed"
         assert body["output"][0]["content"][0]["text"] == "hello background!"
         assert "_mship" not in body
+        assert request_outcomes() == [("m", "create_response", "ok", None)]
 
 
 class TestMcpBackgroundWiring:
@@ -327,7 +329,9 @@ class TestGuards:
 
 class TestCancel:
     @pytest.mark.asyncio
-    async def test_cancel_in_progress_marks_cancelled_and_survives_abnormal_end(self, api):
+    async def test_cancel_in_progress_marks_cancelled_and_survives_abnormal_end(
+        self, api, _fake_disconnect_registry, request_outcomes
+    ):
         started = asyncio.Event()
         release = asyncio.Event()
         _wire(api, _hanging_gen_factory(started, release))
@@ -340,6 +344,7 @@ class TestCancel:
         cancel_result = await api.cancel_response(response_id, _raw_request())
         body = json.loads(bytes(cancel_result.body))
         assert body["status"] == "cancelled"
+        _fake_disconnect_registry.is_set.remote.return_value = True
 
         # Let the "generation" end abnormally (no terminal event) — the drain task's
         # fallback-failure write must not regress an already-cancelled status.
@@ -348,6 +353,7 @@ class TestCancel:
 
         get_result = await api.get_response(response_id, _raw_request())
         assert json.loads(bytes(get_result.body))["status"] == "cancelled"
+        assert request_outcomes() == [("m", "create_response", "cancelled", None)]
 
     @pytest.mark.asyncio
     async def test_cancel_wins_race_against_a_genuine_completion(self, api):

@@ -12,8 +12,8 @@ groups:
     rules:
       - alert: ModelshipHighErrorRate
         expr: |
-          sum(rate(ray_modelship_request_errors_total[5m]))
-          / clamp_min(sum(rate(ray_modelship_request_total[5m])), 1)
+          sum(rate(ray_modelship_request_total{status="error"}[5m]))
+          / clamp_min(sum(rate(ray_modelship_request_total{status=~"ok|error"}[5m])), 1)
           > 0.05
         for: 5m
         labels:
@@ -109,21 +109,22 @@ groups:
       - alert: ModelshipHighP99Latency
         expr: |
           histogram_quantile(0.99,
-            sum(rate(ray_modelship_request_duration_seconds_bucket[5m])) by (le)
+            sum(rate(ray_modelship_request_duration_seconds_bucket{status="ok"}[5m])) by (gateway, model, operation, le)
           ) > 30
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Request latency P99 > 30s"
+          summary: "Request latency P99 > 30s ({{ $labels.model }} {{ $labels.operation }}, {{ $labels.gateway }})"
           description: >-
-            P99 gateway latency is {{ $value | humanizeDuration }}.
+            P99 latency of successful {{ $labels.operation }} requests to
+            {{ $labels.model }} is {{ $value | humanizeDuration }}.
 
       - alert: ModelshipModelHighErrorRate
         expr: |
-          sum by (gateway, model) (rate(ray_modelship_request_errors_total[5m]))
-          / sum by (gateway, model) (rate(ray_modelship_request_total[5m])) > 0.05
-          and sum by (gateway, model) (rate(ray_modelship_request_total[5m])) > 0.05
+          sum by (gateway, model) (rate(ray_modelship_request_total{status="error"}[5m]))
+          / sum by (gateway, model) (rate(ray_modelship_request_total{status=~"ok|error"}[5m])) > 0.05
+          and sum by (gateway, model) (rate(ray_modelship_request_total{status=~"ok|error"}[5m])) > 0.05
         for: 5m
         labels:
           severity: warning
@@ -156,7 +157,7 @@ groups:
             evicted and recomputed.
 
       - alert: ModelshipClientDisconnects
-        expr: sum(rate(ray_modelship_client_disconnects_total[5m])) > 0.0167
+        expr: sum(rate(ray_modelship_request_total{status="cancelled"}[5m])) > 0.0167
         for: 5m
         labels:
           severity: warning
