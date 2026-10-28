@@ -1522,7 +1522,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(ray_modelship_deploy_models_changed_total{gateway=~\"$gateway\"}[1h])) by (action)",
+          "expr": "sum by (action) ((ray_modelship_deploy_models_changed_total{gateway=~\"$gateway\"} unless ray_modelship_deploy_models_changed_total{gateway=~\"$gateway\"} offset 1h) or increase(ray_modelship_deploy_models_changed_total{gateway=~\"$gateway\"}[1h]))",
           "legendFormat": "{{ action }}"
         }
       ],
