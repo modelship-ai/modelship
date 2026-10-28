@@ -184,7 +184,7 @@ The dashboard has 9 rows:
 
 | Row | What it shows | Metric sources |
 |---|---|---|
-| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*` |
+| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*`, `ray_serve_*` |
 | **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed) | `ray_modelship_*` |
 | **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `ray_vllm_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory (cluster aggregate) | `ray_node_*` |
@@ -219,9 +219,8 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 |---|---|---|---|
 | `ModelshipHighErrorRate` | Error rate > 5% of traffic | 5m | Significant portion of requests are failing |
 | `ModelshipHTTP5xxRatio` | 5xx > 5% of a gateway's HTTP requests, `/health` and `/readyz` excluded | 5m | Gateway is answering server errors |
-| `ModelshipNoModelsLoaded` | `models_loaded` == 0 | 2m | Server is running but cannot serve requests |
+| `ModelshipModelDown` | `ray_modelship_model_up` == 0 | 5m | A gateway has no running replica of a model to route to; the model answers 503 |
 | `ModelshipKVCacheExhausted` | KV cache usage > 95% | 5m | Requests will queue or be preempted |
-| `ModelshipAppUnhealthy` | `ray_serve_application_status` == 2 (UNHEALTHY) | 5m | A Serve application has an unhealthy deployment |
 | `ModelshipModelLoadFailure` | A model replica failed to load in the last 15m | 0m | A model can't come up; its replica log has the reason |
 | `ModelshipBackendCrashLooping` | A model's backend died 3+ times in 15m | 0m | `llama-server` or vLLM's engine keeps crashing |
 | `ModelshipTargetDown` | `up{job="modelship"}` == 0 | 5m | Prometheus cannot scrape a node |
@@ -239,6 +238,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | `ModelshipClientDisconnects` | Disconnect rate > 1/min | 5m | Clients timing out or dropping connections |
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
 | `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
+| `ModelshipAppUnhealthy` | `ray_serve_application_status` == 2 (UNHEALTHY) | 5m | A Serve application has an unhealthy deployment |
 | `ModelshipDeployStuck` | `ray_serve_application_status` == 5 (DEPLOYING) | 30m | A Serve application is waiting for capacity or a slow model load |
 | `ModelshipDeployFailed` | A deploy request failed in the last 15m | 0m | The request was rolled back; the gateway serves its last committed models |
 | `ModelshipGatewayRoutingDivergence` | `gateway_replicas_behind` > 0 | 10m | A gateway replica is routing from a stale table |
@@ -308,8 +308,9 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 | Metric | Type | Tags | Description |
 |---|---|---|---|
 | `ray_modelship_model_load_failures_total` | Counter | `model`, `loader`, `fatal`, `gateway` | Failed model loads, reported by the replica to the deploy coordinator (`fatal`: `true` when the deploy doesn't retry it) |
+| `ray_modelship_model_load_failures_created_seconds_total` | Counter | `model`, `loader`, `fatal`, `gateway` | Unix time each `model_load_failures_total` series was created |
 | `ray_modelship_backend_deaths_total` | Counter | `model`, `gateway` | Deaths of a model's backend process (`llama-server`, vLLM's engine), reported by its replica |
-| `ray_modelship_models_loaded` | Gauge | `gateway` | Number of loaded and ready models |
+| `ray_modelship_backend_deaths_created_seconds_total` | Counter | `model`, `gateway` | Unix time each `backend_deaths_total` series was created |
 
 ### Inference Timing
 
@@ -329,17 +330,22 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 
 ### HA Control Plane
 
-These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first five carry a `gateway` tag; the rest are cluster-scoped.
+These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first eight carry a `gateway` tag; the rest are cluster-scoped.
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
 | `ray_modelship_gateway_reconciles_total` | Counter | `gateway` | Routing reconciles a gateway replica applied from the coordinator |
 | `ray_modelship_gateway_watch_errors_total` | Counter | `gateway` | Errors in a gateway replica's coordinator watch loop (retried) |
 | `ray_modelship_gateway_replicas_behind` | Gauge | `gateway` | Running gateway replicas not on the gateway coordinator's current routing generation |
+| `ray_modelship_model_up` | Gauge | `gateway`, `model` | 1 while the deployment the gateway routes a model to can serve it, 0 when it can't; not set while that deployment is missing or deploying with no running replica |
 | `ray_modelship_deploy_requests_total` | Counter | `gateway`, `outcome` | Deploy requests finished (`outcome`: `succeeded`, `failed`, `cancelled`), including those cancelled while queued |
+| `ray_modelship_deploy_requests_created_seconds_total` | Counter | `gateway`, `outcome` | Unix time each `deploy_requests_total` series was created |
 | `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a successful deploy request (`action`: `add`, `remove`, `rescale`) |
+| `ray_modelship_deploy_models_changed_created_seconds_total` | Counter | `gateway`, `action` | Unix time each `deploy_models_changed_total` series was created |
 | `ray_modelship_state_store_operations_total` | Counter | `backend`, `op`, `result` | State-store ops (`op`: `get`/`set`/`delete`; `result`: `ok`/`error`) |
 | `ray_modelship_state_store_operation_duration_seconds` | Histogram | `backend`, `op` | State-store operation latency |
+
+The deploy coordinator's four counters (`deploy_requests_total`, `deploy_models_changed_total`, `model_load_failures_total`, `backend_deaths_total`) start each series at its first value, which `increase()` doesn't count. Each has a `_created_seconds_total` counter with the same tags holding the Unix time the series was created, so the alerts and the Models Changed panel count a series created within their window in full.
 
 ## Built-in Metrics from vLLM and Ray
 

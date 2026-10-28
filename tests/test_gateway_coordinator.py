@@ -476,6 +476,63 @@ class TestReplicasBehind:
         behind.set.assert_not_called()
 
 
+class TestModelUp:
+    @pytest.fixture
+    def up(self, monkeypatch):
+        gauge = MagicMock()
+        monkeypatch.setattr(gateway_coordinator, "MODEL_UP", gauge)
+        return gauge
+
+    @pytest.mark.asyncio
+    async def test_one_for_a_model_whose_app_can_serve(self, cluster, up):
+        cluster.configure(NEW)
+        cluster.apps[_app_name(NEW)] = _app()
+        await _pass(_coordinator("gw"))
+        up.set.assert_called_once_with(1, tags={"gateway": "gw", "model": "a"})
+
+    @pytest.mark.asyncio
+    async def test_zero_for_a_model_whose_app_has_no_running_replica(self, cluster, up):
+        cluster.configure(NEW)
+        cluster.apps[_app_name(NEW)] = _app(ApplicationStatus.UNHEALTHY, running=0)
+        await _pass(_coordinator("gw"))
+        up.set.assert_called_once_with(0, tags={"gateway": "gw", "model": "a"})
+
+    @pytest.mark.asyncio
+    async def test_zero_while_only_an_app_outside_the_routing_version_can_serve(self, cluster, up):
+        cluster.configure(OLD)
+        cluster.apps[_app_name(OLD)] = _app(ApplicationStatus.UNHEALTHY, running=0)
+        cluster.apps[_app_name(NEW)] = _app()
+        await _pass(_coordinator("gw"))
+        up.set.assert_called_once_with(0, tags={"gateway": "gw", "model": "a"})
+
+    @pytest.mark.asyncio
+    async def test_nothing_while_the_routed_app_is_missing(self, cluster, up):
+        cluster.configure(OLD)
+        cluster.apps[_app_name(NEW)] = LOADING
+        await _pass(_coordinator("gw"))
+        up.set.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_nothing_while_the_routed_app_deploys_with_no_running_replica(self, cluster, up):
+        cluster.configure(NEW)
+        cluster.apps[_app_name(NEW)] = LOADING
+        await _pass(_coordinator("gw"))
+        up.set.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_one_while_the_routed_app_deploys_with_a_running_replica(self, cluster, up):
+        cluster.configure(NEW)
+        cluster.apps[_app_name(NEW)] = _app(ApplicationStatus.DEPLOYING, running=1)
+        await _pass(_coordinator("gw"))
+        up.set.assert_called_once_with(1, tags={"gateway": "gw", "model": "a"})
+
+    @pytest.mark.asyncio
+    async def test_nothing_for_a_gateway_with_no_models(self, cluster, up):
+        cluster.configure()
+        await _pass(_coordinator("gw"))
+        up.set.assert_not_called()
+
+
 class TestReadServe:
     @pytest.fixture
     def client(self, monkeypatch):

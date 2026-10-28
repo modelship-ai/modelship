@@ -20,6 +20,8 @@ Both APIs expose the same ``inc`` / ``set`` / ``observe`` surface, so the no-op
 stubs below cover either and call sites stay identical.
 """
 
+import time
+
 from modelship.utils.runtime_env import env_setting
 
 _ENABLED = env_setting("MSHIP_METRICS").lower() == "true"
@@ -82,7 +84,6 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "stream_chunks_total",
         "gateway_reconciles_total",
         "gateway_watch_errors_total",
-        "models_loaded",
         "generation_duration_seconds",
         "tts_generation_duration_seconds",
         "image_generation_duration_seconds",
@@ -131,6 +132,20 @@ def stamp_gateway(gateway_name: str) -> None:
     _GATEWAY["name"] = gateway_name
 
 
+class _CreatedStampedCounter:
+    def __init__(self, inner, created):
+        self._inner = inner
+        self._created = created
+        self._seen = set()
+
+    def inc(self, value=1.0, tags=None):
+        key = frozenset((tags or {}).items())
+        if key not in self._seen:
+            self._seen.add(key)
+            self._created.inc(time.time(), tags)
+        self._inner.inc(value, tags)
+
+
 def _build_metrics():
     """Construct real or no-op metric objects based on MSHIP_METRICS."""
 
@@ -145,8 +160,6 @@ def _build_metrics():
             # Gateway HA routing (watch loop)
             "gateway_reconciles_total": _NoOpCounter(),
             "gateway_watch_errors_total": _NoOpCounter(),
-            # Model deployment
-            "models_loaded": _NoOpGauge(),
             # Inference timing
             "generation_duration_seconds": _NoOpHistogram(),
             "tts_generation_duration_seconds": _NoOpHistogram(),
@@ -157,7 +170,7 @@ def _build_metrics():
             "resource_cleanup_errors_total": _NoOpCounter(),
         }
 
-    from ray.serve.metrics import Counter, Gauge, Histogram
+    from ray.serve.metrics import Counter, Histogram
 
     # Ray's type stubs over-constrain tag_keys (Tuple[str] instead of variable-length
     # tuples) and boundaries (List[float] vs int literals). Suppressed with type: ignore.
@@ -198,12 +211,6 @@ def _build_metrics():
         "gateway_watch_errors_total": Counter(
             "modelship_gateway_watch_errors_total",
             description="Errors in a gateway replica's coordinator watch loop (retried).",
-            tag_keys=("gateway",),
-        ),
-        # -- Model deployment layer --
-        "models_loaded": Gauge(
-            "modelship_models_loaded",
-            description="Number of models currently loaded.",
             tag_keys=("gateway",),
         ),
         # -- Inference timing --
@@ -260,6 +267,7 @@ def _build_util_metrics():
         return {
             # Gateway coordinator
             "gateway_replicas_behind": _NoOpGauge(),
+            "model_up": _NoOpGauge(),
             # State store
             "state_store_operations_total": _NoOpCounter(),
             "state_store_operation_duration_seconds": _NoOpHistogram(),
@@ -279,6 +287,11 @@ def _build_util_metrics():
             description="Running gateway replicas not on the gateway coordinator's current routing generation.",
             tag_keys=("gateway",),
         ),
+        "model_up": Gauge(
+            "modelship_model_up",
+            description="1 while the deployment a gateway routes a model to can serve it, 0 while it can't and isn't deploying.",
+            tag_keys=("gateway", "model"),
+        ),
         # -- State store (durable HA state: deploy versions, conversations) --
         "state_store_operations_total": Counter(
             "modelship_state_store_operations_total",
@@ -292,25 +305,53 @@ def _build_util_metrics():
             tag_keys=("backend", "op"),
         ),
         # -- Deploy coordinator --
-        "deploy_requests_total": Counter(
-            "modelship_deploy_requests_total",
-            description="Deploy requests finished, by outcome.",
-            tag_keys=("gateway", "outcome"),
+        "deploy_requests_total": _CreatedStampedCounter(
+            Counter(
+                "modelship_deploy_requests_total",
+                description="Deploy requests finished, by outcome.",
+                tag_keys=("gateway", "outcome"),
+            ),
+            Counter(
+                "modelship_deploy_requests_created_seconds_total",
+                description="Unix time each deploy_requests_total series was created.",
+                tag_keys=("gateway", "outcome"),
+            ),
         ),
-        "deploy_models_changed_total": Counter(
-            "modelship_deploy_models_changed_total",
-            description="Models changed by a successful deploy request, by action.",
-            tag_keys=("gateway", "action"),
+        "deploy_models_changed_total": _CreatedStampedCounter(
+            Counter(
+                "modelship_deploy_models_changed_total",
+                description="Models changed by a successful deploy request, by action.",
+                tag_keys=("gateway", "action"),
+            ),
+            Counter(
+                "modelship_deploy_models_changed_created_seconds_total",
+                description="Unix time each deploy_models_changed_total series was created.",
+                tag_keys=("gateway", "action"),
+            ),
         ),
-        "model_load_failures_total": Counter(
-            "modelship_model_load_failures_total",
-            description="Failed model loads reported by model replicas.",
-            tag_keys=("gateway", "model", "loader", "fatal"),
+        "model_load_failures_total": _CreatedStampedCounter(
+            Counter(
+                "modelship_model_load_failures_total",
+                description="Failed model loads reported by model replicas.",
+                tag_keys=("gateway", "model", "loader", "fatal"),
+            ),
+            Counter(
+                "modelship_model_load_failures_created_seconds_total",
+                description="Unix time each model_load_failures_total series was created.",
+                tag_keys=("gateway", "model", "loader", "fatal"),
+            ),
         ),
-        "backend_deaths_total": Counter(
-            "modelship_backend_deaths_total",
-            description="Backend process deaths reported by model replicas.",
-            tag_keys=("gateway", "model"),
+        "backend_deaths_total": _CreatedStampedCounter(
+            Counter(
+                "modelship_backend_deaths_total",
+                description="Backend process deaths reported by model replicas.",
+                tag_keys=("gateway", "model"),
+            ),
+            Counter(
+                "modelship_backend_deaths_created_seconds_total",
+                description="Unix time each backend_deaths_total series was created.",
+                tag_keys=("gateway", "model"),
+            ),
         ),
     }
 
@@ -329,9 +370,6 @@ STREAM_CHUNKS_TOTAL = _metrics["stream_chunks_total"]
 GATEWAY_RECONCILES_TOTAL = _metrics["gateway_reconciles_total"]
 GATEWAY_WATCH_ERRORS_TOTAL = _metrics["gateway_watch_errors_total"]
 
-# -- Model deployment --
-MODELS_LOADED = _metrics["models_loaded"]
-
 # -- Inference timing --
 GENERATION_DURATION_SECONDS = _metrics["generation_duration_seconds"]
 TTS_GENERATION_DURATION_SECONDS = _metrics["tts_generation_duration_seconds"]
@@ -345,6 +383,7 @@ RESOURCE_CLEANUP_ERRORS_TOTAL = _metrics["resource_cleanup_errors_total"]
 # -- HA control plane (ray.util.metrics — non-Serve emitters) --
 # Gateway coordinator
 GATEWAY_REPLICAS_BEHIND = _util_metrics["gateway_replicas_behind"]
+MODEL_UP = _util_metrics["model_up"]
 # State store
 STATE_STORE_OPERATIONS_TOTAL = _util_metrics["state_store_operations_total"]
 STATE_STORE_OPERATION_DURATION_SECONDS = _util_metrics["state_store_operation_duration_seconds"]

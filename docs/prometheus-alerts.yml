@@ -39,16 +39,16 @@ groups:
             {{ $labels.application }} answered 5xx over the last 5 minutes,
             not counting its /health and /readyz routes.
 
-      - alert: ModelshipNoModelsLoaded
-        expr: ray_modelship_models_loaded == 0
-        for: 2m
+      - alert: ModelshipModelDown
+        expr: max by (gateway, model) (ray_modelship_model_up) == 0
+        for: 5m
         labels:
           severity: critical
         annotations:
-          summary: "No models loaded"
+          summary: "Model down ({{ $labels.model }}, {{ $labels.gateway }})"
           description: >-
-            ray_modelship_models_loaded has been 0 for 2 minutes.
-            The server is running but cannot serve any requests.
+            {{ $labels.gateway }} has had no running replica of {{ $labels.model }}
+            to route to for 5 minutes, so the model answers 503.
 
       - alert: ModelshipKVCacheExhausted
         expr: ray_vllm_kv_cache_usage_perc > 0.95
@@ -61,23 +61,13 @@ groups:
             KV cache usage is {{ $value | humanizePercentage }}.
             Requests will queue or be preempted.
 
-      - alert: ModelshipAppUnhealthy
-        expr: ray_serve_application_status == 2
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Serve application unhealthy ({{ $labels.application }})"
-          description: >-
-            Ray Serve reports {{ $labels.application }} as UNHEALTHY: one or
-            more of its deployments are unhealthy.
-
       - alert: ModelshipModelLoadFailure
         expr: |
-          sum by (gateway, model) (increase(ray_modelship_model_load_failures_total[15m])) > 0
-          or sum by (gateway, model) (
-            ray_modelship_model_load_failures_total unless ray_modelship_model_load_failures_total offset 15m
-          )
+          sum by (gateway, model) (
+            ray_modelship_model_load_failures_total
+              and ray_modelship_model_load_failures_created_seconds_total > time() - 900
+            or increase(ray_modelship_model_load_failures_total[15m])
+          ) > 0
         for: 0m
         labels:
           severity: critical
@@ -89,9 +79,10 @@ groups:
 
       - alert: ModelshipBackendCrashLooping
         expr: |
-          sum by (gateway, model) (increase(ray_modelship_backend_deaths_total[15m])) >= 3
-          or sum by (gateway, model) (
-            ray_modelship_backend_deaths_total unless ray_modelship_backend_deaths_total offset 15m
+          sum by (gateway, model) (
+            ray_modelship_backend_deaths_total
+              and ray_modelship_backend_deaths_created_seconds_total > time() - 900
+            or increase(ray_modelship_backend_deaths_total[15m])
           ) >= 3
         for: 0m
         labels:
@@ -198,6 +189,17 @@ groups:
             TTFT P99 is {{ $value | humanizeDuration }} — users are waiting
             too long for the first token.
 
+      - alert: ModelshipAppUnhealthy
+        expr: ray_serve_application_status == 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Serve application unhealthy ({{ $labels.application }})"
+          description: >-
+            Ray Serve reports {{ $labels.application }} as UNHEALTHY: one or
+            more of its deployments are unhealthy.
+
       - alert: ModelshipDeployStuck
         expr: ray_serve_application_status == 5
         for: 30m
@@ -211,11 +213,11 @@ groups:
 
       - alert: ModelshipDeployFailed
         expr: |
-          sum by (gateway) (increase(ray_modelship_deploy_requests_total{outcome="failed"}[15m])) > 0
-          or sum by (gateway) (
+          sum by (gateway) (
             ray_modelship_deploy_requests_total{outcome="failed"}
-            unless ray_modelship_deploy_requests_total{outcome="failed"} offset 15m
-          )
+              and ray_modelship_deploy_requests_created_seconds_total{outcome="failed"} > time() - 900
+            or increase(ray_modelship_deploy_requests_total{outcome="failed"}[15m])
+          ) > 0
         for: 0m
         labels:
           severity: warning

@@ -2,6 +2,7 @@
 outcomes, cancel, rollback, a deploy coordinator restart, and deploys sent through the Ray dashboard."""
 
 import os
+import re
 import subprocess
 import time
 from functools import partial
@@ -318,6 +319,20 @@ def _counted(metric: str, **labels: str) -> float:
     )
 
 
+def _series(metric: str) -> dict[frozenset, float]:
+    lines = httpx.get("http://localhost:8079/metrics", timeout=10).text.splitlines()
+    return {
+        frozenset(re.findall(r'(\w+)="([^"]*)"', line.split("} ", 1)[0])): float(line.split("} ", 1)[1].split()[0])
+        for line in lines
+        if line.startswith(metric + "{")
+    }
+
+
+def _stamped(metric: str) -> bool:
+    counted, created = _series(f"{metric}_total"), _series(f"{metric}_created_seconds_total")
+    return bool(counted) and all(0 < created.get(labels, 0) <= time.time() for labels in counted)
+
+
 @pytest.mark.integration
 @pytest.mark.llama_server
 @pytest.mark.deploy
@@ -329,6 +344,10 @@ class TestDeployMetrics:
         model_deployer.run(*_flags("load-failure", broken=True), log_name="load-failure", expect_code=1)
         assert _poll(lambda: failed() > before, deadline_s=30), "the failed deploy was not scraped"
         assert _poll(lambda: load_failures() > 0, deadline_s=30), "the load failure was not scraped"
+        assert _poll(partial(_stamped, "ray_modelship_deploy_requests"), deadline_s=30), "a request series has no stamp"
+        assert _poll(partial(_stamped, "ray_modelship_model_load_failures"), deadline_s=30), (
+            "a load-failure series has no stamp"
+        )
 
 
 def _deploy_remote(url: str, config: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
