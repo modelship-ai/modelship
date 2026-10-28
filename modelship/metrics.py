@@ -289,7 +289,7 @@ def _build_util_metrics():
         ),
         "model_up": Gauge(
             "modelship_model_up",
-            description="1 while the deployment a gateway routes a model to can serve it, else 0.",
+            description="1 while the deployment a gateway routes a model to can serve it, 0 while it can't and isn't deploying.",
             tag_keys=("gateway", "model"),
         ),
         # -- State store (durable HA state: deploy versions, conversations) --

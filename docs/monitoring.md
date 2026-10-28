@@ -337,7 +337,7 @@ These cover the multi-node / HA machinery deployed by the Helm chart (gateway co
 | `ray_modelship_gateway_reconciles_total` | Counter | `gateway` | Routing reconciles a gateway replica applied from the coordinator |
 | `ray_modelship_gateway_watch_errors_total` | Counter | `gateway` | Errors in a gateway replica's coordinator watch loop (retried) |
 | `ray_modelship_gateway_replicas_behind` | Gauge | `gateway` | Running gateway replicas not on the gateway coordinator's current routing generation |
-| `ray_modelship_model_up` | Gauge | `gateway`, `model` | 1 while the deployment the gateway routes a model to can serve it, 0 when it can't; set for every model the gateway should serve |
+| `ray_modelship_model_up` | Gauge | `gateway`, `model` | 1 while the deployment the gateway routes a model to can serve it, 0 when it can't; not set while that deployment is missing or deploying with no running replica |
 | `ray_modelship_deploy_requests_total` | Counter | `gateway`, `outcome` | Deploy requests finished (`outcome`: `succeeded`, `failed`, `cancelled`), including those cancelled while queued |
 | `ray_modelship_deploy_requests_created_seconds_total` | Counter | `gateway`, `outcome` | Unix time each `deploy_requests_total` series was created |
 | `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a successful deploy request (`action`: `add`, `remove`, `rescale`) |

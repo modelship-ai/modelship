@@ -16,7 +16,7 @@ from typing import Any
 
 import ray
 from ray.serve.context import _get_global_client
-from ray.serve.schema import ApplicationStatusOverview
+from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview
 
 from modelship.deploy.routing import Routing, compute_routing, running_replica_ids, status_overview
 from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator
@@ -112,7 +112,11 @@ class GatewayCoordinator:
             GATEWAY_REPLICAS_BEHIND.set(len(self._replicas[gateway] - holding), tags={"gateway": gateway})
             serving = set(routing.models.values())
             for model in routing.expected:
-                MODEL_UP.set(int(model in serving), tags={"gateway": gateway, "model": model})
+                target = apps.get(version["apps"][model])
+                if model in serving:
+                    MODEL_UP.set(1, tags={"gateway": gateway, "model": model})
+                elif target is not None and target.status != ApplicationStatus.DEPLOYING:
+                    MODEL_UP.set(0, tags={"gateway": gateway, "model": model})
         self._computed.set()
 
     async def _fetch_versions(self, gateways: list[str]) -> None:

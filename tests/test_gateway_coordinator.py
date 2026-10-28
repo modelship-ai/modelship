@@ -506,6 +506,27 @@ class TestModelUp:
         up.set.assert_called_once_with(0, tags={"gateway": "gw", "model": "a"})
 
     @pytest.mark.asyncio
+    async def test_nothing_while_the_routed_app_is_missing(self, cluster, up):
+        cluster.configure(OLD)
+        cluster.apps[_app_name(NEW)] = LOADING
+        await _pass(_coordinator("gw"))
+        up.set.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_nothing_while_the_routed_app_deploys_with_no_running_replica(self, cluster, up):
+        cluster.configure(NEW)
+        cluster.apps[_app_name(NEW)] = LOADING
+        await _pass(_coordinator("gw"))
+        up.set.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_one_while_the_routed_app_deploys_with_a_running_replica(self, cluster, up):
+        cluster.configure(NEW)
+        cluster.apps[_app_name(NEW)] = _app(ApplicationStatus.DEPLOYING, running=1)
+        await _pass(_coordinator("gw"))
+        up.set.assert_called_once_with(1, tags={"gateway": "gw", "model": "a"})
+
+    @pytest.mark.asyncio
     async def test_nothing_for_a_gateway_with_no_models(self, cluster, up):
         cluster.configure()
         await _pass(_coordinator("gw"))
