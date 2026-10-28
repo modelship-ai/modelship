@@ -16,8 +16,6 @@ from modelship.metrics import (
     EMBEDDING_DURATION_SECONDS,
     GENERATION_DURATION_SECONDS,
     IMAGE_GENERATION_DURATION_SECONDS,
-    MODEL_DOWNLOAD_DURATION_SECONDS,
-    MODEL_ENGINE_LOAD_DURATION_SECONDS,
     TRANSCRIPTION_DURATION_SECONDS,
     TTS_GENERATION_DURATION_SECONDS,
     stamp_gateway,
@@ -99,17 +97,14 @@ class ModelDeployment:
             reject_unset_cache_roots()
             _reject_unsupported_darwin_loader(config)
             _reject_unsupported_accelerator(config)
-            start = time.monotonic()
             # Must run before the loader is constructed: preflight (which
             # needs the model file on disk) runs synchronously inside a
             # loader's own __init__, so `_resolved_path` has to be populated
             # ahead of that, not lazily inside `infer.start()`.
             await BaseInfer.ensure_downloaded(config)
-            downloaded = time.monotonic()
 
             # after the download, so a replica downloading holds no lease
             await wait_for_deploy_lease(config.name)
-            leased = time.monotonic()
             if config.loader == ModelLoader.vllm:
                 from modelship.infer.vllm.vllm_infer import VllmInfer
 
@@ -159,18 +154,6 @@ class ModelDeployment:
             await _report_load_failure(config, reason, fatal=True)
 
             raise RuntimeError(err_msg) from e
-        loaded = time.monotonic()
-        tags = {"model": config.name, "loader": config.loader.value}
-        MODEL_DOWNLOAD_DURATION_SECONDS.observe(downloaded - start, tags=tags)
-        MODEL_ENGINE_LOAD_DURATION_SECONDS.observe(loaded - leased, tags=tags)
-        logger.info(
-            "Loaded '%s' in %.1fs: download %.1fs, lease wait %.1fs, engine %.1fs",
-            config.name,
-            loaded - start,
-            downloaded - start,
-            leased - downloaded,
-            loaded - leased,
-        )
 
     def __del__(self):
         self._graceful_teardown()

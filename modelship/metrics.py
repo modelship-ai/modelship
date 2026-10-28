@@ -58,7 +58,6 @@ class _NoOpHistogram:
 # ---------------------------------------------------------------------------
 
 _REQUEST_LATENCY_BOUNDARIES = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60]
-_MODEL_LOAD_BOUNDARIES: list[float] = [1, 5, 10, 30, 60, 120, 300, 600]
 # State-store ops are sub-second on a healthy backend; the long tail flags a slow
 # or failing redis/file volume that would silently break self-heal durability.
 _STATE_STORE_BOUNDARIES: list[float] = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5]
@@ -84,8 +83,6 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "gateway_reconciles_total",
         "gateway_watch_errors_total",
         "models_loaded",
-        "model_download_duration_seconds",
-        "model_engine_load_duration_seconds",
         "generation_duration_seconds",
         "tts_generation_duration_seconds",
         "image_generation_duration_seconds",
@@ -149,8 +146,6 @@ def _build_metrics():
             "gateway_reconciles_total": _NoOpCounter(),
             "gateway_watch_errors_total": _NoOpCounter(),
             # Model deployment
-            "model_download_duration_seconds": _NoOpHistogram(),
-            "model_engine_load_duration_seconds": _NoOpHistogram(),
             "models_loaded": _NoOpGauge(),
             # Inference timing
             "generation_duration_seconds": _NoOpHistogram(),
@@ -206,18 +201,6 @@ def _build_metrics():
             tag_keys=("gateway",),
         ),
         # -- Model deployment layer --
-        "model_download_duration_seconds": Histogram(
-            "modelship_model_download_duration_seconds",
-            description="Time to fetch a loaded model's weights, including the download lock wait, in seconds.",
-            boundaries=[0.1, 1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600],
-            tag_keys=("model", "loader", "gateway"),  # type: ignore[arg-type]
-        ),
-        "model_engine_load_duration_seconds": Histogram(
-            "modelship_model_engine_load_duration_seconds",
-            description="Time to start a loaded model's engine once its weights are local, in seconds.",
-            boundaries=_MODEL_LOAD_BOUNDARIES,
-            tag_keys=("model", "loader", "gateway"),  # type: ignore[arg-type]
-        ),
         "models_loaded": Gauge(
             "modelship_models_loaded",
             description="Number of models currently loaded.",
@@ -282,7 +265,6 @@ def _build_util_metrics():
             "state_store_operation_duration_seconds": _NoOpHistogram(),
             # Deploy coordinator
             "deploy_requests_total": _NoOpCounter(),
-            "deploy_duration_seconds": _NoOpHistogram(),
             "deploy_models_changed_total": _NoOpCounter(),
             "model_load_failures_total": _NoOpCounter(),
             "backend_deaths_total": _NoOpCounter(),
@@ -313,12 +295,6 @@ def _build_util_metrics():
         "deploy_requests_total": Counter(
             "modelship_deploy_requests_total",
             description="Deploy requests finished, by outcome.",
-            tag_keys=("gateway", "outcome"),
-        ),
-        "deploy_duration_seconds": Histogram(
-            "modelship_deploy_duration_seconds",
-            description="Wall-clock time a deploy request ran, by outcome, in seconds.",
-            boundaries=_MODEL_LOAD_BOUNDARIES,
             tag_keys=("gateway", "outcome"),
         ),
         "deploy_models_changed_total": Counter(
@@ -354,8 +330,6 @@ GATEWAY_RECONCILES_TOTAL = _metrics["gateway_reconciles_total"]
 GATEWAY_WATCH_ERRORS_TOTAL = _metrics["gateway_watch_errors_total"]
 
 # -- Model deployment --
-MODEL_DOWNLOAD_DURATION_SECONDS = _metrics["model_download_duration_seconds"]
-MODEL_ENGINE_LOAD_DURATION_SECONDS = _metrics["model_engine_load_duration_seconds"]
 MODELS_LOADED = _metrics["models_loaded"]
 
 # -- Inference timing --
@@ -376,7 +350,6 @@ STATE_STORE_OPERATIONS_TOTAL = _util_metrics["state_store_operations_total"]
 STATE_STORE_OPERATION_DURATION_SECONDS = _util_metrics["state_store_operation_duration_seconds"]
 # Deploy coordinator
 DEPLOY_REQUESTS_TOTAL = _util_metrics["deploy_requests_total"]
-DEPLOY_DURATION_SECONDS = _util_metrics["deploy_duration_seconds"]
 DEPLOY_MODELS_CHANGED_TOTAL = _util_metrics["deploy_models_changed_total"]
 MODEL_LOAD_FAILURES_TOTAL = _util_metrics["model_load_failures_total"]
 BACKEND_DEATHS_TOTAL = _util_metrics["backend_deaths_total"]

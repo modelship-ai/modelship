@@ -5,7 +5,7 @@ import asyncio
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import ANY, MagicMock, call, create_autospec
+from unittest.mock import MagicMock, call, create_autospec
 
 import pytest
 from ray.exceptions import RayActorError
@@ -33,11 +33,8 @@ def no_logging_setup(monkeypatch):
 
 @pytest.fixture
 def metrics(monkeypatch) -> SimpleNamespace:
-    mocks = SimpleNamespace(
-        requests=MagicMock(), duration=MagicMock(), changed=MagicMock(), load_failures=MagicMock(), deaths=MagicMock()
-    )
+    mocks = SimpleNamespace(requests=MagicMock(), changed=MagicMock(), load_failures=MagicMock(), deaths=MagicMock())
     monkeypatch.setattr(deploy_coordinator, "DEPLOY_REQUESTS_TOTAL", mocks.requests)
-    monkeypatch.setattr(deploy_coordinator, "DEPLOY_DURATION_SECONDS", mocks.duration)
     monkeypatch.setattr(deploy_coordinator, "DEPLOY_MODELS_CHANGED_TOTAL", mocks.changed)
     monkeypatch.setattr(deploy_coordinator, "MODEL_LOAD_FAILURES_TOTAL", mocks.load_failures)
     monkeypatch.setattr(deploy_coordinator, "BACKEND_DEATHS_TOTAL", mocks.deaths)
@@ -459,23 +456,20 @@ class TestQueue:
 @pytest.mark.asyncio
 class TestDeployMetrics:
     @pytest.mark.parametrize("state", ["succeeded", "failed", "cancelled"])
-    async def test_each_outcome_is_counted_once_with_how_long_it_ran(self, workers, metrics, state):
+    async def test_each_outcome_is_counted_once(self, workers, metrics, state):
         coord = _ledger()
         receipt = await coord.submit(_request())
         await _settle()
         workers.created[0].finish(state)
         await receipt["outcome"]
-        tags = {"gateway": "g", "outcome": state}
-        metrics.requests.inc.assert_called_once_with(tags=tags)
-        metrics.duration.observe.assert_called_once_with(ANY, tags=tags)
+        metrics.requests.inc.assert_called_once_with(tags={"gateway": "g", "outcome": state})
 
-    async def test_a_request_cancelled_in_the_queue_is_counted_without_a_duration(self, workers, metrics):
+    async def test_a_request_cancelled_in_the_queue_is_counted(self, workers, metrics):
         coord = _ledger()
         await coord.submit(_request())
         queued = await coord.submit(_request())
         await coord.cancel(queued["id"])
         metrics.requests.inc.assert_called_once_with(tags={"gateway": "g", "outcome": "cancelled"})
-        metrics.duration.observe.assert_not_called()
 
     async def test_a_request_whose_worker_dies_is_counted_as_failed(self, workers, metrics):
         coord = _ledger()

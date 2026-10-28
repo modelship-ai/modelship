@@ -37,7 +37,6 @@ from modelship.deploy.ledger import DeployRequest, Version, commit_version, read
 from modelship.logging import configure_logging, get_logger, serve_logging_config
 from modelship.metrics import (
     BACKEND_DEATHS_TOTAL,
-    DEPLOY_DURATION_SECONDS,
     DEPLOY_MODELS_CHANGED_TOTAL,
     DEPLOY_REQUESTS_TOTAL,
     MODEL_LOAD_FAILURES_TOTAL,
@@ -439,7 +438,6 @@ class DeployCoordinator:
                 entry = queue.popleft()
                 self._running[gateway_name] = entry
                 entry.state = "applying"
-                started = time.monotonic()
                 try:
                     outcome = await self._apply(entry)
                 except Exception as e:
@@ -447,9 +445,7 @@ class DeployCoordinator:
                     outcome = _outcome(entry, "failed", f"{type(e).__name__}: {e}")
                 finally:
                     del self._running[gateway_name]
-                tags = {"gateway": gateway_name, "outcome": outcome["state"]}
-                DEPLOY_REQUESTS_TOTAL.inc(tags=tags)
-                DEPLOY_DURATION_SECONDS.observe(time.monotonic() - started, tags=tags)
+                DEPLOY_REQUESTS_TOTAL.inc(tags={"gateway": gateway_name, "outcome": outcome["state"]})
                 for action, count in outcome["actions"].items():
                     DEPLOY_MODELS_CHANGED_TOTAL.inc(count, tags={"gateway": gateway_name, "action": action})
                 entry.done.set_result(outcome)
