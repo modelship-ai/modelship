@@ -115,7 +115,7 @@ Prometheus  ──scrape──>  Ray Metrics Agent (:8079)
                               |-- ray_node_*          Ray cluster: GPU, CPU, memory
                               |-- ray_serve_*         Ray Serve: HTTP requests, latency, replicas
                               |-- ray_vllm_*          vLLM engine: KV cache, TTFT, tokens, queue
-                              |-- ray_modelship_*         Custom: per-model latency, errors, load time
+                              |-- ray_modelship_*         Custom: per-model latency, errors
 ```
 
 > **Note:** All metrics are prefixed with `ray_` by Ray's metrics agent. vLLM metric names are also sanitized (`:` → `_`), so e.g. the vLLM-native `vllm:kv_cache_usage_perc` becomes `ray_vllm_kv_cache_usage_perc`.
@@ -189,9 +189,9 @@ The dashboard has 9 rows:
 | **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `ray_vllm_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory (cluster aggregate) | `ray_node_*` |
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
-| **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*` |
+| **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*`, `ray_serve_*` |
 | **Alerts** | Error rate %, KV cache usage, queue depth, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_node_*` |
-| **Cluster / HA** | Model app status, gateway reconciles, Serve requests per model, gateway replicas behind the routing generation, gateway watch errors, state-store latency/errors, deploy duration & model changes | `ray_modelship_*`, `ray_serve_*` |
+| **Cluster / HA** | Model app status, gateway reconciles, Serve requests per model, gateway replicas behind the routing generation, gateway watch errors, state-store latency/errors, models changed by deploys | `ray_modelship_*`, `ray_serve_*` |
 | **Per-Node Resources** | GPU utilization/memory, CPU, system memory broken out by node (filtered by the Node dropdown) | `ray_node_*` |
 
 > **Deploying via the Helm chart:** set `grafanaDashboard.enabled=true` to ship this dashboard as a ConfigMap the Grafana sidecar auto-imports (and `prometheusRule.enabled=true` for the alert rules below) — no manual import needed. See the chart README.
@@ -307,7 +307,6 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
-| `ray_modelship_model_load_duration_seconds` | Histogram | `model`, `loader`, `gateway` | Time to initialize a model |
 | `ray_modelship_model_load_failures_total` | Counter | `model`, `loader`, `fatal`, `gateway` | Failed model loads, reported by the replica to the deploy coordinator (`fatal`: `true` when the deploy doesn't retry it) |
 | `ray_modelship_backend_deaths_total` | Counter | `model`, `gateway` | Deaths of a model's backend process (`llama-server`, vLLM's engine), reported by its replica |
 | `ray_modelship_models_loaded` | Gauge | `gateway` | Number of loaded and ready models |
@@ -330,7 +329,7 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 
 ### HA Control Plane
 
-These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first six carry a `gateway` tag; the rest are cluster-scoped.
+These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first five carry a `gateway` tag; the rest are cluster-scoped.
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
@@ -338,7 +337,6 @@ These cover the multi-node / HA machinery deployed by the Helm chart (gateway co
 | `ray_modelship_gateway_watch_errors_total` | Counter | `gateway` | Errors in a gateway replica's coordinator watch loop (retried) |
 | `ray_modelship_gateway_replicas_behind` | Gauge | `gateway` | Running gateway replicas not on the gateway coordinator's current routing generation |
 | `ray_modelship_deploy_requests_total` | Counter | `gateway`, `outcome` | Deploy requests finished (`outcome`: `succeeded`, `failed`, `cancelled`), including those cancelled while queued |
-| `ray_modelship_deploy_duration_seconds` | Histogram | `gateway`, `outcome` | Wall-clock time a deploy request ran, from its start to its outcome |
 | `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a successful deploy request (`action`: `add`, `remove`, `rescale`) |
 | `ray_modelship_state_store_operations_total` | Counter | `backend`, `op`, `result` | State-store ops (`op`: `get`/`set`/`delete`; `result`: `ok`/`error`) |
 | `ray_modelship_state_store_operation_duration_seconds` | Histogram | `backend`, `op` | State-store operation latency |
@@ -373,6 +371,8 @@ Full reference: [vLLM Metrics Documentation](https://docs.vllm.ai/en/stable/desi
 - `ray_serve_application_status` — status of each application: 0=UNKNOWN, 1=DEPLOY_FAILED, 2=UNHEALTHY, 3=NOT_STARTED, 4=DELETING, 5=DEPLOYING, 6=RUNNING. A model's application is named `<gateway>.<model>-<fingerprint>`.
 - `ray_serve_replica_processing_queries` — requests each replica is processing
 - `ray_serve_deployment_queued_queries` — requests queued at the caller (the gateway replica, for a model's application)
+- `ray_serve_replica_startup_latency_ms` — time from a replica's creation to ready, including the wait for capacity
+- `ray_serve_replica_initialization_latency_ms` — time a replica spent in its constructor (a model's whole load) and first health check
 
 Full reference: [Ray Serve Monitoring](https://docs.ray.io/en/latest/serve/monitoring.html)
 

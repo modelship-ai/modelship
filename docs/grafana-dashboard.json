@@ -806,8 +806,12 @@
       },
       "targets": [
         {
-          "expr": "ray_modelship_model_load_duration_seconds_sum{gateway=~\"$gateway\", model=~\"$model\"} / clamp_min(ray_modelship_model_load_duration_seconds_count{gateway=~\"$gateway\", model=~\"$model\"}, 1)",
-          "legendFormat": "avg {{ model }}"
+          "expr": "histogram_quantile(0.95, sum(label_replace(ray_serve_replica_initialization_latency_ms_bucket{application=~\"($gateway)\\\\.($model)-[0-9a-f]{10}\"}, \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")) by (le, model)) / 1000",
+          "legendFormat": "p95 Serve initialization {{ model }}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(label_replace(ray_serve_replica_startup_latency_ms_bucket{application=~\"($gateway)\\\\.($model)-[0-9a-f]{10}\"}, \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")) by (le, model)) / 1000",
+          "legendFormat": "p95 Serve startup {{ model }}"
         }
       ],
       "fieldConfig": {
@@ -1502,7 +1506,7 @@
       }
     },
     {
-      "title": "Deploy Duration P95 / Models Changed",
+      "title": "Models Changed",
       "type": "timeseries",
       "id": 115,
       "gridPos": {
@@ -1517,17 +1521,13 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_deploy_duration_seconds_bucket{gateway=~\"$gateway\", outcome=\"succeeded\"}[1h])) by (le, gateway))",
-          "legendFormat": "p95 {{ gateway }}"
-        },
-        {
           "expr": "sum(increase(ray_modelship_deploy_models_changed_total{gateway=~\"$gateway\"}[1h])) by (action)",
           "legendFormat": "{{ action }}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s"
+          "unit": "short"
         }
       }
     },

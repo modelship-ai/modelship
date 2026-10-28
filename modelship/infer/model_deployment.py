@@ -16,7 +16,6 @@ from modelship.metrics import (
     EMBEDDING_DURATION_SECONDS,
     GENERATION_DURATION_SECONDS,
     IMAGE_GENERATION_DURATION_SECONDS,
-    MODEL_LOAD_DURATION_SECONDS,
     TRANSCRIPTION_DURATION_SECONDS,
     TTS_GENERATION_DURATION_SECONDS,
     stamp_gateway,
@@ -93,7 +92,6 @@ class ModelDeployment:
         # actor_options), so the gateway tag is set without threading a param in.
         stamp_gateway(os.environ.get("MSHIP_GATEWAY_NAME", ""))
         self.config = config
-        start = time.monotonic()
         self.infer: BaseInfer
         try:
             reject_unset_cache_roots()
@@ -156,10 +154,6 @@ class ModelDeployment:
             await _report_load_failure(config, reason, fatal=True)
 
             raise RuntimeError(err_msg) from e
-        finally:
-            MODEL_LOAD_DURATION_SECONDS.observe(
-                time.monotonic() - start, tags={"model": config.name, "loader": config.loader.value}
-            )
 
     def __del__(self):
         self._graceful_teardown()
