@@ -43,6 +43,7 @@ class ResponsesRequest(OpenAIBaseModel):
     reasoning: dict[str, Any] | None = None
     stream: bool | None = False
     metadata: dict[str, Any] | None = None
+    prompt_cache_key: str | None = None
     user: str | None = None
     # Stateful / background features — accepted into the schema so the adapter
     # can reject them explicitly rather than have pydantic drop them silently.

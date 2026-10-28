@@ -302,6 +302,7 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 | `ray_modelship_request_errors_total` | Counter | `model`, `endpoint`, `error_type`, `gateway` | Errors: `validation_error`, `inference_error`, `stream_error`, `unhandled` |
 | `ray_modelship_client_disconnects_total` | Counter | `model`, `endpoint`, `gateway` | Client disconnected before response completed |
 | `ray_modelship_stream_chunks_total` | Counter | `model`, `gateway` | Streaming chunks emitted |
+| `ray_modelship_affinity_routed_total` | Counter | `model`, `choice`, `gateway` | Requests routed to a model replica; `choice` is `first` (the key's first-ranked replica), `spilled` or `no_key` |
 
 ### Model Deployment
 

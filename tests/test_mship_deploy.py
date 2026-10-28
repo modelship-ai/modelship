@@ -1033,6 +1033,25 @@ class TestBuildDeploymentOptions:
         assert "pip" not in actor["runtime_env"]
         assert "placement_group_bundles" not in opts
 
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            {"model": "kokoro-en-v0_19", "usecase": ModelUsecase.tts, "loader": ModelLoader.sherpa_onnx},
+            {"model": "some-model", "usecase": ModelUsecase.generate, "loader": ModelLoader.llama_server},
+            {
+                "model": "some-model",
+                "usecase": ModelUsecase.generate,
+                "loader": ModelLoader.vllm,
+                "num_gpus": 2,
+                "vllm_engine_kwargs": VllmEngineConfig(tensor_parallel_size=2),
+            },
+        ],
+    )
+    def test_every_deployment_routes_with_the_affinity_router(self, fields):
+        config = ModelshipModelConfig(name="test-model", **fields)
+        router_config = build_deployment_options(config)["request_router_config"]
+        assert router_config.request_router_class == "modelship.deploy.request_router.AffinityRouter"
+
     def test_llama_server_honors_num_gpus(self):
         config = ModelshipModelConfig(
             name="test-model",

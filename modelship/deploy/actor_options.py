@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import platform
 
+from ray.serve.config import RequestRouterConfig
+
 from modelship.deploy.capabilities import deployment_capability_resources
+from modelship.deploy.request_router import AffinityRouter
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.state import state_store_env_var
@@ -119,4 +122,5 @@ def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] |
 
     if max_ongoing is not None:
         opts["max_ongoing_requests"] = max_ongoing
+    opts["request_router_config"] = RequestRouterConfig(request_router_class=AffinityRouter)  # type: ignore[arg-type]
     return opts
