@@ -1522,7 +1522,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (action) ((ray_modelship_deploy_models_changed_total{gateway=~\"$gateway\"} unless ray_modelship_deploy_models_changed_total{gateway=~\"$gateway\"} offset 1h) or increase(ray_modelship_deploy_models_changed_total{gateway=~\"$gateway\"}[1h]))",
+          "expr": "sum by (action) (ray_modelship_deploy_models_changed_total{gateway=~\"$gateway\"} and ray_modelship_deploy_models_changed_created_seconds_total{gateway=~\"$gateway\"} > time() - 3600 or increase(ray_modelship_deploy_models_changed_total{gateway=~\"$gateway\"}[1h]))",
           "legendFormat": "{{ action }}"
         }
       ],

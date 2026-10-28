@@ -20,6 +20,8 @@ Both APIs expose the same ``inc`` / ``set`` / ``observe`` surface, so the no-op
 stubs below cover either and call sites stay identical.
 """
 
+import time
+
 from modelship.utils.runtime_env import env_setting
 
 _ENABLED = env_setting("MSHIP_METRICS").lower() == "true"
@@ -128,6 +130,20 @@ def stamp_gateway(gateway_name: str) -> None:
     """Record the gateway name once (from a replica's ``__init__``) so every
     gateway-scoped metric stamps it. No call site passes the gateway tag."""
     _GATEWAY["name"] = gateway_name
+
+
+class _CreatedStampedCounter:
+    def __init__(self, inner, created):
+        self._inner = inner
+        self._created = created
+        self._seen = set()
+
+    def inc(self, value=1.0, tags=None):
+        key = frozenset((tags or {}).items())
+        if key not in self._seen:
+            self._seen.add(key)
+            self._created.inc(time.time(), tags)
+        self._inner.inc(value, tags)
 
 
 def _build_metrics():
@@ -283,25 +299,53 @@ def _build_util_metrics():
             tag_keys=("backend", "op"),
         ),
         # -- Deploy coordinator --
-        "deploy_requests_total": Counter(
-            "modelship_deploy_requests_total",
-            description="Deploy requests finished, by outcome.",
-            tag_keys=("gateway", "outcome"),
+        "deploy_requests_total": _CreatedStampedCounter(
+            Counter(
+                "modelship_deploy_requests_total",
+                description="Deploy requests finished, by outcome.",
+                tag_keys=("gateway", "outcome"),
+            ),
+            Counter(
+                "modelship_deploy_requests_created_seconds_total",
+                description="Unix time each deploy_requests_total series was created.",
+                tag_keys=("gateway", "outcome"),
+            ),
         ),
-        "deploy_models_changed_total": Counter(
-            "modelship_deploy_models_changed_total",
-            description="Models changed by a successful deploy request, by action.",
-            tag_keys=("gateway", "action"),
+        "deploy_models_changed_total": _CreatedStampedCounter(
+            Counter(
+                "modelship_deploy_models_changed_total",
+                description="Models changed by a successful deploy request, by action.",
+                tag_keys=("gateway", "action"),
+            ),
+            Counter(
+                "modelship_deploy_models_changed_created_seconds_total",
+                description="Unix time each deploy_models_changed_total series was created.",
+                tag_keys=("gateway", "action"),
+            ),
         ),
-        "model_load_failures_total": Counter(
-            "modelship_model_load_failures_total",
-            description="Failed model loads reported by model replicas.",
-            tag_keys=("gateway", "model", "loader", "fatal"),
+        "model_load_failures_total": _CreatedStampedCounter(
+            Counter(
+                "modelship_model_load_failures_total",
+                description="Failed model loads reported by model replicas.",
+                tag_keys=("gateway", "model", "loader", "fatal"),
+            ),
+            Counter(
+                "modelship_model_load_failures_created_seconds_total",
+                description="Unix time each model_load_failures_total series was created.",
+                tag_keys=("gateway", "model", "loader", "fatal"),
+            ),
         ),
-        "backend_deaths_total": Counter(
-            "modelship_backend_deaths_total",
-            description="Backend process deaths reported by model replicas.",
-            tag_keys=("gateway", "model"),
+        "backend_deaths_total": _CreatedStampedCounter(
+            Counter(
+                "modelship_backend_deaths_total",
+                description="Backend process deaths reported by model replicas.",
+                tag_keys=("gateway", "model"),
+            ),
+            Counter(
+                "modelship_backend_deaths_created_seconds_total",
+                description="Unix time each backend_deaths_total series was created.",
+                tag_keys=("gateway", "model"),
+            ),
         ),
     }
 

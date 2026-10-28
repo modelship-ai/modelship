@@ -69,10 +69,11 @@ groups:
 
       - alert: ModelshipModelLoadFailure
         expr: |
-          sum by (gateway, model) (increase(ray_modelship_model_load_failures_total[15m])) > 0
-          or sum by (gateway, model) (
-            ray_modelship_model_load_failures_total unless ray_modelship_model_load_failures_total offset 15m
-          )
+          sum by (gateway, model) (
+            ray_modelship_model_load_failures_total
+              and ray_modelship_model_load_failures_created_seconds_total > time() - 900
+            or increase(ray_modelship_model_load_failures_total[15m])
+          ) > 0
         for: 0m
         labels:
           severity: critical
@@ -84,9 +85,10 @@ groups:
 
       - alert: ModelshipBackendCrashLooping
         expr: |
-          sum by (gateway, model) (increase(ray_modelship_backend_deaths_total[15m])) >= 3
-          or sum by (gateway, model) (
-            ray_modelship_backend_deaths_total unless ray_modelship_backend_deaths_total offset 15m
+          sum by (gateway, model) (
+            ray_modelship_backend_deaths_total
+              and ray_modelship_backend_deaths_created_seconds_total > time() - 900
+            or increase(ray_modelship_backend_deaths_total[15m])
           ) >= 3
         for: 0m
         labels:
@@ -217,11 +219,11 @@ groups:
 
       - alert: ModelshipDeployFailed
         expr: |
-          sum by (gateway) (increase(ray_modelship_deploy_requests_total{outcome="failed"}[15m])) > 0
-          or sum by (gateway) (
+          sum by (gateway) (
             ray_modelship_deploy_requests_total{outcome="failed"}
-            unless ray_modelship_deploy_requests_total{outcome="failed"} offset 15m
-          )
+              and ray_modelship_deploy_requests_created_seconds_total{outcome="failed"} > time() - 900
+            or increase(ray_modelship_deploy_requests_total{outcome="failed"}[15m])
+          ) > 0
         for: 0m
         labels:
           severity: warning
