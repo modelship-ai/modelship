@@ -118,7 +118,7 @@
       },
       "targets": [
         {
-          "expr": "count(label_replace(ray_serve_application_status{application=~\"($gateway)\\\\..+\"} == 6, \"gateway\", \"$1\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")) by (gateway)",
+          "expr": "count(label_replace(ray_serve_application_status{application=~\"($gateway)\\\\..+\"} == 6, \"gateway\", \"$1\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")) by (gateway) or count(label_replace(ray_serve_application_status{application=~\"$gateway\", application!~\".*[.].*\"}, \"gateway\", \"$1\", \"application\", \"(.+)\")) by (gateway) * 0",
           "legendFormat": "{{ gateway }}"
         }
       ]
