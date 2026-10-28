@@ -21,7 +21,7 @@ from ray.serve.schema import ApplicationStatusOverview
 from modelship.deploy.routing import Routing, compute_routing, running_replica_ids, status_overview
 from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator
 from modelship.logging import configure_logging, get_logger
-from modelship.metrics import GATEWAY_REPLICAS_BEHIND
+from modelship.metrics import GATEWAY_REPLICAS_BEHIND, MODEL_UP
 from modelship.utils import head_node_options
 from modelship.utils.config_schema import parse_deployment_name
 from modelship.utils.runtime_env import cluster_env_vars
@@ -110,6 +110,9 @@ class GatewayCoordinator:
             reports = self._fresh_reports(gateway)
             holding = {replica for replica, (_, generation) in reports.items() if generation == current}
             GATEWAY_REPLICAS_BEHIND.set(len(self._replicas[gateway] - holding), tags={"gateway": gateway})
+            serving = set(routing.models.values())
+            for model in routing.expected:
+                MODEL_UP.set(int(model in serving), tags={"gateway": gateway, "model": model})
         self._computed.set()
 
     async def _fetch_versions(self, gateways: list[str]) -> None:

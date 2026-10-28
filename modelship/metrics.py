@@ -267,6 +267,7 @@ def _build_util_metrics():
         return {
             # Gateway coordinator
             "gateway_replicas_behind": _NoOpGauge(),
+            "model_up": _NoOpGauge(),
             # State store
             "state_store_operations_total": _NoOpCounter(),
             "state_store_operation_duration_seconds": _NoOpHistogram(),
@@ -285,6 +286,11 @@ def _build_util_metrics():
             "modelship_gateway_replicas_behind",
             description="Running gateway replicas not on the gateway coordinator's current routing generation.",
             tag_keys=("gateway",),
+        ),
+        "model_up": Gauge(
+            "modelship_model_up",
+            description="1 while the deployment a gateway routes a model to can serve it, else 0.",
+            tag_keys=("gateway", "model"),
         ),
         # -- State store (durable HA state: deploy versions, conversations) --
         "state_store_operations_total": Counter(
@@ -377,6 +383,7 @@ RESOURCE_CLEANUP_ERRORS_TOTAL = _metrics["resource_cleanup_errors_total"]
 # -- HA control plane (ray.util.metrics — non-Serve emitters) --
 # Gateway coordinator
 GATEWAY_REPLICAS_BEHIND = _util_metrics["gateway_replicas_behind"]
+MODEL_UP = _util_metrics["model_up"]
 # State store
 STATE_STORE_OPERATIONS_TOTAL = _util_metrics["state_store_operations_total"]
 STATE_STORE_OPERATION_DURATION_SECONDS = _util_metrics["state_store_operation_duration_seconds"]

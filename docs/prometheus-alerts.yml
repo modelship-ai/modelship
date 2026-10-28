@@ -40,21 +40,15 @@ groups:
             not counting its /health and /readyz routes.
 
       - alert: ModelshipModelDown
-        expr: |
-          (
-            max by (application) (ray_serve_application_status{application=~"[^.]+\\..+-[0-9a-f]{10}"}) == 1
-            or max by (application) (ray_serve_application_status{application=~"[^.]+\\..+-[0-9a-f]{10}"}) == 2
-          )
-          unless on (application) sum by (application) (ray_serve_deployment_replica_healthy) > 0
+        expr: max by (gateway, model) (ray_modelship_model_up) == 0
         for: 5m
         labels:
           severity: critical
         annotations:
-          summary: "Model down ({{ $labels.application }})"
+          summary: "Model down ({{ $labels.model }}, {{ $labels.gateway }})"
           description: >-
-            Ray Serve reports {{ $labels.application }} as DEPLOY_FAILED or
-            UNHEALTHY and none of its replicas is healthy, so its model
-            cannot serve requests.
+            {{ $labels.gateway }} has had no running replica of {{ $labels.model }}
+            to route to for 5 minutes, so the model answers 503.
 
       - alert: ModelshipKVCacheExhausted
         expr: ray_vllm_kv_cache_usage_perc > 0.95

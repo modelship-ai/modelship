@@ -118,7 +118,7 @@
       },
       "targets": [
         {
-          "expr": "count(label_replace(ray_serve_application_status{application=~\"($gateway)\\\\..+\"} == 6, \"gateway\", \"$1\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")) by (gateway) or count(label_replace(ray_serve_application_status{application=~\"$gateway\", application!~\".*[.].*\"}, \"gateway\", \"$1\", \"application\", \"(.+)\")) by (gateway) * 0",
+          "expr": "sum(max(ray_modelship_model_up{gateway=~\"$gateway\"}) by (gateway, model)) by (gateway) or max(ray_modelship_gateway_replicas_behind{gateway=~\"$gateway\"}) by (gateway) * 0",
           "legendFormat": "{{ gateway }}"
         }
       ]
@@ -1669,10 +1669,10 @@
         },
         "query": {
           "qryType": 1,
-          "query": "label_values(ray_modelship_request_total, gateway)",
+          "query": "label_values(ray_modelship_gateway_replicas_behind, gateway)",
           "refId": "gateway"
         },
-        "definition": "label_values(ray_modelship_request_total, gateway)",
+        "definition": "label_values(ray_modelship_gateway_replicas_behind, gateway)",
         "includeAll": true,
         "allValue": ".*",
         "multi": true,
@@ -1693,10 +1693,10 @@
         },
         "query": {
           "qryType": 1,
-          "query": "label_values(ray_modelship_request_total, model)",
+          "query": "label_values(ray_modelship_model_up, model)",
           "refId": "model"
         },
-        "definition": "label_values(ray_modelship_request_total, model)",
+        "definition": "label_values(ray_modelship_model_up, model)",
         "includeAll": true,
         "allValue": ".*",
         "multi": true,

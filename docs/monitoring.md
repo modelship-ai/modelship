@@ -219,7 +219,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 |---|---|---|---|
 | `ModelshipHighErrorRate` | Error rate > 5% of traffic | 5m | Significant portion of requests are failing |
 | `ModelshipHTTP5xxRatio` | 5xx > 5% of a gateway's HTTP requests, `/health` and `/readyz` excluded | 5m | Gateway is answering server errors |
-| `ModelshipModelDown` | A model's `ray_serve_application_status` is 1 (DEPLOY_FAILED) or 2 (UNHEALTHY) and none of its replicas is healthy | 5m | A model cannot serve requests |
+| `ModelshipModelDown` | `ray_modelship_model_up` == 0 | 5m | A gateway has no running replica of a model to route to; the model answers 503 |
 | `ModelshipKVCacheExhausted` | KV cache usage > 95% | 5m | Requests will queue or be preempted |
 | `ModelshipModelLoadFailure` | A model replica failed to load in the last 15m | 0m | A model can't come up; its replica log has the reason |
 | `ModelshipBackendCrashLooping` | A model's backend died 3+ times in 15m | 0m | `llama-server` or vLLM's engine keeps crashing |
@@ -330,13 +330,14 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 
 ### HA Control Plane
 
-These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first seven carry a `gateway` tag; the rest are cluster-scoped.
+These cover the multi-node / HA machinery deployed by the Helm chart (gateway coordinator, pluggable state store, gateway watch loop). The first eight carry a `gateway` tag; the rest are cluster-scoped.
 
 | Metric | Type | Tags | Description |
 |---|---|---|---|
 | `ray_modelship_gateway_reconciles_total` | Counter | `gateway` | Routing reconciles a gateway replica applied from the coordinator |
 | `ray_modelship_gateway_watch_errors_total` | Counter | `gateway` | Errors in a gateway replica's coordinator watch loop (retried) |
 | `ray_modelship_gateway_replicas_behind` | Gauge | `gateway` | Running gateway replicas not on the gateway coordinator's current routing generation |
+| `ray_modelship_model_up` | Gauge | `gateway`, `model` | 1 while the deployment the gateway routes a model to can serve it, 0 when it can't; set for every model the gateway should serve |
 | `ray_modelship_deploy_requests_total` | Counter | `gateway`, `outcome` | Deploy requests finished (`outcome`: `succeeded`, `failed`, `cancelled`), including those cancelled while queued |
 | `ray_modelship_deploy_requests_created_seconds_total` | Counter | `gateway`, `outcome` | Unix time each `deploy_requests_total` series was created |
 | `ray_modelship_deploy_models_changed_total` | Counter | `gateway`, `action` | Models changed by a successful deploy request (`action`: `add`, `remove`, `rescale`) |
@@ -374,7 +375,6 @@ Full reference: [vLLM Metrics Documentation](https://docs.vllm.ai/en/stable/desi
 - `ray_serve_deployment_processing_latency_ms` — per-replica processing time
 - `ray_serve_health_check_latency_ms` — health check latency histogram
 - `ray_serve_application_status` — status of each application: 0=UNKNOWN, 1=DEPLOY_FAILED, 2=UNHEALTHY, 3=NOT_STARTED, 4=DELETING, 5=DEPLOYING, 6=RUNNING. A model's application is named `<gateway>.<model>-<fingerprint>`.
-- `ray_serve_deployment_replica_healthy` — whether each replica passes its health checks (1 or 0)
 - `ray_serve_replica_processing_queries` — requests each replica is processing
 - `ray_serve_deployment_queued_queries` — requests queued at the caller (the gateway replica, for a model's application)
 - `ray_serve_replica_startup_latency_ms` — time from a replica's creation to ready, including the wait for capacity
