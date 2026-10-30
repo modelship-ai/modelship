@@ -32,6 +32,7 @@ from vllm.tokenizers import TokenizerLike as VllmTokenizerLike
 from vllm.v1.engine.async_llm import AsyncLLM as VllmAsyncLLM
 
 from modelship.logging import get_logger
+from modelship.metrics import record_engine_tokens
 from modelship.openai.protocol import (
     ChatCompletionLogProb,
     ChatCompletionLogProbs,
@@ -603,8 +604,10 @@ async def stream_chat_completion(
                 else None,
             )
 
+    completion_tokens = sum(previous_num_tokens)
+    record_engine_tokens(model_name, "vllm", num_prompt_tokens, completion_tokens)
+
     if include_usage:
-        completion_tokens = sum(previous_num_tokens)
         reasoning_tokens = None
         if parsers[0] is not None and parsers[0].reasoning_parser_cls is not None:
             reasoning_tokens = 0

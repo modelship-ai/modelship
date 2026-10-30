@@ -89,6 +89,9 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "image_generation_duration_seconds",
         "transcription_duration_seconds",
         "embedding_duration_seconds",
+        "time_to_first_token_seconds",
+        "engine_prompt_tokens_total",
+        "engine_generation_tokens_total",
         "resource_cleanup_errors_total",
     }
 )
@@ -164,6 +167,14 @@ class RequestTracker:
         REQUEST_DURATION_SECONDS.observe(time.monotonic() - self._start, tags={**tags, "status": status})
 
 
+def record_engine_tokens(model: str, loader: str, prompt: int, generated: int) -> None:
+    tags = {"model": model, "loader": loader}
+    if prompt:
+        ENGINE_PROMPT_TOKENS_TOTAL.inc(prompt, tags=tags)
+    if generated:
+        ENGINE_GENERATION_TOKENS_TOTAL.inc(generated, tags=tags)
+
+
 def _build_metrics():
     """Construct real or no-op metric objects based on MSHIP_METRICS."""
 
@@ -183,6 +194,9 @@ def _build_metrics():
             "image_generation_duration_seconds": _NoOpHistogram(),
             "transcription_duration_seconds": _NoOpHistogram(),
             "embedding_duration_seconds": _NoOpHistogram(),
+            "time_to_first_token_seconds": _NoOpHistogram(),
+            "engine_prompt_tokens_total": _NoOpCounter(),
+            "engine_generation_tokens_total": _NoOpCounter(),
             # Resource cleanup
             "resource_cleanup_errors_total": _NoOpCounter(),
         }
@@ -255,6 +269,22 @@ def _build_metrics():
             description="Embedding inference latency in seconds.",
             boundaries=_SHORT_LATENCY_BOUNDARIES,
             tag_keys=("model", "gateway"),  # type: ignore[arg-type]
+        ),
+        "time_to_first_token_seconds": Histogram(
+            "modelship_time_to_first_token_seconds",
+            description="Seconds from a streaming request reaching its replica to its first generated token.",
+            boundaries=[0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+            tag_keys=("model", "gateway"),  # type: ignore[arg-type]
+        ),
+        "engine_prompt_tokens_total": Counter(
+            "modelship_engine_prompt_tokens_total",
+            description="Prompt tokens of finished requests, cached tokens included.",
+            tag_keys=("model", "loader", "gateway"),  # type: ignore[arg-type]
+        ),
+        "engine_generation_tokens_total": Counter(
+            "modelship_engine_generation_tokens_total",
+            description="Tokens generated for finished requests.",
+            tag_keys=("model", "loader", "gateway"),  # type: ignore[arg-type]
         ),
         # -- Resource cleanup --
         "resource_cleanup_errors_total": Counter(
@@ -387,6 +417,9 @@ TTS_GENERATION_DURATION_SECONDS = _metrics["tts_generation_duration_seconds"]
 IMAGE_GENERATION_DURATION_SECONDS = _metrics["image_generation_duration_seconds"]
 TRANSCRIPTION_DURATION_SECONDS = _metrics["transcription_duration_seconds"]
 EMBEDDING_DURATION_SECONDS = _metrics["embedding_duration_seconds"]
+TIME_TO_FIRST_TOKEN_SECONDS = _metrics["time_to_first_token_seconds"]
+ENGINE_PROMPT_TOKENS_TOTAL = _metrics["engine_prompt_tokens_total"]
+ENGINE_GENERATION_TOKENS_TOTAL = _metrics["engine_generation_tokens_total"]
 
 # -- Resource cleanup --
 RESOURCE_CLEANUP_ERRORS_TOTAL = _metrics["resource_cleanup_errors_total"]

@@ -221,6 +221,7 @@ class RawRequestProxy:
         self.state = State()  # vllm writes per-request state here; lives in the actor process
         self.request_id = request_id
         self.identity = identity
+        self.received_at = time.monotonic()
 
     @property
     def is_watchable(self) -> bool:

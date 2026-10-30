@@ -76,6 +76,7 @@ from modelship.infer.vllm.parsing.detect import (
 )
 from modelship.logging import TRACE, VLLM_CHILD_ENV, get_logger
 from modelship.metrics import _ENABLED as _METRICS_ENABLED
+from modelship.metrics import record_engine_tokens
 from modelship.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -377,6 +378,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
 
         engine_args = VllmAsyncEngineArgs(
             model=self._model_path,
+            served_model_name=[self.model_config.name],
             tensor_parallel_size=self.vllm_engine_kwargs.tensor_parallel_size,
             pipeline_parallel_size=self.vllm_engine_kwargs.pipeline_parallel_size,
             max_model_len=self._max_model_len,
@@ -752,6 +754,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         chunks = self.run_cancellable_stream(stream, raw_request)
         if logger.isEnabledFor(TRACE):
             chunks = _trace_chunks(chunks, request_id)
+        chunks = self._observe_first_token(chunks, raw_request)
         try:
             async for chunk in chunks:
                 yield encode_chat_sse_chunk(chunk)
@@ -821,6 +824,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return _to_error_response("vllm returned no prompt_token_ids for a completed request", status_code=502)
         prompt_tokens = len(final_res.prompt_token_ids)
         completion_tokens = sum(len(output.token_ids) for output in final_res.outputs)
+        record_engine_tokens(self.model_config.name, "vllm", prompt_tokens, completion_tokens)
 
         usage = UsageInfo(
             prompt_tokens=prompt_tokens,
@@ -924,6 +928,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return _to_error_response("vllm returned no prompt_token_ids for a completed request", status_code=502)
         prompt_tokens = len(final_res.prompt_token_ids)
         completion_tokens = sum(len(output.token_ids) for output in final_res.outputs)
+        record_engine_tokens(self.model_config.name, "vllm", prompt_tokens, completion_tokens)
 
         usage = UsageInfo(
             prompt_tokens=prompt_tokens,
@@ -977,7 +982,12 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if logger.isEnabledFor(TRACE):
             chunks = _trace_chunks(chunks, request_id)
         async for event in self._stream_responses(
-            request, chunks, request_id=request_id, client_error=_vllm_stream_error, response_id=response_id
+            request,
+            chunks,
+            request_id=request_id,
+            raw_request=raw_request,
+            client_error=_vllm_stream_error,
+            response_id=response_id,
         ):
             yield event
 

@@ -16,6 +16,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+from modelship.infer import base_infer
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.infer_config import (
     LlamaServerConfig,
@@ -24,6 +25,7 @@ from modelship.infer.infer_config import (
     ModelUsecase,
     RawRequestProxy,
 )
+from modelship.infer.llama_server import llama_server_infer
 from modelship.infer.llama_server.llama_server_infer import LlamaServerInfer
 from modelship.openai.protocol import (
     ChatCompletionRequest,
@@ -360,6 +362,7 @@ class _DisconnectingRawRequest:
         self._start = asyncio.get_event_loop().time()
         self.request_id = "req-1"
         self.is_watchable = True
+        self.received_at = 0.0
         _DisconnectingRawRequest._by_id[self.request_id] = self
 
     async def is_disconnected(self) -> bool:
@@ -1062,6 +1065,112 @@ class TestResponsesProjection:
         assert "response.created" in types
         assert "response.completed" not in types
         assert "response.failed" not in types
+
+
+class TestTimeToFirstToken:
+    _BODY = (
+        'data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n'
+        'data: {"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}\n\n'
+        'data: {"choices":[{"index":0,"delta":{"content":"!"},"finish_reason":null}]}\n\n'
+        "data: [DONE]\n\n"
+    )
+
+    def _infer(self) -> LlamaServerInfer:
+        return _infer_with_client(lambda _request: httpx.Response(200, content=self._BODY.encode()))
+
+    @pytest.mark.asyncio
+    async def test_a_chat_stream_is_observed_once(self):
+        with (
+            patch.object(BaseInfer, "_poll_disconnected_ids", staticmethod(_poll_disconnected_via_fakes)),
+            patch.object(base_infer, "TIME_TO_FIRST_TOKEN_SECONDS") as histogram,
+        ):
+            result = await self._infer().create_chat_completion(
+                _request(stream=True), _DisconnectingRawRequest(disconnect_after=60)
+            )
+            [chunk async for chunk in result]
+
+        histogram.observe.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_a_response_stream_is_observed_once(self):
+        with (
+            patch.object(BaseInfer, "_poll_disconnected_ids", staticmethod(_poll_disconnected_via_fakes)),
+            patch.object(base_infer, "TIME_TO_FIRST_TOKEN_SECONDS") as histogram,
+        ):
+            result = await self._infer().create_response(
+                _responses_request(stream=True), _DisconnectingRawRequest(disconnect_after=60)
+            )
+            [event async for event in result]
+
+        histogram.observe.assert_called_once()
+
+
+class TestEngineTokens:
+    _TIMINGS = '"timings":{"cache_n":24,"prompt_n":8,"predicted_n":6}'
+
+    @staticmethod
+    def _infer(body: str) -> LlamaServerInfer:
+        return _infer_with_client(lambda _request: httpx.Response(200, content=body.encode()))
+
+    @pytest.mark.asyncio
+    async def test_a_plain_stream_counts_its_timings(self):
+        infer = self._infer(
+            'data: {"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}\n\n'
+            f'data: {{"choices":[{{"index":0,"delta":{{}},"finish_reason":"stop"}}],{self._TIMINGS}}}\n\n'
+            "data: [DONE]\n\n"
+        )
+        with patch.object(llama_server_infer, "record_engine_tokens") as record:
+            result = await infer.create_chat_completion(_request(stream=True), RawRequestProxy(None, {}))
+            [chunk async for chunk in result]
+
+        record.assert_called_once_with("test-model", "llama_server", 32, 6)
+
+    @pytest.mark.asyncio
+    async def test_a_usage_chunk_counts_its_timings_once(self):
+        infer = self._infer(
+            'data: {"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":"stop"}]}\n\n'
+            'data: {"choices":[],"usage":{"prompt_tokens":32,"completion_tokens":6,"total_tokens":38},'
+            f"{self._TIMINGS}}}\n\n"
+            "data: [DONE]\n\n"
+        )
+        with patch.object(llama_server_infer, "record_engine_tokens") as record:
+            result = await infer.create_response(_responses_request(stream=True), RawRequestProxy(None, {}))
+            [event async for event in result]
+
+        record.assert_called_once_with("test-model", "llama_server", 32, 6)
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_stream_counts_nothing(self):
+        infer = self._infer('data: {"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}\n\n')
+        with patch.object(llama_server_infer, "record_engine_tokens") as record:
+            result = await infer.create_chat_completion(_request(stream=True), RawRequestProxy(None, {}))
+            await anext(result)
+            await result.aclose()
+
+        record.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_non_streaming_response_counts_its_timings(self):
+        body = json.dumps(
+            {
+                "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "Hi"}}],
+                "usage": {"prompt_tokens": 32, "completion_tokens": 6, "total_tokens": 38},
+                "timings": {"cache_n": 24, "prompt_n": 8, "predicted_n": 6},
+            }
+        )
+        with patch.object(llama_server_infer, "record_engine_tokens") as record:
+            await self._infer(body).create_chat_completion(_request(), RawRequestProxy(None, {}))
+
+        record.assert_called_once_with("test-model", "llama_server", 32, 6)
+
+    def test_timings_per_token_never_reaches_llama_server(self):
+        request = _request(timings_per_token=True)
+
+        payload = llama_server_infer._build_payload(
+            request, [], model_name="test-model", reasoning_budget=None, reasoning_preserve=None
+        )
+
+        assert "timings_per_token" not in payload
 
 
 _REASONED = {

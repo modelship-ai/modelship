@@ -46,6 +46,29 @@ def test_the_deploy_coordinators_counters_are_stamped(name):
     assert isinstance(getattr(metrics, name), _CreatedStampedCounter)
 
 
+def test_engine_tokens_carry_their_model_and_loader():
+    with (
+        patch.object(metrics, "ENGINE_PROMPT_TOKENS_TOTAL") as prompt,
+        patch.object(metrics, "ENGINE_GENERATION_TOKENS_TOTAL") as generated,
+    ):
+        metrics.record_engine_tokens("m", "vllm", 5, 2)
+
+    tags = {"model": "m", "loader": "vllm"}
+    prompt.inc.assert_called_once_with(5, tags=tags)
+    generated.inc.assert_called_once_with(2, tags=tags)
+
+
+def test_zero_engine_tokens_are_not_counted():
+    with (
+        patch.object(metrics, "ENGINE_PROMPT_TOKENS_TOTAL") as prompt,
+        patch.object(metrics, "ENGINE_GENERATION_TOKENS_TOTAL") as generated,
+    ):
+        metrics.record_engine_tokens("m", "vllm", 0, 0)
+
+    prompt.inc.assert_not_called()
+    generated.inc.assert_not_called()
+
+
 def test_a_request_is_recorded_once(request_outcomes):
     tracker = RequestTracker("m", "create_chat_completion")
 

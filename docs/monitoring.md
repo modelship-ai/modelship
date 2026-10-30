@@ -178,20 +178,20 @@ To import it:
 2. Upload `grafana-dashboard.json` or paste its contents
 3. Select your Prometheus datasource when prompted
 
-At the top the dashboard has **Gateway**, **Model**, and **Node** dropdowns. The Gateway dropdown filters every `ray_modelship_*` panel to a single gateway (or All); the vLLM/Ray-Serve/GPU rows stay cluster-wide since those metrics aren't per-gateway (see [The `gateway` dimension](#the-gateway-dimension)).
+At the top the dashboard has **Gateway**, **Model**, and **Node** dropdowns. The Gateway dropdown filters every `ray_modelship_*` panel to a single gateway (or All); the vLLM/Ray-Serve/GPU rows stay cluster-wide since those metrics aren't per-gateway (see [The `gateway` dimension](#the-gateway-dimension)). The Model dropdown also filters the vLLM panels.
 
 The dashboard has 9 rows:
 
 | Row | What it shows | Metric sources |
 |---|---|---|
-| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*`, `ray_serve_*` |
-| **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed) | `ray_modelship_*` |
-| **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `ray_vllm_*` |
+| **Overview** | Request rate, error rate, gateway replica requests in progress, models loaded, client disconnects | `ray_modelship_*`, `ray_serve_*` |
+| **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed), per-model time to first token | `ray_modelship_*` |
+| **vLLM Engine** | KV cache usage, TTFT, inter-token latency, vLLM engine requests, preemptions, prefix cache hit rate, and token throughput for `vllm` and `llama_server` | `ray_vllm_*`, `ray_modelship_engine_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory (cluster aggregate) | `ray_node_*` |
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
 | **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*`, `ray_serve_*` |
-| **Alerts** | Error rate %, KV cache usage, queue depth, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_node_*` |
-| **Cluster / HA** | Model app status, gateway reconciles, Serve requests per model, gateway replicas behind the routing generation, gateway watch errors, state-store latency/errors, models changed by deploys | `ray_modelship_*`, `ray_serve_*` |
+| **Alerts** | Error rate %, KV cache usage, vLLM engine requests, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_node_*` |
+| **Cluster / HA** | Model app status, gateway reconciles, Ray Serve replica requests per model, gateway replicas behind the routing generation, gateway watch errors, state-store latency/errors, models changed by deploys | `ray_modelship_*`, `ray_serve_*` |
 | **Per-Node Resources** | GPU utilization/memory, CPU, system memory broken out by node (filtered by the Node dropdown) | `ray_node_*` |
 
 > **Deploying via the Helm chart:** set `grafanaDashboard.enabled=true` to ship this dashboard as a ConfigMap the Grafana sidecar auto-imports (and `prometheusRule.enabled=true` for the alert rules below) — no manual import needed. See the chart README.
@@ -238,6 +238,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | `ModelshipClientDisconnects` | Cancelled requests > 1/min | 5m | Clients timing out or dropping connections |
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
 | `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
+| `ModelshipModelHighTTFT` | One model's time to first token P99 > 5s | 5m | Streaming requests to a model wait too long, on any loader that streams |
 | `ModelshipAppUnhealthy` | `ray_serve_application_status` == 2 (UNHEALTHY) | 5m | A Serve application has an unhealthy deployment |
 | `ModelshipDeployStuck` | `ray_serve_application_status` == 5 (DEPLOYING) | 30m | A Serve application is waiting for capacity or a slow model load |
 | `ModelshipDeployFailed` | A deploy request failed in the last 15m | 0m | The request was rolled back; the gateway serves its last committed models |
@@ -322,6 +323,16 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 | `ray_modelship_image_generation_duration_seconds` | Histogram | `model`, `gateway` | Image generation latency |
 | `ray_modelship_transcription_duration_seconds` | Histogram | `model`, `gateway` | Speech-to-text latency |
 | `ray_modelship_embedding_duration_seconds` | Histogram | `model`, `gateway` | Embedding latency |
+| `ray_modelship_time_to_first_token_seconds` | Histogram | `model`, `gateway` | From a streaming request reaching its replica to its first content, reasoning or tool-call token (`vllm`, `llama_server`) |
+
+### Engine Tokens
+
+| Metric | Type | Tags | Description |
+|---|---|---|---|
+| `ray_modelship_engine_prompt_tokens_total` | Counter | `model`, `loader`, `gateway` | Prompt tokens of finished chat and Responses requests, cached tokens included |
+| `ray_modelship_engine_generation_tokens_total` | Counter | `model`, `loader`, `gateway` | Tokens generated for those requests |
+
+These cover the `vllm` and `llama_server` loaders. A cancelled stream isn't counted. `vllm` also exports its own engine metrics (`ray_vllm_*`); the other loaders have none, so use `ray_serve_replica_processing_queries` and `ray_serve_deployment_queued_queries` for them.
 
 ### Resource Cleanup
 
@@ -354,7 +365,7 @@ These are automatically available when `MSHIP_METRICS=true` — no additional co
 
 ### vLLM (`ray_vllm_*`)
 
-vLLM metrics are routed through Ray's metrics agent via `RayPrometheusStatLogger`. The native `vllm:` prefix is sanitized to `ray_vllm_`.
+vLLM metrics are routed through Ray's metrics agent via `RayPrometheusStatLogger`. The native `vllm:` prefix is sanitized to `ray_vllm_`. Their `model_name` label is the modelship model name.
 
 - `ray_vllm_num_requests_running` / `ray_vllm_num_requests_waiting` — queue depth
 - `ray_vllm_kv_cache_usage_perc` — KV cache utilization (0-1)
@@ -376,7 +387,7 @@ Full reference: [vLLM Metrics Documentation](https://docs.vllm.ai/en/stable/desi
 - `ray_serve_deployment_processing_latency_ms` — per-replica processing time
 - `ray_serve_health_check_latency_ms` — health check latency histogram
 - `ray_serve_application_status` — status of each application: 0=UNKNOWN, 1=DEPLOY_FAILED, 2=UNHEALTHY, 3=NOT_STARTED, 4=DELETING, 5=DEPLOYING, 6=RUNNING. A model's application is named `<gateway>.<model>-<fingerprint>`.
-- `ray_serve_replica_processing_queries` — requests each replica is processing
+- `ray_serve_replica_processing_queries` — requests each replica holds, which can include requests waiting inside its engine
 - `ray_serve_deployment_queued_queries` — requests queued at the caller (the gateway replica, for a model's application)
 - `ray_serve_replica_startup_latency_ms` — time from a replica's creation to ready, including the wait for capacity
 - `ray_serve_replica_initialization_latency_ms` — time a replica spent in its constructor (a model's whole load) and first health check
