@@ -184,14 +184,14 @@ The dashboard has 9 rows:
 
 | Row | What it shows | Metric sources |
 |---|---|---|
-| **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*`, `ray_serve_*` |
+| **Overview** | Request rate, error rate, gateway replica requests in progress, models loaded, client disconnects | `ray_modelship_*`, `ray_serve_*` |
 | **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed), per-model time to first token | `ray_modelship_*` |
-| **vLLM Engine** | KV cache usage, TTFT, inter-token latency, queue depth, preemptions, prefix cache hit rate, and token throughput for `vllm` and `llama_server` | `ray_vllm_*`, `ray_modelship_engine_*` |
+| **vLLM Engine** | KV cache usage, TTFT, inter-token latency, vLLM engine requests, preemptions, prefix cache hit rate, and token throughput for `vllm` and `llama_server` | `ray_vllm_*`, `ray_modelship_engine_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory (cluster aggregate) | `ray_node_*` |
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
 | **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*`, `ray_serve_*` |
-| **Alerts** | Error rate %, KV cache usage, queue depth, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_node_*` |
-| **Cluster / HA** | Model app status, gateway reconciles, Serve requests per model, gateway replicas behind the routing generation, gateway watch errors, state-store latency/errors, models changed by deploys | `ray_modelship_*`, `ray_serve_*` |
+| **Alerts** | Error rate %, KV cache usage, vLLM engine requests, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_node_*` |
+| **Cluster / HA** | Model app status, gateway reconciles, Ray Serve replica requests per model, gateway replicas behind the routing generation, gateway watch errors, state-store latency/errors, models changed by deploys | `ray_modelship_*`, `ray_serve_*` |
 | **Per-Node Resources** | GPU utilization/memory, CPU, system memory broken out by node (filtered by the Node dropdown) | `ray_node_*` |
 
 > **Deploying via the Helm chart:** set `grafanaDashboard.enabled=true` to ship this dashboard as a ConfigMap the Grafana sidecar auto-imports (and `prometheusRule.enabled=true` for the alert rules below) — no manual import needed. See the chart README.
@@ -387,7 +387,7 @@ Full reference: [vLLM Metrics Documentation](https://docs.vllm.ai/en/stable/desi
 - `ray_serve_deployment_processing_latency_ms` — per-replica processing time
 - `ray_serve_health_check_latency_ms` — health check latency histogram
 - `ray_serve_application_status` — status of each application: 0=UNKNOWN, 1=DEPLOY_FAILED, 2=UNHEALTHY, 3=NOT_STARTED, 4=DELETING, 5=DEPLOYING, 6=RUNNING. A model's application is named `<gateway>.<model>-<fingerprint>`.
-- `ray_serve_replica_processing_queries` — requests each replica is processing
+- `ray_serve_replica_processing_queries` — requests each replica holds, which can include requests waiting inside its engine
 - `ray_serve_deployment_queued_queries` — requests queued at the caller (the gateway replica, for a model's application)
 - `ray_serve_replica_startup_latency_ms` — time from a replica's creation to ready, including the wait for capacity
 - `ray_serve_replica_initialization_latency_ms` — time a replica spent in its constructor (a model's whole load) and first health check

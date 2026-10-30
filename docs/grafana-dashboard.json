@@ -82,7 +82,7 @@
       }
     },
     {
-      "title": "In-Flight Requests",
+      "title": "Gateway Replica Requests In Progress",
       "type": "timeseries",
       "gridPos": {
         "h": 4,
@@ -440,7 +440,7 @@
       }
     },
     {
-      "title": "Queue Depth",
+      "title": "vLLM Engine Requests",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -456,11 +456,11 @@
       "targets": [
         {
           "expr": "ray_vllm_num_requests_running{model_name=~\"$model\"}",
-          "legendFormat": "running"
+          "legendFormat": "vLLM running"
         },
         {
           "expr": "ray_vllm_num_requests_waiting{model_name=~\"$model\"}",
-          "legendFormat": "waiting"
+          "legendFormat": "vLLM waiting"
         }
       ]
     },
@@ -1059,7 +1059,7 @@
       }
     },
     {
-      "title": "Queue Depth",
+      "title": "vLLM Engine Requests",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -1075,7 +1075,7 @@
       "targets": [
         {
           "expr": "ray_vllm_num_requests_waiting{model_name=~\"$model\"}",
-          "legendFormat": "waiting"
+          "legendFormat": "vLLM waiting"
         }
       ],
       "fieldConfig": {
@@ -1403,7 +1403,7 @@
       }
     },
     {
-      "title": "Serve Requests per Model",
+      "title": "Ray Serve Replica Requests per Model",
       "type": "timeseries",
       "id": 123,
       "gridPos": {
@@ -1419,11 +1419,11 @@
       "targets": [
         {
           "expr": "label_replace(sum(ray_serve_replica_processing_queries{application=~\"($gateway)\\\\..+\"}) by (application), \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")",
-          "legendFormat": "processing {{ model }}"
+          "legendFormat": "in progress at replicas {{ model }}"
         },
         {
           "expr": "label_replace(sum(ray_serve_deployment_queued_queries{application=~\"($gateway)\\\\..+\"}) by (application), \"model\", \"$2\", \"application\", \"([^.]+)\\\\.(.+)-[0-9a-f]{10}\")",
-          "legendFormat": "queued {{ model }}"
+          "legendFormat": "queued for a replica {{ model }}"
         }
       ],
       "fieldConfig": {
