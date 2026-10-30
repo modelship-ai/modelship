@@ -770,11 +770,32 @@ class TestRequestOutcomes:
 
     @pytest.mark.asyncio
     async def test_a_client_leaving_before_the_first_item_is_recorded_once_as_cancelled(self, api, request_outcomes):
+        from modelship.openai.protocol import ChatCompletionRequest
+
         async def mock_gen():
             raise asyncio.CancelledError
             yield
 
+        handle = MagicMock()
+        handle.generate.options.return_value.remote.return_value = mock_gen()
+        api.models = {"m": {"m-a1b2c": handle}}
+        request = ChatCompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}])
+
         with pytest.raises(asyncio.CancelledError):
-            await api._handle_response(mock_gen(), MagicMock(), RequestTracker("m", "create_chat_completion"))
+            await api.create_chat_completion(request, MagicMock(headers={}))
 
         assert request_outcomes() == [("m", "create_chat_completion", "cancelled", None)]
+
+    @pytest.mark.asyncio
+    async def test_a_dispatch_failure_is_recorded_once_as_unhandled(self, api, request_outcomes):
+        from modelship.openai.protocol import ChatCompletionRequest
+
+        handle = MagicMock()
+        handle.generate.options.return_value.remote.side_effect = RuntimeError("no replica")
+        api.models = {"m": {"m-a1b2c": handle}}
+        request = ChatCompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}])
+
+        with pytest.raises(RuntimeError):
+            await api.create_chat_completion(request, MagicMock(headers={}))
+
+        assert request_outcomes() == [("m", "create_chat_completion", "error", "unhandled")]

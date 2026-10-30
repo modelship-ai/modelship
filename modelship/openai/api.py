@@ -168,12 +168,19 @@ def _is_failure_chunk(chunk: Any) -> bool:
     return isinstance(chunk, str) and chunk.startswith((ERROR_SSE_PREFIX, RESPONSE_FAILED_SSE_PREFIX))
 
 
-def _outcome_of(exc: BaseException) -> tuple[str, str | None]:
-    if isinstance(exc, HTTPException):
-        return "error", f"http_{exc.status_code}"
-    if isinstance(exc, asyncio.CancelledError):
-        return "cancelled", None
-    return "error", "unhandled"
+@contextlib.contextmanager
+def _recorded(tracker: RequestTracker):
+    try:
+        yield
+    except HTTPException as exc:
+        tracker.finish("error", f"http_{exc.status_code}")
+        raise
+    except asyncio.CancelledError:
+        tracker.finish("cancelled")
+        raise
+    except BaseException:
+        tracker.finish("error", "unhandled")
+        raise
 
 
 def _validation_error_from_cause(cause: BaseException) -> ErrorResponse:
@@ -509,9 +516,6 @@ class ModelshipAPI:
 
             streaming = True
             return StreamingResponse(content=_stream(), media_type=stream_media_type)
-        except BaseException as exc:
-            tracker.finish(*_outcome_of(exc))
-            raise
         finally:
             if not streaming:
                 watcher.stop()
@@ -568,28 +572,31 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         model = request.model or ""
         tracker = RequestTracker(model, "create_chat_completion")
-        handle = self._get_handle(request.model, tracker)
-        watcher = RequestWatcher(raw_request, req_id)
-        headers = dict(raw_request.headers)
-        # Materialize any lazy pydantic ValidatorIterators (from Iterable-typed fields
-        # like tool_calls) in place — they can't be pickled across the Ray boundary.
-        # Do NOT re-validate via model_validate/model_validate_json as pydantic will
-        # re-wrap Iterable fields in a new ValidatorIterator.
-        for msg in request.messages:
-            if isinstance(msg, dict) and "tool_calls" in msg:
-                tc = msg["tool_calls"]
-                if not isinstance(tc, list):
-                    msg["tool_calls"] = list(tc)  # type: ignore[arg-type]
-        logger.info(
-            "chat_completion model=%s messages=%d stream=%s max_tokens=%s",
-            model,
-            len(request.messages),
-            request.stream,
-            request.max_tokens,
-        )
-        logger.debug("chat_completion full request: %s", request.model_dump_json())
-        response_gen = handle.generate.options(stream=True).remote(request, headers, watcher.registry, req_id, identity)
-        return await self._handle_response(response_gen, watcher, tracker)
+        with _recorded(tracker):
+            handle = self._get_handle(request.model, tracker)
+            watcher = RequestWatcher(raw_request, req_id)
+            headers = dict(raw_request.headers)
+            # Materialize any lazy pydantic ValidatorIterators (from Iterable-typed fields
+            # like tool_calls) in place — they can't be pickled across the Ray boundary.
+            # Do NOT re-validate via model_validate/model_validate_json as pydantic will
+            # re-wrap Iterable fields in a new ValidatorIterator.
+            for msg in request.messages:
+                if isinstance(msg, dict) and "tool_calls" in msg:
+                    tc = msg["tool_calls"]
+                    if not isinstance(tc, list):
+                        msg["tool_calls"] = list(tc)  # type: ignore[arg-type]
+            logger.info(
+                "chat_completion model=%s messages=%d stream=%s max_tokens=%s",
+                model,
+                len(request.messages),
+                request.stream,
+                request.max_tokens,
+            )
+            logger.debug("chat_completion full request: %s", request.model_dump_json())
+            response_gen = handle.generate.options(stream=True).remote(
+                request, headers, watcher.registry, req_id, identity
+            )
+            return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/responses")
     async def create_response(self, request: ResponsesRequest, raw_request: Request):
@@ -598,107 +605,103 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         model = request.model or ""
         tracker = RequestTracker(model, "create_response")
-        handle = self._get_handle(request.model, tracker)
-        watcher = RequestWatcher(raw_request, req_id)
-        headers = dict(raw_request.headers)
+        with _recorded(tracker):
+            handle = self._get_handle(request.model, tracker)
+            watcher = RequestWatcher(raw_request, req_id)
+            headers = dict(raw_request.headers)
 
-        if request.background:
-            # Run continues detached after this response sends; a live disconnect-watch
-            # would self-abort it once the HTTP response closes.
-            watcher.stop()
-            if request.store is False:
-                error = responses_utils.background_store_false_error()
-                tracker.finish("error", f"http_{error.status_code}")
-                raise error
-
-        # Resolve conversation history here, before the Ray hop: the loader only ever
-        # sees a flat `input`, and a store outage fails the request before any GPU
-        # work starts. Costs nothing when previous_response_id is unset.
-        input_items_for_turn = responses_utils.as_input_items(request.input)
-        parent = None
-        mcp_listings: dict[str, dict] = {}
-        if request.previous_response_id is not None:
-            try:
-                history, parent, mcp_listings = await responses_utils.resolve_previous(
-                    self._state_store, identity, request.previous_response_id
-                )
-            except BaseException as exc:
-                # Any failure here — not just the expected 404/503 HTTPException — must
-                # still stop the watcher: _handle_response hasn't taken ownership of it
-                # yet, so nothing else will cancel its polling task.
+            if request.background:
+                # Run continues detached after this response sends; a live disconnect-watch
+                # would self-abort it once the HTTP response closes.
                 watcher.stop()
-                tracker.finish(*_outcome_of(exc))
-                raise
-            request.input = [*history, *input_items_for_turn]
+                if request.store is False:
+                    raise responses_utils.background_store_false_error()
 
-        logger.info(
-            "responses model=%s input_items=%s max_output_tokens=%s stream=%s store=%s previous_response_id=%s"
-            " background=%s",
-            model,
-            1 if isinstance(request.input, str) else len(request.input),
-            request.max_output_tokens,
-            bool(request.stream),
-            request.store is not False,
-            request.previous_response_id,
-            bool(request.background),
-        )
+            # Resolve conversation history here, before the Ray hop: the loader only ever
+            # sees a flat `input`, and a store outage fails the request before any GPU
+            # work starts. Costs nothing when previous_response_id is unset.
+            input_items_for_turn = responses_utils.as_input_items(request.input)
+            parent = None
+            mcp_listings: dict[str, dict] = {}
+            if request.previous_response_id is not None:
+                try:
+                    history, parent, mcp_listings = await responses_utils.resolve_previous(
+                        self._state_store, identity, request.previous_response_id
+                    )
+                except BaseException:
+                    # Any failure here — not just the expected 404/503 HTTPException — must
+                    # still stop the watcher: _handle_response hasn't taken ownership of it
+                    # yet, so nothing else will cancel its polling task.
+                    watcher.stop()
+                    raise
+                request.input = [*history, *input_items_for_turn]
 
-        if request.background:
-            # Captured before run_background forces request.stream=True on its own copy.
-            wants_stream = bool(request.stream)
-            try:
+            logger.info(
+                "responses model=%s input_items=%s max_output_tokens=%s stream=%s store=%s previous_response_id=%s"
+                " background=%s",
+                model,
+                1 if isinstance(request.input, str) else len(request.input),
+                request.max_output_tokens,
+                bool(request.stream),
+                request.store is not False,
+                request.previous_response_id,
+                bool(request.background),
+            )
+
+            if request.background:
+                # Captured before run_background forces request.stream=True on its own copy.
+                wants_stream = bool(request.stream)
                 response_dict = await responses_utils.start_background(
                     self._state_store, identity, request, req_id, parent, input_items_for_turn
                 )
-            except BaseException as exc:
-                tracker.finish(*_outcome_of(exc))
-                raise
-            task = asyncio.ensure_future(
-                responses_utils.run_background(
-                    handle,
-                    request,
-                    headers,
-                    req_id,
-                    identity,
-                    store=self._state_store,
-                    response_id=response_dict["id"],
-                    tracker=tracker,
-                    stream_buffer=wants_stream,
-                    mcp_listings=mcp_listings,
+                task = asyncio.ensure_future(
+                    responses_utils.run_background(
+                        handle,
+                        request,
+                        headers,
+                        req_id,
+                        identity,
+                        store=self._state_store,
+                        response_id=response_dict["id"],
+                        tracker=tracker,
+                        stream_buffer=wants_stream,
+                        mcp_listings=mcp_listings,
+                    )
                 )
-            )
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
-            if wants_stream:
-                return StreamingResponse(
-                    frame_sse(responses_utils.tail_background_events(self._state_store, identity, response_dict["id"])),
-                    media_type="text/event-stream",
-                )
-            return JSONResponse(content=response_dict, status_code=200)
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
+                if wants_stream:
+                    return StreamingResponse(
+                        frame_sse(
+                            responses_utils.tail_background_events(self._state_store, identity, response_dict["id"])
+                        ),
+                        media_type="text/event-stream",
+                    )
+                return JSONResponse(content=response_dict, status_code=200)
 
-        if mcp_loop.wants_mcp(request):
-            response_gen = mcp_loop.run_mcp_response(
-                handle, request, headers, watcher.registry, req_id, identity, mcp_listings=mcp_listings
-            )
-        else:
-            # Under stream=True the remote() result is an async-iterable
-            # DeploymentResponseGenerator; Ray's stub widens it to a union because it
-            # doesn't overload on the stream literal, so narrow it explicitly.
-            response_gen = cast(
-                "DeploymentResponseGenerator[Any]",
-                handle.respond.options(stream=True).remote(request, headers, watcher.registry, req_id, identity),
-            )
-        if request.store is not False:
-            response_gen = responses_utils.persist_response(
-                response_gen,
-                self._state_store,
-                identity=identity,
-                parent=parent,
-                input_items=input_items_for_turn,
-            )
-        # SSE-frame + [DONE] happen here, after persistence, so persist_response still sees plain event dicts.
-        response_gen = frame_sse(response_gen)
-        return await self._handle_response(response_gen, watcher, tracker)
+            if mcp_loop.wants_mcp(request):
+                response_gen = mcp_loop.run_mcp_response(
+                    handle, request, headers, watcher.registry, req_id, identity, mcp_listings=mcp_listings
+                )
+            else:
+                # Under stream=True the remote() result is an async-iterable
+                # DeploymentResponseGenerator; Ray's stub widens it to a union because it
+                # doesn't overload on the stream literal, so narrow it explicitly.
+                response_gen = cast(
+                    "DeploymentResponseGenerator[Any]",
+                    handle.respond.options(stream=True).remote(request, headers, watcher.registry, req_id, identity),
+                )
+            if request.store is not False:
+                response_gen = responses_utils.persist_response(
+                    response_gen,
+                    self._state_store,
+                    identity=identity,
+                    parent=parent,
+                    input_items=input_items_for_turn,
+                )
+            # SSE-frame + [DONE] happen here, after persistence, so persist_response still sees plain event dicts.
+            response_gen = frame_sse(response_gen)
+            return await self._handle_response(response_gen, watcher, tracker)
 
     @app.websocket("/v1/responses")
     async def responses_ws(self, websocket: WebSocket):
@@ -985,71 +988,69 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         model = request.model
         tracker = RequestTracker(model, "compact_response")
-        handle = self._get_handle(model, tracker)
-        watcher = RequestWatcher(raw_request, req_id)
-        headers = dict(raw_request.headers)
-
-        try:
-            items = responses_utils.as_input_items(request.input) if request.input is not None else []
-            if request.previous_response_id is not None:
-                history, _, _ = await responses_utils.resolve_previous(
-                    self._state_store, identity, request.previous_response_id
-                )
-                items = [*history, *items]
-            if not items:
-                raise HTTPException(
-                    status_code=HTTPStatus.BAD_REQUEST.value, detail="cannot compact an empty conversation."
-                )
-
-            logger.info(
-                "compact_response model=%s previous_response_id=%s items=%d",
-                model,
-                request.previous_response_id,
-                len(items),
-            )
+        with _recorded(tracker):
+            handle = self._get_handle(model, tracker)
+            watcher = RequestWatcher(raw_request, req_id)
+            headers = dict(raw_request.headers)
 
             try:
-                chat_request = responses_utils.build_summarization_request(model, items, request.instructions)
-            except UnsupportedResponsesFeatureError as e:
-                tracker.finish("error", "validation_error")
-                return _error_response(create_error_response(str(e), err_type="invalid_request_error"))
+                items = responses_utils.as_input_items(request.input) if request.input is not None else []
+                if request.previous_response_id is not None:
+                    history, _, _ = await responses_utils.resolve_previous(
+                        self._state_store, identity, request.previous_response_id
+                    )
+                    items = [*history, *items]
+                if not items:
+                    raise HTTPException(
+                        status_code=HTTPStatus.BAD_REQUEST.value, detail="cannot compact an empty conversation."
+                    )
 
-            async def _summarize(chat_request: ChatCompletionRequest):
-                response_gen = handle.generate.options(stream=True).remote(
-                    chat_request, headers, watcher.registry, req_id, identity
-                )
-                first, error_type = await self._await_first(response_gen, model)
-                if not isinstance(first, ErrorResponse):
-                    return first, error_type
                 logger.info(
-                    "Inference error endpoint=%s model=%s type=%s code=%s param=%s message=%.200s",
-                    tracker.operation,
+                    "compact_response model=%s previous_response_id=%s items=%d",
                     model,
-                    first.error.type,
-                    first.error.code,
-                    first.error.param,
-                    first.error.message,
+                    request.previous_response_id,
+                    len(items),
                 )
-                return _error_response(first), "inference_error"
 
-            first, error_type = await _summarize(chat_request)
-            if isinstance(first, JSONResponse) and first.status_code == HTTPStatus.BAD_REQUEST:
-                first, error_type = await _summarize(chat_request.model_copy(update={"reasoning_effort": None}))
-            if isinstance(first, JSONResponse):
-                tracker.finish("error", error_type)
-                return first
+                try:
+                    chat_request = responses_utils.build_summarization_request(model, items, request.instructions)
+                except UnsupportedResponsesFeatureError as e:
+                    tracker.finish("error", "validation_error")
+                    return _error_response(create_error_response(str(e), err_type="invalid_request_error"))
 
-            assert isinstance(first, ChatCompletionResponse)
-            summary_text = first.choices[0].message.content or ""
-            summary_items = [{"type": "message", "role": "assistant", "content": summary_text}]
-            resource = responses_utils.build_compaction(summary_items=summary_items, usage=first.usage)
-            tracker.finish("ok")
-            return JSONResponse(content=resource.model_dump(mode="json"))
-        except BaseException as exc:
-            tracker.finish(*_outcome_of(exc))
-            raise
-        finally:
-            watcher.stop()
+                async def _summarize(chat_request: ChatCompletionRequest):
+                    response_gen = handle.generate.options(stream=True).remote(
+                        chat_request, headers, watcher.registry, req_id, identity
+                    )
+                    first, error_type = await self._await_first(response_gen, model)
+                    if not isinstance(first, ErrorResponse):
+                        return first, error_type
+                    logger.info(
+                        "Inference error endpoint=%s model=%s type=%s code=%s param=%s message=%.200s",
+                        tracker.operation,
+                        model,
+                        first.error.type,
+                        first.error.code,
+                        first.error.param,
+                        first.error.message,
+                    )
+                    return _error_response(first), "inference_error"
+
+                first, error_type = await _summarize(chat_request)
+                if isinstance(first, JSONResponse) and first.status_code == HTTPStatus.BAD_REQUEST:
+                    first, error_type = await _summarize(chat_request.model_copy(update={"reasoning_effort": None}))
+                if isinstance(first, JSONResponse):
+                    tracker.finish("error", error_type)
+                    return first
+
+                assert isinstance(first, ChatCompletionResponse)
+                summary_text = first.choices[0].message.content or ""
+                summary_items = [{"type": "message", "role": "assistant", "content": summary_text}]
+                resource = responses_utils.build_compaction(summary_items=summary_items, usage=first.usage)
+                tracker.finish("ok")
+                return JSONResponse(content=resource.model_dump(mode="json"))
+            finally:
+                watcher.stop()
 
     @app.post("/v1/embeddings")
     async def create_embeddings(self, request: EmbeddingRequest, raw_request: Request):
@@ -1058,12 +1059,15 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         model = request.model or ""
         tracker = RequestTracker(model, "create_embeddings")
-        handle = self._get_handle(request.model, tracker)
-        watcher = RequestWatcher(raw_request, req_id)
-        headers = dict(raw_request.headers)
-        logger.info("embeddings model=%s", model)
-        response_gen = handle.embed.options(stream=True).remote(request, headers, watcher.registry, req_id, identity)
-        return await self._handle_response(response_gen, watcher, tracker)
+        with _recorded(tracker):
+            handle = self._get_handle(request.model, tracker)
+            watcher = RequestWatcher(raw_request, req_id)
+            headers = dict(raw_request.headers)
+            logger.info("embeddings model=%s", model)
+            response_gen = handle.embed.options(stream=True).remote(
+                request, headers, watcher.registry, req_id, identity
+            )
+            return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/audio/transcriptions")
     async def create_transcriptions(self, request: Annotated[TranscriptionRequest, Form()], raw_request: Request):
@@ -1072,21 +1076,22 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         model = request.model or ""
         tracker = RequestTracker(model, "create_transcriptions")
-        handle = self._get_handle(request.model, tracker)
-        watcher = RequestWatcher(raw_request, req_id)
-        headers = dict(raw_request.headers)
-        logger.info("transcription model=%s", model)
-        # Read audio bytes before crossing process boundary — UploadFile is not serializable.
-        # The bytes are passed separately; the request is reconstructed without the file field.
-        try:
-            audio_data = await request.file.read()
-        finally:
-            await request.file.close()
-        request_no_file = TranscriptionRequest.model_construct(**request.model_dump(exclude={"file"}))
-        response_gen = handle.transcribe.options(stream=True).remote(
-            audio_data, request_no_file, headers, watcher.registry, req_id, identity
-        )
-        return await self._handle_response(response_gen, watcher, tracker)
+        with _recorded(tracker):
+            handle = self._get_handle(request.model, tracker)
+            watcher = RequestWatcher(raw_request, req_id)
+            headers = dict(raw_request.headers)
+            logger.info("transcription model=%s", model)
+            # Read audio bytes before crossing process boundary — UploadFile is not serializable.
+            # The bytes are passed separately; the request is reconstructed without the file field.
+            try:
+                audio_data = await request.file.read()
+            finally:
+                await request.file.close()
+            request_no_file = TranscriptionRequest.model_construct(**request.model_dump(exclude={"file"}))
+            response_gen = handle.transcribe.options(stream=True).remote(
+                audio_data, request_no_file, headers, watcher.registry, req_id, identity
+            )
+            return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/audio/translations")
     async def create_translations(self, request: Annotated[TranslationRequest, Form()], raw_request: Request):
@@ -1095,21 +1100,22 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         model = request.model or ""
         tracker = RequestTracker(model, "create_translations")
-        handle = self._get_handle(request.model, tracker)
-        watcher = RequestWatcher(raw_request, req_id)
-        headers = dict(raw_request.headers)
-        logger.info("translation model=%s", model)
-        # Read audio bytes before crossing process boundary — UploadFile is not serializable.
-        # The bytes are passed separately; the request is reconstructed without the file field.
-        try:
-            audio_data = await request.file.read()
-        finally:
-            await request.file.close()
-        request_no_file = TranslationRequest.model_construct(**request.model_dump(exclude={"file"}))
-        response_gen = handle.translate.options(stream=True).remote(
-            audio_data, request_no_file, headers, watcher.registry, req_id, identity
-        )
-        return await self._handle_response(response_gen, watcher, tracker)
+        with _recorded(tracker):
+            handle = self._get_handle(request.model, tracker)
+            watcher = RequestWatcher(raw_request, req_id)
+            headers = dict(raw_request.headers)
+            logger.info("translation model=%s", model)
+            # Read audio bytes before crossing process boundary — UploadFile is not serializable.
+            # The bytes are passed separately; the request is reconstructed without the file field.
+            try:
+                audio_data = await request.file.read()
+            finally:
+                await request.file.close()
+            request_no_file = TranslationRequest.model_construct(**request.model_dump(exclude={"file"}))
+            response_gen = handle.translate.options(stream=True).remote(
+                audio_data, request_no_file, headers, watcher.registry, req_id, identity
+            )
+            return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/audio/speech")
     async def create_speech(self, request: SpeechRequest, raw_request: Request):
@@ -1119,11 +1125,14 @@ class ModelshipAPI:
         logger.info("speech model=%s voice=%s format=%s", request.model, request.voice, request.response_format)
         logger.debug("speech full request: %s", request.model_dump_json())
         tracker = RequestTracker(request.model, "create_speech")
-        handle = self._get_handle(request.model, tracker)
-        watcher = RequestWatcher(raw_request, req_id)
-        headers = dict(raw_request.headers)
-        response_gen = handle.speak.options(stream=True).remote(request, headers, watcher.registry, req_id, identity)
-        return await self._handle_response(response_gen, watcher, tracker)
+        with _recorded(tracker):
+            handle = self._get_handle(request.model, tracker)
+            watcher = RequestWatcher(raw_request, req_id)
+            headers = dict(raw_request.headers)
+            response_gen = handle.speak.options(stream=True).remote(
+                request, headers, watcher.registry, req_id, identity
+            )
+            return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/images/generations")
     async def create_image(self, request: ImageGenerationRequest, raw_request: Request):
@@ -1134,11 +1143,14 @@ class ModelshipAPI:
             "image_generation model=%s prompt=%r n=%d size=%s", request.model, request.prompt, request.n, request.size
         )
         tracker = RequestTracker(request.model, "create_image")
-        handle = self._get_handle(request.model, tracker)
-        watcher = RequestWatcher(raw_request, req_id)
-        headers = dict(raw_request.headers)
-        response_gen = handle.imagine.options(stream=True).remote(request, headers, watcher.registry, req_id, identity)
-        return await self._handle_response(response_gen, watcher, tracker)
+        with _recorded(tracker):
+            handle = self._get_handle(request.model, tracker)
+            watcher = RequestWatcher(raw_request, req_id)
+            headers = dict(raw_request.headers)
+            response_gen = handle.imagine.options(stream=True).remote(
+                request, headers, watcher.registry, req_id, identity
+            )
+            return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/images/edits")
     async def create_image_edit(self, request: Annotated[ImageEditRequest, Form()], raw_request: Request):
@@ -1154,26 +1166,27 @@ class ModelshipAPI:
             request.mask is not None,
         )
         tracker = RequestTracker(request.model, "create_image_edit")
-        handle = self._get_handle(request.model, tracker)
-        watcher = RequestWatcher(raw_request, req_id)
-        headers = dict(raw_request.headers)
-        # Read image bytes before crossing the process boundary — UploadFile is not serializable.
-        # The bytes are passed separately; the request is reconstructed without the file fields.
-        # `image` is Optional on the model (to accept the `image[]` alias) but the validator
-        # guarantees it is set post-validation.
-        assert request.image is not None
-        try:
-            image_data = await request.image.read()
-            mask_data = await request.mask.read() if request.mask is not None else None
-        finally:
-            await request.image.close()
-            if request.mask is not None:
-                await request.mask.close()
-        request_no_file = ImageEditRequest.model_construct(**request.model_dump(exclude={"image", "mask"}))
-        response_gen = handle.edit_image.options(stream=True).remote(
-            image_data, mask_data, request_no_file, headers, watcher.registry, req_id, identity
-        )
-        return await self._handle_response(response_gen, watcher, tracker)
+        with _recorded(tracker):
+            handle = self._get_handle(request.model, tracker)
+            watcher = RequestWatcher(raw_request, req_id)
+            headers = dict(raw_request.headers)
+            # Read image bytes before crossing the process boundary — UploadFile is not serializable.
+            # The bytes are passed separately; the request is reconstructed without the file fields.
+            # `image` is Optional on the model (to accept the `image[]` alias) but the validator
+            # guarantees it is set post-validation.
+            assert request.image is not None
+            try:
+                image_data = await request.image.read()
+                mask_data = await request.mask.read() if request.mask is not None else None
+            finally:
+                await request.image.close()
+                if request.mask is not None:
+                    await request.mask.close()
+            request_no_file = ImageEditRequest.model_construct(**request.model_dump(exclude={"image", "mask"}))
+            response_gen = handle.edit_image.options(stream=True).remote(
+                image_data, mask_data, request_no_file, headers, watcher.registry, req_id, identity
+            )
+            return await self._handle_response(response_gen, watcher, tracker)
 
     @app.post("/v1/images/variations")
     async def create_image_variation(self, request: Annotated[ImageVariationRequest, Form()], raw_request: Request):
@@ -1182,19 +1195,20 @@ class ModelshipAPI:
         identity = self._set_identity(raw_request)
         logger.info("image_variation model=%s n=%d size=%s", request.model, request.n, request.size)
         tracker = RequestTracker(request.model, "create_image_variation")
-        handle = self._get_handle(request.model, tracker)
-        watcher = RequestWatcher(raw_request, req_id)
-        headers = dict(raw_request.headers)
-        # Read image bytes before crossing the process boundary — UploadFile is not serializable.
-        # `image` is Optional on the model (to accept the `image[]` alias) but the validator
-        # guarantees it is set post-validation.
-        assert request.image is not None
-        try:
-            image_data = await request.image.read()
-        finally:
-            await request.image.close()
-        request_no_file = ImageVariationRequest.model_construct(**request.model_dump(exclude={"image"}))
-        response_gen = handle.vary_image.options(stream=True).remote(
-            image_data, request_no_file, headers, watcher.registry, req_id, identity
-        )
-        return await self._handle_response(response_gen, watcher, tracker)
+        with _recorded(tracker):
+            handle = self._get_handle(request.model, tracker)
+            watcher = RequestWatcher(raw_request, req_id)
+            headers = dict(raw_request.headers)
+            # Read image bytes before crossing the process boundary — UploadFile is not serializable.
+            # `image` is Optional on the model (to accept the `image[]` alias) but the validator
+            # guarantees it is set post-validation.
+            assert request.image is not None
+            try:
+                image_data = await request.image.read()
+            finally:
+                await request.image.close()
+            request_no_file = ImageVariationRequest.model_construct(**request.model_dump(exclude={"image"}))
+            response_gen = handle.vary_image.options(stream=True).remote(
+                image_data, request_no_file, headers, watcher.registry, req_id, identity
+            )
+            return await self._handle_response(response_gen, watcher, tracker)
