@@ -13,6 +13,7 @@ from vllm.exceptions import VLLMValidationError as VllmValidationError
 from modelship.infer.vllm.capabilities import VllmCapabilities
 from modelship.infer.vllm.vllm_infer import VllmInfer
 from modelship.openai.protocol import (
+    ChatCompletionRequest,
     ChatCompletionResponseStreamChoice,
     ChatCompletionStreamResponse,
     DeltaMessage,
@@ -125,6 +126,50 @@ async def test_stream_success_produces_native_responses_events():
     assert "response.created" in types
     assert "response.output_text.delta" in types
     assert types[-1] == "response.completed"
+
+
+@pytest.mark.asyncio
+async def test_a_response_stream_is_timed_to_its_first_token():
+    infer = _make_infer()
+    raw_request = _FakeRawRequest()
+
+    async def fake_stream(*_args, **_kwargs):
+        yield ChatCompletionStreamResponse(
+            model="m", choices=[ChatCompletionResponseStreamChoice(index=0, delta=DeltaMessage(content="hi!"))]
+        )
+
+    with (
+        patch("modelship.infer.vllm.vllm_infer.engine_ops") as mock_ops,
+        patch.object(VllmInfer, "_observe_first_token", side_effect=lambda chunks, _raw: chunks) as observe,
+    ):
+        mock_ops.build_vllm_request.return_value = MagicMock()
+        mock_ops.render_and_params = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_ops.stream_chat_completion = MagicMock(side_effect=fake_stream)
+        result = await infer.create_response(ResponsesRequest(model="m", input="hi", stream=True), raw_request)
+        [event async for event in result]
+
+    assert observe.call_args.args[1] is raw_request
+
+
+@pytest.mark.asyncio
+async def test_a_chat_stream_is_timed_to_its_first_token():
+    infer = _make_infer()
+    raw_request = _FakeRawRequest()
+
+    async def fake_stream(*_args, **_kwargs):
+        yield ChatCompletionStreamResponse(
+            model="m", choices=[ChatCompletionResponseStreamChoice(index=0, delta=DeltaMessage(content="hi!"))]
+        )
+
+    with (
+        patch("modelship.infer.vllm.vllm_infer.engine_ops") as mock_ops,
+        patch.object(VllmInfer, "_observe_first_token", side_effect=lambda chunks, _raw: chunks) as observe,
+    ):
+        mock_ops.stream_chat_completion = MagicMock(side_effect=fake_stream)
+        request = ChatCompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}], stream=True)
+        [chunk async for chunk in infer._create_chat_completion_stream(request, MagicMock(), raw_request)]
+
+    assert observe.call_args.args[1] is raw_request
 
 
 @pytest.mark.asyncio

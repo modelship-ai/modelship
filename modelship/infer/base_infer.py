@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import os
 import struct
+import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any, NoReturn, TypeVar
@@ -14,6 +15,7 @@ from modelship.infer.downloads import locked_download
 from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
 from modelship.infer.sources import ModelDownloadError, ModelSourceError
 from modelship.logging import get_logger
+from modelship.metrics import TIME_TO_FIRST_TOKEN_SECONDS
 from modelship.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -231,6 +233,7 @@ class BaseInfer[Prepared](ABC):
         chunks: AsyncGenerator[ChatCompletionStreamResponse, None],
         *,
         request_id: str,
+        raw_request: RawRequestProxy,
         client_error: Callable[[Exception], str | None] = lambda _exc: None,
         response_id: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
@@ -241,6 +244,7 @@ class BaseInfer[Prepared](ABC):
         when given, pins the id instead of the translator minting its own.
         """
         translator = ResponsesStreamTranslator(request, response_id=response_id)
+        chunks = self._observe_first_token(chunks, raw_request)
         try:
             for event in translator.start():
                 yield event
@@ -261,6 +265,23 @@ class BaseInfer[Prepared](ABC):
                 return
             for event in translator.finish():
                 yield event
+        finally:
+            await chunks.aclose()
+
+    async def _observe_first_token(
+        self, chunks: AsyncGenerator[ChatCompletionStreamResponse, None], raw_request: RawRequestProxy
+    ) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
+        observed = not raw_request.is_watchable
+        try:
+            async for chunk in chunks:
+                if not observed and any(
+                    c.delta.content or c.delta.reasoning or c.delta.tool_calls for c in chunk.choices
+                ):
+                    observed = True
+                    TIME_TO_FIRST_TOKEN_SECONDS.observe(
+                        time.monotonic() - raw_request.received_at, tags={"model": self.model_config.name}
+                    )
+                yield chunk
         finally:
             await chunks.aclose()
 

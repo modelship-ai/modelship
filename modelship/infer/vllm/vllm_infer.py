@@ -753,6 +753,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         chunks = self.run_cancellable_stream(stream, raw_request)
         if logger.isEnabledFor(TRACE):
             chunks = _trace_chunks(chunks, request_id)
+        chunks = self._observe_first_token(chunks, raw_request)
         try:
             async for chunk in chunks:
                 yield encode_chat_sse_chunk(chunk)
@@ -978,7 +979,12 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if logger.isEnabledFor(TRACE):
             chunks = _trace_chunks(chunks, request_id)
         async for event in self._stream_responses(
-            request, chunks, request_id=request_id, client_error=_vllm_stream_error, response_id=response_id
+            request,
+            chunks,
+            request_id=request_id,
+            raw_request=raw_request,
+            client_error=_vllm_stream_error,
+            response_id=response_id,
         ):
             yield event
 

@@ -185,7 +185,7 @@ The dashboard has 9 rows:
 | Row | What it shows | Metric sources |
 |---|---|---|
 | **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*`, `ray_serve_*` |
-| **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed) | `ray_modelship_*` |
+| **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed), per-model time to first token | `ray_modelship_*` |
 | **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `ray_vllm_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory (cluster aggregate) | `ray_node_*` |
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
@@ -238,6 +238,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 | `ModelshipClientDisconnects` | Cancelled requests > 1/min | 5m | Clients timing out or dropping connections |
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
 | `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
+| `ModelshipModelHighTTFT` | One model's time to first token P99 > 5s | 5m | Streaming requests to a model wait too long, on any loader that streams |
 | `ModelshipAppUnhealthy` | `ray_serve_application_status` == 2 (UNHEALTHY) | 5m | A Serve application has an unhealthy deployment |
 | `ModelshipDeployStuck` | `ray_serve_application_status` == 5 (DEPLOYING) | 30m | A Serve application is waiting for capacity or a slow model load |
 | `ModelshipDeployFailed` | A deploy request failed in the last 15m | 0m | The request was rolled back; the gateway serves its last committed models |
@@ -322,6 +323,7 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 | `ray_modelship_image_generation_duration_seconds` | Histogram | `model`, `gateway` | Image generation latency |
 | `ray_modelship_transcription_duration_seconds` | Histogram | `model`, `gateway` | Speech-to-text latency |
 | `ray_modelship_embedding_duration_seconds` | Histogram | `model`, `gateway` | Embedding latency |
+| `ray_modelship_time_to_first_token_seconds` | Histogram | `model`, `gateway` | From a streaming request reaching its replica to its first content, reasoning or tool-call token (`vllm`, `llama_server`) |
 
 ### Resource Cleanup
 

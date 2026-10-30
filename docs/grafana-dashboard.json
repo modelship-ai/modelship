@@ -166,7 +166,7 @@
       "type": "timeseries",
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 6,
         "x": 0,
         "y": 10
       },
@@ -200,8 +200,8 @@
       "type": "timeseries",
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 8,
+        "w": 6,
+        "x": 6,
         "y": 10
       },
       "id": 11,
@@ -226,8 +226,8 @@
       "type": "timeseries",
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
+        "w": 6,
+        "x": 12,
         "y": 10
       },
       "id": 12,
@@ -255,6 +255,32 @@
         {
           "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_embedding_duration_seconds_bucket{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (le, model))",
           "legendFormat": "embedding {{ model }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Time to First Token P95",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 10
+      },
+      "id": 124,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ray_modelship_time_to_first_token_seconds_bucket{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (le, model))",
+          "legendFormat": "p95 {{ model }}"
         }
       ],
       "fieldConfig": {

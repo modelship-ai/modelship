@@ -613,7 +613,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         holding a `--parallel` slot until the response finishes on its own.
         """
         request_id = f"chat-{base_request_id(raw_request)}"
-        stream = self._stream_chat_completion_body(prepared, request_id)
+        stream = self._stream_chat_completion_body(prepared, request_id, raw_request)
         try:
             async for chunk in self.run_cancellable_stream(stream, raw_request):
                 yield chunk
@@ -621,14 +621,15 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             logger.info("chat request %s aborted: client disconnected", request_id)
             return
 
-    async def _stream_chat_completion_body(self, payload: dict[str, Any], request_id: str) -> AsyncGenerator[str, None]:
+    async def _stream_chat_completion_body(
+        self, payload: dict[str, Any], request_id: str, raw_request: RawRequestProxy
+    ) -> AsyncGenerator[str, None]:
         assert self._client is not None
         trace = logger.isEnabledFor(TRACE)
         buffered: list[str] = []
+        stream = _raw_stream_chunks(self._client, payload, model_name=self.model_config.name, request_id=request_id)
         try:
-            async for chunk in _raw_stream_chunks(
-                self._client, payload, model_name=self.model_config.name, request_id=request_id
-            ):
+            async for chunk in self._observe_first_token(stream, raw_request):
                 if trace:
                     for choice in chunk.choices:
                         if choice.delta.content:
@@ -664,7 +665,12 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         stream = _raw_stream_chunks(self._client, prepared, model_name=self.model_config.name, request_id=request_id)
         chunks = self.run_cancellable_stream(stream, raw_request)
         async for event in self._stream_responses(
-            request, chunks, request_id=request_id, client_error=_llama_stream_error, response_id=response_id
+            request,
+            chunks,
+            request_id=request_id,
+            raw_request=raw_request,
+            client_error=_llama_stream_error,
+            response_id=response_id,
         ):
             yield event
 

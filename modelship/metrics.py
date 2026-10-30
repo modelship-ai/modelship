@@ -89,6 +89,7 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "image_generation_duration_seconds",
         "transcription_duration_seconds",
         "embedding_duration_seconds",
+        "time_to_first_token_seconds",
         "resource_cleanup_errors_total",
     }
 )
@@ -183,6 +184,7 @@ def _build_metrics():
             "image_generation_duration_seconds": _NoOpHistogram(),
             "transcription_duration_seconds": _NoOpHistogram(),
             "embedding_duration_seconds": _NoOpHistogram(),
+            "time_to_first_token_seconds": _NoOpHistogram(),
             # Resource cleanup
             "resource_cleanup_errors_total": _NoOpCounter(),
         }
@@ -254,6 +256,12 @@ def _build_metrics():
             "modelship_embedding_duration_seconds",
             description="Embedding inference latency in seconds.",
             boundaries=_SHORT_LATENCY_BOUNDARIES,
+            tag_keys=("model", "gateway"),  # type: ignore[arg-type]
+        ),
+        "time_to_first_token_seconds": Histogram(
+            "modelship_time_to_first_token_seconds",
+            description="Seconds from a streaming request reaching its replica to its first generated token.",
+            boundaries=[0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
             tag_keys=("model", "gateway"),  # type: ignore[arg-type]
         ),
         # -- Resource cleanup --
@@ -387,6 +395,7 @@ TTS_GENERATION_DURATION_SECONDS = _metrics["tts_generation_duration_seconds"]
 IMAGE_GENERATION_DURATION_SECONDS = _metrics["image_generation_duration_seconds"]
 TRANSCRIPTION_DURATION_SECONDS = _metrics["transcription_duration_seconds"]
 EMBEDDING_DURATION_SECONDS = _metrics["embedding_duration_seconds"]
+TIME_TO_FIRST_TOKEN_SECONDS = _metrics["time_to_first_token_seconds"]
 
 # -- Resource cleanup --
 RESOURCE_CLEANUP_ERRORS_TOTAL = _metrics["resource_cleanup_errors_total"]
