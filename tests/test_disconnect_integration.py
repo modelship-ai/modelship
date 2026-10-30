@@ -90,7 +90,7 @@ async def test_disconnect_propagates_end_to_end_through_real_registry():
     infer = _Infer()
     request_id = "integration-req-solo"
     client_request = _FakeClientRequest()
-    watcher = RequestWatcher(client_request, request_id, model="m", endpoint="chat")
+    watcher = RequestWatcher(client_request, request_id)
 
     async def slow_work():
         await asyncio.sleep(30)
@@ -114,7 +114,7 @@ async def test_stream_disconnect_propagates_end_to_end_through_real_registry():
     infer = _Infer()
     request_id = "integration-req-stream"
     client_request = _FakeClientRequest()
-    watcher = RequestWatcher(client_request, request_id, model="m", endpoint="chat")
+    watcher = RequestWatcher(client_request, request_id)
 
     async def slow_stream():
         yield "first"

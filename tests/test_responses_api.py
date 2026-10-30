@@ -94,8 +94,7 @@ class TestResponsesRoute:
         # straight to the deployment, which owns chat<->Responses shaping now.
         assert remote.call_args.args[0] is request
         hr.assert_awaited_once()
-        # endpoint label flows through to _handle_response for metrics.
-        assert hr.call_args.args[3] == "create_response"
+        assert hr.call_args.args[2].operation == "create_response"
 
     @pytest.mark.asyncio
     async def test_stream_true_dispatches_and_returns_event_stream(self, api):
@@ -119,6 +118,22 @@ class TestResponsesRoute:
         body = "".join([chunk async for chunk in result.body_iterator])
         assert "event: response.created" in body
         assert "event: response.completed" in body
+
+    @pytest.mark.asyncio
+    async def test_a_failed_event_is_recorded_as_a_stream_error(self, api, request_outcomes):
+        handle = MagicMock()
+
+        async def gen():
+            yield {"type": "response.created", "sequence_number": 0}
+            yield {"type": "response.failed", "sequence_number": 1, "response": {"status": "failed"}}
+
+        handle.respond.options.return_value.remote.return_value = gen()
+        api.models = {"m": {"m-a1b2c": handle}}
+
+        result = await api.create_response(ResponsesRequest(model="m", input="hi", stream=True), _raw_request())
+        [chunk async for chunk in result.body_iterator]
+
+        assert request_outcomes() == [("m", "create_response", "error", "stream_error")]
 
     @pytest.mark.asyncio
     async def test_invalid_param_returns_400_not_500(self, api):

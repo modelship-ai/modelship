@@ -6,11 +6,14 @@ Drives `ModelshipAPI._run_ws_turn` directly with a fake `WebSocket` (records
 plumbing (`responses_ws` itself is a thin reader-task/auth wrapper around this).
 """
 
+import asyncio
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import WebSocketDisconnect
 from ray.exceptions import RayTaskError
+from starlette.websockets import WebSocketState
 
 from modelship.openai.api import ModelshipAPI
 from modelship.openai.protocol import create_error_response
@@ -26,6 +29,7 @@ class _FakeWebSocket:
 
     def __init__(self):
         self.sent: list[str] = []
+        self.client_state = WebSocketState.CONNECTED
 
     async def send_text(self, data: str) -> None:
         self.sent.append(data)
@@ -163,32 +167,36 @@ class TestWsTurns:
 
 class TestFrameValidation:
     @pytest.mark.asyncio
-    async def test_invalid_json_yields_error_frame(self, api):
+    async def test_invalid_json_yields_error_frame(self, api, request_outcomes):
         ws = _FakeWebSocket()
         await api._run_ws_turn(ws, "unscoped", {}, "{not json", {}, MagicMock(), "req-1")
         assert ws.types == ["error"]
         assert ws.events[0]["status"] == 400
+        assert request_outcomes() == [("", "create_response_ws", "error", "http_400")]
 
     @pytest.mark.asyncio
-    async def test_wrong_type_field_yields_error_frame(self, api):
+    async def test_wrong_type_field_yields_error_frame(self, api, request_outcomes):
         ws = _FakeWebSocket()
         await api._run_ws_turn(ws, "unscoped", {}, json.dumps({"type": "ping"}), {}, MagicMock(), "req-1")
         assert ws.types == ["error"]
+        assert request_outcomes() == [("", "create_response_ws", "error", "http_400")]
 
     @pytest.mark.asyncio
-    async def test_invalid_request_body_yields_error_frame(self, api):
+    async def test_invalid_request_body_yields_error_frame(self, api, request_outcomes):
         ws = _FakeWebSocket()
-        raw = _frame(reasoning={"effort": "turbo"})
+        raw = _frame(max_output_tokens="lots")
         await api._run_ws_turn(ws, "unscoped", {}, raw, {}, MagicMock(), "req-1")
         assert ws.types == ["error"]
         assert ws.events[0]["error"]["type"] == "invalid_request_error"
+        assert request_outcomes() == [("", "create_response_ws", "error", "http_400")]
 
     @pytest.mark.asyncio
-    async def test_unknown_model_yields_error_frame(self, api):
+    async def test_unknown_model_yields_error_frame(self, api, request_outcomes):
         ws = _FakeWebSocket()
         await api._run_ws_turn(ws, "unscoped", {}, _frame(model="nope"), {}, MagicMock(), "req-1")
         assert ws.types == ["error"]
         assert ws.events[0]["status"] == 404
+        assert request_outcomes() == [("", "create_response_ws", "error", "model_not_found")]
 
     @pytest.mark.asyncio
     async def test_an_expected_model_with_nothing_routed_yields_a_503_frame(self, api):
@@ -201,7 +209,7 @@ class TestFrameValidation:
 
 class TestPreviousResponseIdResolution:
     @pytest.mark.asyncio
-    async def test_unknown_previous_response_id_sends_not_found_error_frame(self, api):
+    async def test_unknown_previous_response_id_sends_not_found_error_frame(self, api, request_outcomes):
         handle = _wire(api, "m", _events(_terminal("resp_1")))
         ws = _FakeWebSocket()
 
@@ -210,6 +218,7 @@ class TestPreviousResponseIdResolution:
         assert ws.types == ["error"]
         assert ws.events[0]["error"]["code"] == "previous_response_not_found"
         handle.respond.options.return_value.remote.assert_not_called()
+        assert request_outcomes() == [("m", "create_response_ws", "error", "http_404")]
 
     @pytest.mark.asyncio
     async def test_continuation_resolves_from_connection_local_cache(self, api):
@@ -328,7 +337,7 @@ class TestPreviousResponseIdResolution:
 
 class TestMidStreamFailures:
     @pytest.mark.asyncio
-    async def test_raytaskerror_with_value_error_cause_yields_400_error_frame(self, api):
+    async def test_raytaskerror_with_value_error_cause_yields_400_error_frame(self, api, request_outcomes):
         class _FakeValidationError(ValueError):
             def __init__(self, message: str, parameter: str) -> None:
                 super().__init__(message)
@@ -349,9 +358,10 @@ class TestMidStreamFailures:
         assert ws.types == ["error"]
         assert ws.events[0]["error"]["param"] == "input_tokens"
         assert "maximum context length" in ws.events[0]["error"]["message"]
+        assert request_outcomes() == [("m", "create_response_ws", "error", "validation_error")]
 
     @pytest.mark.asyncio
-    async def test_error_response_mid_generator_yields_error_frame_and_does_not_raise(self, api):
+    async def test_error_response_mid_generator_yields_error_frame_and_does_not_raise(self, api, request_outcomes):
         async def gen():
             yield {"type": "response.created", "sequence_number": 0}
             yield create_error_response("boom", status_code=500, err_type="api_error")
@@ -361,9 +371,10 @@ class TestMidStreamFailures:
         await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
 
         assert ws.types == ["response.created", "error"]
+        assert request_outcomes() == [("m", "create_response_ws", "error", "inference_error")]
 
     @pytest.mark.asyncio
-    async def test_unhandled_exception_yields_generic_500_error_frame(self, api):
+    async def test_unhandled_exception_yields_generic_500_error_frame(self, api, request_outcomes):
         async def gen():
             yield {"type": "response.created", "sequence_number": 0}
             raise RuntimeError("engine blew up")
@@ -374,3 +385,82 @@ class TestMidStreamFailures:
 
         assert ws.types == ["response.created", "error"]
         assert ws.events[-1]["status"] == 500
+        assert request_outcomes() == [("m", "create_response_ws", "error", "unhandled")]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_event_is_recorded_as_a_stream_error(self, api, request_outcomes):
+        _wire(api, "m", _events({"type": "response.failed", "sequence_number": 0, "response": {"status": "failed"}}))
+        ws = _FakeWebSocket()
+        await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
+
+        assert ws.types == ["response.failed"]
+        assert request_outcomes() == [("m", "create_response_ws", "error", "stream_error")]
+
+
+class TestClientLeaving:
+    @pytest.mark.asyncio
+    async def test_a_turn_whose_client_left_is_recorded_once_as_cancelled(self, api, request_outcomes):
+        ws = _FakeWebSocket()
+
+        async def gen():
+            yield {"type": "response.created", "sequence_number": 0}
+            ws.client_state = WebSocketState.DISCONNECTED
+
+        _wire(api, "m", gen())
+        await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
+
+        assert request_outcomes() == [("m", "create_response_ws", "cancelled", None)]
+
+    @pytest.mark.asyncio
+    async def test_a_turn_whose_send_fails_is_recorded_once_as_cancelled(self, api, request_outcomes):
+        ws = _FakeWebSocket()
+        ws.send_text = AsyncMock(side_effect=WebSocketDisconnect(code=1006))
+        _wire(api, "m", _events({"type": "response.created", "sequence_number": 0}, _terminal("resp_1")))
+
+        await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
+
+        assert request_outcomes() == [("m", "create_response_ws", "cancelled", None)]
+
+    @pytest.mark.asyncio
+    async def test_a_client_leaving_after_a_failed_event_is_recorded_as_a_stream_error(self, api, request_outcomes):
+        ws = _FakeWebSocket()
+
+        async def gen():
+            yield {"type": "response.failed", "sequence_number": 0, "response": {"status": "failed"}}
+            ws.client_state = WebSocketState.DISCONNECTED
+
+        _wire(api, "m", gen())
+        await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
+
+        assert request_outcomes() == [("m", "create_response_ws", "error", "stream_error")]
+
+    @pytest.mark.asyncio
+    async def test_a_send_failing_after_an_error_frame_is_recorded_as_an_inference_error(self, api, request_outcomes):
+        ws = _FakeWebSocket()
+        ws.send_text = AsyncMock(side_effect=[None, WebSocketDisconnect(code=1006)])
+        _wire(
+            api,
+            "m",
+            _events(
+                create_error_response("boom", status_code=500, err_type="api_error"),
+                {"type": "response.created", "sequence_number": 0},
+            ),
+        )
+
+        await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
+
+        assert request_outcomes() == [("m", "create_response_ws", "error", "inference_error")]
+
+    @pytest.mark.asyncio
+    async def test_a_cancel_after_a_failed_event_is_recorded_as_a_stream_error(self, api, request_outcomes):
+        async def gen():
+            yield {"type": "response.failed", "sequence_number": 0, "response": {"status": "failed"}}
+            raise asyncio.CancelledError
+
+        _wire(api, "m", gen())
+        ws = _FakeWebSocket()
+        with pytest.raises(asyncio.CancelledError):
+            await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
+
+        assert ws.types == ["response.failed"]
+        assert request_outcomes() == [("m", "create_response_ws", "error", "stream_error")]

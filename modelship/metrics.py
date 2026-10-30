@@ -59,7 +59,8 @@ class _NoOpHistogram:
 # Latency bucket boundaries (in seconds)
 # ---------------------------------------------------------------------------
 
-_REQUEST_LATENCY_BOUNDARIES = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60]
+_REQUEST_LATENCY_BOUNDARIES = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600]
+_SHORT_LATENCY_BOUNDARIES = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30]
 # State-store ops are sub-second on a healthy backend; the long tail flags a slow
 # or failing redis/file volume that would silently break self-heal durability.
 _STATE_STORE_BOUNDARIES: list[float] = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5]
@@ -80,7 +81,6 @@ _GATEWAY_SCOPED_KEYS = frozenset(
         "request_total",
         "request_duration_seconds",
         "request_errors_total",
-        "client_disconnects_total",
         "stream_chunks_total",
         "gateway_reconciles_total",
         "gateway_watch_errors_total",
@@ -146,6 +146,24 @@ class _CreatedStampedCounter:
         self._inner.inc(value, tags)
 
 
+class RequestTracker:
+    def __init__(self, model: str, operation: str):
+        self.model = model
+        self.operation = operation
+        self._start = time.monotonic()
+        self._finished = False
+
+    def finish(self, status: str, error_type: str | None = None) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        tags = {"model": self.model, "operation": self.operation}
+        REQUEST_TOTAL.inc(tags={**tags, "status": status})
+        if status == "error":
+            REQUEST_ERRORS_TOTAL.inc(tags={**tags, "error_type": error_type})
+        REQUEST_DURATION_SECONDS.observe(time.monotonic() - self._start, tags={**tags, "status": status})
+
+
 def _build_metrics():
     """Construct real or no-op metric objects based on MSHIP_METRICS."""
 
@@ -155,7 +173,6 @@ def _build_metrics():
             "request_total": _NoOpCounter(),
             "request_duration_seconds": _NoOpHistogram(),
             "request_errors_total": _NoOpCounter(),
-            "client_disconnects_total": _NoOpCounter(),
             "stream_chunks_total": _NoOpCounter(),
             # Gateway HA routing (watch loop)
             "gateway_reconciles_total": _NoOpCounter(),
@@ -178,24 +195,19 @@ def _build_metrics():
         # -- Gateway layer --
         "request_total": Counter(
             "modelship_request_total",
-            description="Total inference requests by model and endpoint.",
-            tag_keys=("model", "endpoint", "status", "gateway"),  # type: ignore[arg-type]
+            description="Total inference requests by model, operation, and status.",
+            tag_keys=("model", "operation", "status", "gateway"),  # type: ignore[arg-type]
         ),
         "request_duration_seconds": Histogram(
             "modelship_request_duration_seconds",
             description="End-to-end request latency (gateway to response) in seconds.",
             boundaries=_REQUEST_LATENCY_BOUNDARIES,
-            tag_keys=("model", "endpoint", "gateway"),  # type: ignore[arg-type]
+            tag_keys=("model", "operation", "status", "gateway"),  # type: ignore[arg-type]
         ),
         "request_errors_total": Counter(
             "modelship_request_errors_total",
-            description="Total inference errors by model, endpoint, and error type.",
-            tag_keys=("model", "endpoint", "error_type", "gateway"),  # type: ignore[arg-type]
-        ),
-        "client_disconnects_total": Counter(
-            "modelship_client_disconnects_total",
-            description="Total client disconnects during inference.",
-            tag_keys=("model", "endpoint", "gateway"),  # type: ignore[arg-type]
+            description="Total inference errors by model, operation, and error type.",
+            tag_keys=("model", "operation", "error_type", "gateway"),  # type: ignore[arg-type]
         ),
         "stream_chunks_total": Counter(
             "modelship_stream_chunks_total",
@@ -223,25 +235,25 @@ def _build_metrics():
         "tts_generation_duration_seconds": Histogram(
             "modelship_tts_generation_duration_seconds",
             description="TTS inference latency in seconds.",
-            boundaries=_REQUEST_LATENCY_BOUNDARIES,
+            boundaries=_SHORT_LATENCY_BOUNDARIES,
             tag_keys=("model", "gateway"),  # type: ignore[arg-type]
         ),
         "image_generation_duration_seconds": Histogram(
             "modelship_image_generation_duration_seconds",
             description="Image generation latency in seconds.",
-            boundaries=_REQUEST_LATENCY_BOUNDARIES,
+            boundaries=[0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600],
             tag_keys=("model", "gateway"),  # type: ignore[arg-type]
         ),
         "transcription_duration_seconds": Histogram(
             "modelship_transcription_duration_seconds",
             description="Speech-to-text latency in seconds.",
-            boundaries=_REQUEST_LATENCY_BOUNDARIES,
+            boundaries=[0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
             tag_keys=("model", "gateway"),  # type: ignore[arg-type]
         ),
         "embedding_duration_seconds": Histogram(
             "modelship_embedding_duration_seconds",
             description="Embedding inference latency in seconds.",
-            boundaries=_REQUEST_LATENCY_BOUNDARIES,
+            boundaries=_SHORT_LATENCY_BOUNDARIES,
             tag_keys=("model", "gateway"),  # type: ignore[arg-type]
         ),
         # -- Resource cleanup --
@@ -363,7 +375,6 @@ _util_metrics = _build_util_metrics()
 REQUEST_TOTAL = _metrics["request_total"]
 REQUEST_DURATION_SECONDS = _metrics["request_duration_seconds"]
 REQUEST_ERRORS_TOTAL = _metrics["request_errors_total"]
-CLIENT_DISCONNECTS_TOTAL = _metrics["client_disconnects_total"]
 STREAM_CHUNKS_TOTAL = _metrics["stream_chunks_total"]
 
 # -- Gateway HA routing (watch loop) --

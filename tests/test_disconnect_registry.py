@@ -93,7 +93,7 @@ async def test_watcher_sets_on_disconnect_and_stop_leaves_entry_for_ttl():
     raw_request.is_disconnected = AsyncMock(return_value=True)
 
     with patch("modelship.infer.infer_config.get_disconnect_registry", return_value=reg):
-        watcher = RequestWatcher(raw_request, "req-9", model="m", endpoint="e")
+        watcher = RequestWatcher(raw_request, "req-9")
         await watcher._task  # watch loop records the disconnect, then breaks
 
     assert "req-9" in reg.disconnected
@@ -173,7 +173,7 @@ async def test_watch_reresolves_and_retries_set_on_actor_death():
 
     # First resolve (in __init__) hands back the dead actor; the retry re-resolves to a live one.
     with patch("modelship.infer.infer_config.get_disconnect_registry", side_effect=[_DeadRegistry(), healthy]):
-        watcher = RequestWatcher(raw_request, "req-2", model="m", endpoint="e")
+        watcher = RequestWatcher(raw_request, "req-2")
         await watcher._task
 
     assert "req-2" in healthy.disconnected

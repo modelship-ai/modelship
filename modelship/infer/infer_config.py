@@ -158,20 +158,15 @@ class RequestWatcher:
     """Watches a FastAPI Request for client disconnect and records it in the shared
     DisconnectRegistry, keyed by request id."""
 
-    def __init__(self, raw_request: Request, request_id: str, model: str = "", endpoint: str = ""):
+    def __init__(self, raw_request: Request, request_id: str):
         self._request = raw_request
         self._registry = get_disconnect_registry()
         self._request_id = request_id
-        self._model = model
-        self._endpoint = endpoint
         self._task = asyncio.create_task(self._watch())
 
     async def _watch(self):
-        from modelship.metrics import CLIENT_DISCONNECTS_TOTAL
-
         while True:
             if await self._request.is_disconnected():
-                CLIENT_DISCONNECTS_TOTAL.inc(tags={"model": self._model, "endpoint": self._endpoint})
                 await self._record_disconnect()
                 break
             await asyncio.sleep(0.1)

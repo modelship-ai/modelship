@@ -115,6 +115,9 @@ def failure_event_from_frames(created_frame: Any, last_frame: Any, message: str,
     }
 
 
+RESPONSE_FAILED_SSE_PREFIX = "event: response.failed\n"
+
+
 def encode_sse_event(event: dict[str, Any]) -> str:
     """Wire-format one Responses event dict as an SSE frame (named event line + JSON data line)."""
     return f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
