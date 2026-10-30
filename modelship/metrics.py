@@ -195,7 +195,6 @@ def _build_metrics():
             "transcription_duration_seconds": _NoOpHistogram(),
             "embedding_duration_seconds": _NoOpHistogram(),
             "time_to_first_token_seconds": _NoOpHistogram(),
-            # Engine tokens
             "engine_prompt_tokens_total": _NoOpCounter(),
             "engine_generation_tokens_total": _NoOpCounter(),
             # Resource cleanup
@@ -277,7 +276,6 @@ def _build_metrics():
             boundaries=[0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
             tag_keys=("model", "gateway"),  # type: ignore[arg-type]
         ),
-        # -- Engine tokens --
         "engine_prompt_tokens_total": Counter(
             "modelship_engine_prompt_tokens_total",
             description="Prompt tokens of finished requests, cached tokens included.",
@@ -420,8 +418,6 @@ IMAGE_GENERATION_DURATION_SECONDS = _metrics["image_generation_duration_seconds"
 TRANSCRIPTION_DURATION_SECONDS = _metrics["transcription_duration_seconds"]
 EMBEDDING_DURATION_SECONDS = _metrics["embedding_duration_seconds"]
 TIME_TO_FIRST_TOKEN_SECONDS = _metrics["time_to_first_token_seconds"]
-
-# -- Engine tokens --
 ENGINE_PROMPT_TOKENS_TOTAL = _metrics["engine_prompt_tokens_total"]
 ENGINE_GENERATION_TOKENS_TOTAL = _metrics["engine_generation_tokens_total"]
 
