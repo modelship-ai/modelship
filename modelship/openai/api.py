@@ -500,7 +500,8 @@ class ModelshipAPI:
                     yield _stream_error_chunk(endpoint, model, first, last)
                     yield "data: [DONE]\n\n"
                 except BaseException:
-                    status, error_type = "cancelled", None
+                    if status == "ok":
+                        status, error_type = "cancelled", None
                     raise
                 finally:
                     tracker.finish(status, error_type)
@@ -862,7 +863,8 @@ class ModelshipAPI:
                 elif event_type in TERMINAL_EVENT_TYPES:
                     terminal_response = item.get("response")
         except WebSocketDisconnect:
-            status, error_type = "cancelled", None
+            if status == "ok":
+                status, error_type = "cancelled", None
         except RayTaskError as exc:
             cause = exc.cause if isinstance(exc.cause, BaseException) else None
             if isinstance(cause, ValueError | TypeError | OverflowError):
@@ -885,10 +887,11 @@ class ModelshipAPI:
                 status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
         except BaseException:
-            status, error_type = "cancelled", None
+            if status == "ok":
+                status, error_type = "cancelled", None
             raise
         finally:
-            if websocket.client_state == WebSocketState.DISCONNECTED:
+            if status == "ok" and websocket.client_state == WebSocketState.DISCONNECTED:
                 status, error_type = "cancelled", None
             tracker.finish(status, error_type)
 

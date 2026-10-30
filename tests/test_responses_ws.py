@@ -6,6 +6,7 @@ Drives `ModelshipAPI._run_ws_turn` directly with a fake `WebSocket` (records
 plumbing (`responses_ws` itself is a thin reader-task/auth wrapper around this).
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -416,3 +417,47 @@ class TestClientLeaving:
         await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
 
         assert request_outcomes() == [("m", "create_response_ws", "cancelled", None)]
+
+    @pytest.mark.asyncio
+    async def test_a_client_leaving_after_a_failed_event_is_recorded_as_a_stream_error(self, api, request_outcomes):
+        ws = _FakeWebSocket()
+
+        async def gen():
+            yield {"type": "response.failed", "sequence_number": 0, "response": {"status": "failed"}}
+            ws.client_state = WebSocketState.DISCONNECTED
+
+        _wire(api, "m", gen())
+        await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
+
+        assert request_outcomes() == [("m", "create_response_ws", "error", "stream_error")]
+
+    @pytest.mark.asyncio
+    async def test_a_send_failing_after_an_error_frame_is_recorded_as_an_inference_error(self, api, request_outcomes):
+        ws = _FakeWebSocket()
+        ws.send_text = AsyncMock(side_effect=[None, WebSocketDisconnect(code=1006)])
+        _wire(
+            api,
+            "m",
+            _events(
+                create_error_response("boom", status_code=500, err_type="api_error"),
+                {"type": "response.created", "sequence_number": 0},
+            ),
+        )
+
+        await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
+
+        assert request_outcomes() == [("m", "create_response_ws", "error", "inference_error")]
+
+    @pytest.mark.asyncio
+    async def test_a_cancel_after_a_failed_event_is_recorded_as_a_stream_error(self, api, request_outcomes):
+        async def gen():
+            yield {"type": "response.failed", "sequence_number": 0, "response": {"status": "failed"}}
+            raise asyncio.CancelledError
+
+        _wire(api, "m", gen())
+        ws = _FakeWebSocket()
+        with pytest.raises(asyncio.CancelledError):
+            await api._run_ws_turn(ws, "unscoped", {}, _frame(store=False), {}, MagicMock(), "req-1")
+
+        assert ws.types == ["response.failed"]
+        assert request_outcomes() == [("m", "create_response_ws", "error", "stream_error")]

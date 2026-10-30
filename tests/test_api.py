@@ -753,6 +753,22 @@ class TestRequestOutcomes:
         assert request_outcomes() == [("m", "create_chat_completion", "error", "stream_error")]
 
     @pytest.mark.asyncio
+    async def test_a_client_leaving_after_an_error_chunk_is_recorded_as_a_stream_error(self, api, request_outcomes):
+        from modelship.openai.protocol import create_error_response
+        from modelship.openai.utils.chat import encode_error_sse
+
+        async def mock_gen():
+            yield encode_error_sse(create_error_response("engine died", err_type="api_error", status_code=500))
+            yield "data: [DONE]\n\n"
+
+        result = await api._handle_response(mock_gen(), MagicMock(), RequestTracker("m", "create_chat_completion"))
+        body = result.body_iterator
+        await anext(body)
+        await body.aclose()
+
+        assert request_outcomes() == [("m", "create_chat_completion", "error", "stream_error")]
+
+    @pytest.mark.asyncio
     async def test_a_client_leaving_before_the_first_item_is_recorded_once_as_cancelled(self, api, request_outcomes):
         async def mock_gen():
             raise asyncio.CancelledError
