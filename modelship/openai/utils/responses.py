@@ -539,26 +539,41 @@ async def run_background(
     generator to completion, persisting every terminal transition. `stream_buffer=True`
     also tees every event into the durable replay log a poller reads from."""
     request.stream = True
-    registry = get_disconnect_registry()
-    # Local import: modelship.openai.mcp.{spec,egress} import ResponsesApiError from this
-    # module, so importing mcp.loop at module scope here would be a cycle.
-    from modelship.openai.mcp import loop as mcp_loop
-
-    if mcp_loop.wants_mcp(request):
-        response_gen = mcp_loop.run_mcp_response(
-            handle, request, headers, registry, req_id, identity, response_id=response_id, mcp_listings=mcp_listings
-        )
-    else:
-        response_gen = cast(
-            "DeploymentResponseGenerator[Any]",
-            handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity, response_id),
-        )
-    piped = persist_response(response_gen, store, identity=identity, conditional=True)
     buffer = _StreamBuffer(store, identity, response_id) if stream_buffer else None
-    if buffer is not None:
-        piped = buffer_stream_events(piped, buffer)
-
     try:
+        try:
+            registry = get_disconnect_registry()
+            # Local import: modelship.openai.mcp.{spec,egress} import ResponsesApiError from this
+            # module, so importing mcp.loop at module scope here would be a cycle.
+            from modelship.openai.mcp import loop as mcp_loop
+
+            if mcp_loop.wants_mcp(request):
+                response_gen = mcp_loop.run_mcp_response(
+                    handle,
+                    request,
+                    headers,
+                    registry,
+                    req_id,
+                    identity,
+                    response_id=response_id,
+                    mcp_listings=mcp_listings,
+                )
+            else:
+                response_gen = cast(
+                    "DeploymentResponseGenerator[Any]",
+                    handle.respond.options(stream=True).remote(
+                        request, headers, registry, req_id, identity, response_id
+                    ),
+                )
+        except Exception:
+            logger.exception("background response %s: dispatch failed", response_id)
+            tracker.finish("error", "unhandled")
+            await _write_failed(store, identity, response_id, "Generation failed to start.")
+            return
+        piped = persist_response(response_gen, store, identity=identity, conditional=True)
+        if buffer is not None:
+            piped = buffer_stream_events(piped, buffer)
+
         drain_task = asyncio.ensure_future(_drain_background_stream(piped, response_id))
         heartbeat_task = asyncio.ensure_future(_heartbeat_loop(identity, response_id, req_id))
         try:
@@ -597,12 +612,7 @@ async def run_background(
                     tracker.finish("cancelled")
             tracker.finish("error", "stream_error")
             # Stream ended with no terminal event (cancel race or actor crash) — don't leave a poller hanging.
-            record = await responses_state.read_async(store, identity, response_id)
-            if record is not None:
-                failed = _mark_failed(
-                    record.get("response") or {}, "Generation ended unexpectedly without a terminal event."
-                )
-                await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
+            await _write_failed(store, identity, response_id, "Generation ended unexpectedly without a terminal event.")
         else:
             tracker.finish("ok")
     finally:
@@ -610,6 +620,13 @@ async def run_background(
         # is what covers the abnormal exits above, which never reach a terminal event.
         if buffer is not None:
             await buffer.flush_and_discard()
+
+
+async def _write_failed(store: StateStore, identity: str, response_id: str, message: str) -> None:
+    record = await responses_state.read_async(store, identity, response_id)
+    if record is not None:
+        failed = _mark_failed(record.get("response") or {}, message)
+        await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
 
 
 async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict | None]:

@@ -239,6 +239,21 @@ class TestBackgroundCreate:
         assert "_mship" not in body
         assert request_outcomes() == [("m", "create_response", "ok", None)]
 
+    @pytest.mark.asyncio
+    async def test_a_dispatch_failure_is_recorded_and_fails_the_response(self, api, request_outcomes):
+        _wire(api, RuntimeError("no replica"))
+        request = ResponsesRequest(model="m", input="hi", background=True)
+
+        result = await api.create_response(request, _raw_request())
+        response_id = json.loads(bytes(result.body))["id"]
+        await _drain_background_tasks(api)
+
+        get_result = await api.get_response(response_id, _raw_request())
+        body = json.loads(bytes(get_result.body))
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == "Generation failed to start."
+        assert request_outcomes() == [("m", "create_response", "error", "unhandled")]
+
 
 class TestMcpBackgroundWiring:
     """Wiring only — behavior covered by test_mcp_loop.py. Confirms run_background
