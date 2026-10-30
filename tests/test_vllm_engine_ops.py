@@ -250,6 +250,16 @@ async def _drive_stream(monkeypatch, parser_cls, *, results=None, vllm_req=None,
     return chunks
 
 
+@pytest.mark.asyncio
+async def test_a_finished_stream_counts_its_tokens(monkeypatch):
+    record = Mock()
+    monkeypatch.setattr(engine_ops, "record_engine_tokens", record)
+
+    await _drive_stream(monkeypatch, _TrapParser)
+
+    record.assert_called_once_with("m", "vllm", 2, 1)
+
+
 class TestStreamReconcilesTrappedContent:
     """A model that never closes its reasoning leaves the whole streamed reply in
     `reasoning` with empty `content`; the finish branch reconciles against the

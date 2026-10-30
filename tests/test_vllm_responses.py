@@ -5,6 +5,7 @@ translation error mapping, and pre-generation-vs-mid-stream error handling.
 by test_vllm_engine_ops.py instead.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -126,6 +127,38 @@ async def test_stream_success_produces_native_responses_events():
     assert "response.created" in types
     assert "response.output_text.delta" in types
     assert types[-1] == "response.completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("create", "request_"),
+    [
+        ("_create_response_no_stream", ResponsesRequest(model="m", input="hi")),
+        (
+            "_create_chat_completion_no_stream",
+            ChatCompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}]),
+        ),
+    ],
+    ids=["response", "chat"],
+)
+async def test_a_non_streaming_request_counts_its_tokens(create, request_):
+    infer = _make_infer()
+    final = SimpleNamespace(
+        prompt_token_ids=[1, 2, 3], outputs=[SimpleNamespace(token_ids=[4, 5])], num_cached_tokens=0
+    )
+
+    with (
+        patch("modelship.infer.vllm.vllm_infer.engine_ops") as mock_ops,
+        patch("modelship.infer.vllm.vllm_infer.build_response_from_parsed"),
+        patch("modelship.infer.vllm.vllm_infer.build_from_parsed"),
+        patch("modelship.infer.vllm.vllm_infer.record_engine_tokens") as record,
+        patch.object(VllmInfer, "_make_parser"),
+    ):
+        mock_ops.consume_final_output = AsyncMock(return_value=final)
+        mock_ops.build_choices.return_value = ([MagicMock()], ["stop"], [None], None)
+        await getattr(infer, create)(request_, MagicMock(), _FakeRawRequest())
+
+    record.assert_called_once_with("m", "vllm", 3, 2)
 
 
 @pytest.mark.asyncio

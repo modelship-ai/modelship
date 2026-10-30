@@ -76,6 +76,7 @@ from modelship.infer.vllm.parsing.detect import (
 )
 from modelship.logging import TRACE, VLLM_CHILD_ENV, get_logger
 from modelship.metrics import _ENABLED as _METRICS_ENABLED
+from modelship.metrics import record_engine_tokens
 from modelship.openai.protocol import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -823,6 +824,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return _to_error_response("vllm returned no prompt_token_ids for a completed request", status_code=502)
         prompt_tokens = len(final_res.prompt_token_ids)
         completion_tokens = sum(len(output.token_ids) for output in final_res.outputs)
+        record_engine_tokens(self.model_config.name, "vllm", prompt_tokens, completion_tokens)
 
         usage = UsageInfo(
             prompt_tokens=prompt_tokens,
@@ -926,6 +928,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return _to_error_response("vllm returned no prompt_token_ids for a completed request", status_code=502)
         prompt_tokens = len(final_res.prompt_token_ids)
         completion_tokens = sum(len(output.token_ids) for output in final_res.outputs)
+        record_engine_tokens(self.model_config.name, "vllm", prompt_tokens, completion_tokens)
 
         usage = UsageInfo(
             prompt_tokens=prompt_tokens,

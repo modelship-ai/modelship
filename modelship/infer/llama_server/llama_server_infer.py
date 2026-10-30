@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from modelship.infer.base_infer import BaseInfer, ClientDisconnectedError
 from modelship.infer.infer_config import LlamaServerConfig, ModelshipModelConfig, ModelUsecase, RawRequestProxy
 from modelship.logging import TRACE, get_logger
+from modelship.metrics import record_engine_tokens
 from modelship.openai.protocol import (
     ChatCompletionLogProbs,
     ChatCompletionRequest,
@@ -600,6 +601,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             return create_error_response(message or "Unknown error returned from llama-server", status_code=502)
         reasoning = [(choice.get("message") or {}).get("reasoning_content") for choice in data.get("choices", [])]
         await _add_reasoning_tokens(self._client, data, reasoning, request_id)
+        _record_timings(self.model_config.name, data.get("timings") or {})
         return data
 
     async def _create_chat_completion_stream(
@@ -698,7 +700,7 @@ def _build_payload(
     reasoning_preserve: bool | None,
 ) -> dict[str, Any]:
     # If request.logprobs is True, we want to forward logprobs and top_logprobs (if > 0) to llama-server.
-    exclude_fields = {"messages", "model", "logprobs", "top_logprobs"}
+    exclude_fields = {"messages", "model", "logprobs", "top_logprobs", "timings_per_token"}
     payload = request.model_dump(exclude_none=True, exclude=exclude_fields)
     payload["messages"] = [
         {("reasoning_content" if key == "reasoning" else key): value for key, value in message.items()}
@@ -759,6 +761,15 @@ def _project_tool_calls(raw_tool_calls: list[dict] | None) -> list[ToolCall]:
             )
         )
     return tool_calls
+
+
+def _record_timings(model_name: str, timings: dict) -> None:
+    record_engine_tokens(
+        model_name,
+        "llama_server",
+        timings.get("prompt_n", 0) + timings.get("cache_n", 0),
+        timings.get("predicted_n", 0),
+    )
 
 
 def _project_usage(raw_usage: dict | None) -> UsageInfo:
@@ -957,6 +968,8 @@ async def _raw_stream_chunks(
                 message = error_data.get("message") if isinstance(error_data, dict) else str(error_data)
                 logger.warning("chat request %s failed mid-stream with error: %s", request_id, message)
                 raise _LlamaServerStreamError(message or "Unknown mid-stream error from llama-server")
+            if timings := data.get("timings"):
+                _record_timings(model_name, timings)
             if data.get("usage"):
                 await _add_reasoning_tokens(client, data, ["".join(parts) for parts in reasoning.values()], request_id)
             chunk = _project_stream_chunk(data, model_name=model_name, request_id=request_id)

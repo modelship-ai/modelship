@@ -425,12 +425,12 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ray_vllm_prompt_tokens_total[5m]))",
-          "legendFormat": "prefill tok/s"
+          "expr": "sum(rate(ray_modelship_engine_prompt_tokens_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (model)",
+          "legendFormat": "prompt {{ model }}"
         },
         {
-          "expr": "sum(rate(ray_vllm_generation_tokens_total[5m]))",
-          "legendFormat": "decode tok/s"
+          "expr": "sum(rate(ray_modelship_engine_generation_tokens_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (model)",
+          "legendFormat": "generated {{ model }}"
         }
       ],
       "fieldConfig": {

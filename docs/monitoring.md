@@ -186,7 +186,7 @@ The dashboard has 9 rows:
 |---|---|---|
 | **Overview** | Request rate, error rate, in-flight requests, models loaded, client disconnects | `ray_modelship_*`, `ray_serve_*` |
 | **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed), per-model time to first token | `ray_modelship_*` |
-| **vLLM Engine** | KV cache usage, TTFT, inter-token latency, token throughput, queue depth, preemptions, prefix cache hit rate | `ray_vllm_*` |
+| **vLLM Engine** | KV cache usage, TTFT, inter-token latency, queue depth, preemptions, prefix cache hit rate, and token throughput for `vllm` and `llama_server` | `ray_vllm_*`, `ray_modelship_engine_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory (cluster aggregate) | `ray_node_*` |
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
 | **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*`, `ray_serve_*` |
@@ -324,6 +324,15 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 | `ray_modelship_transcription_duration_seconds` | Histogram | `model`, `gateway` | Speech-to-text latency |
 | `ray_modelship_embedding_duration_seconds` | Histogram | `model`, `gateway` | Embedding latency |
 | `ray_modelship_time_to_first_token_seconds` | Histogram | `model`, `gateway` | From a streaming request reaching its replica to its first content, reasoning or tool-call token (`vllm`, `llama_server`) |
+
+### Engine Tokens
+
+| Metric | Type | Tags | Description |
+|---|---|---|---|
+| `ray_modelship_engine_prompt_tokens_total` | Counter | `model`, `loader`, `gateway` | Prompt tokens of finished chat and Responses requests, cached tokens included |
+| `ray_modelship_engine_generation_tokens_total` | Counter | `model`, `loader`, `gateway` | Tokens generated for those requests |
+
+These cover the `vllm` and `llama_server` loaders. A cancelled stream isn't counted. `vllm` also exports its own engine metrics (`ray_vllm_*`); the other loaders have none, so use `ray_serve_replica_processing_queries` and `ray_serve_deployment_queued_queries` for them.
 
 ### Resource Cleanup
 
