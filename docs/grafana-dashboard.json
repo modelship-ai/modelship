@@ -291,7 +291,7 @@
       },
       "targets": [
         {
-          "expr": "ray_vllm_kv_cache_usage_perc",
+          "expr": "ray_vllm_kv_cache_usage_perc{model_name=~\"$model\"}",
           "legendFormat": "{{ model_name }}"
         }
       ],
@@ -335,15 +335,15 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_vllm_time_to_first_token_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_vllm_time_to_first_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))",
           "legendFormat": "p50"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_vllm_time_to_first_token_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_vllm_time_to_first_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))",
           "legendFormat": "p95"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_vllm_time_to_first_token_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(ray_vllm_time_to_first_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))",
           "legendFormat": "p99"
         }
       ],
@@ -369,11 +369,11 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(ray_vllm_inter_token_latency_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(ray_vllm_inter_token_latency_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))",
           "legendFormat": "p50"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_vllm_inter_token_latency_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_vllm_inter_token_latency_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))",
           "legendFormat": "p95"
         }
       ],
@@ -429,11 +429,11 @@
       },
       "targets": [
         {
-          "expr": "ray_vllm_num_requests_running",
+          "expr": "ray_vllm_num_requests_running{model_name=~\"$model\"}",
           "legendFormat": "running"
         },
         {
-          "expr": "ray_vllm_num_requests_waiting",
+          "expr": "ray_vllm_num_requests_waiting{model_name=~\"$model\"}",
           "legendFormat": "waiting"
         }
       ]
@@ -454,7 +454,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ray_vllm_num_preemptions_total[5m]))",
+          "expr": "sum(rate(ray_vllm_num_preemptions_total{model_name=~\"$model\"}[5m]))",
           "legendFormat": "preemptions/s"
         }
       ]
@@ -475,7 +475,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ray_vllm_prefix_cache_hits_total[5m])) / clamp_min(sum(rate(ray_vllm_prefix_cache_queries_total[5m])), 1)",
+          "expr": "sum(rate(ray_vllm_prefix_cache_hits_total{model_name=~\"$model\"}[5m])) / clamp_min(sum(rate(ray_vllm_prefix_cache_queries_total{model_name=~\"$model\"}[5m])), 1)",
           "legendFormat": "hit rate"
         }
       ],
@@ -501,7 +501,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_vllm_request_queue_time_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_vllm_request_queue_time_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))",
           "legendFormat": "p95"
         }
       ],
@@ -527,7 +527,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(ray_vllm_e2e_request_latency_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(ray_vllm_e2e_request_latency_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))",
           "legendFormat": "p95"
         }
       ],
@@ -998,7 +998,7 @@
       },
       "targets": [
         {
-          "expr": "ray_vllm_kv_cache_usage_perc * 100",
+          "expr": "ray_vllm_kv_cache_usage_perc{model_name=~\"$model\"} * 100",
           "legendFormat": "{{ model_name }}"
         }
       ],
@@ -1048,7 +1048,7 @@
       },
       "targets": [
         {
-          "expr": "ray_vllm_num_requests_waiting",
+          "expr": "ray_vllm_num_requests_waiting{model_name=~\"$model\"}",
           "legendFormat": "waiting"
         }
       ],
@@ -1095,7 +1095,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_vllm_time_to_first_token_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(ray_vllm_time_to_first_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))",
           "legendFormat": "p99"
         }
       ],
@@ -1169,7 +1169,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(ray_vllm_num_preemptions_total[5m]))",
+          "expr": "sum(rate(ray_vllm_num_preemptions_total{model_name=~\"$model\"}[5m]))",
           "legendFormat": "preemptions/s"
         }
       ]

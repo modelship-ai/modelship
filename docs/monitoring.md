@@ -178,7 +178,7 @@ To import it:
 2. Upload `grafana-dashboard.json` or paste its contents
 3. Select your Prometheus datasource when prompted
 
-At the top the dashboard has **Gateway**, **Model**, and **Node** dropdowns. The Gateway dropdown filters every `ray_modelship_*` panel to a single gateway (or All); the vLLM/Ray-Serve/GPU rows stay cluster-wide since those metrics aren't per-gateway (see [The `gateway` dimension](#the-gateway-dimension)).
+At the top the dashboard has **Gateway**, **Model**, and **Node** dropdowns. The Gateway dropdown filters every `ray_modelship_*` panel to a single gateway (or All); the vLLM/Ray-Serve/GPU rows stay cluster-wide since those metrics aren't per-gateway (see [The `gateway` dimension](#the-gateway-dimension)). The Model dropdown also filters the vLLM panels.
 
 The dashboard has 9 rows:
 
@@ -354,7 +354,7 @@ These are automatically available when `MSHIP_METRICS=true` — no additional co
 
 ### vLLM (`ray_vllm_*`)
 
-vLLM metrics are routed through Ray's metrics agent via `RayPrometheusStatLogger`. The native `vllm:` prefix is sanitized to `ray_vllm_`.
+vLLM metrics are routed through Ray's metrics agent via `RayPrometheusStatLogger`. The native `vllm:` prefix is sanitized to `ray_vllm_`. Their `model_name` label is the modelship model name.
 
 - `ray_vllm_num_requests_running` / `ray_vllm_num_requests_waiting` — queue depth
 - `ray_vllm_kv_cache_usage_perc` — KV cache utilization (0-1)

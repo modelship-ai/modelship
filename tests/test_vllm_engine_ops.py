@@ -420,6 +420,11 @@ class TestSignaturesGuardVllmBump:
     def test_online_renderer_takes_default_chat_template_kwargs(self):
         assert "default_chat_template_kwargs" in inspect.signature(VllmOnlineRenderer.__init__).parameters
 
+    def test_engine_args_take_a_served_model_name(self):
+        from vllm.engine.arg_utils import AsyncEngineArgs as VllmAsyncEngineArgs
+
+        assert "served_model_name" in inspect.signature(VllmAsyncEngineArgs).parameters
+
     def test_structured_outputs_config_has_a_reasoning_parser(self):
         from vllm.config import StructuredOutputsConfig as VllmStructuredOutputsConfig
 

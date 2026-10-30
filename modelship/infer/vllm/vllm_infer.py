@@ -377,6 +377,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
 
         engine_args = VllmAsyncEngineArgs(
             model=self._model_path,
+            served_model_name=[self.model_config.name],
             tensor_parallel_size=self.vllm_engine_kwargs.tensor_parallel_size,
             pipeline_parallel_size=self.vllm_engine_kwargs.pipeline_parallel_size,
             max_model_len=self._max_model_len,

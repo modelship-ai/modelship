@@ -46,7 +46,7 @@ def _build(
 
     class EngineArgs:
         def __init__(self, **kwargs: Any) -> None:
-            pass
+            started["served_model_name"] = kwargs["served_model_name"]
 
         def create_engine_config(self, usage_context: Any) -> Any:
             return SimpleNamespace(
@@ -81,6 +81,13 @@ def _build(
     monkeypatch.setattr(vllm_infer, "_METRICS_ENABLED", False)
     monkeypatch.delenv(VLLM_CHILD_ENV, raising=False)
     return VllmInfer(config), started
+
+
+def test_the_engine_serves_the_modelship_model_name(monkeypatch):
+    config = _config()
+    _, started = _build(monkeypatch, config, _PLAIN_TEMPLATE)
+
+    assert started["served_model_name"] == [config.name]
 
 
 class TestEngineStartsWithTheReasoningParser:
