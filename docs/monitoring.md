@@ -302,7 +302,7 @@ Cluster-scoped metrics are **not** per-gateway, because the thing they measure i
 | `ray_modelship_request_errors_total` | Counter | `model`, `operation`, `error_type`, `gateway` | Errors: `validation_error`, `inference_error`, `stream_error` (a failure after the stream started), `model_not_found`, `model_not_ready`, `http_<status>` (rejected before dispatch), `unhandled` |
 | `ray_modelship_stream_chunks_total` | Counter | `model`, `gateway` | Streaming chunks emitted |
 
-`operation` is the API method: `create_chat_completion`, `create_response` (background runs included, counted when they end), `create_response_ws` (one per WebSocket turn), `compact_response`, `create_embeddings`, `create_transcriptions`, `create_translations`, `create_speech`, `create_image`, `create_image_edit`, `create_image_variation`. A request for a model the gateway doesn't serve is counted with `model=""`.
+`operation` is the API method: `create_chat_completion`, `create_response` (background runs included, counted when they end), `create_response_ws` (one per WebSocket turn), `compact_response`, `create_embeddings`, `create_transcriptions`, `create_translations`, `create_speech`, `create_image`, `create_image_edit`, `create_image_variation`. A request for a model the gateway doesn't serve, and a WebSocket frame that isn't a valid request, is counted with `model=""`.
 
 ### Model Deployment
 

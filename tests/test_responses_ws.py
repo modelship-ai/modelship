@@ -167,25 +167,28 @@ class TestWsTurns:
 
 class TestFrameValidation:
     @pytest.mark.asyncio
-    async def test_invalid_json_yields_error_frame(self, api):
+    async def test_invalid_json_yields_error_frame(self, api, request_outcomes):
         ws = _FakeWebSocket()
         await api._run_ws_turn(ws, "unscoped", {}, "{not json", {}, MagicMock(), "req-1")
         assert ws.types == ["error"]
         assert ws.events[0]["status"] == 400
+        assert request_outcomes() == [("", "create_response_ws", "error", "http_400")]
 
     @pytest.mark.asyncio
-    async def test_wrong_type_field_yields_error_frame(self, api):
+    async def test_wrong_type_field_yields_error_frame(self, api, request_outcomes):
         ws = _FakeWebSocket()
         await api._run_ws_turn(ws, "unscoped", {}, json.dumps({"type": "ping"}), {}, MagicMock(), "req-1")
         assert ws.types == ["error"]
+        assert request_outcomes() == [("", "create_response_ws", "error", "http_400")]
 
     @pytest.mark.asyncio
-    async def test_invalid_request_body_yields_error_frame(self, api):
+    async def test_invalid_request_body_yields_error_frame(self, api, request_outcomes):
         ws = _FakeWebSocket()
-        raw = _frame(reasoning={"effort": "turbo"})
+        raw = _frame(max_output_tokens="lots")
         await api._run_ws_turn(ws, "unscoped", {}, raw, {}, MagicMock(), "req-1")
         assert ws.types == ["error"]
         assert ws.events[0]["error"]["type"] == "invalid_request_error"
+        assert request_outcomes() == [("", "create_response_ws", "error", "http_400")]
 
     @pytest.mark.asyncio
     async def test_unknown_model_yields_error_frame(self, api, request_outcomes):

@@ -760,10 +760,12 @@ class ModelshipAPI:
         socket loop — any failure is sent as an error frame instead, so one bad turn
         never kills the connection."""
         self._set_request_id(req_id)
+        tracker = RequestTracker("", "create_response_ws")
 
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError:
+            tracker.finish("error", "http_400")
             await websocket.send_text(
                 error_ws_frame(
                     create_error_response("WebSocket frame is not valid JSON.", err_type="invalid_request_error")
@@ -771,6 +773,7 @@ class ModelshipAPI:
             )
             return
         if not isinstance(msg, dict) or msg.get("type") != "response.create":
+            tracker.finish("error", "http_400")
             await websocket.send_text(
                 error_ws_frame(
                     create_error_response(
@@ -788,11 +791,12 @@ class ModelshipAPI:
         try:
             request = ResponsesRequest(**body)
         except ValidationError as exc:
+            tracker.finish("error", "http_400")
             await websocket.send_text(error_ws_frame(responses_utils.responses_validation_error(exc)))
             return
         request.stream = True
         model = request.model or ""
-        tracker = RequestTracker(model, "create_response_ws")
+        tracker.model = model
 
         try:
             handle = self._get_handle(request.model, tracker)
