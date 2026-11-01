@@ -233,7 +233,7 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 |---|---|---|---|
 | `ModelshipHighP99Latency` | P99 of one model's successful requests of one operation > 30s | 5m | End-to-end latency is very high |
 | `ModelshipModelHighErrorRate` | One model's errors > 5% of its requests, cancelled ones excluded, above 0.05 requests/s | 5m | A model is failing while the cluster-wide rate may look fine |
-| `ModelshipHighQueueDepth` | Waiting requests > 10 | 5m | vLLM engine is falling behind |
+| `ModelshipHighQueueDepth` | One model's requests queued for a replica > 10 | 5m | A model's replicas are falling behind |
 | `ModelshipPreemptions` | Preemption rate > 0 | 5m | GPU memory pressure causing request eviction |
 | `ModelshipClientDisconnects` | Cancelled requests > 1/min | 5m | Clients timing out or dropping connections |
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |

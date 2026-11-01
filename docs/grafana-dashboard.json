@@ -1059,7 +1059,7 @@
       }
     },
     {
-      "title": "vLLM Engine Requests",
+      "title": "Requests Queued for a Replica",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -1074,8 +1074,8 @@
       },
       "targets": [
         {
-          "expr": "ray_vllm_num_requests_waiting{model_name=~\"$model\"}",
-          "legendFormat": "vLLM waiting"
+          "expr": "sum(ray_serve_deployment_queued_queries{application=~\"($gateway)\\\\.($model)-[0-9a-f]{10}\"}) by (application)",
+          "legendFormat": "{{ application }}"
         }
       ],
       "fieldConfig": {
