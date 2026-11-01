@@ -186,11 +186,11 @@ The dashboard has 9 rows:
 |---|---|---|
 | **Overview** | Request rate, error rate, gateway replica requests in progress, models loaded, client disconnects | `ray_modelship_*`, `ray_serve_*` |
 | **Latency** | Gateway P50/P95/P99, per-model latency, per-usecase latency (generate, TTS, image, STT, embed), per-model time to first token | `ray_modelship_*` |
-| **vLLM Engine** | KV cache usage, TTFT, inter-token latency, vLLM engine requests, preemptions, prefix cache hit rate, and token throughput for `vllm` and `llama_server` | `ray_vllm_*`, `ray_modelship_engine_*` |
+| **vLLM Engine** | KV cache usage, TTFT, inter-token latency, vLLM engine requests, preemptions, prefix cache hit rate, queue wait time, end-to-end latency | `ray_vllm_*` |
 | **GPU & System** | GPU utilization, GPU memory, CPU, system memory (cluster aggregate) | `ray_node_*` |
 | **Ray Serve** | Health check latency, request count, deployment processing latency, HTTP request latency | `ray_serve_*` |
-| **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s | `ray_modelship_*`, `ray_serve_*` |
-| **Alerts** | Error rate %, KV cache usage, vLLM engine requests, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_node_*` |
+| **Operational** | Model load time, load failures, resource cleanup errors, streaming chunks/s, token throughput for `vllm` and `llama_server` | `ray_modelship_*`, `ray_serve_*` |
+| **Alerts** | Error rate %, KV cache usage, requests queued for a replica, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_serve_*`, `ray_node_*` |
 | **Cluster / HA** | Model app status, gateway reconciles, Ray Serve replica requests per model, gateway replicas behind the routing generation, gateway watch errors, state-store latency/errors, models changed by deploys | `ray_modelship_*`, `ray_serve_*` |
 | **Per-Node Resources** | GPU utilization/memory, CPU, system memory broken out by node (filtered by the Node dropdown) | `ray_node_*` |
 
@@ -233,11 +233,10 @@ Then reload Prometheus (`kill -HUP <pid>` or `POST /-/reload` if `--web.enable-l
 |---|---|---|---|
 | `ModelshipHighP99Latency` | P99 of one model's successful requests of one operation > 30s | 5m | End-to-end latency is very high |
 | `ModelshipModelHighErrorRate` | One model's errors > 5% of its requests, cancelled ones excluded, above 0.05 requests/s | 5m | A model is failing while the cluster-wide rate may look fine |
-| `ModelshipHighQueueDepth` | Waiting requests > 10 | 5m | vLLM engine is falling behind |
+| `ModelshipHighQueueDepth` | One model's requests queued for a replica > 10 | 5m | A model's replicas are falling behind |
 | `ModelshipPreemptions` | Preemption rate > 0 | 5m | GPU memory pressure causing request eviction |
 | `ModelshipClientDisconnects` | Cancelled requests > 1/min | 5m | Clients timing out or dropping connections |
 | `ModelshipGPUMemoryPressure` | Available GPU memory < 1 GB | 5m | GPU is nearly out of memory |
-| `ModelshipHighTTFT` | TTFT P99 > 5s | 5m | Users waiting too long for first token |
 | `ModelshipModelHighTTFT` | One model's time to first token P99 > 5s | 5m | Streaming requests to a model wait too long, on any loader that streams |
 | `ModelshipAppUnhealthy` | `ray_serve_application_status` == 2 (UNHEALTHY) | 5m | A Serve application has an unhealthy deployment |
 | `ModelshipDeployStuck` | `ray_serve_application_status` == 5 (DEPLOYING) | 30m | A Serve application is waiting for capacity or a slow model load |
@@ -251,7 +250,7 @@ All thresholds are starting points. Adjust based on your deployment:
 
 - **Error rate**: 5% is aggressive — if you run small models that occasionally OOM, raise to 10%.
 - **P99 latency**: 30s works for chat completions with long outputs. For embeddings or TTS, consider lowering to 5-10s by adding rules for their `operation`.
-- **Queue depth**: 10 assumes a single vLLM instance. Scale proportionally with replicas.
+- **Queue depth**: 10 is one model's total across its replicas. Scale proportionally with replicas.
 - **KV cache**: 95% is the danger zone. If you use prefix caching heavily, 90% may be more appropriate.
 - **TTFT**: 5s is generous. For interactive chat, consider 2-3s.
 - **GPU memory**: 1 GB threshold assumes you're not running anything else on the GPU. Raise if you have shared workloads.

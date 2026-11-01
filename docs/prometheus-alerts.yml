@@ -136,14 +136,18 @@ groups:
             requests/s.
 
       - alert: ModelshipHighQueueDepth
-        expr: ray_vllm_num_requests_waiting > 10
+        expr: |
+          sum by (application) (
+            ray_serve_deployment_queued_queries{application=~".+\\..+-[0-9a-f]{10}"}
+          ) > 10
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "vLLM request queue depth > 10"
+          summary: "Request queue depth > 10 ({{ $labels.application }})"
           description: >-
-            {{ $value }} requests waiting in the vLLM queue.
+            {{ $value }} requests queued for a replica of
+            {{ $labels.application }}.
 
       - alert: ModelshipPreemptions
         expr: rate(ray_vllm_num_preemptions_total[5m]) > 0
@@ -175,20 +179,6 @@ groups:
           summary: "GPU memory available < 1 GB"
           description: >-
             GPU {{ $labels.GpuIndex }} has only {{ $value | humanize }}MB free.
-
-      - alert: ModelshipHighTTFT
-        expr: |
-          histogram_quantile(0.99,
-            sum(rate(ray_vllm_time_to_first_token_seconds_bucket[5m])) by (le)
-          ) > 5
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Time to first token P99 > 5s"
-          description: >-
-            TTFT P99 is {{ $value | humanizeDuration }} — users are waiting
-            too long for the first token.
 
       - alert: ModelshipModelHighTTFT
         expr: |
