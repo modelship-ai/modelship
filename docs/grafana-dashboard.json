@@ -306,7 +306,7 @@
       "type": "gauge",
       "gridPos": {
         "h": 8,
-        "w": 4,
+        "w": 6,
         "x": 0,
         "y": 19
       },
@@ -350,8 +350,8 @@
       "type": "timeseries",
       "gridPos": {
         "h": 8,
-        "w": 5,
-        "x": 4,
+        "w": 6,
+        "x": 6,
         "y": 19
       },
       "id": 21,
@@ -384,8 +384,8 @@
       "type": "timeseries",
       "gridPos": {
         "h": 8,
-        "w": 5,
-        "x": 9,
+        "w": 6,
+        "x": 12,
         "y": 19
       },
       "id": 22,
@@ -410,42 +410,12 @@
       }
     },
     {
-      "title": "Token Throughput",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 5,
-        "x": 14,
-        "y": 19
-      },
-      "id": 23,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "targets": [
-        {
-          "expr": "sum(rate(ray_modelship_engine_prompt_tokens_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (model)",
-          "legendFormat": "prompt {{ model }}"
-        },
-        {
-          "expr": "sum(rate(ray_modelship_engine_generation_tokens_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (model)",
-          "legendFormat": "generated {{ model }}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "tok/s"
-        }
-      }
-    },
-    {
       "title": "vLLM Engine Requests",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
-        "w": 5,
-        "x": 19,
+        "w": 6,
+        "x": 18,
         "y": 19
       },
       "id": 24,
@@ -822,7 +792,7 @@
       "type": "timeseries",
       "gridPos": {
         "h": 8,
-        "w": 6,
+        "w": 5,
         "x": 0,
         "y": 54
       },
@@ -852,8 +822,8 @@
       "type": "stat",
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 6,
+        "w": 4,
+        "x": 5,
         "y": 54
       },
       "id": 51,
@@ -889,8 +859,8 @@
       "type": "stat",
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 12,
+        "w": 5,
+        "x": 9,
         "y": 54
       },
       "id": 52,
@@ -926,8 +896,8 @@
       "type": "timeseries",
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 18,
+        "w": 5,
+        "x": 14,
         "y": 54
       },
       "id": 53,
@@ -944,6 +914,36 @@
       "fieldConfig": {
         "defaults": {
           "unit": "cps"
+        }
+      }
+    },
+    {
+      "title": "Token Throughput",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 5,
+        "x": 19,
+        "y": 54
+      },
+      "id": 23,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(ray_modelship_engine_prompt_tokens_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (model)",
+          "legendFormat": "prompt {{ model }}"
+        },
+        {
+          "expr": "sum(rate(ray_modelship_engine_generation_tokens_total{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (model)",
+          "legendFormat": "generated {{ model }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "tok/s"
         }
       }
     },
@@ -1121,8 +1121,8 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(ray_vllm_time_to_first_token_seconds_bucket{model_name=~\"$model\"}[5m])) by (le))",
-          "legendFormat": "p99"
+          "expr": "histogram_quantile(0.99, sum(rate(ray_modelship_time_to_first_token_seconds_bucket{gateway=~\"$gateway\", model=~\"$model\"}[5m])) by (le, model))",
+          "legendFormat": "p99 {{ model }}"
         }
       ],
       "fieldConfig": {

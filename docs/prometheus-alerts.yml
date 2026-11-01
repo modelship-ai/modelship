@@ -180,20 +180,6 @@ groups:
           description: >-
             GPU {{ $labels.GpuIndex }} has only {{ $value | humanize }}MB free.
 
-      - alert: ModelshipHighTTFT
-        expr: |
-          histogram_quantile(0.99,
-            sum(rate(ray_vllm_time_to_first_token_seconds_bucket[5m])) by (le)
-          ) > 5
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Time to first token P99 > 5s"
-          description: >-
-            TTFT P99 is {{ $value | humanizeDuration }} — users are waiting
-            too long for the first token.
-
       - alert: ModelshipModelHighTTFT
         expr: |
           histogram_quantile(0.99,
