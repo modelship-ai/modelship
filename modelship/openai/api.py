@@ -188,8 +188,6 @@ def _recorded(tracker: RequestTracker):
 
 
 def _validation_error_from_cause(cause: BaseException) -> ErrorResponse:
-    # OpenAI-style 400 for client-side validation failures (e.g. vLLM's
-    # VLLMValidationError on context overflow, which subclasses ValueError).
     # A pydantic ValidationError's .args is only () locally; once it crosses the
     # Ray pickle boundary it becomes (model_title, [line_errors], ...) — args[0]
     # would be a bare model name like "TranscriptionRequest", not a useful
@@ -424,9 +422,6 @@ class ModelshipAPI:
         try:
             return await response_gen.__anext__(), None
         except RayTaskError as e:
-            # Loader code raised across the Ray boundary. Treat ValueError-family
-            # causes (e.g. vLLM's VLLMValidationError on context overflow) as
-            # OpenAI-style 400s rather than masking them as 500s.
             cause = e.cause if isinstance(e.cause, BaseException) else None
             if isinstance(cause, ValueError):
                 logger.info("Validation error for model=%s: %s", model, cause)
