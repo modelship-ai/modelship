@@ -112,7 +112,7 @@ class OpenAIServingImage:
         steps = self.config.num_inference_steps
         guidance = self.config.guidance_scale
 
-        def _run(stop: threading.Event) -> ImageGenerationResponse:
+        def run(stop: threading.Event) -> ImageGenerationResponse:
             images = self.pipeline(  # type: ignore[reportCallIssue]
                 prompt=request.prompt,
                 num_images_per_prompt=request.n,
@@ -126,7 +126,7 @@ class OpenAIServingImage:
 
         # Inference and PNG/base64 encoding are both CPU-bound; run the whole
         # chain in the executor so the event loop stays responsive.
-        response: ImageGenerationResponse = await self._run_blocking(_run)
+        response: ImageGenerationResponse = await self._run_blocking(run)
         logger.log(TRACE, "image response %s: num_images=%d", request_id, len(response.data))
         return response
 
@@ -150,8 +150,8 @@ class OpenAIServingImage:
 
         # All image decode / resize / mask work is CPU-bound; run it in the
         # executor alongside inference and encoding so the event loop is never
-        # blocked. _run returns the final response (or an error response).
-        def _run(stop: threading.Event) -> ImageGenerationResponse | ErrorResponse:
+        # blocked.
+        def run(stop: threading.Event) -> ImageGenerationResponse | ErrorResponse:
             try:
                 # Decode the input once; derive both the RGB image and (if
                 # needed) the alpha mask from it.
@@ -201,7 +201,7 @@ class OpenAIServingImage:
             ).images
             return _build_response(images, revised_prompt=request.prompt)
 
-        response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(_run)
+        response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(run)
         if isinstance(response, ImageGenerationResponse):
             logger.log(TRACE, "image edit response %s: num_images=%d", request_id, len(response.data))
         return response
@@ -225,7 +225,7 @@ class OpenAIServingImage:
         strength = request.strength if request.strength is not None else _DEFAULT_VARIATION_STRENGTH
 
         # Decode / resize / encode are CPU-bound; keep them off the event loop.
-        def _run(stop: threading.Event) -> ImageGenerationResponse | ErrorResponse:
+        def run(stop: threading.Event) -> ImageGenerationResponse | ErrorResponse:
             try:
                 image = _load_image(image_data, width, height)
             except ValueError as e:
@@ -241,7 +241,7 @@ class OpenAIServingImage:
             ).images
             return _build_response(images, revised_prompt=None)
 
-        response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(_run)
+        response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(run)
         if isinstance(response, ImageGenerationResponse):
             logger.log(TRACE, "image variation response %s: num_images=%d", request_id, len(response.data))
         return response
