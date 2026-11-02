@@ -256,11 +256,11 @@ class BaseInfer[Prepared](ABC):
                 logger.info("responses request %s aborted: client disconnected", request_id)
                 return
             except Exception as exc:
-                message = client_error(exc)
+                message, code = client_error(exc), "invalid_prompt"
                 if message is None:
                     logger.exception("responses request %s failed mid-stream", request_id)
-                    message = "Internal error during generation"
-                for event in translator.fail(message):
+                    message, code = "Internal error during generation", "server_error"
+                for event in translator.fail(message, code):
                     yield event
                 return
             for event in translator.finish():

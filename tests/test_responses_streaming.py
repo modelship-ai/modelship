@@ -54,7 +54,7 @@ def _events_then_fail(translator: ResponsesStreamTranslator, chunks, message: st
     events.extend(translator.start())
     for c in chunks:
         events.extend(translator.process(c))
-    events.extend(translator.fail(message))
+    events.extend(translator.fail(message, "server_error"))
     return events
 
 
@@ -250,7 +250,7 @@ class TestFailedStream:
         assert _types(events) == ["response.created", "response.in_progress", "response.failed"]
         failed = events[-1]["response"]
         assert failed["status"] == "failed"
-        assert failed["error"] == {"message": "boom"}
+        assert failed["error"] == {"code": "server_error", "message": "boom"}
         assert failed["output"] == []
 
     def test_fail_mid_message_closes_the_open_item_with_partial_text(self):

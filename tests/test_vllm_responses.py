@@ -75,6 +75,40 @@ async def test_background_is_not_rejected_before_engine_ops_touched():
 
 
 @pytest.mark.asyncio
+async def test_a_chat_tool_choice_naming_no_tool_returns_400():
+    infer = _make_infer()
+    request = ChatCompletionRequest(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "a", "parameters": {"type": "object"}}}],
+        tool_choice={"type": "function", "function": {"name": "nope"}},
+    )
+
+    result = await infer.create_chat_completion(request, _FakeRawRequest())
+
+    assert isinstance(result, ErrorResponse)
+    assert result._http_status == 400
+    assert result.error.param == "tool_choice"
+
+
+@pytest.mark.asyncio
+async def test_a_responses_tool_choice_naming_no_tool_returns_400():
+    infer = _make_infer()
+    request = ResponsesRequest(
+        model="m",
+        input="hi",
+        tools=[{"type": "function", "name": "a", "parameters": {"type": "object"}}],
+        tool_choice={"type": "function", "name": "nope"},
+    )
+
+    result = await infer.create_response(request, raw_request=_FakeRawRequest())
+
+    assert isinstance(result, ErrorResponse)
+    assert result._http_status == 400
+    assert result.error.param == "tool_choice"
+
+
+@pytest.mark.asyncio
 async def test_invalid_reasoning_effort_returns_400():
     infer = _make_infer()
     request = ResponsesRequest(model="m", input="hi", reasoning={"effort": "turbo"})

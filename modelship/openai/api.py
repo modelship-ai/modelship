@@ -33,6 +33,7 @@ from modelship.metrics import (
 from modelship.openai.auth import resolve_identity
 from modelship.openai.mcp import loop as mcp_loop
 from modelship.openai.protocol import (
+    ERROR_SSE_PREFIX,
     TERMINAL_EVENT_TYPES,
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -55,16 +56,17 @@ from modelship.openai.protocol import (
     TranslationResponse,
     TranslationResponseVerbose,
     create_error_response,
+    encode_error_sse,
     encode_sse_event,
     error_ws_frame,
     failure_event_from_frames,
     frame_sse,
+    server_error,
 )
 from modelship.openai.protocol.responses.adapter import UnsupportedResponsesFeatureError
 from modelship.openai.protocol.responses.streaming import RESPONSE_FAILED_SSE_PREFIX
 from modelship.openai.state.responses import mcp_listings_in
 from modelship.openai.utils import responses as responses_utils
-from modelship.openai.utils.chat import ERROR_SSE_PREFIX, encode_error_sse
 from modelship.state import get_state_store
 from modelship.utils import random_uuid
 
@@ -127,8 +129,11 @@ def build_app():
 
     @app.exception_handler(Exception)
     async def log_unhandled_exception(request: Request, exc: Exception):
+        from modelship.logging import request_id_var
+
+        request_id_var.set(request_id_var.get() or random_uuid())
         logger.exception("%s %s -> 500: %s", request.method, request.url.path, exc)
-        return JSONResponse(status_code=500, content={"detail": str(exc)})
+        return _error_response(server_error())
 
     return app
 
@@ -157,10 +162,9 @@ def _stream_error_chunk(endpoint: str, model: str, created_frame: Any, last_fram
     — raising would just abort the connection with no body. Message is generic; details
     go to the server log instead. /v1/responses needs a typed terminal event rebuilt from
     the frames already sent; every other endpoint takes the bare `data:` error object."""
-    message = "Internal error during generation"
+    error = server_error()
     if endpoint == "create_response":
-        return encode_sse_event(failure_event_from_frames(created_frame, last_frame, message, model=model))
-    error = create_error_response(message=message, err_type="api_error", status_code=500)
+        return encode_sse_event(failure_event_from_frames(created_frame, last_frame, error.error.message, model=model))
     return encode_error_sse(error)
 
 
@@ -184,8 +188,6 @@ def _recorded(tracker: RequestTracker):
 
 
 def _validation_error_from_cause(cause: BaseException) -> ErrorResponse:
-    # OpenAI-style 400 for client-side validation failures (e.g. vLLM's
-    # VLLMValidationError on context overflow, which subclasses ValueError).
     # A pydantic ValidationError's .args is only () locally; once it crosses the
     # Ray pickle boundary it becomes (model_title, [line_errors], ...) — args[0]
     # would be a bare model name like "TranscriptionRequest", not a useful
@@ -420,19 +422,16 @@ class ModelshipAPI:
         try:
             return await response_gen.__anext__(), None
         except RayTaskError as e:
-            # Loader code raised across the Ray boundary. Treat ValueError-family
-            # causes (e.g. vLLM's VLLMValidationError on context overflow) as
-            # OpenAI-style 400s rather than masking them as 500s.
             cause = e.cause if isinstance(e.cause, BaseException) else None
-            if isinstance(cause, ValueError | TypeError | OverflowError):
+            if isinstance(cause, ValueError):
                 logger.info("Validation error for model=%s: %s", model, cause)
                 return _error_response(_validation_error_from_cause(cause)), "validation_error"
             logger.exception("Initial response generation failed for model=%s", model)
-            return JSONResponse(status_code=500, content={"detail": str(e)}), "unhandled"
-        except Exception as e:
+            return _error_response(server_error()), "unhandled"
+        except Exception:
             # Catch failures during initial generator creation or the very first yield
             logger.exception("Initial response generation failed for model=%s", model)
-            return JSONResponse(status_code=500, content={"detail": str(e)}), "unhandled"
+            return _error_response(server_error()), "unhandled"
 
     async def _handle_response(
         self,
@@ -874,25 +873,17 @@ class ModelshipAPI:
                 status, error_type = "cancelled", None
         except RayTaskError as exc:
             cause = exc.cause if isinstance(exc.cause, BaseException) else None
-            if isinstance(cause, ValueError | TypeError | OverflowError):
+            if isinstance(cause, ValueError):
                 status, error_type = "error", "validation_error"
                 err = _validation_error_from_cause(cause)
             else:
                 logger.exception("responses request %s failed over websocket", req_id)
                 status, error_type = "error", "unhandled"
-                err = create_error_response(
-                    "Internal error during generation",
-                    err_type="api_error",
-                    status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-                )
+                err = server_error()
         except Exception:
             logger.exception("responses request %s failed over websocket", req_id)
             status, error_type = "error", "unhandled"
-            err = create_error_response(
-                "Internal error during generation",
-                err_type="api_error",
-                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-            )
+            err = server_error()
         except BaseException:
             if status == "ok":
                 status, error_type = "cancelled", None

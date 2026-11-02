@@ -739,8 +739,7 @@ class TestRequestOutcomes:
 
     @pytest.mark.asyncio
     async def test_an_error_chunk_mid_stream_is_recorded_as_a_stream_error(self, api, request_outcomes):
-        from modelship.openai.protocol import create_error_response
-        from modelship.openai.utils.chat import encode_error_sse
+        from modelship.openai.protocol import create_error_response, encode_error_sse
 
         async def mock_gen():
             yield "data: chunk1\n\n"
@@ -754,8 +753,7 @@ class TestRequestOutcomes:
 
     @pytest.mark.asyncio
     async def test_a_client_leaving_after_an_error_chunk_is_recorded_as_a_stream_error(self, api, request_outcomes):
-        from modelship.openai.protocol import create_error_response
-        from modelship.openai.utils.chat import encode_error_sse
+        from modelship.openai.protocol import create_error_response, encode_error_sse
 
         async def mock_gen():
             yield encode_error_sse(create_error_response("engine died", err_type="api_error", status_code=500))

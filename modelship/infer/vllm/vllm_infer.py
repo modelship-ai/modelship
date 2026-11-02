@@ -95,6 +95,7 @@ from modelship.openai.protocol import (
     TranslationResponseVerbose,
     UsageInfo,
     create_error_response,
+    encode_error_sse,
 )
 from modelship.openai.protocol.responses.adapter import (
     UnsupportedResponsesFeatureError,
@@ -105,7 +106,6 @@ from modelship.openai.utils.chat import (
     UnsupportedContentError,
     build_from_parsed,
     encode_chat_sse_chunk,
-    encode_error_sse,
     normalize_chat_messages,
 )
 from modelship.openai.utils.responses import build_response_from_parsed, responses_validation_error
@@ -724,6 +724,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             return create_error_response(
                 message=str(exc), err_type="invalid_request_error", status_code=HTTPStatus.BAD_REQUEST
             )
+        except VllmValidationError as exc:
+            logger.info("Validation error building vllm request: %s", exc)
+            return _to_error_response(exc)
         return await self._render_bundle(vllm_request)
 
     async def _create_chat_completion_stream(
@@ -875,6 +878,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             # Same 400 as the `responses_request_to_chat` failure above.
             logger.info("Validation error building vllm request: %s", exc)
             return responses_validation_error(exc)
+        except VllmValidationError as exc:
+            logger.info("Validation error building vllm request: %s", exc)
+            return _to_error_response(exc)
         return await self._render_bundle(vllm_request)
 
     async def _create_response_no_stream(

@@ -30,6 +30,7 @@ from modelship.openai.protocol import (
     SpeechRequest,
     TranscriptionRequest,
     TranslationRequest,
+    client_safe,
 )
 from modelship.preflight import ModelNotSizedError
 from modelship.utils.accelerator import detect_accelerator
@@ -196,12 +197,12 @@ class ModelDeployment:
             # client disconnect / cancellation).
             try:
                 async for chunk in result:
-                    yield chunk
+                    yield client_safe(chunk)
             finally:
                 GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
         else:
             GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
-            yield result
+            yield client_safe(result)
 
     async def respond(
         self,
@@ -220,12 +221,12 @@ class ModelDeployment:
         if isinstance(result, AsyncGenerator):
             try:
                 async for chunk in result:
-                    yield chunk
+                    yield client_safe(chunk)
             finally:
                 GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
         else:
             GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
-            yield result
+            yield client_safe(result)
 
     async def embed(
         self,
@@ -243,9 +244,9 @@ class ModelDeployment:
         EMBEDDING_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
         if isinstance(result, AsyncGenerator):
             async for chunk in result:
-                yield chunk
+                yield client_safe(chunk)
         else:
-            yield result
+            yield client_safe(result)
 
     async def transcribe(
         self,
@@ -264,9 +265,9 @@ class ModelDeployment:
         TRANSCRIPTION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
         if isinstance(result, AsyncGenerator):
             async for chunk in result:
-                yield chunk
+                yield client_safe(chunk)
         else:
-            yield result
+            yield client_safe(result)
 
     async def translate(
         self,
@@ -285,9 +286,9 @@ class ModelDeployment:
         TRANSCRIPTION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
         if isinstance(result, AsyncGenerator):
             async for chunk in result:
-                yield chunk
+                yield client_safe(chunk)
         else:
-            yield result
+            yield client_safe(result)
 
     async def speak(
         self,
@@ -305,9 +306,9 @@ class ModelDeployment:
         TTS_GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
         if isinstance(result, AsyncGenerator):
             async for chunk in result:
-                yield chunk
+                yield client_safe(chunk)
         else:
-            yield result
+            yield client_safe(result)
 
     async def imagine(
         self,
@@ -325,9 +326,9 @@ class ModelDeployment:
         IMAGE_GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
         if isinstance(result, AsyncGenerator):
             async for chunk in result:
-                yield chunk
+                yield client_safe(chunk)
         else:
-            yield result
+            yield client_safe(result)
 
     async def edit_image(
         self,
@@ -347,9 +348,9 @@ class ModelDeployment:
         IMAGE_GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
         if isinstance(result, AsyncGenerator):
             async for chunk in result:
-                yield chunk
+                yield client_safe(chunk)
         else:
-            yield result
+            yield client_safe(result)
 
     async def vary_image(
         self,
@@ -368,6 +369,6 @@ class ModelDeployment:
         IMAGE_GENERATION_DURATION_SECONDS.observe(time.monotonic() - start, tags={"model": self.config.name})
         if isinstance(result, AsyncGenerator):
             async for chunk in result:
-                yield chunk
+                yield client_safe(chunk)
         else:
-            yield result
+            yield client_safe(result)
