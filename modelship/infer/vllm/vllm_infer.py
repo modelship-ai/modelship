@@ -718,8 +718,6 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         try:
             vllm_request = engine_ops.build_vllm_request(request, cache_salt=raw_request.identity)
         except ValidationError as exc:
-            # pydantic's .args is () here (str(exc) is the only useful message),
-            # matching api.py's _validation_error_from_cause for the same reason.
             logger.info("Validation error building vllm request: %s", exc)
             return create_error_response(
                 message=str(exc), err_type="invalid_request_error", status_code=HTTPStatus.BAD_REQUEST

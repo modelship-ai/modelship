@@ -326,8 +326,9 @@ def test_a_background_dispatch_failure_is_stored_without_its_text(gateway, caplo
     _assert_hidden(record.text, caplog)
 
 
-def test_a_background_client_failure_keeps_its_text(gateway):
-    gateway.infer.result = _reply(400)
+@pytest.mark.parametrize("result", CLIENT_FAILURES.values(), ids=CLIENT_FAILURES.keys())
+def test_a_background_client_failure_keeps_its_text(gateway, result):
+    gateway.infer.result = result
 
     record = _background_record(gateway.client)
 
