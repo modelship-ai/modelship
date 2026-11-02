@@ -106,10 +106,12 @@ class SherpaOnnxInfer(BaseInfer):
         return RawSpeechResponse(audio=wav)
 
     async def _generate(self, text: str, sid: int, speed: float) -> bytes:
-        def run(stop: threading.Event) -> Any:
-            return self.tts.generate(text, sid, speed, callback=lambda _samples, _progress: 0 if stop.is_set() else 1)
-
-        result = await self.run_blocking(run, exclusive=False)
+        result = await self.run_blocking(
+            lambda stop: self.tts.generate(
+                text, sid, speed, callback=lambda _samples, _progress: 0 if stop.is_set() else 1
+            ),
+            exclusive=False,
+        )
         samples = np.asarray(result.samples, dtype=np.float32)
         return to_wav(samples, result.sample_rate)
 
