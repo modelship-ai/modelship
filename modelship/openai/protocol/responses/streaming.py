@@ -70,7 +70,7 @@ def store_failure_event(terminal_payload: dict[str, Any], message: str) -> dict[
     response = {
         **(terminal_payload.get("response") or {}),
         "status": "failed",
-        "error": {"message": message},
+        "error": {"code": "server_error", "message": message},
     }
     return {
         "type": "response.failed",

@@ -15,8 +15,11 @@ from mcp_types import INVALID_REQUEST
 from mcp.client.client import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
+from modelship.logging import get_logger
 from modelship.openai.mcp.spec import McpToolSpec
 from modelship.openai.protocol.responses.schemas import McpListToolsTool
+
+logger = get_logger("openai.mcp.client")
 
 LIST_TOOLS_TIMEOUT_S = 30
 CALL_TOOL_TIMEOUT_S = 60
@@ -132,7 +135,8 @@ class McpConnections:
         except MCPError as exc:
             raise McpCallError(f"server {spec.server_label!r}: tools/list failed: {exc.message}") from exc
         except Exception as exc:
-            raise McpCallError(f"server {spec.server_label!r}: tools/list failed: {exc}") from exc
+            logger.warning("server %r: tools/list failed: %r", spec.server_label, exc)
+            raise McpCallError(f"server {spec.server_label!r}: tools/list failed.") from exc
 
         return [
             McpListToolsTool(
@@ -159,7 +163,8 @@ class McpConnections:
         except MCPError as exc:
             raise McpCallError(f"tool {name!r} on server {spec.server_label!r} failed: {exc.message}") from exc
         except Exception as exc:
-            raise McpCallError(f"tool {name!r} on server {spec.server_label!r} failed: {exc}") from exc
+            logger.warning("tool %r on server %r failed: %r", name, spec.server_label, exc)
+            raise McpCallError(f"tool {name!r} on server {spec.server_label!r} failed.") from exc
 
         output = _flatten_content(result.content)
         if result.is_error:

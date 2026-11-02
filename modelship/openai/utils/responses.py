@@ -25,6 +25,7 @@ from modelship.openai.protocol import (
     ResponsesRequest,
     UsageInfo,
     create_error_response,
+    server_error,
 )
 from modelship.openai.protocol.base import random_uuid
 from modelship.openai.protocol.responses.adapter import (
@@ -215,8 +216,8 @@ def _not_background_error(response_id: str) -> ResponsesApiError:
     )
 
 
-def _mark_failed(response: dict, message: str) -> dict:
-    return {**response, "status": "failed", "error": {"message": message}}
+def _mark_failed(response: dict, message: str, code: str) -> dict:
+    return {**response, "status": "failed", "error": {"code": code, "message": message}}
 
 
 def as_input_items(input_: str | list[Any]) -> list[Any]:
@@ -568,7 +569,7 @@ async def run_background(
         except Exception:
             logger.exception("background response %s: dispatch failed", response_id)
             tracker.finish("error", "unhandled")
-            await _write_failed(store, identity, response_id, "Generation failed to start.")
+            await _write_failed(store, identity, response_id, server_error())
             return
         piped = persist_response(response_gen, store, identity=identity, conditional=True)
         if buffer is not None:
@@ -602,7 +603,10 @@ async def run_background(
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
 
-        if failed_response is not None:
+        if isinstance(failed_response, ErrorResponse):
+            tracker.finish("error", "inference_error")
+            await _write_failed(store, identity, response_id, failed_response)
+        elif failed_response is not None:
             tracker.finish("error", "stream_error")
             # persist_response doesn't persist response.failed events; the poller needs it stored.
             await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed_response)
@@ -612,7 +616,7 @@ async def run_background(
                     tracker.finish("cancelled")
             tracker.finish("error", "stream_error")
             # Stream ended with no terminal event (cancel race or actor crash) — don't leave a poller hanging.
-            await _write_failed(store, identity, response_id, "Generation ended unexpectedly without a terminal event.")
+            await _write_failed(store, identity, response_id, server_error())
         else:
             tracker.finish("ok")
     finally:
@@ -622,23 +626,25 @@ async def run_background(
             await buffer.flush_and_discard()
 
 
-async def _write_failed(store: StateStore, identity: str, response_id: str, message: str) -> None:
+async def _write_failed(store: StateStore, identity: str, response_id: str, error: ErrorResponse) -> None:
     record = await responses_state.read_async(store, identity, response_id)
     if record is not None:
-        failed = _mark_failed(record.get("response") or {}, message)
+        code = "invalid_prompt" if error._http_status < 500 else "server_error"
+        failed = _mark_failed(record.get("response") or {}, error.error.message, code)
         await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
 
 
-async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict | None]:
-    """Consume *piped* (the `persist_response`-wrapped event stream) to completion.
-    Returns `(saw_ok_terminal, failed_response)` — `failed_response` carries a
-    loader-side `response.failed` payload, which `persist_response` doesn't persist itself."""
+async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict | ErrorResponse | None]:
+    """Consume *piped* (the `persist_response`-wrapped event stream) to completion."""
     saw_ok_terminal = False
-    failed_response: dict | None = None
+    failed_response: dict | ErrorResponse | None = None
     try:
         async for item in piped:
+            if isinstance(item, ErrorResponse):
+                failed_response = item
+                continue
             if not isinstance(item, dict):
-                continue  # persist_response's own terminal-write-failed signal; nothing new to persist
+                continue
             event_type = item.get("type")
             if event_type in TERMINAL_EVENT_TYPES:
                 saw_ok_terminal = True
@@ -726,7 +732,9 @@ async def reconcile_staleness(store: StateStore, identity: str, response_id: str
         return record
     if alive:
         return record
-    failed = _mark_failed(response, "Background response orphaned: its worker stopped reporting progress.")
+    failed = _mark_failed(
+        response, "Background response orphaned: its worker stopped reporting progress.", "server_error"
+    )
     try:
         await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
     except StateStoreUnavailableError:

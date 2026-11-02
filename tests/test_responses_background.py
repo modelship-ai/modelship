@@ -251,7 +251,7 @@ class TestBackgroundCreate:
         get_result = await api.get_response(response_id, _raw_request())
         body = json.loads(bytes(get_result.body))
         assert body["status"] == "failed"
-        assert body["error"]["message"] == "Generation failed to start."
+        assert body["error"]["code"] == "server_error"
         assert request_outcomes() == [("m", "create_response", "error", "unhandled")]
 
 

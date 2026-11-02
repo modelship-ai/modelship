@@ -32,7 +32,7 @@ Library logs (Ray, vLLM, transformers) are silent unless the level is `DEBUG` or
 
 Every API request is assigned a unique request ID that appears in all log lines for that request — both in the API gateway process and in the model deployment actor. This allows tracing a request end-to-end across Ray actor boundaries.
 
-A server error (5xx, or a failure mid-stream that isn't the client's) reaches the client as a fixed message carrying only this request ID; the error itself is in the logs under that ID.
+An unexpected server error (5xx, or a failure mid-stream that isn't the client's) reaches the client as a fixed message carrying only this request ID; the error itself is in the logs under that ID.
 
 Text format example:
 ```

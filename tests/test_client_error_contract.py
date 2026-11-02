@@ -174,12 +174,28 @@ RESPONSES_STREAM_SERVER_FAILURES = {
     "failed with server_error": _stream(_CREATED, _failed(code="server_error", message=MARKER)),
     "raises mid-stream": _stream_then_raise(_CREATED),
 }
+BACKGROUND_SERVER_FAILURES = {
+    "5xx reply": _reply(502),
+    "raises": _raise(RuntimeError),
+    "failed without code": _stream(_CREATED, _failed(message=MARKER)),
+    "raises mid-stream": _stream_then_raise(_CREATED),
+}
 
 
 def _assert_hidden(text, caplog):
     assert MARKER not in text
     assert REQUEST_ID.search(text), text
     assert MARKER in caplog.text
+
+
+def _background_record(client):
+    started = client.post("/v1/responses", json={"model": "m", "input": "hi", "background": True})
+    for _ in range(100):
+        record = client.get(f"/v1/responses/{started.json()['id']}")
+        if record.json()["status"] == "failed":
+            return record
+        time.sleep(0.05)
+    raise AssertionError(record.text)
 
 
 def _ws_frames(client):
@@ -292,21 +308,40 @@ def test_a_websocket_client_error_keeps_its_text(gateway):
     assert MARKER in str(frames)
 
 
-@pytest.mark.parametrize(
-    "result",
-    [_stream(_CREATED, _failed(message=MARKER)), _stream_then_raise(_CREATED)],
-    ids=["failed without code", "raises mid-stream"],
-)
+@pytest.mark.parametrize("result", BACKGROUND_SERVER_FAILURES.values(), ids=BACKGROUND_SERVER_FAILURES.keys())
 def test_a_background_failure_is_stored_without_its_text(gateway, result, caplog):
     gateway.infer.result = result
 
-    started = gateway.client.post("/v1/responses", json={"model": "m", "input": "hi", "background": True})
-    for _ in range(100):
-        record = gateway.client.get(f"/v1/responses/{started.json()['id']}")
-        if record.json()["status"] == "failed":
-            break
-        time.sleep(0.05)
+    record = _background_record(gateway.client)
 
-    assert record.json()["status"] == "failed"
-    assert MARKER not in record.text
+    assert record.json()["error"]["code"] == "server_error"
+    _assert_hidden(record.text, caplog)
+
+
+def test_a_background_dispatch_failure_is_stored_without_its_text(gateway, caplog):
+    with patch("modelship.openai.utils.responses.get_disconnect_registry", side_effect=RuntimeError(MARKER)):
+        record = _background_record(gateway.client)
+
+    assert record.json()["error"]["code"] == "server_error"
+    _assert_hidden(record.text, caplog)
+
+
+def test_a_background_client_failure_keeps_its_text(gateway):
+    gateway.infer.result = _reply(400)
+
+    record = _background_record(gateway.client)
+
+    assert record.json()["error"] == {"code": "invalid_prompt", "message": MARKER}
+
+
+def test_an_mcp_server_failure_reaches_the_client_without_its_text(gateway, caplog):
+    tool = {"type": "mcp", "server_label": "s", "server_url": "https://mcp.example.com/mcp"}
+    with (
+        patch("modelship.openai.mcp.loop.validate_server_url"),
+        patch("modelship.openai.mcp.client.McpConnections._run", side_effect=RuntimeError(MARKER)),
+    ):
+        resp = gateway.client.post("/v1/responses", json={"model": "m", "input": "hi", "tools": [tool]})
+
+    assert resp.json()["error"]["code"] == "server_error"
+    assert MARKER not in resp.text
     assert MARKER in caplog.text

@@ -281,8 +281,20 @@ class TestRealMcpServer:
 
         failed = [e for e in events if e["type"] == "response.failed"]
         assert len(failed) == 1
-        assert "dice" in failed[0]["response"]["error"]["message"]
+        assert failed[0]["response"]["error"] == {
+            "code": "server_error",
+            "message": "mcp server 'dice' discovery failed: server 'dice': tools/list failed.",
+        }
         assert handle.calls == 0
+
+    @pytest.mark.asyncio
+    async def test_a_call_to_an_unreachable_server_fails_with_a_fixed_error(self):
+        url = "http://127.0.0.1:1/mcp"
+        handle = FakeHandle([_roll_call_turn(), _final_answer_turn()])
+
+        output = await _output(handle, _request(url), mcp_listings=_stored(url))
+
+        assert output[0]["error"] == "tool 'roll' on server 'dice' failed."
 
 
 def _request(server_url: str) -> ResponsesRequest:

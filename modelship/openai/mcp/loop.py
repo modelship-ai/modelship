@@ -461,7 +461,7 @@ async def _events(
     tool_index: _ToolIndex = {}
     stitcher = Stitcher(tool_index)
 
-    def _failed_event(message: str) -> dict[str, Any]:
+    def _failed_event(message: str, code: str) -> dict[str, Any]:
         response = build_response_object(
             request,
             status="failed",
@@ -471,7 +471,7 @@ async def _events(
             response_id=response_id,
             created_at=created_at,
             completed_at=int(time.time()),
-            error={"message": message},
+            error={"code": code, "message": message},
             background=bool(request.background),
         )
         return stitcher.stamped("response.failed", response=response.model_dump(mode="json"))
@@ -515,7 +515,7 @@ async def _events(
                 yield stitcher.stamped("response.mcp_list_tools.failed", oi, item_id=list_item_id)
                 yield stitcher.stamped("response.output_item.done", oi, item=failed_item.model_dump(mode="json"))
                 accumulator.append(failed_item.model_dump(mode="json"))
-                yield _failed_event(f"mcp server {spec.server_label!r} discovery failed: {exc}")
+                yield _failed_event(f"mcp server {spec.server_label!r} discovery failed: {exc}", "server_error")
                 return
 
             tools = filter_tools(spec, tools)
@@ -530,7 +530,7 @@ async def _events(
     try:
         check_collisions(specs, discovered, other_tools)
     except ResponsesApiError as exc:
-        yield _failed_event(exc.err.error.message)
+        yield _failed_event(exc.err.error.message, "invalid_prompt")
         return
 
     # --- Approval resume ---------------------------------------------------
