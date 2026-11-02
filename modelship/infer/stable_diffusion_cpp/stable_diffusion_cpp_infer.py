@@ -82,7 +82,7 @@ class StableDiffusionCppInfer(BaseInfer):
         loop = asyncio.get_running_loop()
         sd = await loop.run_in_executor(None, self._load, model_path)
         self.sd = sd
-        self.serving_image = OpenAIServingImage(sd, self.config, self.run_exclusive)
+        self.serving_image = OpenAIServingImage(sd, self.config, self.run_blocking)
 
     def _load(self, model_path: str) -> StableDiffusion:
         c = self.config

@@ -76,7 +76,7 @@ class OpenAIServingImage:
         self,
         pipeline: AutoPipelineForText2Image,
         config: DiffusersConfig,
-        run_exclusive: Callable[[Callable[[threading.Event], Any]], Awaitable[Any]],
+        run_blocking: Callable[[Callable[[threading.Event], Any]], Awaitable[Any]],
         img2img_pipeline: AutoPipelineForImage2Image | None = None,
         inpaint_pipeline: AutoPipelineForInpainting | None = None,
     ):
@@ -84,7 +84,7 @@ class OpenAIServingImage:
         self.config = config
         self.img2img_pipeline = img2img_pipeline
         self.inpaint_pipeline = inpaint_pipeline
-        self._run_exclusive = run_exclusive
+        self._run_blocking = run_blocking
 
     async def create_image_generation(
         self, request: ImageGenerationRequest, raw_request: RawRequestProxy
@@ -126,7 +126,7 @@ class OpenAIServingImage:
 
         # Inference and PNG/base64 encoding are both CPU-bound; run the whole
         # chain in the executor so the event loop stays responsive.
-        response: ImageGenerationResponse = await self._run_exclusive(_run)
+        response: ImageGenerationResponse = await self._run_blocking(_run)
         logger.log(TRACE, "image response %s: num_images=%d", request_id, len(response.data))
         return response
 
@@ -201,7 +201,7 @@ class OpenAIServingImage:
             ).images
             return _build_response(images, revised_prompt=request.prompt)
 
-        response: ImageGenerationResponse | ErrorResponse = await self._run_exclusive(_run)
+        response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(_run)
         if isinstance(response, ImageGenerationResponse):
             logger.log(TRACE, "image edit response %s: num_images=%d", request_id, len(response.data))
         return response
@@ -241,7 +241,7 @@ class OpenAIServingImage:
             ).images
             return _build_response(images, revised_prompt=None)
 
-        response: ImageGenerationResponse | ErrorResponse = await self._run_exclusive(_run)
+        response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(_run)
         if isinstance(response, ImageGenerationResponse):
             logger.log(TRACE, "image variation response %s: num_images=%d", request_id, len(response.data))
         return response

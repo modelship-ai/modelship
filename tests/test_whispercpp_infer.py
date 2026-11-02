@@ -24,7 +24,7 @@ from modelship.openai.protocol import (
     TranslationResponse,
     TranslationResponseVerbose,
 )
-from tests.test_base_infer_exclusive import wait_for_turn
+from tests.test_base_infer_run_blocking import wait_for_turn
 
 
 class _Segment:

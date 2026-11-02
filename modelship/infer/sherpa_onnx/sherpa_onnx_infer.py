@@ -109,7 +109,7 @@ class SherpaOnnxInfer(BaseInfer):
         def run(stop: threading.Event) -> Any:
             return self.tts.generate(text, sid, speed, callback=lambda _samples, _progress: 0 if stop.is_set() else 1)
 
-        result = await self.run_exclusive(run, exclusive=False)
+        result = await self.run_blocking(run, exclusive=False)
         samples = np.asarray(result.samples, dtype=np.float32)
         return to_wav(samples, result.sample_rate)
 
@@ -139,7 +139,7 @@ class SherpaOnnxInfer(BaseInfer):
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, _done)
 
-        worker = asyncio.ensure_future(self.run_exclusive(run, exclusive=False))
+        worker = asyncio.ensure_future(self.run_blocking(run, exclusive=False))
         try:
             while True:
                 item = await queue.get()

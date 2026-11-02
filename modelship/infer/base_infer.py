@@ -129,7 +129,7 @@ class BaseInfer[Prepared](ABC):
             llama_cfg._pinned_mmproj = None
             logger.info("Downloaded mmproj for '%s' -> %s", model_config.name, llama_cfg.mmproj)
 
-    async def run_exclusive(self, fn: Callable[[threading.Event], T], *, exclusive: bool = True) -> T:
+    async def run_blocking(self, fn: Callable[[threading.Event], T], *, exclusive: bool = True) -> T:
         if exclusive:
             await self._exclusive.acquire()
         stop = threading.Event()

@@ -24,7 +24,7 @@ from modelship.openai.protocol import (
     ImageGenerationResponse,
     ImageVariationRequest,
 )
-from tests.test_base_infer_exclusive import ExclusiveInfer, wait_for_turn
+from tests.test_base_infer_run_blocking import ExclusiveInfer, wait_for_turn
 
 
 class _SteppingPipeline:
@@ -106,7 +106,7 @@ def _serving(img2img=None, inpaint=None, pipeline=None, infer=None) -> OpenAISer
     return OpenAIServingImage(
         pipeline=pipeline or _StubPipeline(),  # type: ignore[arg-type]
         config=DiffusersConfig(num_inference_steps=5, guidance_scale=3.0),
-        run_exclusive=(infer or ExclusiveInfer()).run_exclusive,
+        run_blocking=(infer or ExclusiveInfer()).run_blocking,
         img2img_pipeline=img2img,
         inpaint_pipeline=inpaint,
     )

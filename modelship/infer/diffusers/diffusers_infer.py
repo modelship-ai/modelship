@@ -110,7 +110,7 @@ class DiffusersInfer(BaseInfer):
             OpenAIServingImage(
                 pipeline=self._pipeline,
                 config=config,
-                run_exclusive=self.run_exclusive,
+                run_blocking=self.run_blocking,
                 img2img_pipeline=self._img2img,
                 inpaint_pipeline=self._inpaint,
             )

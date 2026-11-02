@@ -53,11 +53,11 @@ class OpenAIServingImage:
         self,
         sd: StableDiffusion,
         config: StableDiffusionCppConfig,
-        run_exclusive: Callable[[Callable[[threading.Event], Any]], Awaitable[Any]],
+        run_blocking: Callable[[Callable[[threading.Event], Any]], Awaitable[Any]],
     ):
         self.sd = sd
         self.config = config
-        self._run_exclusive = run_exclusive
+        self._run_blocking = run_blocking
 
     def _generate(self, **kwargs):
         """Invoke sd.cpp with the per-model defaults applied. Callers supply the
@@ -89,7 +89,7 @@ class OpenAIServingImage:
             images = self._generate(prompt=request.prompt, width=width, height=height, batch_count=request.n)
             return build_response(images, revised_prompt=request.prompt)
 
-        response: ImageGenerationResponse = await self._run_exclusive(_run)
+        response: ImageGenerationResponse = await self._run_blocking(_run)
         logger.log(TRACE, "image response %s: num_images=%d", request_id, len(response.data))
         return response
 
@@ -144,7 +144,7 @@ class OpenAIServingImage:
             images = self._generate(**kwargs)
             return build_response(images, revised_prompt=request.prompt)
 
-        response: ImageGenerationResponse | ErrorResponse = await self._run_exclusive(_run)
+        response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(_run)
         if isinstance(response, ImageGenerationResponse):
             logger.log(TRACE, "image edit response %s: num_images=%d", request_id, len(response.data))
         return response
@@ -172,7 +172,7 @@ class OpenAIServingImage:
             )
             return build_response(images, revised_prompt=None)
 
-        response: ImageGenerationResponse | ErrorResponse = await self._run_exclusive(_run)
+        response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(_run)
         if isinstance(response, ImageGenerationResponse):
             logger.log(TRACE, "image variation response %s: num_images=%d", request_id, len(response.data))
         return response

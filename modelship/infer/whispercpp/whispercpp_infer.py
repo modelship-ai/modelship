@@ -100,7 +100,7 @@ class WhispercppInfer(BaseInfer):
         # pywhispercpp maps to a wrong language.
         if not self._multilingual:
             return "en"
-        (lang, _prob), _all = await self.run_exclusive(lambda _stop: self.model.auto_detect_language(samples))
+        (lang, _prob), _all = await self.run_blocking(lambda _stop: self.model.auto_detect_language(samples))
         return lang
 
     # -- transcription -----------------------------------------------------
@@ -146,7 +146,7 @@ class WhispercppInfer(BaseInfer):
             return create_error_response(f"failed to decode audio: {e}")
 
         decode_kwargs = self._decode_kwargs(request, translate=translate)
-        segments = await self.run_exclusive(
+        segments = await self.run_blocking(
             lambda stop: self.model.transcribe(samples, abort_callback=stop.is_set, **decode_kwargs)
         )
         text = "".join(s.text for s in segments).strip()
@@ -222,7 +222,7 @@ class WhispercppInfer(BaseInfer):
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, _done)
 
-        worker = asyncio.ensure_future(self.run_exclusive(run))
+        worker = asyncio.ensure_future(self.run_blocking(run))
         text_parts: list[str] = []
         try:
             while True:

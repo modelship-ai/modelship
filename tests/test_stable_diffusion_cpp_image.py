@@ -20,7 +20,7 @@ from modelship.openai.protocol import (
     ImageGenerationResponse,
     ImageVariationRequest,
 )
-from tests.test_base_infer_exclusive import ExclusiveInfer
+from tests.test_base_infer_run_blocking import ExclusiveInfer
 
 
 class _StubSD:
@@ -78,7 +78,7 @@ def _serving(sd=None) -> OpenAIServingImage:
         config=StableDiffusionCppConfig(
             sample_steps=5, cfg_scale=3.0, sample_method="euler", scheduler="karras", vae_tiling=True
         ),
-        run_exclusive=ExclusiveInfer().run_exclusive,
+        run_blocking=ExclusiveInfer().run_blocking,
     )
 
 
