@@ -38,6 +38,7 @@ from modelship.openai.protocol import (
     ToolCall,
     UsageInfo,
     create_error_response,
+    encode_error_sse,
 )
 from modelship.openai.protocol.responses.adapter import (
     UnsupportedResponsesFeatureError,
@@ -48,7 +49,6 @@ from modelship.openai.utils.chat import (
     UnsupportedContentError,
     build_from_parsed,
     encode_chat_sse_chunk,
-    encode_error_sse,
     normalize_chat_messages,
 )
 from modelship.openai.utils.responses import build_response_from_parsed, responses_validation_error
@@ -639,7 +639,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
                 yield encode_chat_sse_chunk(chunk)
             yield "data: [DONE]\n\n"
         except _LlamaServerStreamError as e:
-            yield encode_error_sse(create_error_response(str(e), err_type="api_error", status_code=502))
+            yield encode_error_sse(create_error_response(str(e), status_code=e.status_code))
             yield "data: [DONE]\n\n"
         except httpx.HTTPError as e:
             logger.warning("chat request %s failed mid-stream: %s", request_id, e)
@@ -909,16 +909,14 @@ class _LlamaServerStreamError(Exception):
     `response.failed` event).
     """
 
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
+
 
 def _llama_stream_error(exc: Exception) -> str | None:
-    """`client_error` mapper for `BaseInfer._stream_responses`: both of
-    `_raw_stream_chunks`'s failure modes are client-safe to relay verbatim;
-    anything else falls through to the generic "Internal error during generation"
-    message."""
-    if isinstance(exc, _LlamaServerStreamError):
+    if isinstance(exc, _LlamaServerStreamError) and exc.status_code < 500:
         return str(exc)
-    if isinstance(exc, httpx.HTTPError):
-        return f"llama-server request failed: {exc}"
     return None
 
 
@@ -940,7 +938,7 @@ async def _raw_stream_chunks(
             await e.response.aread()
             detail = _extract_error_detail(e.response)
             logger.warning("chat request %s failed: %s", request_id, detail)
-            raise _LlamaServerStreamError(detail) from e
+            raise _LlamaServerStreamError(detail, e.response.status_code) from e
 
         done = False
         reasoning: dict[int, list[str]] = {}
@@ -966,8 +964,11 @@ async def _raw_stream_chunks(
             if "error" in data:
                 error_data = data["error"] or {}
                 message = error_data.get("message") if isinstance(error_data, dict) else str(error_data)
+                status = error_data.get("code") if isinstance(error_data, dict) else None
                 logger.warning("chat request %s failed mid-stream with error: %s", request_id, message)
-                raise _LlamaServerStreamError(message or "Unknown mid-stream error from llama-server")
+                raise _LlamaServerStreamError(
+                    message or "Unknown mid-stream error from llama-server", status if isinstance(status, int) else 500
+                )
             if timings := data.get("timings"):
                 _record_timings(model_name, timings)
             if data.get("usage"):

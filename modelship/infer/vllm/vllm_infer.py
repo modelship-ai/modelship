@@ -95,6 +95,7 @@ from modelship.openai.protocol import (
     TranslationResponseVerbose,
     UsageInfo,
     create_error_response,
+    encode_error_sse,
 )
 from modelship.openai.protocol.responses.adapter import (
     UnsupportedResponsesFeatureError,
@@ -105,7 +106,6 @@ from modelship.openai.utils.chat import (
     UnsupportedContentError,
     build_from_parsed,
     encode_chat_sse_chunk,
-    encode_error_sse,
     normalize_chat_messages,
 )
 from modelship.openai.utils.responses import build_response_from_parsed, responses_validation_error

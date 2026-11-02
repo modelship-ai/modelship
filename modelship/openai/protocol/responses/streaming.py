@@ -102,7 +102,7 @@ def failure_event_from_frames(created_frame: Any, last_frame: Any, message: str,
     model, the last frame the sequence number this one must follow. Output is dropped —
     the frames carry it as deltas, not items."""
     response = dict(_frame_payload(created_frame).get("response") or {})
-    response.update(status="failed", error={"message": message}, output=[])
+    response.update(status="failed", error={"code": "server_error", "message": message}, output=[])
     response.setdefault("object", "response")
     response.setdefault("id", f"resp_{random_uuid()}")
     response.setdefault("created_at", int(time.time()))
@@ -274,13 +274,13 @@ class ResponsesStreamTranslator:
         completed_at = int(time.time()) if status == "completed" else None
         yield self._envelope(terminal, status, output, usage, incomplete, completed_at=completed_at)
 
-    def fail(self, message: str) -> Iterator[dict[str, Any]]:
+    def fail(self, message: str, code: str) -> Iterator[dict[str, Any]]:
         """Terminal ``response.failed`` event for a mid-stream error (a loader
         exception, not a normal completion). Still closes any already-open item
         brackets so a client sees whatever partial content was generated."""
         yield from self._close_all()
         output = self._collect_output()
-        yield self._envelope("response.failed", "failed", output, None, None, error={"message": message})
+        yield self._envelope("response.failed", "failed", output, None, None, error={"code": code, "message": message})
 
     # -- reasoning channel --------------------------------------------------
 

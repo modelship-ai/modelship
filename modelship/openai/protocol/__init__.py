@@ -52,9 +52,13 @@ from modelship.openai.protocol.embeddings import (
     EmbeddingResponseData,
 )
 from modelship.openai.protocol.error import (
+    ERROR_SSE_PREFIX,
     ErrorInfo,
     ErrorResponse,
+    client_safe,
     create_error_response,
+    encode_error_sse,
+    server_error,
 )
 from modelship.openai.protocol.images import (
     ImageEditRequest,
@@ -93,6 +97,7 @@ from modelship.openai.protocol.responses import (
 from modelship.openai.protocol.usage import CompletionTokenUsageInfo, PromptTokenUsageInfo, UsageInfo
 
 __all__ = [
+    "ERROR_SSE_PREFIX",
     "TERMINAL_EVENT_TYPES",
     "AudioResponseFormat",
     "ChatCompletionLogProb",
@@ -158,10 +163,13 @@ __all__ = [
     "TranslationResponse",
     "TranslationResponseVerbose",
     "UsageInfo",
+    "client_safe",
     "create_error_response",
+    "encode_error_sse",
     "encode_sse_event",
     "error_ws_frame",
     "failure_event_from_frames",
     "frame_sse",
     "random_uuid",
+    "server_error",
 ]

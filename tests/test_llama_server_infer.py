@@ -1031,7 +1031,7 @@ class TestResponsesProjection:
     async def test_stream_mid_stream_error_emits_failed_event(self):
         sse_body = (
             'data: {"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}\n\n'
-            'data: {"error": {"message": "inline mid-stream error detail"}}\n\n'
+            'data: {"error": {"code": 400, "message": "inline mid-stream error detail"}}\n\n'
         )
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -1043,8 +1043,28 @@ class TestResponsesProjection:
         types = [e["type"] for e in events]
 
         assert types[-1] == "response.failed"
-        assert events[-1]["response"]["error"]["message"] == "inline mid-stream error detail"
+        assert events[-1]["response"]["error"] == {
+            "code": "invalid_prompt",
+            "message": "inline mid-stream error detail",
+        }
         assert "response.completed" not in types
+
+    @pytest.mark.asyncio
+    async def test_stream_mid_stream_server_error_is_not_relayed(self):
+        sse_body = (
+            'data: {"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}\n\n'
+            'data: {"error": {"code": 500, "message": "inline mid-stream error detail"}}\n\n'
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=sse_body.encode(), headers={"content-type": "text/event-stream"})
+
+        infer = _infer_with_client(handler)
+        result = await infer.create_response(_responses_request(stream=True), RawRequestProxy(None, {}))
+        events = [chunk async for chunk in result]
+
+        assert events[-1]["response"]["error"]["code"] == "server_error"
+        assert "inline mid-stream error detail" not in events[-1]["response"]["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_stream_disconnect_ends_without_hanging(self):

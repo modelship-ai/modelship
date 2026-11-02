@@ -4,7 +4,6 @@ Responses-specific shaping (parsed chat output -> Responses items) and gateway-s
 Responses helpers live in the sibling :mod:`.responses` module instead.
 """
 
-import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,7 +14,6 @@ from modelship.openai.protocol import (
     ChatCompletionResponseChoice,
     ChatCompletionStreamResponse,
     ChatMessage,
-    ErrorResponse,
     ToolCall,
     UsageInfo,
 )
@@ -288,16 +286,3 @@ def build_from_parsed(
 def encode_chat_sse_chunk(chunk: ChatCompletionStreamResponse) -> str:
     """Encode one chat-completion stream chunk as an SSE `data:` line."""
     return f"data: {chunk.model_dump_json()}\n\n"
-
-
-ERROR_SSE_PREFIX = 'data: {"error"'
-
-
-def encode_error_sse(error: ErrorResponse) -> str:
-    """Encode a mid-stream `ErrorResponse` as an SSE `data:` line.
-
-    Shared by every loader's streaming chat/responses paths — a pre-generation
-    failure is returned as a plain `ErrorResponse` instead (see `BaseInfer.create_chat_completion`);
-    this is only for a failure after the stream has already started.
-    """
-    return f"data: {json.dumps(error.model_dump(mode='json'))}\n\n"

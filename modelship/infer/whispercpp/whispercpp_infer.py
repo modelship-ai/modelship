@@ -20,8 +20,8 @@ from modelship.openai.protocol import (
     TranslationResponse,
     TranslationResponseVerbose,
     create_error_response,
+    encode_error_sse,
 )
-from modelship.openai.utils.chat import encode_error_sse
 from modelship.utils import base_request_id
 from modelship.utils.audio import decode_audio
 

@@ -4,9 +4,8 @@ import pytest
 
 from modelship import metrics
 from modelship.metrics import RequestTracker, _CreatedStampedCounter
-from modelship.openai.protocol import create_error_response, encode_sse_event
+from modelship.openai.protocol import ERROR_SSE_PREFIX, create_error_response, encode_error_sse, encode_sse_event
 from modelship.openai.protocol.responses.streaming import RESPONSE_FAILED_SSE_PREFIX
-from modelship.openai.utils.chat import ERROR_SSE_PREFIX, encode_error_sse
 
 
 def test_a_series_is_stamped_with_its_creation_time_before_its_first_count():
