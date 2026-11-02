@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import asyncio
-from typing import TYPE_CHECKING
+import threading
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from modelship.infer.image_serving_common import (
     alpha_mask,
@@ -48,13 +49,15 @@ class OpenAIServingImage:
 
     request_id_prefix = "img"
 
-    def __init__(self, sd: StableDiffusion, config: StableDiffusionCppConfig):
+    def __init__(
+        self,
+        sd: StableDiffusion,
+        config: StableDiffusionCppConfig,
+        run_exclusive: Callable[[Callable[[threading.Event], Any]], Awaitable[Any]],
+    ):
         self.sd = sd
         self.config = config
-        # The sd.cpp handle wraps a single native context that is not safe to
-        # call concurrently. Serialize all generation through this lock; it gates
-        # only the executor hop, so the event loop stays free while a render runs.
-        self._lock = asyncio.Lock()
+        self._run_exclusive = run_exclusive
 
     def _generate(self, **kwargs):
         """Invoke sd.cpp with the per-model defaults applied. Callers supply the
@@ -82,13 +85,11 @@ class OpenAIServingImage:
         except ValueError as e:
             return create_error_response(str(e))
 
-        def _run() -> ImageGenerationResponse:
+        def _run(_stop: threading.Event) -> ImageGenerationResponse:
             images = self._generate(prompt=request.prompt, width=width, height=height, batch_count=request.n)
             return build_response(images, revised_prompt=request.prompt)
 
-        loop = asyncio.get_running_loop()
-        async with self._lock:
-            response = await loop.run_in_executor(None, _run)
+        response: ImageGenerationResponse = await self._run_exclusive(_run)
         logger.log(TRACE, "image response %s: num_images=%d", request_id, len(response.data))
         return response
 
@@ -110,7 +111,7 @@ class OpenAIServingImage:
 
         # Decode / resize / mask work and inference are all CPU-bound; run the
         # whole chain in the executor so the event loop is never blocked.
-        def _run() -> ImageGenerationResponse | ErrorResponse:
+        def _run(_stop: threading.Event) -> ImageGenerationResponse | ErrorResponse:
             try:
                 src = decode_image(image_data)
                 image = src.convert("RGB").resize((width, height))
@@ -143,9 +144,7 @@ class OpenAIServingImage:
             images = self._generate(**kwargs)
             return build_response(images, revised_prompt=request.prompt)
 
-        loop = asyncio.get_running_loop()
-        async with self._lock:
-            response = await loop.run_in_executor(None, _run)
+        response: ImageGenerationResponse | ErrorResponse = await self._run_exclusive(_run)
         if isinstance(response, ImageGenerationResponse):
             logger.log(TRACE, "image edit response %s: num_images=%d", request_id, len(response.data))
         return response
@@ -163,7 +162,7 @@ class OpenAIServingImage:
 
         strength = request.strength if request.strength is not None else _DEFAULT_VARIATION_STRENGTH
 
-        def _run() -> ImageGenerationResponse | ErrorResponse:
+        def _run(_stop: threading.Event) -> ImageGenerationResponse | ErrorResponse:
             try:
                 image = load_image(image_data, width, height)
             except ValueError as e:
@@ -173,9 +172,7 @@ class OpenAIServingImage:
             )
             return build_response(images, revised_prompt=None)
 
-        loop = asyncio.get_running_loop()
-        async with self._lock:
-            response = await loop.run_in_executor(None, _run)
+        response: ImageGenerationResponse | ErrorResponse = await self._run_exclusive(_run)
         if isinstance(response, ImageGenerationResponse):
             logger.log(TRACE, "image variation response %s: num_images=%d", request_id, len(response.data))
         return response

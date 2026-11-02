@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from modelship.infer.base_infer import BaseInfer, ClientDisconnectedError
+from modelship.infer.base_infer import BaseInfer
 from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
 from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry, registry_name
 from modelship.logging import get_logger
@@ -99,18 +99,17 @@ class SherpaOnnxInfer(BaseInfer):
 
         if "stream_format" in request.model_fields_set and request.stream_format == "sse":
             logger.info("%s: voice=%s sid=%d stream=sse", request_id, request.voice, sid)
-            return self.run_cancellable_stream(self._stream(request.input, sid, request.speed), raw_request)
+            return self._stream(request.input, sid, request.speed)
 
         logger.info("%s: voice=%s sid=%d", request_id, request.voice, sid)
-        try:
-            wav = await self.run_cancellable(self._generate(request.input, sid, request.speed), raw_request)
-        except ClientDisconnectedError:
-            logger.info("%s aborted: client disconnected", request_id)
-            return create_error_response("Client disconnected")
+        wav = await self._generate(request.input, sid, request.speed)
         return RawSpeechResponse(audio=wav)
 
     async def _generate(self, text: str, sid: int, speed: float) -> bytes:
-        result = await asyncio.to_thread(self.tts.generate, text, sid, speed)
+        def run(stop: threading.Event) -> Any:
+            return self.tts.generate(text, sid, speed, callback=lambda _samples, _progress: 0 if stop.is_set() else 1)
+
+        result = await self.run_exclusive(run, exclusive=False)
         samples = np.asarray(result.samples, dtype=np.float32)
         return to_wav(samples, result.sample_rate)
 
@@ -124,16 +123,15 @@ class SherpaOnnxInfer(BaseInfer):
         Return 0 to abort, nonzero to continue — inverted from the bundled docstring."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[Any] = asyncio.Queue()
-        abort_event = threading.Event()
         sample_rate = self.tts.sample_rate
         _done = object()
 
-        def on_chunk(samples: Any, _progress: float) -> int:
-            pcm = to_pcm16(np.asarray(samples, dtype=np.float32))
-            loop.call_soon_threadsafe(queue.put_nowait, pcm)
-            return 0 if abort_event.is_set() else 1
+        def run(stop: threading.Event) -> None:
+            def on_chunk(samples: Any, _progress: float) -> int:
+                pcm = to_pcm16(np.asarray(samples, dtype=np.float32))
+                loop.call_soon_threadsafe(queue.put_nowait, pcm)
+                return 0 if stop.is_set() else 1
 
-        def run() -> None:
             try:
                 self.tts.generate(text, sid, speed, callback=on_chunk)
             except BaseException as exc:
@@ -141,7 +139,7 @@ class SherpaOnnxInfer(BaseInfer):
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, _done)
 
-        worker = asyncio.create_task(asyncio.to_thread(run))
+        worker = asyncio.ensure_future(self.run_exclusive(run, exclusive=False))
         try:
             while True:
                 item = await queue.get()
@@ -151,5 +149,4 @@ class SherpaOnnxInfer(BaseInfer):
                     raise item
                 yield item, sample_rate
         finally:
-            abort_event.set()
-            await worker
+            worker.cancel()

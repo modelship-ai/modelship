@@ -20,9 +20,35 @@ from modelship.infer.infer_config import DiffusersConfig, RawRequestProxy
 from modelship.openai.protocol import (
     ErrorResponse,
     ImageEditRequest,
+    ImageGenerationRequest,
     ImageGenerationResponse,
     ImageVariationRequest,
 )
+from tests.test_base_infer_exclusive import ExclusiveInfer, wait_for_turn
+
+
+class _SteppingPipeline:
+    def __init__(self):
+        self.started = threading.Event()
+        self.steps = 0
+
+    def _run(self, num_inference_steps, on_step):
+        self.started.set()
+        for i in range(num_inference_steps):
+            time.sleep(0.01)
+            self.steps += 1
+            on_step(i)
+        return type("Result", (), {"images": [Image.new("RGB", (8, 8))]})()
+
+
+class _StepEndPipeline(_SteppingPipeline):
+    def __call__(self, *, num_inference_steps, callback_on_step_end=None, **_kwargs):
+        return self._run(num_inference_steps, lambda i: callback_on_step_end and callback_on_step_end(self, i, i, {}))
+
+
+class _LegacyCallbackPipeline(_SteppingPipeline):
+    def __call__(self, *, num_inference_steps, callback=None, **_kwargs):
+        return self._run(num_inference_steps, lambda i: callback and callback(i, i, None))
 
 
 class _StubPipeline:
@@ -76,10 +102,11 @@ def _rgba_png(w: int = 16, h: int = 16, *, transparent: bool) -> bytes:
     return buf.getvalue()
 
 
-def _serving(img2img=None, inpaint=None) -> OpenAIServingImage:
+def _serving(img2img=None, inpaint=None, pipeline=None, infer=None) -> OpenAIServingImage:
     return OpenAIServingImage(
-        pipeline=_StubPipeline(),  # type: ignore[arg-type]
+        pipeline=pipeline or _StubPipeline(),  # type: ignore[arg-type]
         config=DiffusersConfig(num_inference_steps=5, guidance_scale=3.0),
+        run_exclusive=(infer or ExclusiveInfer()).run_exclusive,
         img2img_pipeline=img2img,
         inpaint_pipeline=inpaint,
     )
@@ -260,6 +287,22 @@ class TestImageVariation:
             serving.create_image_variation(_png_bytes(), request, _proxy()),
         )
         assert probe.max_active == 1
+
+
+@pytest.mark.asyncio
+class TestCancellation:
+    @pytest.mark.parametrize("pipeline_type", [_StepEndPipeline, _LegacyCallbackPipeline])
+    async def test_a_cancelled_generation_stops_between_steps(self, pipeline_type):
+        pipeline = pipeline_type()
+        infer = ExclusiveInfer()
+        serving = _serving(pipeline=pipeline, infer=infer)
+        serving.config = DiffusersConfig(num_inference_steps=100)
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
+        task = asyncio.ensure_future(serving.create_image_generation(request, _proxy()))
+        await asyncio.to_thread(pipeline.started.wait, 5)
+        task.cancel()
+        await wait_for_turn(infer)
+        assert pipeline.steps < 100
 
 
 class TestProtocolResponseFormat:

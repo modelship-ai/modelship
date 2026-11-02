@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import os
 import struct
+import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Callable, Coroutine
@@ -87,6 +88,7 @@ class BaseInfer[Prepared](ABC):
         self._pump_task: asyncio.Task[None] | None = None
         # DeployCoordinator handle, resolved on first use.
         self._coordinator: Any = None
+        self._exclusive = asyncio.Lock()
 
     def _get_memory_fraction(self) -> float | None:
         """Return the GPU memory fraction if explicitly set and < 1.0, otherwise None."""
@@ -126,6 +128,25 @@ class BaseInfer[Prepared](ABC):
                 raise ModelDownloadError(f"Failed to download mmproj for '{model_config.name}': {e}") from e
             llama_cfg._pinned_mmproj = None
             logger.info("Downloaded mmproj for '%s' -> %s", model_config.name, llama_cfg.mmproj)
+
+    async def run_exclusive(self, fn: Callable[[threading.Event], T], *, exclusive: bool = True) -> T:
+        if exclusive:
+            await self._exclusive.acquire()
+        stop = threading.Event()
+        inner = asyncio.get_running_loop().run_in_executor(None, fn, stop)
+
+        def finished(_inner: asyncio.Future[T]) -> None:
+            if exclusive:
+                self._exclusive.release()
+            if stop.is_set() and not inner.cancelled() and (exc := inner.exception()) is not None:
+                logger.debug("stopped work ended with %r", exc)
+
+        inner.add_done_callback(finished)
+        try:
+            return await asyncio.shield(inner)
+        except asyncio.CancelledError:
+            stop.set()
+            raise
 
     async def run_cancellable(self, work: Coroutine[Any, Any, T], raw_request: RawRequestProxy) -> T:
         """Run `work` to completion, or cancel it and raise `ClientDisconnectedError`

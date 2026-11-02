@@ -4,7 +4,9 @@ against a stubbed `pywhispercpp.model.Model` (no real ggml file needed)."""
 
 from __future__ import annotations
 
+import asyncio
 import io
+import threading
 import time
 
 import pytest
@@ -22,6 +24,7 @@ from modelship.openai.protocol import (
     TranslationResponse,
     TranslationResponseVerbose,
 )
+from tests.test_base_infer_exclusive import wait_for_turn
 
 
 class _Segment:
@@ -40,9 +43,11 @@ class _StubModel:
         self._detected = detected
         self.calls: list[dict] = []
         self.aborted_early = False
+        self.started = threading.Event()
 
     def transcribe(self, samples, new_segment_callback=None, abort_callback=None, **kwargs):
         self.calls.append(kwargs)
+        self.started.set()
         emitted = []
         for seg in self._segments:
             if abort_callback is not None and abort_callback():
@@ -196,6 +201,21 @@ class TestStreaming:
         gen = infer._stream(MINIMAL_WAV, _transcription_request(), translate=False, request_id="r1")
         await gen.__anext__()  # first delta
         await gen.aclose()
+        await wait_for_turn(infer)
+        assert model.aborted_early
+
+
+class TestCancellation:
+    @pytest.mark.asyncio
+    async def test_a_cancelled_transcription_stops_its_thread(self):
+        model = _StubModel([_Segment("a"), _Segment("b"), _Segment("c")])
+        infer = _infer(model)
+        task = asyncio.ensure_future(
+            infer._transcribe_once(MINIMAL_WAV, _transcription_request(), translate=False, request_id="r1")
+        )
+        await asyncio.to_thread(model.started.wait, 5)
+        task.cancel()
+        await wait_for_turn(infer)
         assert model.aborted_early
 
 

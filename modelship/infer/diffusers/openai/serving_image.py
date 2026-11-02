@@ -1,4 +1,7 @@
-import asyncio
+import inspect
+import threading
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from diffusers.pipelines.auto_pipeline import (
     AutoPipelineForImage2Image,
@@ -45,6 +48,27 @@ _DEFAULT_EDIT_STRENGTH = 0.7
 _DEFAULT_VARIATION_STRENGTH = 0.8
 
 
+class _StoppedError(Exception):
+    pass
+
+
+def _stop_kwargs(pipeline: Any, stop: threading.Event) -> dict[str, Any]:
+    def check(*_args: Any) -> None:
+        if stop.is_set():
+            raise _StoppedError
+
+    def on_step_end(_pipe: Any, _step: int, _timestep: Any, callback_kwargs: dict[str, Any]) -> dict[str, Any]:
+        check()
+        return callback_kwargs
+
+    params = inspect.signature(pipeline.__call__).parameters
+    if "callback_on_step_end" in params:
+        return {"callback_on_step_end": on_step_end}
+    if "callback" in params:
+        return {"callback": check}
+    return {}
+
+
 class OpenAIServingImage:
     request_id_prefix = "img"
 
@@ -52,6 +76,7 @@ class OpenAIServingImage:
         self,
         pipeline: AutoPipelineForText2Image,
         config: DiffusersConfig,
+        run_exclusive: Callable[[Callable[[threading.Event], Any]], Awaitable[Any]],
         img2img_pipeline: AutoPipelineForImage2Image | None = None,
         inpaint_pipeline: AutoPipelineForInpainting | None = None,
     ):
@@ -59,12 +84,7 @@ class OpenAIServingImage:
         self.config = config
         self.img2img_pipeline = img2img_pipeline
         self.inpaint_pipeline = inpaint_pipeline
-        # Diffusers pipelines are not thread-safe and the three pipelines share
-        # the same UNet/VAE/text-encoder, so concurrent forward passes (across
-        # executor threads within a replica) would race. Serialize all GPU
-        # inference through this lock; it gates only the executor hop, so the
-        # event loop stays free while a pass runs.
-        self._gpu_lock = asyncio.Lock()
+        self._run_exclusive = run_exclusive
 
     async def create_image_generation(
         self, request: ImageGenerationRequest, raw_request: RawRequestProxy
@@ -92,7 +112,7 @@ class OpenAIServingImage:
         steps = self.config.num_inference_steps
         guidance = self.config.guidance_scale
 
-        def _run() -> ImageGenerationResponse:
+        def _run(stop: threading.Event) -> ImageGenerationResponse:
             images = self.pipeline(  # type: ignore[reportCallIssue]
                 prompt=request.prompt,
                 num_images_per_prompt=request.n,
@@ -100,14 +120,13 @@ class OpenAIServingImage:
                 height=height,
                 num_inference_steps=steps,
                 guidance_scale=guidance,
+                **_stop_kwargs(self.pipeline, stop),
             ).images
             return _build_response(images, revised_prompt=request.prompt)
 
         # Inference and PNG/base64 encoding are both CPU-bound; run the whole
         # chain in the executor so the event loop stays responsive.
-        loop = asyncio.get_event_loop()
-        async with self._gpu_lock:
-            response = await loop.run_in_executor(None, _run)
+        response: ImageGenerationResponse = await self._run_exclusive(_run)
         logger.log(TRACE, "image response %s: num_images=%d", request_id, len(response.data))
         return response
 
@@ -132,7 +151,7 @@ class OpenAIServingImage:
         # All image decode / resize / mask work is CPU-bound; run it in the
         # executor alongside inference and encoding so the event loop is never
         # blocked. _run returns the final response (or an error response).
-        def _run() -> ImageGenerationResponse | ErrorResponse:
+        def _run(stop: threading.Event) -> ImageGenerationResponse | ErrorResponse:
             try:
                 # Decode the input once; derive both the RGB image and (if
                 # needed) the alpha mask from it.
@@ -178,12 +197,11 @@ class OpenAIServingImage:
                 guidance_scale=guidance,
                 strength=strength,
                 **kwargs,
+                **_stop_kwargs(pipeline, stop),
             ).images
             return _build_response(images, revised_prompt=request.prompt)
 
-        loop = asyncio.get_event_loop()
-        async with self._gpu_lock:
-            response = await loop.run_in_executor(None, _run)
+        response: ImageGenerationResponse | ErrorResponse = await self._run_exclusive(_run)
         if isinstance(response, ImageGenerationResponse):
             logger.log(TRACE, "image edit response %s: num_images=%d", request_id, len(response.data))
         return response
@@ -207,7 +225,7 @@ class OpenAIServingImage:
         strength = request.strength if request.strength is not None else _DEFAULT_VARIATION_STRENGTH
 
         # Decode / resize / encode are CPU-bound; keep them off the event loop.
-        def _run() -> ImageGenerationResponse | ErrorResponse:
+        def _run(stop: threading.Event) -> ImageGenerationResponse | ErrorResponse:
             try:
                 image = _load_image(image_data, width, height)
             except ValueError as e:
@@ -219,12 +237,11 @@ class OpenAIServingImage:
                 num_inference_steps=steps,
                 guidance_scale=guidance,
                 strength=strength,
+                **_stop_kwargs(self.img2img_pipeline, stop),
             ).images
             return _build_response(images, revised_prompt=None)
 
-        loop = asyncio.get_event_loop()
-        async with self._gpu_lock:
-            response = await loop.run_in_executor(None, _run)
+        response: ImageGenerationResponse | ErrorResponse = await self._run_exclusive(_run)
         if isinstance(response, ImageGenerationResponse):
             logger.log(TRACE, "image variation response %s: num_images=%d", request_id, len(response.data))
         return response

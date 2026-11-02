@@ -3,7 +3,9 @@ derivation, config-builder setattr routing, num_speakers mismatch, and
 streaming — all against a stubbed `sherpa_onnx` module. Nothing here
 downloads a bundle."""
 
+import asyncio
 import sys
+import threading
 import time
 import types
 from types import SimpleNamespace
@@ -51,9 +53,11 @@ class _FakeOfflineTts:
         self.generate_calls: list[tuple] = []
         self.chunks = chunks or []
         self.aborted_early = False
+        self.started = threading.Event()
 
     def generate(self, text, sid=0, speed=1.0, callback=None):
         self.generate_calls.append((text, sid, speed))
+        self.started.set()
         if callback is None:
             return SimpleNamespace(samples=[0.0, 0.1, -0.1], sample_rate=self.sample_rate)
         for i, chunk in enumerate(self.chunks):
@@ -213,4 +217,39 @@ class TestStreaming:
         result = await infer.create_speech(req, RawRequestProxy(None, {}))
         await result.__anext__()  # first delta
         await result.aclose()
-        assert tts.aborted_early
+        await _until(lambda: tts.aborted_early)
+
+
+class TestCancellation:
+    @pytest.mark.asyncio
+    async def test_a_cancelled_speech_stops_its_thread(self):
+        chunks = [np.zeros(2, dtype=np.float32) for _ in range(5)]
+        tts = _FakeOfflineTts(_FakeTtsConfig(), num_speakers=len(_ENTRY.voice_names), chunks=chunks)
+        infer = _infer(tts=tts)
+        req = SpeechRequest(input="hi", model="tts", voice="af_bella")
+        task = asyncio.ensure_future(infer.create_speech(req, RawRequestProxy(None, {})))
+        await asyncio.to_thread(tts.started.wait, 5)
+        task.cancel()
+        await _until(lambda: tts.aborted_early)
+
+    @pytest.mark.asyncio
+    async def test_speeches_overlap(self):
+        both = threading.Barrier(2, timeout=5)
+
+        def generate(*_args, **_kwargs):
+            both.wait()
+            return SimpleNamespace(samples=[], sample_rate=24000)
+
+        tts = _FakeOfflineTts(_FakeTtsConfig(), num_speakers=len(_ENTRY.voice_names))
+        tts.generate = generate
+        infer = _infer(tts=tts)
+        req = SpeechRequest(input="hi", model="tts", voice="af_bella")
+        await asyncio.gather(*(infer.create_speech(req, RawRequestProxy(None, {})) for _ in range(2)))
+
+
+async def _until(condition) -> None:
+    for _ in range(100):
+        if condition():
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("condition never held")
