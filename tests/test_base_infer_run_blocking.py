@@ -113,3 +113,49 @@ async def test_an_error_after_the_caller_left_is_not_reported_as_unretrieved():
         loop.set_exception_handler(None)
 
     assert reported == []
+
+
+@pytest.mark.asyncio
+async def test_a_stream_yields_what_its_thread_emits():
+    infer = ExclusiveInfer()
+
+    def emits(emit, _stop: threading.Event) -> None:
+        for i in range(3):
+            emit(i)
+
+    assert [item async for item in infer.stream_blocking(emits)] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_a_stream_raises_its_threads_error_after_what_it_emitted():
+    infer = ExclusiveInfer()
+    seen = []
+
+    def fails(emit, _stop: threading.Event) -> None:
+        emit("first")
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async for item in infer.stream_blocking(fails):
+            seen.append(item)
+
+    assert seen == ["first"]
+
+
+@pytest.mark.asyncio
+async def test_a_closed_stream_holds_the_turn_until_its_thread_exits():
+    infer = ExclusiveInfer()
+    seen = []
+
+    def endless(emit, stop: threading.Event) -> None:
+        emit("first")
+        seen.append(f"stopped={stop.wait(5)}")
+        time.sleep(0.1)
+        seen.append("ended")
+
+    stream = infer.stream_blocking(endless)
+    assert await anext(stream) == "first"
+    await stream.aclose()
+    await infer.run_blocking(lambda _stop: seen.append("next"))
+
+    assert seen == ["stopped=True", "ended", "next"]

@@ -148,6 +148,27 @@ class BaseInfer[Prepared](ABC):
             stop.set()
             raise
 
+    async def stream_blocking(
+        self, fn: Callable[[Callable[[T], Any], threading.Event], Any], *, exclusive: bool = True
+    ) -> AsyncGenerator[T, None]:
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[Any] = asyncio.Queue()
+        done = object()
+
+        def run(stop: threading.Event) -> None:
+            try:
+                fn(lambda item: loop.call_soon_threadsafe(queue.put_nowait, item), stop)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, done)
+
+        worker = asyncio.ensure_future(self.run_blocking(run, exclusive=exclusive))
+        try:
+            while (item := await queue.get()) is not done:
+                yield item
+            await worker
+        finally:
+            worker.cancel()
+
     async def run_cancellable(self, work: Coroutine[Any, Any, T], raw_request: RawRequestProxy) -> T:
         """Run `work` to completion, or cancel it and raise `ClientDisconnectedError`
         if the client disconnects first.

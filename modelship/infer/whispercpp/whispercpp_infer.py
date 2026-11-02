@@ -1,8 +1,8 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
-import threading
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
@@ -202,47 +202,25 @@ class WhispercppInfer(BaseInfer):
             return
 
         decode_kwargs = self._decode_kwargs(request, translate=translate)
-        loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[Any] = asyncio.Queue()
-        _done = object()
-
-        def on_segment(segment: Any) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, segment)
-
-        def run(stop: threading.Event) -> None:
-            try:
-                self.model.transcribe(
-                    samples,
-                    new_segment_callback=on_segment,
-                    abort_callback=stop.is_set,
-                    **decode_kwargs,
-                )
-            except BaseException as exc:  # forwarded to the consumer below, not swallowed
-                loop.call_soon_threadsafe(queue.put_nowait, exc)
-            finally:
-                loop.call_soon_threadsafe(queue.put_nowait, _done)
-
-        worker = asyncio.ensure_future(self.run_blocking(run))
+        segments: AsyncGenerator[Any, None] = self.stream_blocking(
+            lambda emit, stop: self.model.transcribe(
+                samples, new_segment_callback=emit, abort_callback=stop.is_set, **decode_kwargs
+            )
+        )
         text_parts: list[str] = []
         try:
-            while True:
-                item = await queue.get()
-                if item is _done:
-                    break
-                if isinstance(item, BaseException):
-                    raise item
-                segment_text = item.text.strip()
-                if segment_text:
-                    text_parts.append(segment_text)
-                    yield _encode_transcript_event({"type": "transcript.text.delta", "delta": segment_text})
+            async with contextlib.aclosing(segments):
+                async for segment in segments:
+                    segment_text = segment.text.strip()
+                    if segment_text:
+                        text_parts.append(segment_text)
+                        yield _encode_transcript_event({"type": "transcript.text.delta", "delta": segment_text})
             yield _encode_transcript_event({"type": "transcript.text.done", "text": " ".join(text_parts)})
         except Exception as exc:
             logger.warning("%s failed mid-stream: %s", request_id, exc)
             yield encode_error_sse(
                 create_error_response(f"whisper.cpp transcription failed: {exc}", err_type="api_error", status_code=502)
             )
-        finally:
-            worker.cancel()
 
 
 def _encode_transcript_event(payload: dict[str, Any]) -> str:

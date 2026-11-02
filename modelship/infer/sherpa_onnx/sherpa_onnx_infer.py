@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import os
 import threading
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 import numpy as np
@@ -123,32 +123,15 @@ class SherpaOnnxInfer(BaseInfer):
     async def _generate_chunks(self, text: str, sid: int, speed: float) -> AsyncGenerator[tuple[bytes, int], None]:
         """callback fires once per sentence group (offline models aren't autoregressive).
         Return 0 to abort, nonzero to continue — inverted from the bundled docstring."""
-        loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[Any] = asyncio.Queue()
         sample_rate = self.tts.sample_rate
-        _done = object()
 
-        def run(stop: threading.Event) -> None:
+        def run(emit: Callable[[bytes], None], stop: threading.Event) -> None:
             def on_chunk(samples: Any, _progress: float) -> int:
-                pcm = to_pcm16(np.asarray(samples, dtype=np.float32))
-                loop.call_soon_threadsafe(queue.put_nowait, pcm)
+                emit(to_pcm16(np.asarray(samples, dtype=np.float32)))
                 return 0 if stop.is_set() else 1
 
-            try:
-                self.tts.generate(text, sid, speed, callback=on_chunk)
-            except BaseException as exc:
-                loop.call_soon_threadsafe(queue.put_nowait, exc)
-            finally:
-                loop.call_soon_threadsafe(queue.put_nowait, _done)
+            self.tts.generate(text, sid, speed, callback=on_chunk)
 
-        worker = asyncio.ensure_future(self.run_blocking(run, exclusive=False))
-        try:
-            while True:
-                item = await queue.get()
-                if item is _done:
-                    break
-                if isinstance(item, BaseException):
-                    raise item
-                yield item, sample_rate
-        finally:
-            worker.cancel()
+        async with contextlib.aclosing(self.stream_blocking(run, exclusive=False)) as chunks:
+            async for pcm in chunks:
+                yield pcm, sample_rate

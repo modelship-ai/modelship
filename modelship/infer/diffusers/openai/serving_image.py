@@ -10,22 +10,12 @@ from diffusers.pipelines.auto_pipeline import (
 )
 
 from modelship.infer.image_serving_common import (
-    alpha_mask as _alpha_mask,
-)
-from modelship.infer.image_serving_common import (
-    build_response as _build_response,
-)
-from modelship.infer.image_serving_common import (
-    decode_image as _decode_image,
-)
-from modelship.infer.image_serving_common import (
-    load_image as _load_image,
-)
-from modelship.infer.image_serving_common import (
-    load_mask as _load_mask,
-)
-from modelship.infer.image_serving_common import (
-    parse_size as _parse_size,
+    alpha_mask,
+    build_response,
+    decode_image,
+    load_image,
+    load_mask,
+    parse_size,
 )
 from modelship.infer.infer_config import DiffusersConfig, RawRequestProxy
 from modelship.logging import TRACE, get_logger
@@ -105,7 +95,7 @@ class OpenAIServingImage:
         )
 
         try:
-            width, height = _parse_size(request.size)
+            width, height = parse_size(request.size)
         except ValueError as e:
             return create_error_response(str(e))
 
@@ -122,7 +112,7 @@ class OpenAIServingImage:
                 guidance_scale=guidance,
                 **_stop_kwargs(self.pipeline, stop),
             ).images
-            return _build_response(images, revised_prompt=request.prompt)
+            return build_response(images, revised_prompt=request.prompt)
 
         # Inference and PNG/base64 encoding are both CPU-bound; run the whole
         # chain in the executor so the event loop stays responsive.
@@ -140,7 +130,7 @@ class OpenAIServingImage:
         request_id = f"{self.request_id_prefix}-{base_request_id(raw_request)}"
 
         try:
-            width, height = _parse_size(request.size)
+            width, height = parse_size(request.size)
         except ValueError as e:
             return create_error_response(str(e))
 
@@ -155,16 +145,13 @@ class OpenAIServingImage:
             try:
                 # Decode the input once; derive both the RGB image and (if
                 # needed) the alpha mask from it.
-                src = _decode_image(image_data)
+                src = decode_image(image_data)
                 image = src.convert("RGB").resize((width, height))
                 # Determine the inpaint mask. An explicit `mask` upload wins;
                 # otherwise, per the OpenAI edits spec, the input image's own
                 # transparency is used as the mask (transparent areas mark the
                 # region to edit). With neither, this is a plain img2img edit.
-                if mask_data is not None:
-                    mask = _load_mask(mask_data, width, height)
-                else:
-                    mask = _alpha_mask(src, width, height)
+                mask = load_mask(mask_data, width, height) if mask_data is not None else alpha_mask(src, width, height)
             except ValueError as e:
                 return create_error_response(str(e))
 
@@ -199,7 +186,7 @@ class OpenAIServingImage:
                 **kwargs,
                 **_stop_kwargs(pipeline, stop),
             ).images
-            return _build_response(images, revised_prompt=request.prompt)
+            return build_response(images, revised_prompt=request.prompt)
 
         response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(run)
         if isinstance(response, ImageGenerationResponse):
@@ -216,7 +203,7 @@ class OpenAIServingImage:
             return create_error_response("model does not support image variations")
 
         try:
-            width, height = _parse_size(request.size)
+            width, height = parse_size(request.size)
         except ValueError as e:
             return create_error_response(str(e))
 
@@ -227,7 +214,7 @@ class OpenAIServingImage:
         # Decode / resize / encode are CPU-bound; keep them off the event loop.
         def run(stop: threading.Event) -> ImageGenerationResponse | ErrorResponse:
             try:
-                image = _load_image(image_data, width, height)
+                image = load_image(image_data, width, height)
             except ValueError as e:
                 return create_error_response(str(e))
             images = self.img2img_pipeline(  # type: ignore[reportCallIssue]
@@ -239,7 +226,7 @@ class OpenAIServingImage:
                 strength=strength,
                 **_stop_kwargs(self.img2img_pipeline, stop),
             ).images
-            return _build_response(images, revised_prompt=None)
+            return build_response(images, revised_prompt=None)
 
         response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(run)
         if isinstance(response, ImageGenerationResponse):
