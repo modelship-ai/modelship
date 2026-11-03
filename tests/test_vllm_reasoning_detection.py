@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import json
-from types import SimpleNamespace
-
 import pytest
 
-from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase
-from modelship.infer.vllm.parsing.detect import resolve_reasoning_parser, resolve_tool_parser
+from tests.test_vllm_tool_detection import detected_parsers
 
 _PICKS = [
     ("Qwen/Qwen3-0.6B", "qwen3"),
@@ -40,25 +36,4 @@ _PICKS = [
 @pytest.mark.vllm
 @pytest.mark.parametrize(("model", "parser"), _PICKS)
 def test_the_reasoning_parser_detected_for(model: str, parser: str | None) -> None:
-    from huggingface_hub import hf_hub_download
-    from huggingface_hub.errors import EntryNotFoundError
-    from vllm.tokenizers import get_tokenizer as vllm_get_tokenizer
-
-    try:
-        tokenizer = vllm_get_tokenizer(model)
-        with open(hf_hub_download(model, "config.json")) as f:
-            config = json.load(f)
-        try:
-            with open(hf_hub_download(model, "generation_config.json")) as f:
-                eos_token_id = json.load(f).get("eos_token_id")
-        except EntryNotFoundError:
-            eos_token_id = None
-    except Exception as e:
-        pytest.skip(f"could not fetch the tokenizer and config of {model!r}: {e}")
-
-    cfg = ModelshipModelConfig(name="m", model=model, usecase=ModelUsecase.generate, loader=ModelLoader.vllm)
-    hf_config = SimpleNamespace(model_type=config.get("model_type"), architectures=config.get("architectures"))
-    template = tokenizer.get_chat_template()
-    tool_parser = resolve_tool_parser(cfg, template, tokenizer, hf_config, eos_token_id)
-
-    assert resolve_reasoning_parser(cfg, template, tokenizer, hf_config, tool_parser, eos_token_id) == parser
+    assert detected_parsers(model)[1] == parser
