@@ -3,10 +3,10 @@ MAJOR   := $(shell echo $(VERSION) | cut -d. -f1)
 MINOR   := $(shell echo $(VERSION) | cut -d. -f2)
 PATCH   := $(shell echo $(VERSION) | cut -d. -f3)
 
-.PHONY: test lint lint-fix pins release-patch release-minor release-major _release llama-cpp-bump
+.PHONY: unit-test lint lint-fix pins release-patch release-minor release-major _release llama-cpp-bump
 
-test:
-	uv run pytest tests/ -v
+unit-test:
+	uv run pytest tests/ -v -m "not integration"
 
 lint:
 	uv run ruff check .
