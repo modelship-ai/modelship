@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import json
-from types import SimpleNamespace
-
 import pytest
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase
-from modelship.infer.vllm.parsing.detect import resolve_tool_parser
 
 _PICKS = [
     ("Qwen/Qwen3-0.6B", "hermes"),
@@ -41,28 +37,29 @@ _PICKS = [
 ]
 
 
+def detected_parsers(model: str) -> tuple[str | None, str | None]:
+    from vllm.engine.arg_utils import AsyncEngineArgs as VllmAsyncEngineArgs
+    from vllm.usage.usage_lib import UsageContext as VllmUsageContext
+
+    from modelship.infer.vllm.vllm_infer import VllmInfer
+
+    infer = object.__new__(VllmInfer)
+    infer.model_config = ModelshipModelConfig(
+        name="m", model=model, usecase=ModelUsecase.generate, loader=ModelLoader.vllm
+    )
+    try:
+        vllm_config = VllmAsyncEngineArgs(model=model, max_model_len=2048).create_engine_config(
+            usage_context=VllmUsageContext.OPENAI_API_SERVER
+        )
+        parsers = infer._resolve_chat_parsers(vllm_config)
+    except OSError as e:
+        pytest.skip(f"could not fetch {model!r}: {e}")
+    assert parsers is not None
+    return parsers.tool_parser, parsers.reasoning_parser
+
+
 @pytest.mark.integration
 @pytest.mark.vllm
 @pytest.mark.parametrize(("model", "parser"), _PICKS)
 def test_the_tool_parser_detected_for(model: str, parser: str | None) -> None:
-    from huggingface_hub import hf_hub_download
-    from huggingface_hub.errors import EntryNotFoundError
-    from transformers import AutoTokenizer
-
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(model)
-        with open(hf_hub_download(model, "config.json")) as f:
-            config = json.load(f)
-        try:
-            with open(hf_hub_download(model, "generation_config.json")) as f:
-                eos_token_id = json.load(f).get("eos_token_id")
-        except EntryNotFoundError:
-            eos_token_id = None
-    except Exception as e:
-        pytest.skip(f"could not fetch the tokenizer and config of {model!r}: {e}")
-
-    cfg = ModelshipModelConfig(name="m", model=model, usecase=ModelUsecase.generate, loader=ModelLoader.vllm)
-    hf_config = SimpleNamespace(model_type=config.get("model_type"), architectures=config.get("architectures"))
-    template = tokenizer.get_chat_template()
-
-    assert resolve_tool_parser(cfg, template, tokenizer, hf_config, eos_token_id) == parser
+    assert detected_parsers(model)[0] == parser
