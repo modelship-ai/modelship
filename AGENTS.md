@@ -20,6 +20,8 @@ uv sync --extra dev --extra cpu --extra vllm-cpu   # CPU-only dev (vllm-cpu pull
 make lint        # ruff check + ruff format --check + pyright  (all three MUST pass)
 make lint-fix    # ruff check --fix + ruff format
 make unit-test   # uv run pytest tests/ -v -m "not integration"
+make wheel       # engine + bootstrapper wheels and sdists into dist/
+make bootstrap VARIANT=cuda   # make wheel, then `mship bootstrap --cuda` from dist/ into ~/.cache/mship-bootstrap (cuda|cpu|metal)
 
 # Run a single test
 uv run pytest tests/test_config.py::TestLlamaServerConfig::test_defaults -v

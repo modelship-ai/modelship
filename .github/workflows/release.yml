@@ -36,9 +36,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: Build engine and bootstrapper
-        run: |
-          uv build -o dist .
-          uv build -o dist bootstrap
+        run: make wheel
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
