@@ -11,8 +11,7 @@ import pytest
 import yaml
 
 from modelship.deploy.local_nodes import local_nodes
-from modelship.deploy.serve_utils import local_ray_clusters
-from tests.conftest import MODEL_CONFIGS
+from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, wait_for_no_ray_node
 from tests.test_cluster_join import _poll, _terminate_process_group
 
 _GCS_PORT = 6580
@@ -22,9 +21,7 @@ _GATEWAY = f"http://127.0.0.1:{_API_PORT}/modelship"
 
 _MODEL = MODEL_CONFIGS["chat-llama-server-plain"]
 
-_MSHIP = ["uv", "run", "python", "-m", "modelship.launcher"]
-
-pytestmark = [pytest.mark.integration, pytest.mark.llama_server, pytest.mark.mship_stop]
+pytestmark = [pytest.mark.integration, pytest.mark.llama_server, pytest.mark.mship_stop, pytest.mark.own_head]
 
 
 class _Cluster:
@@ -39,10 +36,14 @@ class _Cluster:
         ray_tmp = tempfile.mkdtemp(prefix=f"mship-stop-{name}-")
         self._ray_tmps.append(ray_tmp)
         env = {**os.environ, "RAY_TMPDIR": ray_tmp, "PYTHONUNBUFFERED": "1", **env}
-        env.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
         with open(self._tmp_path / f"{name}.log", "w") as log_file:
             proc = subprocess.Popen(
-                [*_MSHIP, *args], env=env, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True
+                [*MSHIP, *args],
+                cwd=MSHIP_CWD,
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
             )
         self._procs.append(proc)
         return proc
@@ -86,7 +87,7 @@ class _Cluster:
 
 @pytest.fixture
 def cluster(tmp_path):
-    if running := local_ray_clusters():
+    if running := wait_for_no_ray_node():
         pytest.skip(f"a Ray node already runs on this machine (GCS at {', '.join(sorted(running))}); run this alone")
     cluster = _Cluster(tmp_path)
     try:
@@ -136,7 +137,7 @@ def _left() -> list[psutil.Process]:
 
 
 def _mship_stop(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([*_MSHIP, "stop", *args], capture_output=True, text=True, timeout=300)
+    return subprocess.run([*MSHIP, "stop", *args], cwd=MSHIP_CWD, capture_output=True, text=True, timeout=300)
 
 
 def test_stop_shuts_a_head_down_and_leaves_nothing(cluster):

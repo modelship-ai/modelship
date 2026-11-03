@@ -11,8 +11,7 @@ import httpx
 import pytest
 import yaml
 
-from modelship.deploy.serve_utils import local_ray_clusters
-from tests.conftest import MODEL_CONFIGS
+from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, wait_for_no_ray_node
 from tests.test_cluster_join import _poll, _terminate_process_group
 
 # Off Ray's 6379, modelship's defaults (6380/8265/8000), test_cluster_join's and test_node_logging's.
@@ -77,7 +76,7 @@ def _tail(log_path) -> str:
 def autoscaling_cluster(tmp_path):
     """A head serving one model, with a gateway that scales from 1 to 2 replicas past 1 ongoing request each.
     Yields the head's log path."""
-    if running := local_ray_clusters():
+    if running := wait_for_no_ray_node():
         pytest.skip(f"a Ray node already runs on this machine (GCS at {', '.join(sorted(running))}); run this alone")
 
     config = tmp_path / "models.yaml"
@@ -106,7 +105,8 @@ def autoscaling_cluster(tmp_path):
     ]
     with open(log_path, "w") as log_file:
         head = subprocess.Popen(
-            ["uv", "run", "python", "-m", "modelship.launcher", *args],
+            [*MSHIP, *args],
+            cwd=MSHIP_CWD,
             env={**os.environ, "RAY_TMPDIR": ray_tmp, "PYTHONUNBUFFERED": "1"},
             stdout=log_file,
             stderr=subprocess.STDOUT,
@@ -129,6 +129,7 @@ def autoscaling_cluster(tmp_path):
 @pytest.mark.integration
 @pytest.mark.llama_server
 @pytest.mark.gateway_autoscaling
+@pytest.mark.own_head
 def test_load_past_the_target_scales_the_gateway_out_and_the_new_replica_serves_the_model(autoscaling_cluster):
     config = _gateway()["deployment_config"]
     assert (config["autoscaling_config"]["min_replicas"], config["autoscaling_config"]["max_replicas"]) == (1, 2)

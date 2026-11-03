@@ -14,7 +14,7 @@ import yaml
 
 from modelship.deploy.serve_utils import local_ray_clusters
 from openai import NotFoundError, OpenAI
-from tests.conftest import MODEL_CONFIGS
+from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, wait_for_no_ray_node
 from tests.test_cluster_join import _poll, _terminate_process_group
 from tests.test_mcp_e2e import serve_dice
 
@@ -26,7 +26,7 @@ _IDENTITY_HEADER = "X-Mship-Test-Identity"
 
 _MODEL = MODEL_CONFIGS["chat-llama-server-plain"]
 
-pytestmark = [pytest.mark.integration, pytest.mark.llama_server, pytest.mark.state_store]
+pytestmark = [pytest.mark.integration, pytest.mark.llama_server, pytest.mark.state_store, pytest.mark.own_head]
 
 
 def _free_port() -> int:
@@ -115,7 +115,8 @@ class _Head:
         }
         with open(self._log_path, "a") as log_file:
             self._proc = subprocess.Popen(
-                ["uv", "run", "python", "-m", "modelship.launcher", *args],
+                [*MSHIP, *args],
+                cwd=MSHIP_CWD,
                 env=env,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
@@ -151,7 +152,7 @@ class _Head:
 
 @pytest.fixture(scope="module", params=["memory", "redis"])
 def head(request, tmp_path_factory):
-    if running := local_ray_clusters():
+    if running := wait_for_no_ray_node():
         pytest.skip(f"a Ray node already runs on this machine (GCS at {', '.join(sorted(running))}); run this alone")
     with contextlib.ExitStack() as stack:
         redis_url = stack.enter_context(_redis_server()) if request.param == "redis" else None
