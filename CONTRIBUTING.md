@@ -39,7 +39,7 @@ make lint-fix    # auto-fix ruff issues
 
 1. Fork the repository and create a branch from `main`
 2. Make your changes
-3. Ensure `make lint` and `make test` pass
+3. Ensure `make lint` and `make unit-test` pass
 4. Open a pull request against `main` with a clear description of what changed and why
 
 ## Getting Help

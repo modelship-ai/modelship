@@ -19,7 +19,10 @@ uv sync --extra dev --extra cpu --extra vllm-cpu   # CPU-only dev (vllm-cpu pull
 # The canonical dev loop (mirrored in CI and Makefile)
 make lint        # ruff check + ruff format --check + pyright  (all three MUST pass)
 make lint-fix    # ruff check --fix + ruff format
-make test        # uv run pytest tests/ -v
+make unit-test   # uv run pytest tests/ -v -m "not integration"
+make wheel       # engine + bootstrapper wheels and sdists into dist/
+make bootstrap VARIANT=cuda   # make wheel, then `mship bootstrap --cuda` from dist/ into ~/.cache/mship-bootstrap (cuda|cpu|metal)
+make integration MARK=vllm ARGS=tests/test_vllm_integration.py   # integration suite against that mship; MARK, ARGS optional
 
 # Run a single test
 uv run pytest tests/test_config.py::TestLlamaServerConfig::test_defaults -v
@@ -29,7 +32,7 @@ CI (`.github/workflows/ci.yml`) runs `uv sync --extra dev --extra cuda` on Linux
 
 `make lint` requires `--extra cuda` to be installed. Pyright resolves imports against the active venv, and `gguf`, `diffusers`, and `psutil` only ship under the cuda extra, so lint on a cpu-only sync fails with `reportMissingImports`. (`vllm` is importable under both extras as of the Stage E0 CPU wheel wiring — it's no longer cuda-only, just not enough on its own to make lint pass cpu-only.) Tests run fine on either extra (the cuda extra is a superset).
 
-Agents: when running tests on your own initiative (sanity-checking a change, verifying a bump), skip the slow `integration`-marked suite by default — `uv run pytest tests/ -v -m "not integration"`. Only run the full `make test` (which includes integration) when explicitly requested.
+Agents: when running tests on your own initiative (sanity-checking a change, verifying a bump), skip the slow `integration`-marked suite by default — `make unit-test`. Only run `make integration` when explicitly requested; a plain `pytest -m integration` refuses to run.
 
 Pre-commit only runs ruff; it does **not** run pyright or tests, so don't rely on the hook to catch type errors.
 
@@ -83,7 +86,7 @@ Right after connecting to Ray, the driver logs the cluster's observed totals (`C
 
 - Under `tests/`. Use `pytest-asyncio` for async tests.
 - The default suite mocks out Ray Serve; it does **not** spin up a real cluster. Pattern: access the wrapped class via `ModelshipAPI.func_or_class` to bypass the `@serve.deployment` wrapper (see `tests/test_api.py`).
-- `tests/test_*_integration.py` are real end-to-end tests against a live cluster and real (small) models — opt-in via pytest markers (`integration` plus a per-loader/feature marker, e.g. `vllm`, `blue_green`, `cluster_join`; see `pyproject.toml`'s `markers`). Excluded by default (`-m "not integration"`); don't assume `make test`/CI coverage without them.
+- `tests/test_*_integration.py` are real end-to-end tests against a live cluster and real (small) models — opt-in via pytest markers (`integration` plus a per-loader/feature marker, e.g. `vllm`, `blue_green`, `cluster_join`; see `pyproject.toml`'s `markers`). Excluded by default (`-m "not integration"`); don't assume `make unit-test`/CI coverage without them. `make integration` runs them against the `mship` that `make bootstrap` installed, each `mship` process started outside the repo so it imports the wheel; tests marked `own_head` start their own head and run first.
 
 ## Releases
 

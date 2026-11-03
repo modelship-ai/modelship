@@ -18,6 +18,7 @@ import pytest
 import yaml
 
 import modelship.infer.infer_config as infer_config
+from modelship.deploy.serve_utils import local_ray_clusters
 from modelship.utils.model_flags import GENERATED_MODEL_ARGS, MODEL_ARG_KEYS
 from openai import OpenAI
 
@@ -118,7 +119,26 @@ OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 HEALTH_URL = "http://localhost:8000/modelship/health"
 SERVE_STATUS_URL = "http://localhost:8265/api/serve/applications/"
 
-MSHIP = ["uv", "run", "python", "-m", "modelship.launcher"]
+MSHIP_BIN = os.environ.get("MSHIP_TEST_BIN", "")
+MSHIP = [MSHIP_BIN]
+MSHIP_CWD = os.path.dirname(MSHIP_BIN)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    if any(item.get_closest_marker("integration") for item in items) and not os.access(MSHIP_BIN, os.X_OK):
+        raise pytest.UsageError(
+            "integration tests run the mship that `make bootstrap` installs: run them with `make integration`"
+        )
+    items.sort(key=lambda item: item.get_closest_marker("own_head") is None)
+
+
+def wait_for_no_ray_node(timeout_s: float = 120) -> set[str]:
+    deadline = time.time() + timeout_s
+    while (running := local_ray_clusters()) and time.time() < deadline:
+        time.sleep(2)
+    return running
+
 
 # The session cluster runs with token auth; only processes aimed at it get the token.
 CLUSTER_TOKEN = secrets.token_hex(16)
@@ -171,9 +191,6 @@ MODEL_CONFIGS: dict[str, dict] = {
         "num_gpus": 0.5,
         "vllm_engine_kwargs": {
             "max_model_len": 2048,
-            "enforce_eager": True,
-            "enable_auto_tool_choice": True,
-            "tool_call_parser": "hermes",
         },
     },
     "chat-reasoning": {
@@ -185,8 +202,6 @@ MODEL_CONFIGS: dict[str, dict] = {
         "num_gpus": 0.5,
         "vllm_engine_kwargs": {
             "max_model_len": 4096,
-            "enforce_eager": True,
-            "enable_reasoning": True,
         },
     },
     "chat-vlm": {
@@ -197,7 +212,6 @@ MODEL_CONFIGS: dict[str, dict] = {
         "num_gpus": 1,
         "vllm_engine_kwargs": {
             "max_model_len": 8192,
-            "enforce_eager": True,
             "limit_mm_per_prompt": {"image": 2},
             "mm_processor_kwargs": {"min_pixels": 50176, "max_pixels": 200704},
         },
@@ -383,13 +397,12 @@ def _fail_deploy(log_path: Path, code: int, expected: int) -> None:
 
 
 class _DeployProcess:
-    """A background `mship deploy` in its own process group, so a timeout kills uv and Python alike."""
-
     def __init__(self, args: list[str], log_path: Path) -> None:
         self._log_path = log_path
         self._log_file = open(log_path, "w")  # noqa: SIM115 — closed in wait()
         self._proc = subprocess.Popen(
             [*MSHIP, "deploy", "--wait", *args],
+            cwd=MSHIP_CWD,
             env=cluster_env(),
             stdout=self._log_file,
             stderr=subprocess.STDOUT,
@@ -450,6 +463,7 @@ class _Deployer:
         with open(log_path, "w") as log_file:
             result = subprocess.run(
                 [*MSHIP, "deploy", "--wait", *args],
+                cwd=MSHIP_CWD,
                 env=cluster_env(),
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
@@ -466,6 +480,7 @@ class _Deployer:
         with open(log_path, "w") as log_file:
             result = subprocess.run(
                 [*MSHIP, "deploy", "--cancel", request_id, *args],
+                cwd=MSHIP_CWD,
                 env=cluster_env(),
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
@@ -527,7 +542,7 @@ class _Deployer:
 
 
 @pytest.fixture(scope="session")
-def mship_cluster(tmp_path_factory):
+def mship_cluster(tmp_path_factory, pytestconfig):
     """Starts a cluster with a long-lived `mship start` process bound to an empty
     models.yaml; per-test code swaps the deployed set through `_Deployer`."""
     tmp_dir = tmp_path_factory.mktemp("mship_integration")
@@ -544,11 +559,7 @@ def mship_cluster(tmp_path_factory):
     proc = subprocess.Popen(
         # At least 2 gateway replicas exercise multi-replica convergence; num_cpus=0 makes this cheap.
         [
-            "uv",
-            "run",
-            "python",
-            "-m",
-            "modelship.launcher",
+            *MSHIP,
             "start",
             "--config",
             str(empty_config),
@@ -558,6 +569,7 @@ def mship_cluster(tmp_path_factory):
             "false",
             "--enable-ray-auth",
         ],
+        cwd=MSHIP_CWD,
         # MSHIP_TRUSTED_IDENTITY_HEADER lets tests simulate distinct identities via
         # extra_headers; MSHIP_RAY_DASHBOARD_HOST binds the dashboard to 0.0.0.0.
         env=cluster_env(
@@ -602,6 +614,10 @@ def mship_cluster(tmp_path_factory):
             cleanup()
             pytest.fail(f"Gateway failed to become ready within timeout.\nLog file: {log_path}\nLast 4KB:\n{tail}")
 
+        with pytestconfig.pluginmanager.get_plugin("capturemanager").global_and_fixture_disabled():
+            pytestconfig.pluginmanager.get_plugin("terminalreporter").write_line(
+                f"Ray dashboard: http://localhost:8265, token: {CLUSTER_TOKEN}"
+            )
         yield tmp_dir
     finally:
         cleanup()

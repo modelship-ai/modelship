@@ -22,17 +22,20 @@ uv sync --extra dev --extra cpu --extra vllm-cpu   # CPU-only dev (vllm-cpu pull
 
 make lint        # ruff check + ruff format --check + pyright — all three MUST pass
 make lint-fix    # auto-fix ruff issues
-make test        # uv run pytest tests/ -v
+make unit-test   # uv run pytest tests/ -v -m "not integration"
+make wheel       # engine + bootstrapper wheels and sdists into dist/
+make bootstrap VARIANT=cuda   # make wheel, then `mship bootstrap --cuda` from dist/ into ~/.cache/mship-bootstrap (cuda|cpu|metal)
+make integration MARK=vllm ARGS=tests/test_vllm_integration.py   # integration suite against that mship; MARK, ARGS optional
 
 # Single test
 uv run pytest tests/test_config.py::TestLlamaServerConfig::test_defaults -v
 ```
 
-CI mirrors `make lint` + `pytest tests/ -v`. Match it locally before pushing.
+CI mirrors `make lint` + `make unit-test`. Match it locally before pushing.
 
 `make lint` requires the `cuda` extra — pyright fails with `reportMissingImports` for `gguf`, `diffusers`, and `psutil` under the cpu sync. (`vllm` is now importable under both extras — Stage E0 wired a CPU wheel index — but that alone doesn't unblock a cpu-only lint.) Tests pass on either extra.
 
-When running tests on your own initiative, skip the slow integration suite: `uv run pytest tests/ -v -m "not integration"`. Only run full `make test` when explicitly requested.
+When running tests on your own initiative, skip the slow integration suite: `make unit-test`. Only run `make integration` when explicitly requested; a plain `pytest -m integration` refuses to run.
 
 ## Running the server
 

@@ -9,11 +9,14 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
 
 import pytest
+
+from tests.conftest import MSHIP, MSHIP_CWD
 
 # Off Ray's own 6379 (test_integration.py's shared cluster) and modelship's real
 # defaults (6380/8265/8000) — must never collide with a real cluster on this box.
@@ -36,9 +39,6 @@ ray.init(address="local", num_cpus=1, num_gpus=0, dashboard_port={_THROWAWAY_DAS
 print("head up", flush=True)
 signal.pause()
 """
-
-
-_MSHIP = ["uv", "run", "python", "-m", "modelship.launcher"]
 
 
 def _terminate_process_group(proc: subprocess.Popen) -> None:
@@ -107,7 +107,7 @@ def throwaway_head(tmp_path):
     log_path = tmp_path / "head.log"
     with open(log_path, "w") as log_file:
         proc = subprocess.Popen(
-            ["uv", "run", "python", "-c", _HEAD_SCRIPT],
+            [sys.executable, "-c", _HEAD_SCRIPT],
             env=env,
             stdout=log_file,
             stderr=subprocess.STDOUT,
@@ -158,7 +158,7 @@ def no_auth_head(tmp_path):
     log_path = tmp_path / "head.log"
     with open(log_path, "w") as log_file:
         proc = subprocess.Popen(
-            ["uv", "run", "python", "-c", _NO_AUTH_HEAD_SCRIPT],
+            [sys.executable, "-c", _NO_AUTH_HEAD_SCRIPT],
             env=env,
             stdout=log_file,
             stderr=subprocess.STDOUT,
@@ -208,7 +208,7 @@ class TestClusterJoin:
     def _run_joiner(self, tmp_path, head_port, token, suffix="join_home") -> subprocess.CompletedProcess:
         env, join_ray_tmp, _ = self._joiner_env(tmp_path, suffix)
         args = [
-            *_MSHIP,
+            *MSHIP,
             "join",
             "--gcs-address",
             f"127.0.0.1:{head_port}",
@@ -222,7 +222,7 @@ class TestClusterJoin:
         if token is not None:
             env["MSHIP_RAY_AUTH_TOKEN"] = token
         try:
-            return subprocess.run(args, env=env, capture_output=True, text=True, timeout=90)
+            return subprocess.run(args, cwd=MSHIP_CWD, env=env, capture_output=True, text=True, timeout=90)
         finally:
             shutil.rmtree(join_ray_tmp, ignore_errors=True)
 
@@ -246,7 +246,7 @@ class TestClusterJoin:
             with open(log_path, "w") as log_file:
                 proc = subprocess.Popen(
                     [
-                        *_MSHIP,
+                        *MSHIP,
                         "join",
                         "--gcs-address",
                         f"127.0.0.1:{head_port}",
@@ -257,6 +257,7 @@ class TestClusterJoin:
                         "--prune-ray-sessions",
                         "false",
                     ],
+                    cwd=MSHIP_CWD,
                     env=env,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
@@ -296,7 +297,7 @@ class TestClusterJoin:
         with open(log_path, "w") as log_file:
             proc = subprocess.Popen(
                 [
-                    *_MSHIP,
+                    *MSHIP,
                     "join",
                     "--gcs-address",
                     f"127.0.0.1:{_THROWAWAY_HEAD_PORT}",
@@ -307,6 +308,7 @@ class TestClusterJoin:
                     "--prune-ray-sessions",
                     "false",
                 ],
+                cwd=MSHIP_CWD,
                 env=env,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
@@ -325,7 +327,8 @@ class TestClusterJoin:
         env, start_ray_tmp, config_path = self._joiner_env(tmp_path, "start_home")
         try:
             result = subprocess.run(
-                [*_MSHIP, "start", "--config", config_path, "--prune-ray-sessions", "false"],
+                [*MSHIP, "start", "--config", config_path, "--prune-ray-sessions", "false"],
+                cwd=MSHIP_CWD,
                 env=env,
                 capture_output=True,
                 text=True,

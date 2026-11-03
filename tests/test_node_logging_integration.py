@@ -20,8 +20,7 @@ import pytest
 import yaml
 from ray.util.state import list_actors, list_nodes
 
-from modelship.deploy.serve_utils import local_ray_clusters
-from tests.conftest import MODEL_CONFIGS
+from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, wait_for_no_ray_node
 from tests.test_cluster_join import _poll, _terminate_process_group
 
 # Off Ray's 6379, modelship's defaults (6380/8265/8000) and test_cluster_join's 6480/6481.
@@ -31,8 +30,6 @@ _API_PORT = 6492
 _DASHBOARD = f"http://127.0.0.1:{_DASHBOARD_PORT}"
 
 _MODEL = MODEL_CONFIGS["chat-llama-server-plain"]
-
-_MSHIP = ["uv", "run", "python", "-m", "modelship.launcher"]
 
 # Unset in both processes, so the replica's values can only come from the flags.
 _LOGGING_ENV = (
@@ -87,7 +84,7 @@ def _spawn(args: list[str], ray_tmp: str, log_path: Path) -> subprocess.Popen:
     env |= {"RAY_TMPDIR": ray_tmp, "PYTHONUNBUFFERED": "1"}
     with open(log_path, "w") as log_file:
         return subprocess.Popen(
-            [*_MSHIP, *args], env=env, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True
+            [*MSHIP, *args], cwd=MSHIP_CWD, env=env, stdout=log_file, stderr=subprocess.STDOUT, start_new_session=True
         )
 
 
@@ -114,7 +111,7 @@ def _tails(*log_paths: Path) -> str:
 def two_node_cluster(tmp_path):
     """A head at the default level on the console, with JSON format and metrics off, and a joiner
     logging at DEBUG to a syslog listener. Yields (listener, head log, joiner log)."""
-    if running := local_ray_clusters():
+    if running := wait_for_no_ray_node():
         pytest.skip(f"a Ray node already runs on this machine (GCS at {', '.join(sorted(running))}); run this alone")
 
     config = tmp_path / "models.yaml"
@@ -195,6 +192,7 @@ def two_node_cluster(tmp_path):
 
 @pytest.mark.integration
 @pytest.mark.node_logging
+@pytest.mark.own_head
 def test_a_replica_on_the_joiner_uses_its_nodes_logging_and_the_heads_format_and_metrics(two_node_cluster):
     listener, head_log, join_log = two_node_cluster
     assert _poll(_model_app_running, deadline_s=300), f"the model never ran.\n{_tails(head_log, join_log)}"

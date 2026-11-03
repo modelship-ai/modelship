@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from openai import OpenAI
-from tests.conftest import MSHIP, OPENAI_API_BASE, cluster_env, run_on_cluster, serve_apps
+from tests.conftest import MSHIP, MSHIP_CWD, OPENAI_API_BASE, cluster_env, run_on_cluster, serve_apps
 
 _SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf"
 # a text model's GGUF as the vision projector: passes the source check, llama-server exits at startup
@@ -353,6 +353,7 @@ class TestDeployMetrics:
 def _deploy_remote(url: str, config: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         [*MSHIP, "deploy", "--ray-dashboard-url", url, "--config", str(config), "--wait"],
+        cwd=MSHIP_CWD,
         env=env,
         capture_output=True,
         text=True,

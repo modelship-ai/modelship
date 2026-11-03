@@ -6,8 +6,9 @@ list.
 ## Verified cluster behaviour
 
 Every row below is asserted end-to-end against a **live cluster with real models
-over real HTTP** — no mocks, no stubs. Run them with `pytest tests/ -m
-integration`, or a single area via its own marker (e.g. `-m blue_green`).
+over real HTTP** — no mocks, no stubs. Run them with `make integration` against
+the `mship` that `make bootstrap VARIANT=cuda` builds from the branch, or a single
+area via its own marker (e.g. `make integration MARK=blue_green`).
 
 | Capability | What the cluster guarantees | Proven by |
 |---|---|---|

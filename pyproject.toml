@@ -209,6 +209,7 @@ ignore = [
 known-first-party = ["modelship"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = [
     "integration: tests that require a running Ray cluster and external models",
     "llama_server: integration tests that exercise the llama_server loader",
@@ -228,6 +229,7 @@ markers = [
     "node_logging: integration test that exercises per-node logging on a replica scheduled on a joined node",
     "state_store: integration tests that run the same /v1/responses requests on memory:// and on a real redis-server",
     "mship_stop: integration tests that run mship stop against their own head and joined node",
+    "own_head: integration tests that start their own mship head; they run before the session cluster starts",
 ]
 
 [tool.pyright]

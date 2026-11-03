@@ -3,10 +3,42 @@ MAJOR   := $(shell echo $(VERSION) | cut -d. -f1)
 MINOR   := $(shell echo $(VERSION) | cut -d. -f2)
 PATCH   := $(shell echo $(VERSION) | cut -d. -f3)
 
-.PHONY: test lint lint-fix pins release-patch release-minor release-major _release llama-cpp-bump
+BOOTSTRAP_DIR ?= $(HOME)/.cache/mship-bootstrap
 
-test:
-	uv run pytest tests/ -v
+.PHONY: unit-test integration wheel bootstrap lint lint-fix pins release-patch release-minor release-major _release llama-cpp-bump
+
+unit-test:
+	uv run pytest tests/ -v -m "not integration"
+
+integration:
+	@test -x $(BOOTSTRAP_DIR)/venv/bin/mship && test -f $(BOOTSTRAP_DIR)/home/env || \
+		{ echo "Error: no mship installed in $(BOOTSTRAP_DIR): run make bootstrap VARIANT=cuda|cpu|metal" >&2; exit 1; }
+	@if [ -n "$$MSHIP_LLAMA_SERVER_BIN" ]; then echo "Ignoring MSHIP_LLAMA_SERVER_BIN=$$MSHIP_LLAMA_SERVER_BIN: mship bootstrap provides llama-server"; fi
+	@bin=$$(uv run python -c "import os, sys; print(os.path.dirname(sys.executable))") && \
+	env -u MSHIP_LLAMA_SERVER_BIN PATH="$$bin:$$PATH" MSHIP_HOME=$(BOOTSTRAP_DIR)/home \
+		MSHIP_TEST_BIN=$(BOOTSTRAP_DIR)/venv/bin/mship \
+		"$$bin/python" -m pytest -v -m "integration$(if $(MARK), and ($(MARK)))" $(ARGS)
+
+wheel:
+	rm -rf dist
+	uv build -o dist .
+	uv build -o dist bootstrap
+
+bootstrap:
+	@case "$(VARIANT)" in cuda|cpu|metal) ;; *) echo "Error: usage: make bootstrap VARIANT=cuda|cpu|metal" >&2; exit 1;; esac
+	@$(MAKE) wheel
+	uv venv --allow-existing --python 3.12.10 $(BOOTSTRAP_DIR)/venv
+	uv pip install --python $(BOOTSTRAP_DIR)/venv/bin/python --reinstall --no-cache dist/mship-*.whl
+	@if [ -n "$$MSHIP_LLAMA_SERVER_BIN" ]; then echo "Ignoring MSHIP_LLAMA_SERVER_BIN=$$MSHIP_LLAMA_SERVER_BIN: mship bootstrap provisions llama-server"; fi
+	cd $(BOOTSTRAP_DIR) && env -u MSHIP_LLAMA_SERVER_BIN MSHIP_HOME=$(BOOTSTRAP_DIR)/home UV_FIND_LINKS=$(CURDIR)/dist \
+		venv/bin/mship bootstrap --$(VARIANT)
+	uv pip install --python $(BOOTSTRAP_DIR)/home/envs/$(VARIANT)/.venv/bin/python --no-deps --reinstall --no-cache \
+		dist/mship_engine-*.whl
+	@site=$$($(BOOTSTRAP_DIR)/home/envs/$(VARIANT)/.venv/bin/python -I -c \
+		"import modelship, os; print(os.path.dirname(os.path.dirname(modelship.__file__)))"); \
+	git ls-files modelship | while read -r f; do \
+		cmp -s "$$f" "$$site/$$f" || { echo "Error: $$f differs from the installed mship-engine" >&2; exit 1; }; \
+	done
 
 lint:
 	uv run ruff check .
