@@ -4,10 +4,12 @@ streaming — all against a stubbed `sherpa_onnx` module. Nothing here
 downloads a bundle."""
 
 import asyncio
+import io
 import sys
 import threading
 import time
 import types
+import wave
 from types import SimpleNamespace
 
 import numpy as np
@@ -51,21 +53,21 @@ class _FakeOfflineTts:
         self.num_speakers = num_speakers
         self.sample_rate = 24000
         self.generate_calls: list[tuple] = []
-        self.chunks = chunks or []
+        self.chunks = chunks or [np.array([0.0, 0.1, -0.1], dtype=np.float32)]
         self.aborted_early = False
         self.started = threading.Event()
 
     def generate(self, text, sid=0, speed=1.0, callback=None):
         self.generate_calls.append((text, sid, speed))
         self.started.set()
-        if callback is None:
-            return SimpleNamespace(samples=[0.0, 0.1, -0.1], sample_rate=self.sample_rate)
+        generated = []
         for i, chunk in enumerate(self.chunks):
-            if not callback(chunk, (i + 1) / len(self.chunks)):
+            generated.append(chunk)
+            if callback is not None and not callback(chunk, (i + 1) / len(self.chunks)):
                 self.aborted_early = True
                 break
             time.sleep(0.05)  # gives the consumer a window to aclose() mid-loop
-        return SimpleNamespace(samples=[], sample_rate=self.sample_rate)
+        return SimpleNamespace(samples=np.concatenate(generated).tolist(), sample_rate=self.sample_rate)
 
 
 def _fake_sherpa_onnx_module(num_speakers: int) -> types.ModuleType:
@@ -174,7 +176,8 @@ class TestCreateSpeech:
         req = SpeechRequest(input="hello world", model="tts", voice="af_bella", speed=1.5)
         result = await infer.create_speech(req, RawRequestProxy(None, {}))
         assert isinstance(result, RawSpeechResponse)
-        assert result.audio[:4] == b"RIFF"
+        with wave.open(io.BytesIO(result.audio)) as wav:
+            assert wav.getnframes() == 3
         assert tts.generate_calls == [("hello world", _ENTRY.voice_names.index("af_bella"), 1.5)]
 
     @pytest.mark.asyncio
