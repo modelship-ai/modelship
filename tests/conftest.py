@@ -192,8 +192,6 @@ MODEL_CONFIGS: dict[str, dict] = {
         "vllm_engine_kwargs": {
             "max_model_len": 2048,
             "enforce_eager": True,
-            "enable_auto_tool_choice": True,
-            "tool_call_parser": "hermes",
         },
     },
     "chat-reasoning": {
@@ -206,7 +204,6 @@ MODEL_CONFIGS: dict[str, dict] = {
         "vllm_engine_kwargs": {
             "max_model_len": 4096,
             "enforce_eager": True,
-            "enable_reasoning": True,
         },
     },
     "chat-vlm": {
