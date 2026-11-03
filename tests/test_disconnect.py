@@ -1,17 +1,21 @@
-"""Unit tests for BaseInfer.run_cancellable / run_cancellable_stream, which race work
-against the shared disconnect pump and call on_generation_aborted() on cancellation."""
-
 import asyncio
 import itertools
 from typing import ClassVar
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from ray.exceptions import RayActorError
 
 from modelship.infer import infer_config
 from modelship.infer.base_infer import _DISCONNECT_POLL_INTERVAL_S, BaseInfer, ClientDisconnectedError
+from modelship.infer.infer_config import DisconnectRegistry, RawRequestProxy, _DisconnectStore
 
 _request_id_counter = itertools.count()
+
+
+@pytest.fixture(autouse=True)
+def stub_disconnect_registry():
+    yield
 
 
 class _FakeRawRequest:
@@ -306,3 +310,134 @@ async def test_task_cancelled_while_suspended_in_asyncio_wait_does_not_raise():
         await task
 
     assert work_closed.is_set()
+
+
+class _FakeRegistry:
+    """Stand-in for the DisconnectRegistry actor handle."""
+
+    def __init__(self):
+        self.disconnected: set[str] = set()
+        self.set = self._Method(self._set)
+        self.is_set = self._Method(self._is_set)
+        self.is_set_many = self._Method(self._is_set_many)
+        self.clear = self._Method(self._clear)
+
+    async def _set(self, rid):
+        self.disconnected.add(rid)
+
+    async def _is_set(self, rid):
+        return rid in self.disconnected
+
+    async def _is_set_many(self, rids):
+        return [rid for rid in rids if rid in self.disconnected]
+
+    async def _clear(self, rid):
+        self.disconnected.discard(rid)
+
+    class _Method:
+        def __init__(self, fn):
+            self._fn = fn
+
+        def remote(self, *args):
+            return asyncio.ensure_future(self._fn(*args))
+
+
+class _DeadRegistry:
+    """A registry handle whose every method raises RayActorError on await, as a
+    dead Ray actor's methods do."""
+
+    def __init__(self):
+        self.set = self._Method()
+        self.is_set = self._Method()
+        self.is_set_many = self._Method()
+        self.clear = self._Method()
+
+    class _Method:
+        def remote(self, *args):
+            fut: asyncio.Future = asyncio.Future()
+            fut.set_exception(RayActorError())
+            return fut
+
+
+@pytest.mark.asyncio
+async def test_proxies_keyed_independently_on_one_registry():
+    reg = _FakeRegistry()
+    p1 = RawRequestProxy(reg, {}, "req-1")
+    p2 = RawRequestProxy(reg, {}, "req-2")
+
+    await reg.set.remote("req-1")
+
+    assert await p1.is_disconnected() is True
+    assert await p2.is_disconnected() is False
+
+    await reg.clear.remote("req-1")
+    assert await p1.is_disconnected() is False
+
+
+def test_disconnect_store_evicts_after_ttl():
+    clock = {"t": 1000.0}
+    store = _DisconnectStore(ttl_seconds=300.0, now=lambda: clock["t"])
+
+    store.set("req-1")
+    assert store.is_set("req-1") is True
+
+    clock["t"] += 299.0  # just inside the window
+    assert store.is_set("req-1") is True
+
+    clock["t"] += 2.0  # now past the 300s deadline
+    assert store.is_set("req-1") is False
+
+
+def test_disconnect_store_set_sweeps_expired_entries():
+    clock = {"t": 0.0}
+    store = _DisconnectStore(ttl_seconds=10.0, now=lambda: clock["t"])
+
+    store.set("stale")
+    clock["t"] += 11.0  # "stale" is now expired
+    store.set("fresh")  # set() sweeps expired entries
+
+    assert "stale" not in store._deadlines
+    assert store.is_set("fresh") is True
+
+
+def test_disconnect_store_clear_removes_entry():
+    store = _DisconnectStore(ttl_seconds=300.0)
+    store.set("req-1")
+    store.clear("req-1")
+    assert store.is_set("req-1") is False
+    store.clear("never-set")  # clearing an absent id is a no-op
+
+
+def test_disconnect_store_is_set_many_filters_to_disconnected_subset():
+    clock = {"t": 0.0}
+    store = _DisconnectStore(ttl_seconds=10.0, now=lambda: clock["t"])
+
+    store.set("a")
+    store.set("b")
+
+    assert store.is_set_many(["a", "b", "never-set"]) == ["a", "b"]
+
+    clock["t"] += 11.0  # past both deadlines
+    assert store.is_set_many(["a", "b", "never-set"]) == []
+
+
+@pytest.mark.asyncio
+async def test_is_disconnected_degrades_and_reresolves_on_actor_death():
+    """A dead registry actor must not fail a healthy in-flight request: the proxy
+    degrades to 'still connected' and re-resolves the recreated actor for later polls."""
+    healthy = _FakeRegistry()
+    proxy = RawRequestProxy(_DeadRegistry(), {}, "req-1")
+
+    with patch("modelship.infer.infer_config.get_disconnect_registry", return_value=healthy):
+        assert await proxy.is_disconnected() is False  # degraded, not raised
+
+    assert proxy._registry is healthy  # re-resolved to the live actor for later polls
+
+
+def test_creates_a_restartable_registry_on_the_head(monkeypatch):
+    monkeypatch.setattr(infer_config, "_disconnect_registry", None)
+    options = MagicMock()
+    with patch.object(DisconnectRegistry, "options", options):
+        infer_config.get_disconnect_registry()
+    assert options.call_args.kwargs["resources"] == {"node:__internal_head__": 0.001}
+    assert options.call_args.kwargs["max_restarts"] == -1

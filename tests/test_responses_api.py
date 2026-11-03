@@ -94,7 +94,7 @@ class TestResponsesRoute:
         # straight to the deployment, which owns chat<->Responses shaping now.
         assert remote.call_args.args[0] is request
         hr.assert_awaited_once()
-        assert hr.call_args.args[2].operation == "create_response"
+        assert hr.call_args.args[1].operation == "create_response"
 
     @pytest.mark.asyncio
     async def test_stream_true_dispatches_and_returns_event_stream(self, api):

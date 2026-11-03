@@ -40,7 +40,7 @@ async def _stream(*chunks):
 
 
 async def _observed(*chunks, raw_request=None) -> list:
-    raw_request = raw_request or RawRequestProxy(MagicMock(), {}, "req-1")
+    raw_request = raw_request or RawRequestProxy(None, {}, "req-1")
     with patch.object(base_infer, "TIME_TO_FIRST_TOKEN_SECONDS") as histogram:
         yielded = [chunk async for chunk in _Infer()._observe_first_token(_stream(*chunks), raw_request)]
     assert yielded == list(chunks)
@@ -67,7 +67,7 @@ async def test_the_first_generated_chunk_is_observed_once(delta):
 
 @pytest.mark.asyncio
 async def test_the_time_runs_from_the_requests_arrival():
-    raw_request = RawRequestProxy(MagicMock(), {}, "req-1")
+    raw_request = RawRequestProxy(None, {}, "req-1")
     raw_request.received_at = time.monotonic() - 2
 
     observed = await _observed(_chunk(content="hi"), raw_request=raw_request)

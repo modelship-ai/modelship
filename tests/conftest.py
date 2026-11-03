@@ -24,17 +24,8 @@ from openai import OpenAI
 
 
 @pytest.fixture(autouse=True)
-def neutralize_request_watcher():
-    """Stubs the disconnect registry and watch loop so route-handler tests don't spin
-    up a real Ray cluster; a test module needing the real watcher can override this fixture."""
-
-    async def _noop_watch(self):
-        return
-
-    with (
-        patch.object(infer_config, "get_disconnect_registry", return_value=MagicMock()),
-        patch.object(infer_config.RequestWatcher, "_watch", _noop_watch),
-    ):
+def stub_disconnect_registry():
+    with patch.object(infer_config, "get_disconnect_registry", return_value=MagicMock()):
         yield
 
 

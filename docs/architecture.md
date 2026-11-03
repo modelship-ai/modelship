@@ -15,10 +15,8 @@ Modelship is a **FastAPI gateway** exposing an OpenAI-compatible API, built on [
 
 1. Client sends a request to the FastAPI gateway (e.g. `POST /v1/chat/completions`)
 2. The gateway identifies the target model from the request body and looks up the deployment serving it — `404` for a model the gateway doesn't have, `503` for a configured model with nothing serving yet
-3. A `RequestWatcher` begins monitoring the client connection for disconnects
-4. The request is forwarded to the model's Ray Serve deployment via a `RawRequestProxy` (serializable headers + cancellation event)
-5. The deployment runs inference and streams the response back as JSON or SSE
-6. On client disconnect mid-inference, the watcher fires the cancellation event, freeing GPU resources immediately
+3. The request is forwarded to the model's Ray Serve deployment via a `RawRequestProxy` (serializable headers)
+4. The deployment runs inference and streams the response back as JSON or SSE
 
 ## Model Deployments
 

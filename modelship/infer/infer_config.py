@@ -3,12 +3,10 @@
 The models.yaml schemas live in modelship/utils/config_schema.py, re-exported below.
 """
 
-import asyncio
 import time
 from collections.abc import Callable
 
 import ray
-from fastapi import Request
 from ray.exceptions import RayActorError
 from starlette.datastructures import Headers, State
 
@@ -41,7 +39,6 @@ __all__ = [
     "ModelshipConfig",
     "ModelshipModelConfig",
     "RawRequestProxy",
-    "RequestWatcher",
     "StableDiffusionCppConfig",
     "VllmEngineConfig",
     "WhispercppConfig",
@@ -154,49 +151,6 @@ def reset_disconnect_registry() -> None:
     _disconnect_registry = None
 
 
-class RequestWatcher:
-    """Watches a FastAPI Request for client disconnect and records it in the shared
-    DisconnectRegistry, keyed by request id."""
-
-    def __init__(self, raw_request: Request, request_id: str):
-        self._request = raw_request
-        self._registry = get_disconnect_registry()
-        self._request_id = request_id
-        self._task = asyncio.create_task(self._watch())
-
-    async def _watch(self):
-        while True:
-            if await self._request.is_disconnected():
-                await self._record_disconnect()
-                break
-            await asyncio.sleep(0.1)
-
-    async def _record_disconnect(self) -> None:
-        """Record the disconnect in the shared registry, re-resolving the actor and
-        retrying once if it has died — otherwise a registry blip silently loses the
-        signal and the deployment runs to completion."""
-        try:
-            await self._registry.set.remote(self._request_id)  # type: ignore[attr-defined]
-        except RayActorError:
-            reset_disconnect_registry()
-            self._registry = get_disconnect_registry()
-            try:
-                await self._registry.set.remote(self._request_id)  # type: ignore[attr-defined]
-            except RayActorError:
-                _logger.warning("Disconnect registry unavailable; lost disconnect for %s", self._request_id)
-
-    def stop(self):
-        """Cancel the watch task. The disconnect entry (if any) is deliberately
-        left for the DisconnectRegistry to TTL-evict: clearing it here ran in the
-        same teardown the disconnect triggered and raced the model deployment's
-        is_disconnected() poll, dropping the signal before it was read."""
-        self._task.cancel()
-
-    @property
-    def registry(self):
-        return self._registry
-
-
 class RawRequestProxy:
     """
     Stands in for a FastAPI Request inside model deployment actors.
@@ -225,8 +179,6 @@ class RawRequestProxy:
 
     @property
     def is_watchable(self) -> bool:
-        """Whether this proxy has a real registry + id to poll — false for internal
-        requests (e.g. warmup) that have no client to disconnect."""
         return self._registry is not None and self.request_id is not None
 
     async def is_disconnected(self) -> bool:
