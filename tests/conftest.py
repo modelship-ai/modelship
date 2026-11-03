@@ -191,7 +191,6 @@ MODEL_CONFIGS: dict[str, dict] = {
         "num_gpus": 0.5,
         "vllm_engine_kwargs": {
             "max_model_len": 2048,
-            "enforce_eager": True,
         },
     },
     "chat-reasoning": {
@@ -203,7 +202,6 @@ MODEL_CONFIGS: dict[str, dict] = {
         "num_gpus": 0.5,
         "vllm_engine_kwargs": {
             "max_model_len": 4096,
-            "enforce_eager": True,
         },
     },
     "chat-vlm": {
@@ -214,7 +212,6 @@ MODEL_CONFIGS: dict[str, dict] = {
         "num_gpus": 1,
         "vllm_engine_kwargs": {
             "max_model_len": 8192,
-            "enforce_eager": True,
             "limit_mm_per_prompt": {"image": 2},
             "mm_processor_kwargs": {"min_pixels": 50176, "max_pixels": 200704},
         },
