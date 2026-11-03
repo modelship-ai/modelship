@@ -1,12 +1,12 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
-import threading
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
-from modelship.infer.base_infer import BaseInfer, ClientDisconnectedError
+from modelship.infer.base_infer import BaseInfer
 from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy, WhispercppConfig
 from modelship.logging import TRACE, get_logger
 from modelship.openai.protocol import (
@@ -100,7 +100,7 @@ class WhispercppInfer(BaseInfer):
         # pywhispercpp maps to a wrong language.
         if not self._multilingual:
             return "en"
-        (lang, _prob), _all = await asyncio.to_thread(self.model.auto_detect_language, samples)
+        (lang, _prob), _all = await self.run_blocking(lambda _stop: self.model.auto_detect_language(samples))
         return lang
 
     # -- transcription -----------------------------------------------------
@@ -111,16 +111,8 @@ class WhispercppInfer(BaseInfer):
         request_id = f"asr-{base_request_id(raw_request)}"
         logger.info("transcription request %s: stream=%s", request_id, request.stream)
         if request.stream:
-            return self.run_cancellable_stream(
-                self._stream(audio_data, request, translate=False, request_id=request_id), raw_request
-            )
-        try:
-            result = await self.run_cancellable(
-                self._transcribe_once(audio_data, request, translate=False, request_id=request_id), raw_request
-            )
-        except ClientDisconnectedError:
-            logger.info("transcription request %s aborted: client disconnected", request_id)
-            return create_error_response("Client disconnected")
+            return self._stream(audio_data, request, translate=False, request_id=request_id)
+        result = await self._transcribe_once(audio_data, request, translate=False, request_id=request_id)
         return cast("ErrorResponse | TranscriptionResponse | TranscriptionResponseVerbose", result)
 
     async def create_translation(
@@ -129,16 +121,8 @@ class WhispercppInfer(BaseInfer):
         request_id = f"translate-{base_request_id(raw_request)}"
         logger.info("translation request %s: stream=%s", request_id, request.stream)
         if request.stream:
-            return self.run_cancellable_stream(
-                self._stream(audio_data, request, translate=True, request_id=request_id), raw_request
-            )
-        try:
-            result = await self.run_cancellable(
-                self._transcribe_once(audio_data, request, translate=True, request_id=request_id), raw_request
-            )
-        except ClientDisconnectedError:
-            logger.info("translation request %s aborted: client disconnected", request_id)
-            return create_error_response("Client disconnected")
+            return self._stream(audio_data, request, translate=True, request_id=request_id)
+        result = await self._transcribe_once(audio_data, request, translate=True, request_id=request_id)
         return cast("ErrorResponse | TranslationResponse | TranslationResponseVerbose", result)
 
     async def _transcribe_once(
@@ -162,7 +146,9 @@ class WhispercppInfer(BaseInfer):
             return create_error_response(f"failed to decode audio: {e}")
 
         decode_kwargs = self._decode_kwargs(request, translate=translate)
-        segments = await asyncio.to_thread(self.model.transcribe, samples, **decode_kwargs)
+        segments = await self.run_blocking(
+            lambda stop: self.model.transcribe(samples, abort_callback=stop.is_set, **decode_kwargs)
+        )
         text = "".join(s.text for s in segments).strip()
         logger.log(TRACE, "%s response: text=%r", request_id, text)
 
@@ -207,9 +193,7 @@ class WhispercppInfer(BaseInfer):
         translate: bool,
         request_id: str,
     ) -> AsyncGenerator[str, None]:
-        """One `transcript.text.delta` per decoded segment (no token-level API).
-        `abort_event` mirrors whisper.cpp's `abort_callback`; set in `finally` so
-        an early `aclose()` (client disconnect) stops it between segments."""
+        """One `transcript.text.delta` per decoded segment (no token-level API)."""
         try:
             samples, _duration_seconds = decode_audio(audio_data, _WHISPER_SAMPLE_RATE)
         except Exception as e:
@@ -218,49 +202,25 @@ class WhispercppInfer(BaseInfer):
             return
 
         decode_kwargs = self._decode_kwargs(request, translate=translate)
-        loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[Any] = asyncio.Queue()
-        abort_event = threading.Event()
-        _done = object()
-
-        def on_segment(segment: Any) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, segment)
-
-        def run() -> None:
-            try:
-                self.model.transcribe(
-                    samples,
-                    new_segment_callback=on_segment,
-                    abort_callback=abort_event.is_set,
-                    **decode_kwargs,
-                )
-            except BaseException as exc:  # forwarded to the consumer below, not swallowed
-                loop.call_soon_threadsafe(queue.put_nowait, exc)
-            finally:
-                loop.call_soon_threadsafe(queue.put_nowait, _done)
-
-        worker = asyncio.create_task(asyncio.to_thread(run))
+        segments: AsyncGenerator[Any, None] = self.stream_blocking(
+            lambda emit, stop: self.model.transcribe(
+                samples, new_segment_callback=emit, abort_callback=stop.is_set, **decode_kwargs
+            )
+        )
         text_parts: list[str] = []
         try:
-            while True:
-                item = await queue.get()
-                if item is _done:
-                    break
-                if isinstance(item, BaseException):
-                    raise item
-                segment_text = item.text.strip()
-                if segment_text:
-                    text_parts.append(segment_text)
-                    yield _encode_transcript_event({"type": "transcript.text.delta", "delta": segment_text})
+            async with contextlib.aclosing(segments):
+                async for segment in segments:
+                    segment_text = segment.text.strip()
+                    if segment_text:
+                        text_parts.append(segment_text)
+                        yield _encode_transcript_event({"type": "transcript.text.delta", "delta": segment_text})
             yield _encode_transcript_event({"type": "transcript.text.done", "text": " ".join(text_parts)})
         except Exception as exc:
             logger.warning("%s failed mid-stream: %s", request_id, exc)
             yield encode_error_sse(
                 create_error_response(f"whisper.cpp transcription failed: {exc}", err_type="api_error", status_code=502)
             )
-        finally:
-            abort_event.set()
-            await worker
 
 
 def _encode_transcript_event(payload: dict[str, Any]) -> str:

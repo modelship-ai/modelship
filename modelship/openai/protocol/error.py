@@ -4,7 +4,7 @@ import json
 from http import HTTPStatus
 from typing import Any
 
-from pydantic import PrivateAttr
+from pydantic import PrivateAttr, ValidationError
 
 from modelship.logging import get_logger, request_id_var
 from modelship.openai.protocol.base import OpenAIBaseModel
@@ -65,6 +65,25 @@ def create_error_response(
     return resp
 
 
+def validation_error_from_cause(cause: BaseException) -> ErrorResponse:
+    # A pydantic ValidationError's .args is only () locally; once it crosses the
+    # Ray pickle boundary it becomes (model_title, [line_errors], ...) — args[0]
+    # would be a bare model name like "TranscriptionRequest", not a useful
+    # message, so always render those through str() instead.
+    if isinstance(cause, ValidationError):
+        base = str(cause)
+    elif cause.args:
+        base = cause.args[0]
+    else:
+        base = str(cause)
+    return create_error_response(
+        message=base,
+        err_type="invalid_request_error",
+        status_code=HTTPStatus.BAD_REQUEST,
+        param=getattr(cause, "parameter", None),
+    )
+
+
 ERROR_SSE_PREFIX = 'data: {"error"'
 
 
@@ -116,4 +135,5 @@ __all__ = [
     "create_error_response",
     "encode_error_sse",
     "server_error",
+    "validation_error_from_cause",
 ]

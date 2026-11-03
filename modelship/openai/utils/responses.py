@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+from ray.exceptions import RayTaskError
 from ray.serve.handle import DeploymentHandle, DeploymentResponseGenerator
 
 from modelship.infer.infer_config import get_disconnect_registry
@@ -26,6 +27,7 @@ from modelship.openai.protocol import (
     UsageInfo,
     create_error_response,
     server_error,
+    validation_error_from_cause,
 )
 from modelship.openai.protocol.base import random_uuid
 from modelship.openai.protocol.responses.adapter import (
@@ -594,20 +596,20 @@ async def run_background(
                     with contextlib.suppress(Exception):
                         await response_gen.aclose()
                 return
-            saw_ok_terminal, failed_response = drain_task.result()
+            saw_ok_terminal, failed_response, error_type = drain_task.result()
         except Exception:
             logger.exception("background response %s: drain task raised unexpectedly", response_id)
-            saw_ok_terminal, failed_response = False, None
+            saw_ok_terminal, failed_response, error_type = False, None, "stream_error"
         finally:
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await heartbeat_task
 
         if isinstance(failed_response, ErrorResponse):
-            tracker.finish("error", "inference_error")
+            tracker.finish("error", error_type)
             await _write_failed(store, identity, response_id, failed_response)
         elif failed_response is not None:
-            tracker.finish("error", "stream_error")
+            tracker.finish("error", error_type)
             # persist_response doesn't persist response.failed events; the poller needs it stored.
             await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed_response)
         elif not saw_ok_terminal:
@@ -634,14 +636,17 @@ async def _write_failed(store: StateStore, identity: str, response_id: str, erro
         await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=failed)
 
 
-async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict | ErrorResponse | None]:
+async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict | ErrorResponse | None, str]:
     """Consume *piped* (the `persist_response`-wrapped event stream) to completion."""
     saw_ok_terminal = False
     failed_response: dict | ErrorResponse | None = None
+    error_type = "stream_error"
+    started = False
     try:
         async for item in piped:
+            started = True
             if isinstance(item, ErrorResponse):
-                failed_response = item
+                failed_response, error_type = item, "inference_error"
                 continue
             if not isinstance(item, dict):
                 continue
@@ -650,9 +655,14 @@ async def _drain_background_stream(piped, response_id: str) -> tuple[bool, dict 
                 saw_ok_terminal = True
             elif event_type == "response.failed":
                 failed_response = item.get("response")
-    except Exception:
-        logger.exception("background response %s: event stream raised mid-drain", response_id)
-    return saw_ok_terminal, failed_response
+    except Exception as exc:
+        cause = exc.cause if isinstance(exc, RayTaskError) else None
+        if not started and isinstance(cause, ValueError):
+            logger.info("background response %s: validation error: %s", response_id, cause)
+            failed_response, error_type = validation_error_from_cause(cause), "validation_error"
+        else:
+            logger.exception("background response %s: event stream raised mid-drain", response_id)
+    return saw_ok_terminal, failed_response, error_type
 
 
 async def _heartbeat_loop(identity: str, response_id: str, req_id: str) -> None:

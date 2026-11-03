@@ -59,6 +59,7 @@ from modelship.openai.protocol.error import (
     create_error_response,
     encode_error_sse,
     server_error,
+    validation_error_from_cause,
 )
 from modelship.openai.protocol.images import (
     ImageEditRequest,
@@ -172,4 +173,5 @@ __all__ = [
     "frame_sse",
     "random_uuid",
     "server_error",
+    "validation_error_from_cause",
 ]

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from ray.exceptions import RayTaskError
 
 from modelship.openai.api import ModelshipAPI
 from modelship.openai.protocol import ResponsesRequest
@@ -253,6 +254,24 @@ class TestBackgroundCreate:
         assert body["status"] == "failed"
         assert body["error"]["code"] == "server_error"
         assert request_outcomes() == [("m", "create_response", "error", "unhandled")]
+
+    @pytest.mark.asyncio
+    async def test_a_validation_error_is_recorded_and_stored_with_its_text(self, api, request_outcomes):
+        async def rejects(*_args, **_kwargs):
+            raise RayTaskError("respond", "Traceback", ValueError("bad input")).as_instanceof_cause()
+            yield
+
+        _wire(api, rejects)
+        request = ResponsesRequest(model="m", input="hi", background=True)
+
+        result = await api.create_response(request, _raw_request())
+        response_id = json.loads(bytes(result.body))["id"]
+        await _drain_background_tasks(api)
+
+        get_result = await api.get_response(response_id, _raw_request())
+        body = json.loads(bytes(get_result.body))
+        assert body["error"] == {"code": "invalid_prompt", "message": "bad input"}
+        assert request_outcomes() == [("m", "create_response", "error", "validation_error")]
 
 
 class TestMcpBackgroundWiring:

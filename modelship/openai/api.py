@@ -62,6 +62,7 @@ from modelship.openai.protocol import (
     failure_event_from_frames,
     frame_sse,
     server_error,
+    validation_error_from_cause,
 )
 from modelship.openai.protocol.responses.adapter import UnsupportedResponsesFeatureError
 from modelship.openai.protocol.responses.streaming import RESPONSE_FAILED_SSE_PREFIX
@@ -185,25 +186,6 @@ def _recorded(tracker: RequestTracker):
     except BaseException:
         tracker.finish("error", "unhandled")
         raise
-
-
-def _validation_error_from_cause(cause: BaseException) -> ErrorResponse:
-    # A pydantic ValidationError's .args is only () locally; once it crosses the
-    # Ray pickle boundary it becomes (model_title, [line_errors], ...) — args[0]
-    # would be a bare model name like "TranscriptionRequest", not a useful
-    # message, so always render those through str() instead.
-    if isinstance(cause, ValidationError):
-        base = str(cause)
-    elif cause.args:
-        base = cause.args[0]
-    else:
-        base = str(cause)
-    return create_error_response(
-        message=base,
-        err_type="invalid_request_error",
-        status_code=HTTPStatus.BAD_REQUEST,
-        param=getattr(cause, "parameter", None),
-    )
 
 
 @serve.deployment
@@ -425,7 +407,7 @@ class ModelshipAPI:
             cause = e.cause if isinstance(e.cause, BaseException) else None
             if isinstance(cause, ValueError):
                 logger.info("Validation error for model=%s: %s", model, cause)
-                return _error_response(_validation_error_from_cause(cause)), "validation_error"
+                return _error_response(validation_error_from_cause(cause)), "validation_error"
             logger.exception("Initial response generation failed for model=%s", model)
             return _error_response(server_error()), "unhandled"
         except Exception:
@@ -875,7 +857,7 @@ class ModelshipAPI:
             cause = exc.cause if isinstance(exc.cause, BaseException) else None
             if isinstance(cause, ValueError):
                 status, error_type = "error", "validation_error"
-                err = _validation_error_from_cause(cause)
+                err = validation_error_from_cause(cause)
             else:
                 logger.exception("responses request %s failed over websocket", req_id)
                 status, error_type = "error", "unhandled"
