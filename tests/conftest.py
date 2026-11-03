@@ -545,7 +545,7 @@ class _Deployer:
 
 
 @pytest.fixture(scope="session")
-def mship_cluster(tmp_path_factory):
+def mship_cluster(tmp_path_factory, pytestconfig):
     """Starts a cluster with a long-lived `mship start` process bound to an empty
     models.yaml; per-test code swaps the deployed set through `_Deployer`."""
     tmp_dir = tmp_path_factory.mktemp("mship_integration")
@@ -617,6 +617,10 @@ def mship_cluster(tmp_path_factory):
             cleanup()
             pytest.fail(f"Gateway failed to become ready within timeout.\nLog file: {log_path}\nLast 4KB:\n{tail}")
 
+        with pytestconfig.pluginmanager.get_plugin("capturemanager").global_and_fixture_disabled():
+            pytestconfig.pluginmanager.get_plugin("terminalreporter").write_line(
+                f"Ray dashboard: http://localhost:8265, token: {CLUSTER_TOKEN}"
+            )
         yield tmp_dir
     finally:
         cleanup()
