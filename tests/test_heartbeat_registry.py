@@ -3,7 +3,7 @@
 
 ``_HeartbeatStore`` is tested directly for TTL behavior; the module-level
 wrapper functions are tested against a fake registry handle mimicking Ray's
-``.remote()`` dispatch, same pattern as `test_disconnect_registry.py`.
+``.remote()`` dispatch.
 """
 
 from unittest.mock import MagicMock, patch

@@ -21,7 +21,7 @@ from starlette.types import ASGIApp
 from starlette.websockets import WebSocketState
 
 from modelship.infer import gateway_coordinator
-from modelship.infer.infer_config import RequestWatcher, get_disconnect_registry
+from modelship.infer.infer_config import get_disconnect_registry
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
     GATEWAY_RECONCILES_TOTAL,
@@ -418,88 +418,80 @@ class ModelshipAPI:
     async def _handle_response(
         self,
         response_gen,
-        watcher: RequestWatcher,
         tracker: RequestTracker,
         stream_media_type: str = "text/event-stream",
     ):
         model, endpoint = tracker.model, tracker.operation
-        streaming = False
-        try:
-            first, error_type = await self._await_first(response_gen, model)
-            if error_type is not None:
-                tracker.finish("error", error_type)
-                return first
+        first, error_type = await self._await_first(response_gen, model)
+        if error_type is not None:
+            tracker.finish("error", error_type)
+            return first
 
-            if isinstance(first, ErrorResponse):
-                tracker.finish("error", "inference_error")
-                logger.info(
-                    "Inference error endpoint=%s model=%s type=%s code=%s param=%s message=%.200s",
-                    endpoint,
-                    model,
-                    first.error.type,
-                    first.error.code,
-                    first.error.param,
-                    first.error.message,
-                )
-                return _error_response(first)
+        if isinstance(first, ErrorResponse):
+            tracker.finish("error", "inference_error")
+            logger.info(
+                "Inference error endpoint=%s model=%s type=%s code=%s param=%s message=%.200s",
+                endpoint,
+                model,
+                first.error.type,
+                first.error.code,
+                first.error.param,
+                first.error.message,
+            )
+            return _error_response(first)
 
-            if isinstance(first, Response):
-                tracker.finish("ok")
-                return first
+        if isinstance(first, Response):
+            tracker.finish("ok")
+            return first
 
-            if isinstance(first, RawSpeechResponse):
-                tracker.finish("ok")
-                return Response(content=first.audio, media_type=first.media_type)
+        if isinstance(first, RawSpeechResponse):
+            tracker.finish("ok")
+            return Response(content=first.audio, media_type=first.media_type)
 
-            if isinstance(
-                first,
-                ChatCompletionResponse
-                | ResponseObject
-                | EmbeddingResponse
-                | TranscriptionResponse
-                | TranscriptionResponseVerbose
-                | TranslationResponse
-                | TranslationResponseVerbose
-                | ImageGenerationResponse,
-            ):
-                tracker.finish("ok")
-                return JSONResponse(content=first.model_dump(mode="json"))
+        if isinstance(
+            first,
+            ChatCompletionResponse
+            | ResponseObject
+            | EmbeddingResponse
+            | TranscriptionResponse
+            | TranscriptionResponseVerbose
+            | TranslationResponse
+            | TranslationResponseVerbose
+            | ImageGenerationResponse,
+        ):
+            tracker.finish("ok")
+            return JSONResponse(content=first.model_dump(mode="json"))
 
-            # streaming — first chunk already consumed, chain it back
-            async def _stream():
-                # Held for _stream_error_chunk: opening frame carries the Responses
-                # envelope, last one the sequence number. Parsed only on the error path.
-                last = first
-                status, error_type = "ok", None
-                try:
-                    STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
-                    if _is_failure_chunk(first):
-                        status, error_type = "error", "stream_error"
-                    yield first
-                    async for chunk in response_gen:
-                        STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
-                        if _is_failure_chunk(chunk):
-                            status, error_type = "error", "stream_error"
-                        last = chunk
-                        yield chunk
-                except Exception:
+        # streaming — first chunk already consumed, chain it back
+        async def _stream():
+            # Held for _stream_error_chunk: opening frame carries the Responses
+            # envelope, last one the sequence number. Parsed only on the error path.
+            last = first
+            status, error_type = "ok", None
+            try:
+                STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
+                if _is_failure_chunk(first):
                     status, error_type = "error", "stream_error"
-                    logger.exception("stream failed mid-response endpoint=%s model=%s", endpoint, model)
-                    yield _stream_error_chunk(endpoint, model, first, last)
-                    yield "data: [DONE]\n\n"
-                except BaseException:
-                    if status == "ok":
-                        status, error_type = "cancelled", None
-                    raise
-                finally:
-                    tracker.finish(status, error_type)
-                    watcher.stop()
+                yield first
+                async for chunk in response_gen:
+                    STREAM_CHUNKS_TOTAL.inc(tags={"model": model})
+                    if _is_failure_chunk(chunk):
+                        status, error_type = "error", "stream_error"
+                    last = chunk
+                    yield chunk
+            except Exception:
+                status, error_type = "error", "stream_error"
+                logger.exception("stream failed mid-response endpoint=%s model=%s", endpoint, model)
+                yield _stream_error_chunk(endpoint, model, first, last)
+                yield "data: [DONE]\n\n"
+            except BaseException:
+                if status == "ok":
+                    status, error_type = "cancelled", None
+                raise
+            finally:
+                tracker.finish(status, error_type)
 
-            streaming = True
-            return StreamingResponse(content=_stream(), media_type=stream_media_type)
-        finally:
-            if not streaming:
-                watcher.stop()
+        return StreamingResponse(content=_stream(), media_type=stream_media_type)
 
     async def check_health(self) -> None:
         # Serve calls this periodically, so an idle replica still polls and reports its routing seq.
@@ -555,7 +547,6 @@ class ModelshipAPI:
         tracker = RequestTracker(model, "create_chat_completion")
         with _recorded(tracker):
             handle = self._get_handle(request.model, tracker)
-            watcher = RequestWatcher(raw_request, req_id)
             headers = dict(raw_request.headers)
             # Materialize any lazy pydantic ValidatorIterators (from Iterable-typed fields
             # like tool_calls) in place — they can't be pickled across the Ray boundary.
@@ -574,10 +565,8 @@ class ModelshipAPI:
                 request.max_tokens,
             )
             logger.debug("chat_completion full request: %s", request.model_dump_json())
-            response_gen = handle.generate.options(stream=True).remote(
-                request, headers, watcher.registry, req_id, identity
-            )
-            return await self._handle_response(response_gen, watcher, tracker)
+            response_gen = handle.generate.options(stream=True).remote(request, headers, None, req_id, identity)
+            return await self._handle_response(response_gen, tracker)
 
     @app.post("/v1/responses")
     async def create_response(self, request: ResponsesRequest, raw_request: Request):
@@ -588,15 +577,10 @@ class ModelshipAPI:
         tracker = RequestTracker(model, "create_response")
         with _recorded(tracker):
             handle = self._get_handle(request.model, tracker)
-            watcher = RequestWatcher(raw_request, req_id)
             headers = dict(raw_request.headers)
 
-            if request.background:
-                # Run continues detached after this response sends; a live disconnect-watch
-                # would self-abort it once the HTTP response closes.
-                watcher.stop()
-                if request.store is False:
-                    raise responses_utils.background_store_false_error()
+            if request.background and request.store is False:
+                raise responses_utils.background_store_false_error()
 
             # Resolve conversation history here, before the Ray hop: the loader only ever
             # sees a flat `input`, and a store outage fails the request before any GPU
@@ -605,16 +589,9 @@ class ModelshipAPI:
             parent = None
             mcp_listings: dict[str, dict] = {}
             if request.previous_response_id is not None:
-                try:
-                    history, parent, mcp_listings = await responses_utils.resolve_previous(
-                        self._state_store, identity, request.previous_response_id
-                    )
-                except BaseException:
-                    # Any failure here — not just the expected 404/503 HTTPException — must
-                    # still stop the watcher: _handle_response hasn't taken ownership of it
-                    # yet, so nothing else will cancel its polling task.
-                    watcher.stop()
-                    raise
+                history, parent, mcp_listings = await responses_utils.resolve_previous(
+                    self._state_store, identity, request.previous_response_id
+                )
                 request.input = [*history, *input_items_for_turn]
 
             logger.info(
@@ -662,7 +639,7 @@ class ModelshipAPI:
 
             if mcp_loop.wants_mcp(request):
                 response_gen = mcp_loop.run_mcp_response(
-                    handle, request, headers, watcher.registry, req_id, identity, mcp_listings=mcp_listings
+                    handle, request, headers, None, req_id, identity, mcp_listings=mcp_listings
                 )
             else:
                 # Under stream=True the remote() result is an async-iterable
@@ -670,7 +647,7 @@ class ModelshipAPI:
                 # doesn't overload on the stream literal, so narrow it explicitly.
                 response_gen = cast(
                     "DeploymentResponseGenerator[Any]",
-                    handle.respond.options(stream=True).remote(request, headers, watcher.registry, req_id, identity),
+                    handle.respond.options(stream=True).remote(request, headers, None, req_id, identity),
                 )
             if request.store is not False:
                 response_gen = responses_utils.persist_response(
@@ -682,7 +659,7 @@ class ModelshipAPI:
                 )
             # SSE-frame + [DONE] happen here, after persistence, so persist_response still sees plain event dicts.
             response_gen = frame_sse(response_gen)
-            return await self._handle_response(response_gen, watcher, tracker)
+            return await self._handle_response(response_gen, tracker)
 
     @app.websocket("/v1/responses")
     async def responses_ws(self, websocket: WebSocket):
@@ -963,67 +940,63 @@ class ModelshipAPI:
         tracker = RequestTracker(model, "compact_response")
         with _recorded(tracker):
             handle = self._get_handle(model, tracker)
-            watcher = RequestWatcher(raw_request, req_id)
             headers = dict(raw_request.headers)
 
-            try:
-                items = responses_utils.as_input_items(request.input) if request.input is not None else []
-                if request.previous_response_id is not None:
-                    history, _, _ = await responses_utils.resolve_previous(
-                        self._state_store, identity, request.previous_response_id
-                    )
-                    items = [*history, *items]
-                if not items:
-                    raise HTTPException(
-                        status_code=HTTPStatus.BAD_REQUEST.value, detail="cannot compact an empty conversation."
-                    )
-
-                logger.info(
-                    "compact_response model=%s previous_response_id=%s items=%d",
-                    model,
-                    request.previous_response_id,
-                    len(items),
+            items = responses_utils.as_input_items(request.input) if request.input is not None else []
+            if request.previous_response_id is not None:
+                history, _, _ = await responses_utils.resolve_previous(
+                    self._state_store, identity, request.previous_response_id
+                )
+                items = [*history, *items]
+            if not items:
+                raise HTTPException(
+                    status_code=HTTPStatus.BAD_REQUEST.value, detail="cannot compact an empty conversation."
                 )
 
-                try:
-                    chat_request = responses_utils.build_summarization_request(model, items, request.instructions)
-                except UnsupportedResponsesFeatureError as e:
-                    tracker.finish("error", "validation_error")
-                    return _error_response(create_error_response(str(e), err_type="invalid_request_error"))
+            logger.info(
+                "compact_response model=%s previous_response_id=%s items=%d",
+                model,
+                request.previous_response_id,
+                len(items),
+            )
 
-                async def _summarize(chat_request: ChatCompletionRequest):
-                    response_gen = handle.generate.options(stream=True).remote(
-                        chat_request, headers, watcher.registry, req_id, identity
-                    )
-                    first, error_type = await self._await_first(response_gen, model)
-                    if not isinstance(first, ErrorResponse):
-                        return first, error_type
-                    logger.info(
-                        "Inference error endpoint=%s model=%s type=%s code=%s param=%s message=%.200s",
-                        tracker.operation,
-                        model,
-                        first.error.type,
-                        first.error.code,
-                        first.error.param,
-                        first.error.message,
-                    )
-                    return _error_response(first), "inference_error"
+            try:
+                chat_request = responses_utils.build_summarization_request(model, items, request.instructions)
+            except UnsupportedResponsesFeatureError as e:
+                tracker.finish("error", "validation_error")
+                return _error_response(create_error_response(str(e), err_type="invalid_request_error"))
 
-                first, error_type = await _summarize(chat_request)
-                if isinstance(first, JSONResponse) and first.status_code == HTTPStatus.BAD_REQUEST:
-                    first, error_type = await _summarize(chat_request.model_copy(update={"reasoning_effort": None}))
-                if isinstance(first, JSONResponse):
-                    tracker.finish("error", error_type)
-                    return first
+            async def _summarize(chat_request: ChatCompletionRequest):
+                response_gen = handle.generate.options(stream=True).remote(
+                    chat_request, headers, None, req_id, identity
+                )
+                first, error_type = await self._await_first(response_gen, model)
+                if not isinstance(first, ErrorResponse):
+                    return first, error_type
+                logger.info(
+                    "Inference error endpoint=%s model=%s type=%s code=%s param=%s message=%.200s",
+                    tracker.operation,
+                    model,
+                    first.error.type,
+                    first.error.code,
+                    first.error.param,
+                    first.error.message,
+                )
+                return _error_response(first), "inference_error"
 
-                assert isinstance(first, ChatCompletionResponse)
-                summary_text = first.choices[0].message.content or ""
-                summary_items = [{"type": "message", "role": "assistant", "content": summary_text}]
-                resource = responses_utils.build_compaction(summary_items=summary_items, usage=first.usage)
-                tracker.finish("ok")
-                return JSONResponse(content=resource.model_dump(mode="json"))
-            finally:
-                watcher.stop()
+            first, error_type = await _summarize(chat_request)
+            if isinstance(first, JSONResponse) and first.status_code == HTTPStatus.BAD_REQUEST:
+                first, error_type = await _summarize(chat_request.model_copy(update={"reasoning_effort": None}))
+            if isinstance(first, JSONResponse):
+                tracker.finish("error", error_type)
+                return first
+
+            assert isinstance(first, ChatCompletionResponse)
+            summary_text = first.choices[0].message.content or ""
+            summary_items = [{"type": "message", "role": "assistant", "content": summary_text}]
+            resource = responses_utils.build_compaction(summary_items=summary_items, usage=first.usage)
+            tracker.finish("ok")
+            return JSONResponse(content=resource.model_dump(mode="json"))
 
     @app.post("/v1/embeddings")
     async def create_embeddings(self, request: EmbeddingRequest, raw_request: Request):
@@ -1034,13 +1007,10 @@ class ModelshipAPI:
         tracker = RequestTracker(model, "create_embeddings")
         with _recorded(tracker):
             handle = self._get_handle(request.model, tracker)
-            watcher = RequestWatcher(raw_request, req_id)
             headers = dict(raw_request.headers)
             logger.info("embeddings model=%s", model)
-            response_gen = handle.embed.options(stream=True).remote(
-                request, headers, watcher.registry, req_id, identity
-            )
-            return await self._handle_response(response_gen, watcher, tracker)
+            response_gen = handle.embed.options(stream=True).remote(request, headers, None, req_id, identity)
+            return await self._handle_response(response_gen, tracker)
 
     @app.post("/v1/audio/transcriptions")
     async def create_transcriptions(self, request: Annotated[TranscriptionRequest, Form()], raw_request: Request):
@@ -1051,7 +1021,6 @@ class ModelshipAPI:
         tracker = RequestTracker(model, "create_transcriptions")
         with _recorded(tracker):
             handle = self._get_handle(request.model, tracker)
-            watcher = RequestWatcher(raw_request, req_id)
             headers = dict(raw_request.headers)
             logger.info("transcription model=%s", model)
             # Read audio bytes before crossing process boundary — UploadFile is not serializable.
@@ -1062,9 +1031,9 @@ class ModelshipAPI:
                 await request.file.close()
             request_no_file = TranscriptionRequest.model_construct(**request.model_dump(exclude={"file"}))
             response_gen = handle.transcribe.options(stream=True).remote(
-                audio_data, request_no_file, headers, watcher.registry, req_id, identity
+                audio_data, request_no_file, headers, None, req_id, identity
             )
-            return await self._handle_response(response_gen, watcher, tracker)
+            return await self._handle_response(response_gen, tracker)
 
     @app.post("/v1/audio/translations")
     async def create_translations(self, request: Annotated[TranslationRequest, Form()], raw_request: Request):
@@ -1075,7 +1044,6 @@ class ModelshipAPI:
         tracker = RequestTracker(model, "create_translations")
         with _recorded(tracker):
             handle = self._get_handle(request.model, tracker)
-            watcher = RequestWatcher(raw_request, req_id)
             headers = dict(raw_request.headers)
             logger.info("translation model=%s", model)
             # Read audio bytes before crossing process boundary — UploadFile is not serializable.
@@ -1086,9 +1054,9 @@ class ModelshipAPI:
                 await request.file.close()
             request_no_file = TranslationRequest.model_construct(**request.model_dump(exclude={"file"}))
             response_gen = handle.translate.options(stream=True).remote(
-                audio_data, request_no_file, headers, watcher.registry, req_id, identity
+                audio_data, request_no_file, headers, None, req_id, identity
             )
-            return await self._handle_response(response_gen, watcher, tracker)
+            return await self._handle_response(response_gen, tracker)
 
     @app.post("/v1/audio/speech")
     async def create_speech(self, request: SpeechRequest, raw_request: Request):
@@ -1100,12 +1068,9 @@ class ModelshipAPI:
         tracker = RequestTracker(request.model, "create_speech")
         with _recorded(tracker):
             handle = self._get_handle(request.model, tracker)
-            watcher = RequestWatcher(raw_request, req_id)
             headers = dict(raw_request.headers)
-            response_gen = handle.speak.options(stream=True).remote(
-                request, headers, watcher.registry, req_id, identity
-            )
-            return await self._handle_response(response_gen, watcher, tracker)
+            response_gen = handle.speak.options(stream=True).remote(request, headers, None, req_id, identity)
+            return await self._handle_response(response_gen, tracker)
 
     @app.post("/v1/images/generations")
     async def create_image(self, request: ImageGenerationRequest, raw_request: Request):
@@ -1118,12 +1083,9 @@ class ModelshipAPI:
         tracker = RequestTracker(request.model, "create_image")
         with _recorded(tracker):
             handle = self._get_handle(request.model, tracker)
-            watcher = RequestWatcher(raw_request, req_id)
             headers = dict(raw_request.headers)
-            response_gen = handle.imagine.options(stream=True).remote(
-                request, headers, watcher.registry, req_id, identity
-            )
-            return await self._handle_response(response_gen, watcher, tracker)
+            response_gen = handle.imagine.options(stream=True).remote(request, headers, None, req_id, identity)
+            return await self._handle_response(response_gen, tracker)
 
     @app.post("/v1/images/edits")
     async def create_image_edit(self, request: Annotated[ImageEditRequest, Form()], raw_request: Request):
@@ -1141,7 +1103,6 @@ class ModelshipAPI:
         tracker = RequestTracker(request.model, "create_image_edit")
         with _recorded(tracker):
             handle = self._get_handle(request.model, tracker)
-            watcher = RequestWatcher(raw_request, req_id)
             headers = dict(raw_request.headers)
             # Read image bytes before crossing the process boundary — UploadFile is not serializable.
             # The bytes are passed separately; the request is reconstructed without the file fields.
@@ -1157,9 +1118,9 @@ class ModelshipAPI:
                     await request.mask.close()
             request_no_file = ImageEditRequest.model_construct(**request.model_dump(exclude={"image", "mask"}))
             response_gen = handle.edit_image.options(stream=True).remote(
-                image_data, mask_data, request_no_file, headers, watcher.registry, req_id, identity
+                image_data, mask_data, request_no_file, headers, None, req_id, identity
             )
-            return await self._handle_response(response_gen, watcher, tracker)
+            return await self._handle_response(response_gen, tracker)
 
     @app.post("/v1/images/variations")
     async def create_image_variation(self, request: Annotated[ImageVariationRequest, Form()], raw_request: Request):
@@ -1170,7 +1131,6 @@ class ModelshipAPI:
         tracker = RequestTracker(request.model, "create_image_variation")
         with _recorded(tracker):
             handle = self._get_handle(request.model, tracker)
-            watcher = RequestWatcher(raw_request, req_id)
             headers = dict(raw_request.headers)
             # Read image bytes before crossing the process boundary — UploadFile is not serializable.
             # `image` is Optional on the model (to accept the `image[]` alias) but the validator
@@ -1182,6 +1142,6 @@ class ModelshipAPI:
                 await request.image.close()
             request_no_file = ImageVariationRequest.model_construct(**request.model_dump(exclude={"image"}))
             response_gen = handle.vary_image.options(stream=True).remote(
-                image_data, request_no_file, headers, watcher.registry, req_id, identity
+                image_data, request_no_file, headers, None, req_id, identity
             )
-            return await self._handle_response(response_gen, watcher, tracker)
+            return await self._handle_response(response_gen, tracker)

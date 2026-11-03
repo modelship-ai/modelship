@@ -173,15 +173,6 @@ class BaseInfer[Prepared](ABC):
         """Run `work` to completion, or cancel it and raise `ClientDisconnectedError`
         if the client disconnects first.
 
-        A non-streaming Ray Serve call has no socket to watch: unlike streaming
-        (where Starlette's own `StreamingResponse` races disconnect against the
-        body iterator and cancellation propagates down through the whole chain
-        automatically), a single-shot non-stream call would otherwise run to
-        completion for a client that's already gone. This polls
-        `RawRequestProxy.is_disconnected()` (the same cross-process
-        DisconnectRegistry signal the streaming path's disconnect ultimately
-        traces back to) alongside `work` and cancels whichever loses.
-
         Cancelling the task is often sufficient by itself — e.g. vLLM's
         `AsyncLLM.generate()` aborts its own engine-side request when its
         consuming task is cancelled, needing no extra cleanup here. Loaders
@@ -313,7 +304,7 @@ class BaseInfer[Prepared](ABC):
     async def _observe_first_token(
         self, chunks: AsyncGenerator[ChatCompletionStreamResponse, None], raw_request: RawRequestProxy
     ) -> AsyncGenerator[ChatCompletionStreamResponse, None]:
-        observed = not raw_request.is_watchable
+        observed = raw_request.request_id is None
         try:
             async for chunk in chunks:
                 if not observed and any(
