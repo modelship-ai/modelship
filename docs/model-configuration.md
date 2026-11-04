@@ -432,7 +432,7 @@ HuggingFace Diffusers for image generation; any `AutoPipelineForText2Image`-comp
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `torch_dtype` | string | `float16` | `float16`, `bfloat16`, `float32` |
+| `dtype` | string | `float16` | `float16`, `bfloat16`, `float32` |
 | `num_inference_steps` | int | `30` | Default denoising steps (overridable per request) |
 | `guidance_scale` | float | `7.5` | Default classifier-free guidance scale (overridable per request) |
 
@@ -444,7 +444,7 @@ models:
     loader: diffusers
     num_gpus: 0.35
     diffusers_config:
-      torch_dtype: "float16"
+      dtype: "float16"
       num_inference_steps: 4
       guidance_scale: 0.0
 ```

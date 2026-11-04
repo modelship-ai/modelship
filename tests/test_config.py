@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from modelship.infer.infer_config import (
     AutoscalingConfig,
+    DiffusersConfig,
     LlamaServerConfig,
     ModelLoader,
     ModelshipConfig,
@@ -499,6 +500,16 @@ class TestVllmEngineConfig:
         assert config.max_model_len == 12288
         assert config.enable_auto_tool_choice is True
         assert config.tool_call_parser == "llama3_json"
+
+
+class TestDiffusersConfig:
+    @pytest.mark.parametrize("dtype", ["float16", "bfloat16", "float32"])
+    def test_takes_a_float_dtype(self, dtype):
+        assert DiffusersConfig(dtype=dtype).dtype == dtype
+
+    def test_rejects_another_dtype(self):
+        with pytest.raises(ValidationError):
+            DiffusersConfig(dtype="float8")
 
 
 class TestModelshipConfig:

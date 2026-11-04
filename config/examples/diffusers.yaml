@@ -5,6 +5,6 @@ models:
     loader: "diffusers"
     num_gpus: 0.8
     diffusers_config:
-      torch_dtype: "float16"
+      dtype: "float16"
       num_inference_steps: 4
       guidance_scale: 0.0

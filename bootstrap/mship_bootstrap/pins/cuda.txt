@@ -308,9 +308,9 @@ depyf==0.20.0 \
     --hash=sha256:d31effad4261cebecb58955d832e448ace88f432328f95f82fd99c30fd9308d4 \
     --hash=sha256:fb7683bd72c44f67b56029df2c47721e9a02ffa4d7b19095f1c54c4ebf797a98
     # via vllm
-diffusers==0.37.1 \
-    --hash=sha256:0537c0b28cb53cf39d6195489bcf8f833986df556c10f5e28ab7427b86fc8b90 \
-    --hash=sha256:2346c21f77f835f273b7aacbaada1c34a596a3a2cc6ddc99d149efcd0ec298fa
+diffusers==0.42.1 \
+    --hash=sha256:9154faa704ce00e0b77f568e0d64786064368528aab5fc14eeea92f87d788014 \
+    --hash=sha256:ce855ab670c8cd1c7a61be8f12fbc68c081bca8ec5e747273946d8d6c2aff23b
     # via mship-engine
 dill==0.4.1 \
     --hash=sha256:1e1ce33e978ae97fcfcff5638477032b801c46c7c65cf717f95fbc2248f79a9d \
@@ -508,7 +508,6 @@ httpx==0.28.1 \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
     # via
     #   anthropic
-    #   diffusers
     #   fastapi
     #   fastapi-cloud-cli
     #   huggingface-hub
