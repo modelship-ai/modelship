@@ -19,15 +19,15 @@ from .fetch import fetch_and_extract_archive
 from .variants import Variant
 
 # Own-CI builds for every platform; see .github/workflows/llama-cpp-build.yml.
-_LLAMA_CPP_TAG = "b11699"
+_LLAMA_CPP_TAG = "b11769"
 _LLAMA_CPP_BUILDS_REPO = "modelship-ai/llama-cpp-builds"
 _LLAMA_CPP_RELEASE_URL = f"https://github.com/{_LLAMA_CPP_BUILDS_REPO}/releases/download/llamacpp-{_LLAMA_CPP_TAG}"
 
 # Line-anchored: llama-cpp-build.yml's pin job rewrites these by sed.
-_SHA256_LINUX_X64 = "23e590ce59934915430b7d1e8fd0bfe7dcdfcc799b5405015f823188c1b68ace"
-_SHA256_LINUX_ARM64 = "a65eb91b998f32f1cfbed99c8223d9ab07549576784d65b36754a1912ac75a76"
-_SHA256_MACOS_ARM64_METAL = "73e46bf1ae7fdd4b6c85186e959abd92dc751e4c60a33b665fa34a031246c2fe"
-_SHA256_CUDA_X64 = "ae4938e73c2d4474ef3540e49cdcc0043ebff01fc08b837e14399870869536fd"
+_SHA256_LINUX_X64 = "02147ac6a5de9101663228bd11e72c1cbb652d50703ecb01fa992ee4155f3de3"
+_SHA256_LINUX_ARM64 = "0b3bc8fe62a9e4af1c5cb2d35308675b12115ed97354949d0bfd9cc1134e1904"
+_SHA256_MACOS_ARM64_METAL = "137707b3105683fd31668dcd6f908ee2f199a6ac16baf9141e62d0b888c22a81"
+_SHA256_CUDA_X64 = "1c5f025459a5c3727000b6655de5909ce41f7ab9ed5fa3a40deaf6d33db484d6"
 
 # dlopen'd ggml backend, layered over the linux-x64 tarball.
 _CUDA_ADDON_URL = f"{_LLAMA_CPP_RELEASE_URL}/libggml-cuda-{_LLAMA_CPP_TAG}-linux-x64-cuda13.tar.gz"
