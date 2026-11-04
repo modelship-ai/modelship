@@ -11,11 +11,11 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
-import ray
 from pydantic import ValidationError
 
 from modelship.infer.base_infer import BaseInfer, ClientDisconnectedError
 from modelship.infer.infer_config import LlamaServerConfig, ModelshipModelConfig, ModelUsecase, RawRequestProxy
+from modelship.infer.socket_dir import session_socket_dir
 from modelship.logging import TRACE, get_logger
 from modelship.metrics import record_engine_tokens
 from modelship.openai.protocol import (
@@ -191,10 +191,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
 
     async def _launch(self, binary: str, model_path: str) -> None:
         loop = asyncio.get_running_loop()
-        context = ray.get_runtime_context()
-        socket_dir = os.path.join(context.get_temp_dir(), context.get_session_name(), "mship")
-        os.makedirs(socket_dir, mode=0o700, exist_ok=True)
-        self._socket = os.path.join(socket_dir, f"llama-{secrets.token_hex(4)}.sock")
+        self._socket = os.path.join(session_socket_dir(), f"llama-{secrets.token_hex(4)}.sock")
 
         args = [
             binary,

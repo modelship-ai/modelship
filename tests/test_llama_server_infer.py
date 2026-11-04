@@ -19,7 +19,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from modelship.infer import base_infer
+from modelship.infer import base_infer, socket_dir
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.infer_config import (
     LlamaServerConfig,
@@ -98,16 +98,18 @@ def _make_config(num_gpus: float = 0, **llama_server_kwargs) -> ModelshipModelCo
 
 
 @pytest.fixture(autouse=True)
-def ray_temp_dir(monkeypatch):
+def socket_root(monkeypatch):
     with tempfile.TemporaryDirectory() as temp_dir:
-        context = SimpleNamespace(get_temp_dir=lambda: temp_dir, get_session_name=lambda: "session")
-        monkeypatch.setattr(llama_server_infer.ray, "get_runtime_context", lambda: context)
-        yield temp_dir
+        root = os.path.join(temp_dir, "mship")
+        context = SimpleNamespace(get_session_name=lambda: "session")
+        monkeypatch.setattr(socket_dir, "socket_root", lambda: root)
+        monkeypatch.setattr(socket_dir.ray, "get_runtime_context", lambda: context)
+        yield root
 
 
 class TestSubprocessLifecycle:
     @pytest.mark.asyncio
-    async def test_start_waits_for_health_then_shutdown_terminates(self, tmp_path, monkeypatch, ray_temp_dir):
+    async def test_start_waits_for_health_then_shutdown_terminates(self, tmp_path, monkeypatch, socket_root):
         binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
 
@@ -118,7 +120,7 @@ class TestSubprocessLifecycle:
             assert infer._proc is not None
             assert infer._proc.poll() is None
             assert infer._client is not None
-            assert os.path.dirname(socket_path) == os.path.join(ray_temp_dir, "session", "mship")
+            assert os.path.dirname(socket_path) == os.path.join(socket_root, "session")
             assert stat.S_IMODE(os.stat(os.path.dirname(socket_path)).st_mode) == 0o700
         finally:
             infer.shutdown()

@@ -5,6 +5,8 @@ OpenAI-compatible HTTP API."""
 
 import concurrent.futures
 import json
+import os
+import re
 import time
 
 import httpx
@@ -356,6 +358,8 @@ class TestChatLlamaServer:
     def test_llama_server_listens_on_its_socket_only(self):
         server = _llama_server("chat-llama-server")
         socket_path = server.cmdline()[server.cmdline().index("--host") + 1]
+        session = r"session_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_\d{6}_\d{1,7}"
+        assert re.fullmatch(rf"/tmp/mship-{os.getuid()}/{session}/llama-[0-9a-f]{{8}}\.sock", socket_path)
         assert socket_path in [c.laddr for c in server.net_connections(kind="unix")]
         assert not [c for c in server.net_connections(kind="inet") if c.status == psutil.CONN_LISTEN]
 
