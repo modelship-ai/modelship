@@ -621,11 +621,10 @@ wheels = [
 
 [[package]]
 name = "diffusers"
-version = "0.37.1"
+version = "0.42.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
-    { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "importlib-metadata" },
     { name = "numpy" },
@@ -634,9 +633,9 @@ dependencies = [
     { name = "requests" },
     { name = "safetensors" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/46/5c/f4c2eb8d481fe8784a7e2331fbaab820079c06676185fa6d2177b386d590/diffusers-0.37.1.tar.gz", hash = "sha256:2346c21f77f835f273b7aacbaada1c34a596a3a2cc6ddc99d149efcd0ec298fa", size = 4135139, upload-time = "2026-03-25T08:04:04.515Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/4f/21d79e9a2f040416ef4707fbd1bcbaa6f31d33cf63159d78647f78944792/diffusers-0.42.1.tar.gz", hash = "sha256:ce855ab670c8cd1c7a61be8f12fbc68c081bca8ec5e747273946d8d6c2aff23b", size = 5264977, upload-time = "2026-10-27T07:22:26.434Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9c/dd/51c38785ce5e1c287b5ad17ba550edaaaffce0deb0da4857019c6700fbaf/diffusers-0.37.1-py3-none-any.whl", hash = "sha256:0537c0b28cb53cf39d6195489bcf8f833986df556c10f5e28ab7427b86fc8b90", size = 5001536, upload-time = "2026-03-25T08:04:02.385Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/e9/4328c781bc64f8b74363f66674c00e65021e9a857fb9cb4882ed447956cd/diffusers-0.42.1-py3-none-any.whl", hash = "sha256:9154faa704ce00e0b77f568e0d64786064368528aab5fc14eeea92f87d788014", size = 6355908, upload-time = "2026-10-27T07:22:24.331Z" },
 ]
 
 [[package]]
@@ -1791,7 +1790,7 @@ requires-dist = [
     { name = "asyncio", specifier = ">=4.0.0" },
     { name = "bitsandbytes", marker = "extra == 'cuda'", specifier = ">=0.49.0" },
     { name = "cryptography", specifier = ">=43.0.0" },
-    { name = "diffusers", marker = "extra == 'cuda'", specifier = ">=0.31.0" },
+    { name = "diffusers", marker = "extra == 'cuda'", specifier = ">=0.42.1" },
     { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.36.2" },
     { name = "fastapi", specifier = ">=0.116.1,<0.136.0" },
     { name = "flashinfer-python", marker = "extra == 'cuda'", specifier = ">=0.6.1" },

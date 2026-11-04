@@ -126,7 +126,7 @@ class VllmEngineConfig(_StrictModel):
 
 
 class DiffusersConfig(_StrictModel):
-    torch_dtype: str = "float16"
+    dtype: Literal["float16", "bfloat16", "float32"] = "float16"
     num_inference_steps: int = 30
     guidance_scale: float = 7.5
 

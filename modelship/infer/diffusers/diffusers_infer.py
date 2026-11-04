@@ -70,7 +70,7 @@ class DiffusersInfer(BaseInfer):
         )
 
         config = self.model_config.diffusers_config or DiffusersConfig()
-        dtype = _TORCH_DTYPES.get(config.torch_dtype, torch.float16)
+        dtype = _TORCH_DTYPES[config.dtype]
 
         if not self.model_config._resolved_path:
             raise ValueError(
@@ -81,12 +81,12 @@ class DiffusersInfer(BaseInfer):
         logger.info(
             "Loading diffusers pipeline: %s (dtype=%s, device=%s)",
             self.model_config._resolved_path,
-            config.torch_dtype,
+            config.dtype,
             self.device,
         )
         self._pipeline = AutoPipelineForText2Image.from_pretrained(
             self.model_config._resolved_path,
-            torch_dtype=dtype,
+            dtype=dtype,
         ).to(device=self.device, dtype=dtype)
 
         # img2img / inpaint back /v1/images/edits and /v1/images/variations.
