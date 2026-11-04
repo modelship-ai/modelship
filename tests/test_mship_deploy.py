@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
@@ -888,12 +889,13 @@ class TestCancelCommand:
 
 
 class TestStopHead:
-    def _stop(self, env, pop=()):
+    def _stop(self, env, pop=(), ray_up=True):
         from modelship import driver
         from modelship.deploy import removal, serve_utils
 
         with (
             patch.dict(os.environ, env, clear=False),
+            patch("ray.is_initialized", return_value=ray_up),
             patch.object(removal, "delete_apps") as mock_delete,
             patch.object(serve_utils, "shutdown_ray") as mock_shutdown,
         ):
@@ -911,6 +913,11 @@ class TestStopHead:
         mock_delete, mock_shutdown = self._stop({"RAY_REDIS_ADDRESS": "redis:6379"})
         mock_delete.assert_not_called()
         mock_shutdown.assert_called_once_with()
+
+    def test_a_head_that_never_came_up_touches_nothing(self):
+        mock_delete, mock_shutdown = self._stop({}, pop=("RAY_REDIS_ADDRESS",), ray_up=False)
+        mock_delete.assert_not_called()
+        mock_shutdown.assert_not_called()
 
 
 class TestShutdownRay:
@@ -1577,6 +1584,37 @@ class TestValidateNodeGpuReservation:
 
 
 class TestStartHead:
+    @pytest.fixture(autouse=True)
+    def ports_check(self):
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils, "_check_ports_free") as mock_check:
+            yield mock_check
+
+    def test_checks_the_ports_it_pins_before_ray_starts(self, ports_check):
+        from modelship.deploy import serve_utils
+
+        ports_check.side_effect = SystemExit
+        env = {
+            "MSHIP_GCS_PORT": "6390",
+            "MSHIP_OPENAI_API_PORT": "8001",
+            "MSHIP_METRICS": "true",
+            "MSHIP_METRICS_PORT": "8179",
+            "MSHIP_RAY_DASHBOARD_PORT": "8266",
+        }
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch.object(serve_utils.ray, "init") as mock_init,
+            patch.object(serve_utils, "prune_ray_sessions"),
+            pytest.raises(SystemExit),
+        ):
+            os.environ.pop("RAY_GCS_SERVER_PORT", None)
+            serve_utils.start_head(20)
+        ports_check.assert_called_once_with(
+            {6390: "--gcs-port", 8001: "--openai-api-port", 8179: "--metrics-port", 8266: "--ray-dashboard-port"}
+        )
+        mock_init.assert_not_called()
+
     def _init_call(self, env, pop=()):
         """Returns the kwargs start_head passed to ray.init(). `pop` clears
         env vars before the call."""
@@ -1839,6 +1877,31 @@ class TestStartHead:
                 os.environ[name] = given
             serve_utils.start_head(20)
             assert os.environ[name] == expected
+
+
+class TestCheckPortsFree:
+    def test_exits_naming_a_port_another_socket_listens_on(self):
+        from modelship.deploy import serve_utils
+
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            with pytest.raises(SystemExit, match=rf"port {port} .*--metrics-port"):
+                serve_utils._check_ports_free({port: "--metrics-port"})
+
+    def test_passes_a_port_left_with_only_closed_connections(self):
+        from modelship.deploy import serve_utils
+
+        with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            with socket.create_connection(("127.0.0.1", port)):
+                server_side, _ = listener.accept()
+                server_side.close()
+        serve_utils._check_ports_free({port: "--metrics-port"})
 
 
 class TestRayReadsTheCleanupSwitches:
@@ -2133,6 +2196,20 @@ class TestJoinCluster:
         mock_join.assert_called_once_with("head:6380")
         mock_prune.assert_called_once()
         mock_init.assert_not_called()
+
+    def test_checks_a_set_metrics_port_before_joining(self):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ, {"MSHIP_METRICS_PORT": "8179"}, clear=False),
+            patch.object(serve_utils, "_check_ports_free", side_effect=SystemExit) as mock_check,
+            patch.object(serve_utils, "_join_ray_cluster") as mock_join,
+            patch.object(serve_utils, "prune_ray_sessions"),
+            pytest.raises(SystemExit),
+        ):
+            serve_utils.join_cluster("head:6380")
+        mock_check.assert_called_once_with({8179: "--metrics-port"})
+        mock_join.assert_not_called()
 
     @pytest.mark.parametrize(
         ("address", "expected"),

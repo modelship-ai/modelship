@@ -64,7 +64,7 @@ mship start --config models.yaml
 mship start --model Qwen/Qwen3-8B-GGUF:'*Q4_K_M.gguf' --loader llama_server --usecase generate
 ```
 
-Refuses to start when a Ray node already runs on the machine.
+Refuses to start when a Ray node already runs on the machine, or when another program holds one of its ports: `--gcs-port`, `--openai-api-port`, `--metrics-port` and, when set, `--ray-dashboard-port`.
 
 ## `mship join`
 

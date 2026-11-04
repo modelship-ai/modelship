@@ -128,9 +128,13 @@ def _start(args) -> None:
 def _stop_head() -> None:
     """Delete every app, then stop Ray. With a Redis-backed GCS
     every app stays, for the next head to restore."""
+    import ray
+
     from modelship.deploy.removal import delete_apps
     from modelship.deploy.serve_utils import shutdown_ray
 
+    if not ray.is_initialized():
+        return
     if os.environ.get("RAY_REDIS_ADDRESS"):
         logger.info("GCS is stored in Redis; leaving the Serve apps for the next head.")
         shutdown_ray()

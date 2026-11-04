@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import signal
+import socket
 import sys
 import time
 from pathlib import Path
@@ -375,10 +376,27 @@ def start_head(lib_level: int) -> None:
     os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
     # ray.init's only hook for the GCS port; unset, Ray picks a random one per start.
     os.environ.setdefault("RAY_GCS_SERVER_PORT", os.environ.get("MSHIP_GCS_PORT", str(_DEFAULT_RAY_GCS_PORT)))
+    init_kwargs = _own_cluster_init_kwargs()
+    ports = {int(os.environ["RAY_GCS_SERVER_PORT"]): "--gcs-port", _openai_api_port(): "--openai-api-port"}
+    if "_metrics_export_port" in init_kwargs:
+        ports[init_kwargs["_metrics_export_port"]] = "--metrics-port"
+    if "dashboard_port" in init_kwargs:
+        ports[init_kwargs["dashboard_port"]] = "--ray-dashboard-port"
+    _check_ports_free(ports)
     prune_ray_sessions()
     # "local" always starts a new instance, ignoring RAY_ADDRESS and the discovery marker.
-    ray.init(address="local", ignore_reinit_error=True, logging_level=lib_level, **_own_cluster_init_kwargs())
+    ray.init(address="local", ignore_reinit_error=True, logging_level=lib_level, **init_kwargs)
     _pin_ray_log_levels(lib_level)
+
+
+def _check_ports_free(ports: dict[int, str]) -> None:
+    for port, flag in ports.items():
+        with socket.socket() as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("", port))
+            except OSError as e:
+                sys.exit(f"error: can't listen on port {port} ({e.strerror}); pick another one with {flag}.")
 
 
 def join_cluster(address: str) -> None:
@@ -390,6 +408,8 @@ def join_cluster(address: str) -> None:
     os.environ.setdefault("RAY_kill_child_processes_on_worker_exit", "1")
     os.environ.setdefault("RAY_process_group_cleanup_enabled", "1")
     os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+    if metrics_port := os.environ.get("MSHIP_METRICS_PORT"):
+        _check_ports_free({int(metrics_port): "--metrics-port"})
     prune_ray_sessions()
     _join_ray_cluster(_with_default_port(address, _DEFAULT_RAY_GCS_PORT))
 
@@ -418,11 +438,14 @@ def _pin_ray_log_levels(lib_level: int) -> None:
     logging.getLogger("ray._private.worker").setLevel(lib_level)
 
 
+def _openai_api_port() -> int:
+    return int(os.environ.get("MSHIP_OPENAI_API_PORT", str(_DEFAULT_OPENAI_API_PORT)))
+
+
 def start_serve(serve_logging_config: LoggingConfig) -> None:
-    port = int(os.environ.get("MSHIP_OPENAI_API_PORT", str(_DEFAULT_OPENAI_API_PORT)))
     serve.start(
         proxy_location=ProxyLocation.EveryNode,
-        http_options=HTTPOptions(host="0.0.0.0", port=port),
+        http_options=HTTPOptions(host="0.0.0.0", port=_openai_api_port()),
         logging_config=serve_logging_config,
     )
 
