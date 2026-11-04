@@ -67,6 +67,7 @@ from modelship.infer.infer_config import (
     VllmEngineConfig,
     resolve_gpu_memory_utilization,
 )
+from modelship.infer.socket_dir import session_socket_dir
 from modelship.infer.vllm import engine_ops
 from modelship.infer.vllm.capabilities import VllmCapabilities
 from modelship.infer.vllm.parsing.detect import (
@@ -418,6 +419,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
 
             stat_loggers = [VllmRayPrometheusStatLogger]
 
+        os.environ.setdefault("VLLM_RPC_BASE_PATH", session_socket_dir())
         # read by configure_vllm_child_logging in the engine and worker processes
         os.environ[VLLM_CHILD_ENV] = "1"
         self.engine = VllmAsyncLLM.from_vllm_config(

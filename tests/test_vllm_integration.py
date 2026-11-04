@@ -3,11 +3,15 @@ structured output, identity-scoped prefix caching, reasoning, vision, and
 embeddings, all through a real vLLM engine."""
 
 import json
+import os
+import re
 
 import httpx
+import psutil
 import pytest
 
 from tests.conftest import RED_IMAGE_DATA_URI
+from tests.test_dropped_request_integration import _replica
 
 OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 
@@ -318,6 +322,20 @@ class TestChatCapable:
         assert isinstance(first.token, str) and first.token
         assert isinstance(first.logprob, float)
         assert 0 < len(first.top_logprobs) <= 3
+
+    def test_engine_sockets_are_in_the_session_socket_folder(self):
+        _, pid = _replica("chat-capable")
+        replica = psutil.Process(pid)
+        paths = [
+            c.laddr
+            for p in (replica, *replica.children(recursive=True))
+            for c in p.net_connections(kind="unix")
+            if c.laddr.startswith("/")
+        ]
+        session = r"session_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_\d{6}_\d{1,7}"
+        uuid = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+        assert paths
+        assert all(re.fullmatch(rf"/tmp/mship-{os.getuid()}/{session}/{uuid}", path) for path in paths), paths
 
 
 @pytest.mark.integration

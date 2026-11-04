@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -12,6 +14,13 @@ from modelship.logging import VLLM_CHILD_ENV
 
 _THINKING_TEMPLATE = "{% if tools %}<tool_call>{% endif %}<think>"
 _PLAIN_TEMPLATE = "plain"
+_SOCKET_DIR = "/tmp/mship-1000/session_1"
+
+
+@pytest.fixture(autouse=True)
+def _restore_environ():
+    with patch.dict(os.environ):
+        yield
 
 
 def _config(usecase: ModelUsecase = ModelUsecase.generate, **engine_kwargs: Any) -> ModelshipModelConfig:
@@ -63,6 +72,7 @@ def _build(
         def from_vllm_config(cls, vllm_config: Any, **kwargs: Any) -> Any:
             started["reasoning_parser"] = vllm_config.structured_outputs_config.reasoning_parser
             started["reasoning_config"] = vllm_config.reasoning_config
+            started["rpc_base_path"] = os.environ.get("VLLM_RPC_BASE_PATH")
             return SimpleNamespace(shutdown=lambda: None)
 
     def tokenizer(model_config: Any) -> Any:
@@ -79,6 +89,7 @@ def _build(
     )
     monkeypatch.setattr(vllm_infer, "vllm_cached_tokenizer_from_config", tokenizer)
     monkeypatch.setattr(vllm_infer, "_METRICS_ENABLED", False)
+    monkeypatch.setattr(vllm_infer, "session_socket_dir", lambda: _SOCKET_DIR)
     monkeypatch.delenv(VLLM_CHILD_ENV, raising=False)
     return VllmInfer(config), started
 
@@ -88,6 +99,20 @@ def test_the_engine_serves_the_modelship_model_name(monkeypatch):
     _, started = _build(monkeypatch, config, _PLAIN_TEMPLATE)
 
     assert started["served_model_name"] == [config.name]
+
+
+class TestEngineSockets:
+    def test_go_to_the_session_socket_folder(self, monkeypatch):
+        monkeypatch.delenv("VLLM_RPC_BASE_PATH", raising=False)
+        _, started = _build(monkeypatch, _config(), _PLAIN_TEMPLATE)
+
+        assert started["rpc_base_path"] == _SOCKET_DIR
+
+    def test_an_operator_folder_wins(self, monkeypatch):
+        monkeypatch.setenv("VLLM_RPC_BASE_PATH", "/run/vllm")
+        _, started = _build(monkeypatch, _config(), _PLAIN_TEMPLATE)
+
+        assert started["rpc_base_path"] == "/run/vllm"
 
 
 class TestEngineStartsWithTheReasoningParser:
