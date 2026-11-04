@@ -377,11 +377,12 @@ def start_head(lib_level: int) -> None:
     # ray.init's only hook for the GCS port; unset, Ray picks a random one per start.
     os.environ.setdefault("RAY_GCS_SERVER_PORT", os.environ.get("MSHIP_GCS_PORT", str(_DEFAULT_RAY_GCS_PORT)))
     init_kwargs = _own_cluster_init_kwargs()
-    ports = {int(os.environ["RAY_GCS_SERVER_PORT"]): "--gcs-port", _openai_api_port(): "--openai-api-port"}
+    ports = {"--gcs-port": int(os.environ["RAY_GCS_SERVER_PORT"]), "--openai-api-port": _openai_api_port()}
     if "_metrics_export_port" in init_kwargs:
-        ports[init_kwargs["_metrics_export_port"]] = "--metrics-port"
+        ports["--metrics-port"] = init_kwargs["_metrics_export_port"]
     if "dashboard_port" in init_kwargs:
-        ports[init_kwargs["dashboard_port"]] = "--ray-dashboard-port"
+        ports["--ray-dashboard-port"] = init_kwargs["dashboard_port"]
+    _check_ports_distinct(ports)
     _check_ports_free(ports)
     prune_ray_sessions()
     # "local" always starts a new instance, ignoring RAY_ADDRESS and the discovery marker.
@@ -389,8 +390,15 @@ def start_head(lib_level: int) -> None:
     _pin_ray_log_levels(lib_level)
 
 
-def _check_ports_free(ports: dict[int, str]) -> None:
-    for port, flag in ports.items():
+def _check_ports_distinct(ports: dict[str, int]) -> None:
+    for port in ports.values():
+        flags = [flag for flag, other in ports.items() if other == port]
+        if len(flags) > 1:
+            sys.exit(f"error: {' and '.join(flags)} share port {port}; give each its own port.")
+
+
+def _check_ports_free(ports: dict[str, int]) -> None:
+    for flag, port in ports.items():
         with socket.socket() as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
@@ -409,7 +417,7 @@ def join_cluster(address: str) -> None:
     os.environ.setdefault("RAY_process_group_cleanup_enabled", "1")
     os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
     if metrics_port := os.environ.get("MSHIP_METRICS_PORT"):
-        _check_ports_free({int(metrics_port): "--metrics-port"})
+        _check_ports_free({"--metrics-port": int(metrics_port)})
     prune_ray_sessions()
     _join_ray_cluster(_with_default_port(address, _DEFAULT_RAY_GCS_PORT))
 

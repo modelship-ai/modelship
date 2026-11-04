@@ -1611,8 +1611,22 @@ class TestStartHead:
             os.environ.pop("RAY_GCS_SERVER_PORT", None)
             serve_utils.start_head(20)
         ports_check.assert_called_once_with(
-            {6390: "--gcs-port", 8001: "--openai-api-port", 8179: "--metrics-port", 8266: "--ray-dashboard-port"}
+            {"--gcs-port": 6390, "--openai-api-port": 8001, "--metrics-port": 8179, "--ray-dashboard-port": 8266}
         )
+        mock_init.assert_not_called()
+
+    def test_refuses_two_flags_on_one_port_before_checking_them(self, ports_check):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ, {"MSHIP_GCS_PORT": "8000", "MSHIP_OPENAI_API_PORT": "8000"}, clear=False),
+            patch.object(serve_utils.ray, "init") as mock_init,
+            patch.object(serve_utils, "prune_ray_sessions"),
+            pytest.raises(SystemExit, match="--gcs-port and --openai-api-port share port 8000"),
+        ):
+            os.environ.pop("RAY_GCS_SERVER_PORT", None)
+            serve_utils.start_head(20)
+        ports_check.assert_not_called()
         mock_init.assert_not_called()
 
     def _init_call(self, env, pop=()):
@@ -1888,7 +1902,7 @@ class TestCheckPortsFree:
             listener.listen()
             port = listener.getsockname()[1]
             with pytest.raises(SystemExit, match=rf"port {port} .*--metrics-port"):
-                serve_utils._check_ports_free({port: "--metrics-port"})
+                serve_utils._check_ports_free({"--metrics-port": port})
 
     def test_passes_a_port_left_with_only_closed_connections(self):
         from modelship.deploy import serve_utils
@@ -1901,7 +1915,7 @@ class TestCheckPortsFree:
             with socket.create_connection(("127.0.0.1", port)):
                 server_side, _ = listener.accept()
                 server_side.close()
-        serve_utils._check_ports_free({port: "--metrics-port"})
+        serve_utils._check_ports_free({"--metrics-port": port})
 
 
 class TestRayReadsTheCleanupSwitches:
@@ -2208,7 +2222,7 @@ class TestJoinCluster:
             pytest.raises(SystemExit),
         ):
             serve_utils.join_cluster("head:6380")
-        mock_check.assert_called_once_with({8179: "--metrics-port"})
+        mock_check.assert_called_once_with({"--metrics-port": 8179})
         mock_join.assert_not_called()
 
     @pytest.mark.parametrize(
