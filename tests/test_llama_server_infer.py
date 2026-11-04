@@ -7,9 +7,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import stat
 import sys
+import tempfile
 import textwrap
+from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import patch
 
@@ -45,12 +48,6 @@ _FAKE_HEALTHY_SERVER = textwrap.dedent(
     import socketserver
     import sys
 
-    def _port():
-        for i, a in enumerate(sys.argv):
-            if a == "--port":
-                return int(sys.argv[i + 1])
-        raise SystemExit("no --port passed")
-
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/health":
@@ -72,8 +69,7 @@ _FAKE_HEALTHY_SERVER = textwrap.dedent(
         def log_message(self, fmt, *args):
             pass
 
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", _port()), Handler) as httpd:
+    with socketserver.UnixStreamServer(sys.argv[sys.argv.index("--host") + 1], Handler) as httpd:
         httpd.serve_forever()
     """
 )
@@ -101,22 +97,34 @@ def _make_config(num_gpus: float = 0, **llama_server_kwargs) -> ModelshipModelCo
     return cfg
 
 
+@pytest.fixture(autouse=True)
+def ray_temp_dir(monkeypatch):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        context = SimpleNamespace(get_temp_dir=lambda: temp_dir, get_session_name=lambda: "session")
+        monkeypatch.setattr(llama_server_infer.ray, "get_runtime_context", lambda: context)
+        yield temp_dir
+
+
 class TestSubprocessLifecycle:
     @pytest.mark.asyncio
-    async def test_start_waits_for_health_then_shutdown_terminates(self, tmp_path, monkeypatch):
+    async def test_start_waits_for_health_then_shutdown_terminates(self, tmp_path, monkeypatch, ray_temp_dir):
         binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
 
         infer = LlamaServerInfer(_make_config())
         await infer.start()
+        socket_path = infer._socket
         try:
             assert infer._proc is not None
             assert infer._proc.poll() is None
             assert infer._client is not None
+            assert os.path.dirname(socket_path) == os.path.join(ray_temp_dir, "session", "mship")
+            assert stat.S_IMODE(os.stat(os.path.dirname(socket_path)).st_mode) == 0o700
         finally:
             infer.shutdown()
 
         assert infer._proc is None
+        assert not os.path.exists(socket_path)
 
     @pytest.mark.asyncio
     async def test_missing_binary_raises(self, monkeypatch):
@@ -283,14 +291,11 @@ class TestSubprocessLifecycle:
             infer.shutdown()
 
     @pytest.mark.asyncio
-    async def test_immediate_crash_retries_then_raises(self, tmp_path, monkeypatch):
+    async def test_a_crash_during_startup_raises(self, tmp_path, monkeypatch):
         binary = _write_fake_executable(tmp_path, _FAKE_CRASHING_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
         infer = LlamaServerInfer(_make_config())
-        with (
-            patch("modelship.infer.llama_server.llama_server_infer._LAUNCH_RETRY_LIMIT", 2),
-            pytest.raises(RuntimeError, match="failed to start after"),
-        ):
+        with pytest.raises(RuntimeError, match=r"exited \(rc=1\) during startup"):
             await infer.start()
 
     @pytest.mark.asyncio

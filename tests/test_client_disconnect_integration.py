@@ -5,13 +5,13 @@ import socket
 from urllib.parse import urlsplit
 
 import httpx
-import psutil
 import pytest
 from websockets.sync.client import connect
 
 from tests.conftest import MODEL_CONFIGS, OPENAI_API_BASE
 from tests.test_cluster_join import _poll
 from tests.test_dropped_request_integration import _replica
+from tests.test_llama_server_integration import _llama_server
 
 VLLM = {**MODEL_CONFIGS["chat-capable"], "vllm_engine_kwargs": {"max_model_len": 32768}}
 LLAMA = MODEL_CONFIGS["chat-llama-server-plain"]
@@ -27,11 +27,10 @@ def _vllm_running() -> float:
 
 
 def _llama_processing() -> int:
-    _, pid = _replica(LLAMA["name"])
-    args = next(a for a in (c.cmdline() for c in psutil.Process(pid).children(recursive=True)) if "--api-key" in a)
-    port, key = args[args.index("--port") + 1], args[args.index("--api-key") + 1]
-    slots = httpx.get(f"http://127.0.0.1:{port}/slots", headers={"Authorization": f"Bearer {key}"}, timeout=10)
-    return sum(slot["is_processing"] for slot in slots.json())
+    args = _llama_server(LLAMA["name"]).cmdline()
+    with httpx.Client(transport=httpx.HTTPTransport(uds=args[args.index("--host") + 1]), timeout=10) as client:
+        slots = client.get("http://llama-server/slots").json()
+    return sum(slot["is_processing"] for slot in slots)
 
 
 ENGINES = {VLLM["name"]: (_vllm_running, 30), LLAMA["name"]: (_llama_processing, 10)}
