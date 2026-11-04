@@ -22,6 +22,7 @@ from ray.serve.schema import ApplicationStatus, LoggingConfig
 
 from modelship.deploy.capabilities import node_capability_resources
 from modelship.deploy.local_nodes import kill_groups, worker_groups
+from modelship.infer.socket_dir import is_private_dir, socket_root
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
@@ -175,10 +176,10 @@ def _pid_alive(pid: int) -> bool:
 
 
 def prune_ray_sessions() -> None:
-    """Delete stale `session_<timestamp>_<pid>` dirs Ray leaves under its temp
-    root (default /tmp/ray). Ray never cleans them up, so they accumulate across
-    container/process restarts and slowly fill the disk on long-lived self-hosted
-    boxes.
+    """Delete stale `session_<timestamp>_<pid>` dirs under Ray's temp root
+    (default /tmp/ray) and the socket root. Ray never cleans them up, so they
+    accumulate across container/process restarts and slowly fill the disk on
+    long-lived self-hosted boxes.
 
     Called at node startup (start_head, join_cluster), before this run's session
     exists, so it can't be removed. A session whose owning pid is still alive is
@@ -193,24 +194,26 @@ def prune_ray_sessions() -> None:
         return
     try:
         temp_root = Path(get_default_ray_temp_dir())
-        if not temp_root.is_dir():
-            return
         latest = temp_root / "session_latest"
         kept = latest.readlink().name if latest.is_symlink() else None
-        removed = 0
-        for entry in temp_root.iterdir():
-            match = _RAY_SESSION_DIR_RE.match(entry.name)
-            if not match or entry.is_symlink() or not entry.is_dir():
+        roots = [temp_root, Path(socket_root())] if is_private_dir(socket_root()) else [temp_root]
+        for root in roots:
+            if not root.is_dir():
                 continue
-            if entry.name == kept or _pid_alive(int(match.group(1))):
-                continue
-            try:
-                shutil.rmtree(entry)
-                removed += 1
-            except OSError:
-                logger.warning("Failed to prune stale Ray session dir %s (continuing).", entry, exc_info=True)
-        if removed:
-            logger.info("Pruned %d stale Ray session dir(s) under %s", removed, temp_root)
+            removed = 0
+            for entry in root.iterdir():
+                match = _RAY_SESSION_DIR_RE.match(entry.name)
+                if not match or entry.is_symlink() or not entry.is_dir():
+                    continue
+                if entry.name == kept or _pid_alive(int(match.group(1))):
+                    continue
+                try:
+                    shutil.rmtree(entry)
+                    removed += 1
+                except OSError:
+                    logger.warning("Failed to prune stale session dir %s (continuing).", entry, exc_info=True)
+            if removed:
+                logger.info("Pruned %d stale session dir(s) under %s", removed, root)
     except Exception:
         # Cleanup is never worth failing a deploy over — warn and carry on.
         logger.warning("Ray session pruning failed; continuing without it.", exc_info=True)

@@ -5,14 +5,18 @@ OpenAI-compatible HTTP API."""
 
 import concurrent.futures
 import json
+import os
+import re
 import time
 
 import httpx
+import psutil
 import pytest
 
 import openai
 from modelship.utils.cli import infer_model_name
 from tests.conftest import MODEL_CONFIGS, RED_IMAGE_DATA_URI
+from tests.test_dropped_request_integration import _replica
 
 OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 
@@ -28,6 +32,11 @@ _WEATHER_TOOL = {
         },
     },
 }
+
+
+def _llama_server(model: str) -> psutil.Process:
+    _, pid = _replica(model)
+    return next(c for c in psutil.Process(pid).children(recursive=True) if "--host" in c.cmdline())
 
 
 def _collect_streaming_tool_call(stream) -> dict:
@@ -345,6 +354,14 @@ class TestChatLlamaServer:
             f"expected concurrent requests to overlap via llama-server's parallel slots "
             f"(baseline={baseline:.1f}s, {concurrency} concurrent took {concurrent_elapsed:.1f}s)"
         )
+
+    def test_llama_server_listens_on_its_socket_only(self):
+        server = _llama_server("chat-llama-server")
+        socket_path = server.cmdline()[server.cmdline().index("--host") + 1]
+        session = r"session_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_\d{6}_\d{1,7}"
+        assert re.fullmatch(rf"/tmp/mship-{os.getuid()}/{session}/llama-[0-9a-f]{{8}}\.sock", socket_path)
+        assert socket_path in [c.laddr for c in server.net_connections(kind="unix")]
+        assert not [c for c in server.net_connections(kind="inet") if c.status == psutil.CONN_LISTEN]
 
 
 @pytest.mark.integration

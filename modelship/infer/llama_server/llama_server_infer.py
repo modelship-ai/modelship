@@ -3,7 +3,6 @@ import contextlib
 import json
 import os
 import secrets
-import socket
 import subprocess
 import threading
 import time
@@ -16,6 +15,7 @@ from pydantic import ValidationError
 
 from modelship.infer.base_infer import BaseInfer, ClientDisconnectedError
 from modelship.infer.infer_config import LlamaServerConfig, ModelshipModelConfig, ModelUsecase, RawRequestProxy
+from modelship.infer.socket_dir import session_socket_dir
 from modelship.logging import TRACE, get_logger
 from modelship.metrics import record_engine_tokens
 from modelship.openai.protocol import (
@@ -59,26 +59,7 @@ logger = get_logger("infer.llama_server")
 
 _HEALTH_POLL_INTERVAL_S = 0.5
 _STARTUP_TIMEOUT_S = float(os.environ.get("MSHIP_LLAMA_SERVER_STARTUP_TIMEOUT", "900"))
-# A child that dies this soon after spawn is presumed to be the free-port
-# TOCTOU race (port stolen between our probe close() and its bind()), not a
-# real load failure — retry the whole launch with a fresh port.
-_EARLY_CRASH_WINDOW_S = 3.0
-_LAUNCH_RETRY_LIMIT = 5
 _RECENT_LOG_LINES = 50
-
-
-def _free_port() -> int:
-    """Bind an ephemeral port and release it immediately so the child can bind
-    it. Racy (TOCTOU) by nature: something else may grab the port before the
-    child does. The caller retries the whole launch when that happens."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-class _EarlyCrashError(RuntimeError):
-    """The llama-server child exited within `_EARLY_CRASH_WINDOW_S` of spawn —
-    treated as a transient bind race and retried with a fresh port."""
 
 
 # asyncio only holds a weak reference to a task's coroutine, so a fire-and-forget
@@ -109,14 +90,11 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         self.config = user_config.model_copy(update=merged)
 
         self._proc: subprocess.Popen | None = None
-        self._port: int | None = None
-        self._api_key: str = secrets.token_hex(32)
+        self._socket: str | None = None
         self._client: httpx.AsyncClient | None = None
         self._log_lock = threading.Lock()
         self._recent_log_lines: deque[str] = deque(maxlen=_RECENT_LOG_LINES)
         self._log_threads: list[threading.Thread] = []
-        # True during our own shutdown()/retry teardown, so _watch_process can
-        # tell an intentional kill from a real crash.
         self._shutting_down = False
 
     def shutdown(self) -> None:
@@ -150,6 +128,10 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
 
         self._proc = None
         self._log_threads = []
+        if self._socket is not None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(self._socket)
+            self._socket = None
         if self._client is not None:
             client, self._client = self._client, None
             try:
@@ -183,42 +165,19 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             )
 
         logger.info("Starting llama-server for model: %s", self.model_config.name)
-        last_error: Exception | None = None
         try:
-            for attempt in range(1, _LAUNCH_RETRY_LIMIT + 1):
-                try:
-                    await self._launch(binary, model_path)
-                    await self._wait_healthy()
-                    break
-                except _EarlyCrashError as e:
-                    last_error = e
-                    logger.warning(
-                        "llama-server for '%s' exited immediately on attempt %d/%d (likely a port race); retrying: %s",
-                        self.model_config.name,
-                        attempt,
-                        _LAUNCH_RETRY_LIMIT,
-                        e,
-                    )
-                    self.shutdown()
-            else:
-                raise RuntimeError(
-                    f"llama-server for '{self.model_config.name}' failed to start after "
-                    f"{_LAUNCH_RETRY_LIMIT} attempts: {last_error}"
-                )
+            await self._launch(binary, model_path)
+            await self._wait_healthy()
         except Exception:
             self.shutdown()
             raise
 
-        assert self._port is not None
+        assert self._socket is not None
         assert self._proc is not None
-        # A prior retry's shutdown() (see the _EarlyCrashError branch above) may
-        # have left this set — this is the process we're actually keeping, so
-        # arm the watcher fresh rather than inheriting a stale "don't crash" flag.
-        self._shutting_down = False
         threading.Thread(target=self._watch_process, args=(self._proc,), daemon=True).start()
         self._client = httpx.AsyncClient(
-            base_url=f"http://127.0.0.1:{self._port}",
-            headers={"Authorization": f"Bearer {self._api_key}"},
+            transport=httpx.AsyncHTTPTransport(uds=self._socket),
+            base_url="http://llama-server",
             timeout=httpx.Timeout(timeout=None, connect=10.0),
         )
 
@@ -232,16 +191,13 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
 
     async def _launch(self, binary: str, model_path: str) -> None:
         loop = asyncio.get_running_loop()
-        port = await loop.run_in_executor(None, _free_port)
-        self._port = port
+        self._socket = os.path.join(session_socket_dir(), f"llama-{secrets.token_hex(4)}.sock")
 
         args = [
             binary,
             "serve",
             "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
+            self._socket,
             "-m",
             model_path,
             "-c",
@@ -264,8 +220,6 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             "--no-webui",
             "--cache-ram",
             str(self.config.cache_ram_mib),
-            "--api-key",
-            self._api_key,
         ]
         if self.model_config.num_gpus > 0:
             args += ["-ngl", str(self.config.n_gpu_layers)]
@@ -298,7 +252,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         if self.config.reasoning_preserve is not None:
             args += ["--reasoning-preserve" if self.config.reasoning_preserve else "--no-reasoning-preserve"]
 
-        logger.info("llama-server launch args for '%s': %s", self.model_config.name, _redact(args))
+        logger.info("llama-server launch args for '%s': %s", self.model_config.name, args)
         self._proc = await loop.run_in_executor(
             None,
             lambda: subprocess.Popen(
@@ -349,23 +303,21 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
 
     async def _wait_healthy(self) -> None:
         assert self._proc is not None
-        assert self._port is not None
-        spawned_at = time.monotonic()
-        deadline = spawned_at + _STARTUP_TIMEOUT_S
+        assert self._socket is not None
+        deadline = time.monotonic() + _STARTUP_TIMEOUT_S
 
         async with httpx.AsyncClient(
-            base_url=f"http://127.0.0.1:{self._port}",
-            headers={"Authorization": f"Bearer {self._api_key}"},
+            transport=httpx.AsyncHTTPTransport(uds=self._socket),
+            base_url="http://llama-server",
         ) as probe:
             while True:
                 rc = self._proc.poll()
                 if rc is not None:
                     with self._log_lock:
                         tail = "\n".join(self._recent_log_lines)
-                    message = f"llama-server for '{self.model_config.name}' exited (rc={rc}) during startup: {tail}"
-                    if time.monotonic() - spawned_at < _EARLY_CRASH_WINDOW_S:
-                        raise _EarlyCrashError(message)
-                    raise RuntimeError(message)
+                    raise RuntimeError(
+                        f"llama-server for '{self.model_config.name}' exited (rc={rc}) during startup: {tail}"
+                    )
 
                 if time.monotonic() > deadline:
                     raise RuntimeError(
@@ -376,7 +328,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
                 try:
                     resp = await probe.get("/health", timeout=2.0)
                     if resp.status_code == 200:
-                        logger.info("llama-server healthy for '%s' on port %d", self.model_config.name, self._port)
+                        logger.info("llama-server healthy for '%s' on %s", self.model_config.name, self._socket)
                         await self._log_deployed_context(probe)
                         return
                 except httpx.HTTPError:
@@ -681,14 +633,6 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
 # Request / response projection — never relay llama-server's JSON verbatim,
 # it's `extra="allow"`-shaped and would leak extension fields (e.g. `timings`).
 # ---------------------------------------------------------------------------
-
-
-def _redact(args: list[str]) -> list[str]:
-    redacted = list(args)
-    for i, arg in enumerate(redacted):
-        if arg == "--api-key" and i + 1 < len(redacted):
-            redacted[i + 1] = "***"
-    return redacted
 
 
 def _build_payload(

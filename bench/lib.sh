@@ -334,7 +334,7 @@ if loader == "llama_server":
     b_args = shlex.split(b_match.group(1))
 
     # Legitimately different between the arms.
-    IGNORED = {"--host", "--port", "--api-key", "--alias"}
+    IGNORED = {"--host", "--port", "--alias"}
     # Compared by basename: the same weights resolve under different roots.
     PATH_VALUED = {"-m", "--mmproj", "--chat-template-file", "--chat-template"}
 

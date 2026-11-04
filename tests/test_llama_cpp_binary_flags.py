@@ -23,7 +23,6 @@ from mship_bootstrap.llama_cpp import _ASSETS  # noqa: E402
 # Every flag llama_server_infer.py's _launch sends to `llama serve`.
 _SERVE_FLAGS = [
     "--host",
-    "--port",
     "-m",
     "-c",
     "-b",
@@ -35,7 +34,6 @@ _SERVE_FLAGS = [
     "--jinja",
     "--reasoning-format",
     "--no-webui",
-    "--api-key",
     "-ngl",
     "-ts",
     "--threads",

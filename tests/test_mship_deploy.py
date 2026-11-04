@@ -2402,6 +2402,14 @@ class TestPruneRaySessions:
     """`prune_ray_sessions` resolves the temp root via Ray's own `get_default_ray_temp_dir()`
     (`<RAY_TMPDIR>/ray`), so pointing RAY_TMPDIR at a tmp dir isolates these tests."""
 
+    @pytest.fixture(autouse=True)
+    def socket_root(self, tmp_path):
+        from modelship.deploy import serve_utils
+
+        root = tmp_path / "mship"
+        with patch.object(serve_utils, "socket_root", return_value=str(root)):
+            yield root
+
     def _temp_root(self, tmp_path):
         root = tmp_path / "ray"
         root.mkdir()
@@ -2488,6 +2496,43 @@ class TestPruneRaySessions:
             serve_utils.prune_ray_sessions()
         assert not older.exists()
         assert newer.exists()
+
+    def test_removes_dead_socket_folders_session_latest_does_not_point_to(self, tmp_path, socket_root):
+        from modelship.deploy import serve_utils
+
+        root = self._temp_root(tmp_path)
+        (root / "session_latest").symlink_to(self._make_session(root, 666))
+        socket_root.mkdir(mode=0o700)
+        older = self._make_session(socket_root, 555)
+        newer = self._make_session(socket_root, 666)
+        with (
+            patch.dict(
+                os.environ,
+                {"RAY_TMPDIR": str(tmp_path), "MSHIP_PRUNE_RAY_SESSIONS": "true"},
+                clear=False,
+            ),
+            patch.object(serve_utils, "_pid_alive", return_value=False),
+        ):
+            serve_utils.prune_ray_sessions()
+        assert not older.exists()
+        assert newer.exists()
+
+    def test_leaves_a_socket_root_others_can_write(self, tmp_path, socket_root):
+        from modelship.deploy import serve_utils
+
+        socket_root.mkdir()
+        socket_root.chmod(0o777)
+        dead = self._make_session(socket_root, 777)
+        with (
+            patch.dict(
+                os.environ,
+                {"RAY_TMPDIR": str(tmp_path), "MSHIP_PRUNE_RAY_SESSIONS": "true"},
+                clear=False,
+            ),
+            patch.object(serve_utils, "_pid_alive", return_value=False),
+        ):
+            serve_utils.prune_ray_sessions()
+        assert dead.exists()
 
     def test_disabled_via_env_keeps_everything(self, tmp_path):
         from modelship.deploy import serve_utils
