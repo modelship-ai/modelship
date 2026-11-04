@@ -64,7 +64,7 @@ mship start --config models.yaml
 mship start --model Qwen/Qwen3-8B-GGUF:'*Q4_K_M.gguf' --loader llama_server --usecase generate
 ```
 
-Refuses to start when a Ray node already runs on the machine.
+Refuses to start when a Ray node already runs on the machine, or when one of its ports is held by another program or given to two of them: `--gcs-port`, `--openai-api-port`, `--metrics-port` and, when set, `--ray-dashboard-port`.
 
 ## `mship join`
 
@@ -73,6 +73,8 @@ mship join --gcs-address HOST[:PORT] [options]
 ```
 
 Starts this machine's Ray node as a worker of the cluster whose head listens at `HOST` (its `--gcs-port`, `6380` by default). Node only: no gateway, no model changes. It stays running and leaves the cluster on exit. See [Multi-node without Kubernetes](multi-node-docker.md).
+
+Refuses to start when `--metrics-port` is set and another program holds that port.
 
 ## `mship deploy`
 
