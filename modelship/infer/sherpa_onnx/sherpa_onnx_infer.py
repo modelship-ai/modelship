@@ -103,13 +103,14 @@ class SherpaOnnxInfer(BaseInfer):
             return create_error_response(
                 f"unknown voice {request.voice!r}. Valid voices: {', '.join(self.entry.voice_names)}"
             )
+        voice = self.entry.voice_names[sid]
 
         if "stream_format" in request.model_fields_set and request.stream_format == "sse":
             logger.info("%s: voice=%s sid=%d stream=sse", request_id, request.voice, sid)
-            return self._stream(request.input, request.voice, sid, request.speed)
+            return self._stream(request.input, voice, sid, request.speed)
 
         logger.info("%s: voice=%s sid=%d", request_id, request.voice, sid)
-        wav = await self._generate(request.input, request.voice, sid, request.speed)
+        wav = await self._generate(request.input, voice, sid, request.speed)
         return RawSpeechResponse(audio=wav)
 
     def _gen_config(self, text: str, voice: str, sid: int, speed: float) -> Any:

@@ -248,6 +248,7 @@ class TestCreateSpeech:
         result = await infer.create_speech(req, RawRequestProxy(None, {}))
         assert isinstance(result, RawSpeechResponse)
         assert tts.generate_calls[0][1] == 2
+        assert infer.frontend.calls == [("hi", _ENTRY.voice_names[2])]
 
     @pytest.mark.asyncio
     async def test_unknown_voice_returns_400_even_when_streaming(self):
