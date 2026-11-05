@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 from ray.exceptions import ActorUnavailableError
 
-from modelship.infer import deploy_coordinator, deploy_leases
-from modelship.infer.deploy_leases import DeployLeaseError, wait_for_deploy_lease
+from modelship.deploy import deploy_coordinator, deploy_leases
+from modelship.deploy.deploy_leases import DeployLeaseError, wait_for_deploy_lease
 from modelship.state import MemoryStoreActor
 
 _Coord = deploy_coordinator.DeployCoordinator.__ray_metadata__.modified_class

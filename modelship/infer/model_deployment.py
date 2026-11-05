@@ -7,10 +7,9 @@ from typing import Any
 
 from ray import serve
 
+from modelship.deploy.deploy_leases import DeployLeaseError, wait_for_deploy_lease
 from modelship.infer.base_infer import BaseInfer
-from modelship.infer.deploy_leases import DeployLeaseError, wait_for_deploy_lease
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, RawRequestProxy
-from modelship.infer.sources import ModelDownloadError
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
     EMBEDDING_DURATION_SECONDS,
@@ -35,6 +34,7 @@ from modelship.openai.protocol import (
 from modelship.preflight import ModelNotSizedError
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.cache import reject_unset_cache_roots
+from modelship.utils.sources import ModelDownloadError
 
 logger = get_logger("infer.deployment")
 
@@ -74,7 +74,7 @@ def _reject_unsupported_accelerator(config: ModelshipModelConfig) -> None:
 
 async def _report_load_failure(config: ModelshipModelConfig, reason: str, fatal: bool) -> None:
     try:
-        from modelship.infer.deploy_coordinator import find_coordinator
+        from modelship.deploy.deploy_coordinator import find_coordinator
 
         if (coordinator := find_coordinator()) is None:
             logger.error("No deploy coordinator to report the load failure of '%s' to", config.name)

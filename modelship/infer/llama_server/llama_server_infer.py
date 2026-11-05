@@ -15,7 +15,6 @@ from pydantic import ValidationError
 
 from modelship.infer.base_infer import BaseInfer, ClientDisconnectedError
 from modelship.infer.infer_config import LlamaServerConfig, ModelshipModelConfig, ModelUsecase, RawRequestProxy
-from modelship.infer.socket_dir import session_socket_dir
 from modelship.logging import TRACE, get_logger
 from modelship.metrics import record_engine_tokens
 from modelship.openai.protocol import (
@@ -54,6 +53,7 @@ from modelship.openai.utils.chat import (
 from modelship.openai.utils.responses import build_response_from_parsed, responses_validation_error
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight
 from modelship.utils import base_request_id, random_uuid
+from modelship.utils.socket_dir import session_socket_dir
 
 logger = get_logger("infer.llama_server")
 

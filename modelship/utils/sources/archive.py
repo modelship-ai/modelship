@@ -6,11 +6,11 @@ from typing import NamedTuple
 
 import requests
 
-from modelship.infer.sources.errors import ModelSourceError
-from modelship.infer.sources.local import check_required
-from modelship.infer.sources.progress import DownloadProgress
 from modelship.logging import get_logger
 from modelship.utils import cache_dir, download, fetch_and_extract_archive, random_uuid
+from modelship.utils.sources.errors import ModelSourceError
+from modelship.utils.sources.local import check_required
+from modelship.utils.sources.progress import DownloadProgress
 
 logger = get_logger("startup")
 

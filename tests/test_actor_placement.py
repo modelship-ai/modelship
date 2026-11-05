@@ -4,8 +4,9 @@ from unittest.mock import patch
 
 import pytest
 
-from modelship.infer import deploy_coordinator, download_leases, gateway_coordinator
+from modelship.deploy import deploy_coordinator, gateway_coordinator
 from modelship.state import memory
+from modelship.utils import download_leases
 
 _HEAD_PINNED = {
     "get_if_exists": True,

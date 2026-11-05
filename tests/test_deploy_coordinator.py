@@ -11,11 +11,10 @@ import pytest
 from ray.exceptions import RayActorError
 from ray.serve.schema import ApplicationStatus, LoggingConfig
 
-from modelship.deploy import strategy
+from modelship.deploy import deploy_coordinator, strategy
 from modelship.deploy import worker as worker_module
 from modelship.deploy.ledger import DeployRequest, Version, commit_version, read_versions
 from modelship.deploy.strategy import ServeApp
-from modelship.infer import deploy_coordinator
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
 from modelship.state.base import StateStoreUnavailableError

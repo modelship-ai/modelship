@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from modelship.infer.deploy_coordinator import _DEATHS_PER_REPLICA
+from modelship.deploy.deploy_coordinator import _DEATHS_PER_REPLICA
 from tests.conftest import serve_apps
 
 _PING_PROMPT = [{"role": "user", "content": "hi"}]

@@ -11,7 +11,7 @@ from modelship.infer.infer_config import (
     ModelshipModelConfig,
     ModelUsecase,
 )
-from modelship.infer.sources import HfSource, LocalSource, ModelDownloadError, ModelSourceError
+from modelship.utils.sources import HfSource, LocalSource, ModelDownloadError, ModelSourceError
 
 _PIN = HfSource(
     repo="org/repo",

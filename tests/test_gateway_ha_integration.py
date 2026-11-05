@@ -9,8 +9,8 @@ import time
 
 import pytest
 
-from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE
-from modelship.infer.gateway_coordinator import GATEWAY_COORDINATOR_ACTOR_NAME
+from modelship.deploy.deploy_coordinator import COORDINATOR_NAMESPACE
+from modelship.deploy.gateway_coordinator import GATEWAY_COORDINATOR_ACTOR_NAME
 from openai import OpenAI
 from tests.conftest import run_on_cluster
 

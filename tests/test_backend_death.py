@@ -42,7 +42,7 @@ def harness(monkeypatch):
     coordinator = MagicMock()
     monkeypatch.setattr(base_infer.os, "_exit", MagicMock(side_effect=_ExitError))
     monkeypatch.setattr(base_infer.serve, "get_replica_context", lambda: SimpleNamespace(app_name="qwen-aaaa"))
-    with patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator):
+    with patch("modelship.deploy.deploy_coordinator.find_coordinator", return_value=coordinator):
         yield coordinator
 
 
@@ -81,7 +81,7 @@ class TestBackendDied:
 
     def test_exits_without_a_report_when_there_is_no_deploy_coordinator(self, harness, caplog):
         with (
-            patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=None),
+            patch("modelship.deploy.deploy_coordinator.find_coordinator", return_value=None),
             pytest.raises(_ExitError),
         ):
             _infer().backend_died("engine core died")

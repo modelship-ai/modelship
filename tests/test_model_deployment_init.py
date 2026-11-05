@@ -11,8 +11,8 @@ from modelship.infer.model_deployment import (
     _reject_unsupported_accelerator,
     _reject_unsupported_darwin_loader,
 )
-from modelship.infer.sources import ModelDownloadError
 from modelship.preflight import ModelNotSizedError
+from modelship.utils.sources import ModelDownloadError
 
 # Bypass the @serve.deployment wrapper (see test_model_deployment_metrics.py).
 _ModelDeployment = ModelDeployment.func_or_class
@@ -113,7 +113,7 @@ async def test_a_download_error_is_reported_as_not_fatal():
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
         ),
-        patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
+        patch("modelship.deploy.deploy_coordinator.find_coordinator", return_value=coordinator),
         patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
         pytest.raises(ModelDownloadError),
     ):
@@ -142,7 +142,7 @@ async def test_generic_init_failure_reports_fatal():
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
         ),
-        patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
+        patch("modelship.deploy.deploy_coordinator.find_coordinator", return_value=coordinator),
         patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
         pytest.raises(RuntimeError),
     ):
@@ -169,7 +169,7 @@ async def test_a_model_that_could_not_be_sized_is_reported_without_a_traceback()
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
         ),
-        patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator),
+        patch("modelship.deploy.deploy_coordinator.find_coordinator", return_value=coordinator),
         patch("modelship.infer.model_deployment.serve.get_replica_context", return_value=MagicMock(app_name="app")),
         pytest.raises(RuntimeError, match=r"^model 'test-model' could not be sized for this node$"),
     ):
@@ -195,7 +195,7 @@ async def test_an_init_failure_without_a_deploy_coordinator_still_raises(caplog)
             reject_unset_cache_roots=MagicMock(),
             BaseInfer=mock_base_infer,
         ),
-        patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=None),
+        patch("modelship.deploy.deploy_coordinator.find_coordinator", return_value=None),
         pytest.raises(RuntimeError, match="bad config"),
     ):
         await _ModelDeployment.__init__(inst, config)

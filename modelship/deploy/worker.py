@@ -126,7 +126,7 @@ class GatewayReplicas:
     """Asks the gateway coordinator whether a gateway's replicas hold a routing version."""
 
     def wait_switched(self, gateway_name: str, routing: int, timeout: float) -> bool:
-        from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
+        from modelship.deploy.gateway_coordinator import get_or_create_gateway_coordinator
 
         deadline = time.monotonic() + timeout
         while (left := deadline - time.monotonic()) > 0:

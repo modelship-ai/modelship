@@ -12,9 +12,7 @@ from ray import serve
 from ray.exceptions import RayActorError
 
 from modelship.infer import infer_config
-from modelship.infer.downloads import locked_download
 from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
-from modelship.infer.sources import ModelDownloadError, ModelSourceError
 from modelship.logging import get_logger
 from modelship.metrics import TIME_TO_FIRST_TOKEN_SECONDS
 from modelship.openai.protocol import (
@@ -40,6 +38,8 @@ from modelship.openai.protocol import (
     TranslationResponseVerbose,
 )
 from modelship.openai.protocol.responses.streaming import ResponsesStreamTranslator
+from modelship.utils.downloads import locked_download
+from modelship.utils.sources import ModelDownloadError, ModelSourceError
 
 logger = get_logger("infer")
 
@@ -410,7 +410,7 @@ class BaseInfer[Prepared](ABC):
 
     def _deploy_coordinator(self):
         if self._coordinator is None:
-            from modelship.infer.deploy_coordinator import find_coordinator
+            from modelship.deploy.deploy_coordinator import find_coordinator
 
             self._coordinator = find_coordinator()
         return self._coordinator

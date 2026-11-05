@@ -19,7 +19,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from modelship.infer import base_infer, socket_dir
+from modelship.infer import base_infer
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.infer_config import (
     LlamaServerConfig,
@@ -37,6 +37,7 @@ from modelship.openai.protocol import (
     ErrorResponse,
     ResponsesRequest,
 )
+from modelship.utils import socket_dir
 
 # ---------------------------------------------------------------------------
 # Fake llama-server executables (plain scripts; no real binary needed in CI)

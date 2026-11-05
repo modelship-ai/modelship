@@ -16,8 +16,8 @@ from huggingface_hub.errors import CachedRepoTreeNotFoundError, LocalEntryNotFou
 from huggingface_hub.file_download import repo_folder_name
 from huggingface_hub.utils.tqdm import tqdm as hf_tqdm
 
-from modelship.infer.sources.progress import DownloadProgress
 from modelship.logging import get_logger
+from modelship.utils.sources.progress import DownloadProgress
 
 logger = get_logger("startup")
 

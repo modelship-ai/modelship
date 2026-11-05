@@ -6,8 +6,7 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
-from modelship.deploy import worker
-from modelship.infer import deploy_coordinator, download_leases, gateway_coordinator
+from modelship.deploy import deploy_coordinator, gateway_coordinator, worker
 from modelship.state import (
     REDIS_PASSWORD_ENV,
     memory,
@@ -15,6 +14,7 @@ from modelship.state import (
     resolve_state_store_uri,
     state_store_env_var,
 )
+from modelship.utils import download_leases
 from modelship.utils.runtime_env import (
     CLUSTER_ENV_DEFAULTS,
     GATEWAY_ENV_VARS,

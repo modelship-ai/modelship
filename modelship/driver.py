@@ -60,10 +60,10 @@ def run(command: str, argv: list[str] | None = None) -> None:
 
 
 def _start(args) -> None:
+    from modelship.deploy.deploy_coordinator import get_or_create_coordinator
+    from modelship.deploy.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.deploy.gateway_sizing import gateway_sizing
     from modelship.deploy.serve_utils import local_ray_clusters, start_gateway, start_head, start_serve
-    from modelship.infer.deploy_coordinator import get_or_create_coordinator
-    from modelship.infer.gateway_coordinator import get_or_create_gateway_coordinator
     from modelship.state import check_state_store_uri, state_store_env_var
     from modelship.utils.runtime_env import cluster_env_vars
 
@@ -187,8 +187,8 @@ def _join() -> None:
 def _attach_when_ready():
     """Attaches to this machine's cluster and returns its deploy coordinator, waiting up to
     HEAD_WAIT_S (modelship.remote) for a local node and for the deploy coordinator."""
+    from modelship.deploy.deploy_coordinator import find_coordinator
     from modelship.deploy.serve_utils import attach_cluster, local_ray_clusters
-    from modelship.infer.deploy_coordinator import find_coordinator
     from modelship.remote import EXIT_NO_DEPLOY_COORDINATOR, HEAD_WAIT_S
 
     def _stop_waiting(sig, _frame) -> None:

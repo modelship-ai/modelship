@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from modelship.infer import socket_dir
+from modelship.utils import socket_dir
 
 
 @pytest.fixture

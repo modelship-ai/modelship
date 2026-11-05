@@ -115,17 +115,17 @@ This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu
 |------|---------|
 | `modelship/launcher.py` | Entry point behind `mship start` / `join` / `deploy` / `stop` (`python -m modelship.launcher <command>`) — resolves cache root, checks Python version, detects accelerator, hands off to `driver.py` |
 | `modelship/driver.py` | `start` / `join` / `deploy` / `stop`: bring up or attach to Ray, then send a deploy request (`start` converges on its config; `deploy` is additive by default, `--reconcile` to converge exactly) or cancel one |
-| `modelship/infer/deploy_coordinator.py` | Per-gateway deploy queues, routing versions, node load leases, replica-death counts and fatal errors |
+| `modelship/deploy/deploy_coordinator.py` | Per-gateway deploy queues, routing versions, node load leases, replica-death counts and fatal errors |
 | `modelship/deploy/diff.py` | A deploy request's diff: each model's action and the order the actions run in |
 | `modelship/deploy/worker.py`, `strategy.py` | One deploy request's Serve work: the diff's steps, switch, commit or roll back |
 | `modelship/deploy/ledger.py` | Each gateway's committed and previous version in the state store, and the additive/reconcile merge |
-| `modelship/infer/gateway_coordinator.py` | Each gateway's model → deployment table, and which version each gateway replica holds |
+| `modelship/deploy/gateway_coordinator.py` | Each gateway's model → deployment table, and which version each gateway replica holds |
 | `modelship/openai/api.py` | FastAPI gateway with OpenAI endpoints |
 | `modelship/openai/protocol/responses/` | `/v1/responses` schemas, chat adapter (`adapter.py`), streaming translator (`streaming.py`) |
 | `modelship/state/` | Generic pluggable KV store (`memory://` via a detached Ray actor, `redis://`). Domain layers: `openai/state/responses.py`, `deploy/ledger.py` |
 | `modelship/infer/model_deployment.py` | Ray Serve deployment actor |
 | `modelship/infer/infer_config.py` | Pydantic config models and protocols |
-| `modelship/infer/downloads.py`, `download_leases.py` | Replica-side weight download under the cluster-wide lease; the lease actor and leftover cleanup |
+| `modelship/utils/downloads.py`, `download_leases.py` | Replica-side weight download under the cluster-wide lease; the lease actor and leftover cleanup |
 | `modelship/infer/vllm/vllm_infer.py` | vLLM engine wrapper |
 | `modelship/infer/llama_server/llama_server_infer.py` | llama-server subprocess proxy (GGUF chat/embed/vision) |
 | `modelship/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |

@@ -9,11 +9,11 @@ import ray
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
 from modelship.deploy.actor_options import build_cache_env_vars
-from modelship.infer.sources import RemoteSource, remove_leftovers
 from modelship.logging import configure_logging, get_logger
 from modelship.utils import head_node_options
 from modelship.utils.cache import reject_unset_cache_roots
 from modelship.utils.runtime_env import cluster_env_vars
+from modelship.utils.sources import RemoteSource, remove_leftovers
 
 logger = get_logger("download_leases")
 

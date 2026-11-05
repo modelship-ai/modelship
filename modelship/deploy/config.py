@@ -11,7 +11,7 @@ from modelship.utils.cli import model_from_args
 from modelship.utils.config_schema import ModelLoader, ModelshipConfig
 
 if TYPE_CHECKING:
-    from modelship.infer.sources import PinnedSource
+    from modelship.utils.sources import PinnedSource
 
 logger = get_logger("startup")
 
@@ -56,7 +56,7 @@ def _whispercpp_source_ref(model: str) -> str:
 
 
 def _pin_label(pinned: "PinnedSource") -> str:
-    from modelship.infer.sources import ArchiveSource, HfSource
+    from modelship.utils.sources import ArchiveSource, HfSource
 
     match pinned:
         case HfSource():
@@ -82,7 +82,7 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     """
     # Deferred: pulls huggingface_hub.
     from modelship.infer.sherpa_onnx.bundle import bundle_source
-    from modelship.infer.sources import check_model_source
+    from modelship.utils.sources import check_model_source
 
     for cfg in yml_conf.models:
         assert cfg.model is not None  # validator guarantees this for built-in loaders

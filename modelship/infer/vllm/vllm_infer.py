@@ -67,7 +67,6 @@ from modelship.infer.infer_config import (
     VllmEngineConfig,
     resolve_gpu_memory_utilization,
 )
-from modelship.infer.socket_dir import session_socket_dir
 from modelship.infer.vllm import engine_ops
 from modelship.infer.vllm.capabilities import VllmCapabilities
 from modelship.infer.vllm.parsing.detect import (
@@ -112,6 +111,7 @@ from modelship.openai.utils.chat import (
 from modelship.openai.utils.responses import build_response_from_parsed, responses_validation_error
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight
 from modelship.utils import base_request_id
+from modelship.utils.socket_dir import session_socket_dir
 
 logger = get_logger("infer.vllm")
 

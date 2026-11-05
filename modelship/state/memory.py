@@ -25,7 +25,7 @@ from modelship.utils.runtime_env import MEMORY_STORE_ENV_VARS, build_env_vars, c
 logger = get_logger("startup")
 
 # Detached-actor identity: same namespace as the other cluster-wide coordinators
-# (modelship.infer.deploy_coordinator.COORDINATOR_NAMESPACE / gateway_coordinator).
+# (modelship.deploy.deploy_coordinator.COORDINATOR_NAMESPACE / gateway_coordinator).
 # Not imported from there — modelship.state is the generic lower layer and infer
 # depends on it, not the reverse.
 _ACTOR_NAME = "modelship-memory-store"
