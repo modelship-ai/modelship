@@ -227,7 +227,7 @@ class FakeHandle:
     def respond(self):
         return self
 
-    def options(self, stream=True):
+    def options(self, stream=True, session_id=""):
         return self
 
     def remote(self, *args, **kwargs):

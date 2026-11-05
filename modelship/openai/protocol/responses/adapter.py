@@ -373,6 +373,7 @@ def build_response_object(
         "text": request.text if request.text else {"format": {"type": "text"}},
         "reasoning": request.reasoning,
         "metadata": request.metadata or {},
+        "prompt_cache_key": request.prompt_cache_key,
         # OpenAI stores by default; only an explicit `store: false` opts out.
         "store": request.store is not False,
         "previous_response_id": request.previous_response_id,

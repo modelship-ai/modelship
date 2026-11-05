@@ -67,6 +67,7 @@ from modelship.openai.protocol import (
 from modelship.openai.protocol.responses.adapter import UnsupportedResponsesFeatureError
 from modelship.openai.protocol.responses.streaming import RESPONSE_FAILED_SSE_PREFIX
 from modelship.openai.state.responses import mcp_listings_in
+from modelship.openai.utils import affinity
 from modelship.openai.utils import responses as responses_utils
 from modelship.state import get_state_store
 from modelship.utils import random_uuid
@@ -565,7 +566,9 @@ class ModelshipAPI:
                 request.max_tokens,
             )
             logger.debug("chat_completion full request: %s", request.model_dump_json())
-            response_gen = handle.generate.options(stream=True).remote(request, headers, None, req_id, identity)
+            response_gen = handle.generate.options(stream=True, session_id=affinity.chat_key(request, identity)).remote(
+                request, headers, None, req_id, identity
+            )
             return await self._handle_response(response_gen, tracker)
 
     @app.post("/v1/responses")
@@ -647,7 +650,9 @@ class ModelshipAPI:
                 # doesn't overload on the stream literal, so narrow it explicitly.
                 response_gen = cast(
                     "DeploymentResponseGenerator[Any]",
-                    handle.respond.options(stream=True).remote(request, headers, None, req_id, identity),
+                    handle.respond.options(stream=True, session_id=affinity.responses_key(request, identity)).remote(
+                        request, headers, None, req_id, identity
+                    ),
                 )
             if request.store is not False:
                 response_gen = responses_utils.persist_response(
@@ -805,7 +810,9 @@ class ModelshipAPI:
             else:
                 response_gen = cast(
                     "DeploymentResponseGenerator[Any]",
-                    handle.respond.options(stream=True).remote(request, headers, registry, req_id, identity),
+                    handle.respond.options(stream=True, session_id=affinity.responses_key(request, identity)).remote(
+                        request, headers, registry, req_id, identity
+                    ),
                 )
             if request.store is not False:
                 # Same helper HTTP uses — persists before yielding, so a store
@@ -967,9 +974,9 @@ class ModelshipAPI:
                 return _error_response(create_error_response(str(e), err_type="invalid_request_error"))
 
             async def _summarize(chat_request: ChatCompletionRequest):
-                response_gen = handle.generate.options(stream=True).remote(
-                    chat_request, headers, None, req_id, identity
-                )
+                response_gen = handle.generate.options(
+                    stream=True, session_id=affinity.chat_key(chat_request, identity)
+                ).remote(chat_request, headers, None, req_id, identity)
                 first, error_type = await self._await_first(response_gen, model)
                 if not isinstance(first, ErrorResponse):
                     return first, error_type

@@ -549,6 +549,7 @@ async def run_background(
             # Local import: modelship.openai.mcp.{spec,egress} import ResponsesApiError from this
             # module, so importing mcp.loop at module scope here would be a cycle.
             from modelship.openai.mcp import loop as mcp_loop
+            from modelship.openai.utils import affinity
 
             if mcp_loop.wants_mcp(request):
                 response_gen = mcp_loop.run_mcp_response(
@@ -564,7 +565,7 @@ async def run_background(
             else:
                 response_gen = cast(
                     "DeploymentResponseGenerator[Any]",
-                    handle.respond.options(stream=True).remote(
+                    handle.respond.options(stream=True, session_id=affinity.responses_key(request, identity)).remote(
                         request, headers, registry, req_id, identity, response_id
                     ),
                 )
