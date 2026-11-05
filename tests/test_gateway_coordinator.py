@@ -17,9 +17,9 @@ from ray.serve.schema import (
     DeploymentStatusTrigger,
 )
 
+from modelship.deploy import gateway_coordinator
+from modelship.deploy.gateway_coordinator import GatewayCoordinator
 from modelship.deploy.ledger import Version
-from modelship.infer import gateway_coordinator
-from modelship.infer.gateway_coordinator import GatewayCoordinator
 from modelship.infer.infer_config import ModelshipModelConfig
 from tests.conftest import serve_details
 

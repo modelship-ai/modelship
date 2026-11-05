@@ -20,7 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 from starlette.websockets import WebSocketState
 
-from modelship.infer import gateway_coordinator
+from modelship.deploy import gateway_coordinator
 from modelship.infer.infer_config import get_disconnect_registry
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (

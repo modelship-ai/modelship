@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modelship.infer import download_leases
-from modelship.infer.download_leases import LEASE_SECONDS, DownloadLeases
-from modelship.infer.sources import HfSource
+from modelship.utils import download_leases
+from modelship.utils.download_leases import LEASE_SECONDS, DownloadLeases
+from modelship.utils.sources import HfSource
 
 _Leases = DownloadLeases.__ray_metadata__.modified_class
 _SOURCE = HfSource("org/repo", "a" * 40, "model.gguf", None, None, None)

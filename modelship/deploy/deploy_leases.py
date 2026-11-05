@@ -8,7 +8,7 @@ import ray
 from ray import serve
 from ray.exceptions import ActorDiedError, ActorUnavailableError
 
-from modelship.infer.deploy_coordinator import POLL_SECONDS, find_coordinator
+from modelship.deploy.deploy_coordinator import POLL_SECONDS, find_coordinator
 from modelship.logging import get_logger
 
 logger = get_logger("deploy_leases")

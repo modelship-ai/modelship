@@ -3,12 +3,12 @@ replica by `download_model_source`, which returns the path a loader reads."""
 
 from pathlib import Path
 
-from modelship.infer.sources import archive, hf, local
-from modelship.infer.sources.archive import ArchiveSource, check_archive_source
-from modelship.infer.sources.errors import ModelDownloadError, ModelSourceError
-from modelship.infer.sources.hf import HfSource
-from modelship.infer.sources.local import LocalSource, check_required
 from modelship.utils.model_ref import parse_model_ref
+from modelship.utils.sources import archive, hf, local
+from modelship.utils.sources.archive import ArchiveSource, check_archive_source
+from modelship.utils.sources.errors import ModelDownloadError, ModelSourceError
+from modelship.utils.sources.hf import HfSource
+from modelship.utils.sources.local import LocalSource, check_required
 
 __all__ = [
     "ArchiveSource",

@@ -13,7 +13,7 @@ from modelship.infer.infer_config import (
     ModelshipModelConfig,
     ModelUsecase,
 )
-from modelship.infer.sources import HfSource, LocalSource
+from modelship.utils.sources import HfSource, LocalSource
 
 
 def _make_cfg(**overrides) -> ModelshipModelConfig:
@@ -51,21 +51,21 @@ class TestVllmGgufGuard:
     def test_vllm_gguf_rejected(self):
         cfg = _make_cfg(loader=ModelLoader.vllm)
         with (
-            patch("modelship.infer.sources.check_model_source", return_value=_GGUF_PIN),
+            patch("modelship.utils.sources.check_model_source", return_value=_GGUF_PIN),
             pytest.raises(ValueError, match="GGUF"),
         ):
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
 
     def test_llama_server_gguf_allowed(self):
         cfg = _make_cfg(loader=ModelLoader.llama_server, num_gpus=0)
-        with patch("modelship.infer.sources.check_model_source", return_value=_GGUF_PIN):
+        with patch("modelship.utils.sources.check_model_source", return_value=_GGUF_PIN):
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
         assert cfg._pinned_source == _GGUF_PIN
         assert _GGUF_PIN.resolves_to_gguf
 
     def test_vllm_non_gguf_allowed(self):
         cfg = _make_cfg(loader=ModelLoader.vllm, model="some/fp8-repo")
-        with patch("modelship.infer.sources.check_model_source", return_value=_SNAPSHOT_PIN):
+        with patch("modelship.utils.sources.check_model_source", return_value=_SNAPSHOT_PIN):
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
         assert cfg._pinned_source == _SNAPSHOT_PIN
         assert not _SNAPSHOT_PIN.resolves_to_gguf
@@ -84,7 +84,7 @@ class TestLlamaServerGgufRule:
     def test_a_source_that_is_not_a_gguf_file_is_rejected(self, pinned):
         cfg = _make_cfg(loader=ModelLoader.llama_server, model="some/repo-GGUF:README.md", num_gpus=0)
         with (
-            patch("modelship.infer.sources.check_model_source", return_value=pinned),
+            patch("modelship.utils.sources.check_model_source", return_value=pinned),
             pytest.raises(ValueError, match=re.escape("'some/repo-GGUF:README.md' does not resolve to a GGUF file")),
         ):
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
@@ -99,7 +99,7 @@ class TestLlamaServerGgufRule:
     )
     def test_a_gguf_source_is_allowed(self, pinned):
         cfg = _make_cfg(loader=ModelLoader.llama_server, num_gpus=0)
-        with patch("modelship.infer.sources.check_model_source", return_value=pinned):
+        with patch("modelship.utils.sources.check_model_source", return_value=pinned):
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
         assert cfg._pinned_source == pinned
 
@@ -109,7 +109,7 @@ class TestLlamaServerGgufRule:
         )
         with (
             patch(
-                "modelship.infer.sources.check_model_source",
+                "modelship.utils.sources.check_model_source",
                 side_effect=[_GGUF_PIN, _GGUF_PIN._replace(filename="mmproj.bin")],
             ),
             pytest.raises(ValueError, match=re.escape("mmproj 'some/repo-GGUF:mmproj.bin' does not resolve to a GGUF")),
@@ -121,7 +121,7 @@ class TestLlamaServerGgufRule:
         cfg = _make_cfg(
             loader=ModelLoader.llama_server, num_gpus=0, llama_server_config={"mmproj": "some/repo-GGUF:mmproj-*.gguf"}
         )
-        with patch("modelship.infer.sources.check_model_source", side_effect=[_GGUF_PIN, mmproj_pin]):
+        with patch("modelship.utils.sources.check_model_source", side_effect=[_GGUF_PIN, mmproj_pin]):
             resolve_all_model_sources(ModelshipConfig(models=[cfg]))
         assert cfg.llama_server_config is not None
         assert cfg.llama_server_config._pinned_mmproj == mmproj_pin

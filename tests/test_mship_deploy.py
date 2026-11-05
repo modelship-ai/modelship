@@ -368,9 +368,9 @@ class TestDriverVerbs:
             patch.object(driver, "_log_gpus"),
             patch.object(driver, "_prepare_state_store") as prepare_state_store,
             patch(
-                "modelship.infer.deploy_coordinator.get_or_create_coordinator", return_value="deploy-coordinator"
+                "modelship.deploy.deploy_coordinator.get_or_create_coordinator", return_value="deploy-coordinator"
             ) as deploy_coordinator,
-            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator") as gateway_coordinator,
+            patch("modelship.deploy.gateway_coordinator.get_or_create_gateway_coordinator") as gateway_coordinator,
             patch.object(driver, "_send") as send,
             patch.object(driver.signal, "pause"),
         ):
@@ -515,7 +515,7 @@ class TestDriverVerbs:
             patch.object(serve_utils, "start_serve") as mock_serve,
             patch.object(serve_utils, "get_existing_apps", return_value=existing_apps),
             patch.object(serve_utils, "start_gateway") as mock_gateway,
-            patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator if found else None),
+            patch("modelship.deploy.deploy_coordinator.find_coordinator", return_value=coordinator if found else None),
             patch.object(driver, "_log_cluster"),
             patch.object(driver, "_send", return_value=receipt) as mock_send,
             patch("ray.get", side_effect=get) as mock_get,
@@ -548,7 +548,7 @@ class TestDriverVerbs:
             patch.object(driver.time, "sleep") as sleep,
             patch.object(serve_utils, "local_ray_clusters", side_effect=[set(), set(), {"10.0.0.1:6380"}]),
             patch.object(serve_utils, "attach_cluster") as attach,
-            patch("modelship.infer.deploy_coordinator.find_coordinator", side_effect=[None, coordinator]),
+            patch("modelship.deploy.deploy_coordinator.find_coordinator", side_effect=[None, coordinator]),
             patch.object(driver, "_serve_logging", return_value=(logging.INFO, None)),
         ):
             assert driver._attach_when_ready() is coordinator
@@ -654,7 +654,7 @@ class TestDriverVerbs:
             handler = driver.signal.signal.call_args.args[1]
             handler(signal.SIGINT, None)
 
-        with patch("modelship.infer.deploy_coordinator.DeployCoordinator") as ledger, pytest.raises(SystemExit) as exc:
+        with patch("modelship.deploy.deploy_coordinator.DeployCoordinator") as ledger, pytest.raises(SystemExit) as exc:
             self._deploy(["--wait"], existing_apps={"modelship"}, waiting=interrupted)
         assert exc.value.code == 130
         ledger.assert_not_called()
@@ -783,7 +783,7 @@ class TestCancelCommand:
         with (
             patch.object(serve_utils, "local_ray_clusters", return_value=set(clusters)),
             patch.object(serve_utils, "attach_cluster"),
-            patch("modelship.infer.deploy_coordinator.find_coordinator", return_value=coordinator if actor else None),
+            patch("modelship.deploy.deploy_coordinator.find_coordinator", return_value=coordinator if actor else None),
             patch("ray.get", side_effect=waiting or (lambda value: rolled_back if value == "outcome-ref" else value)),
             patch.object(driver.signal, "signal"),
             patch("modelship.remote.HEAD_WAIT_S", 0),
@@ -963,8 +963,8 @@ class TestSignalHandlersOutliveRay:
             patch.object(driver, "_log_join_hint"),
             patch.object(driver, "_log_gpus"),
             patch.object(driver, "_prepare_state_store"),
-            patch("modelship.infer.deploy_coordinator.get_or_create_coordinator"),
-            patch("modelship.infer.gateway_coordinator.get_or_create_gateway_coordinator"),
+            patch("modelship.deploy.deploy_coordinator.get_or_create_coordinator"),
+            patch("modelship.deploy.gateway_coordinator.get_or_create_gateway_coordinator"),
             patch.object(driver, "_send"),
             patch.object(driver.signal, "pause"),
         ):

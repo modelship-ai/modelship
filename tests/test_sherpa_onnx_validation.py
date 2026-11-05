@@ -5,7 +5,7 @@ import pytest
 
 from modelship.infer.sherpa_onnx.bundle import bundle_paths
 from modelship.infer.sherpa_onnx.registry import SherpaOnnxRegistryEntry
-from modelship.infer.sources import check_required
+from modelship.utils.sources import check_required
 
 
 def _entry(**overrides) -> SherpaOnnxRegistryEntry:

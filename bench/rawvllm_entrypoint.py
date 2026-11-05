@@ -31,11 +31,11 @@ from modelship.infer.infer_config import (  # noqa: E402
     ModelUsecase,
     resolve_gpu_memory_utilization,
 )
-from modelship.infer.sources import resolve_model_source  # noqa: E402
 from modelship.infer.vllm.parsing.detect import resolve_reasoning_parser, resolve_tool_parser  # noqa: E402
 from modelship.infer.vllm.vllm_infer import resolve_max_model_len  # noqa: E402
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight  # noqa: E402
 from modelship.utils.config_schema import VllmEngineConfig  # noqa: E402
+from modelship.utils.sources import resolve_model_source  # noqa: E402
 
 CONFIG_PATH = Path(os.environ.get("MSHIP_CONFIG", "/modelship/config/models.yaml"))
 

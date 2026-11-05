@@ -9,8 +9,11 @@ import time
 import ray
 from ray.exceptions import ActorDiedError, ActorUnavailableError
 
-from modelship.infer.download_leases import RENEW_SECONDS, get_or_create_leases, remove_leftovers_on
-from modelship.infer.sources import (
+from modelship.logging import get_logger
+from modelship.utils import random_uuid
+from modelship.utils.cache import shared_cache_id
+from modelship.utils.download_leases import RENEW_SECONDS, get_or_create_leases, remove_leftovers_on
+from modelship.utils.sources import (
     ArchiveSource,
     HfSource,
     LocalSource,
@@ -20,9 +23,6 @@ from modelship.infer.sources import (
     download_model_source,
     is_cached,
 )
-from modelship.logging import get_logger
-from modelship.utils import random_uuid
-from modelship.utils.cache import shared_cache_id
 
 logger = get_logger("startup")
 

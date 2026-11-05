@@ -13,7 +13,7 @@ from modelship.logging import get_logger
 
 if TYPE_CHECKING:
     # Annotation only; a real import pulls huggingface_hub.
-    from modelship.infer.sources import PinnedSource
+    from modelship.utils.sources import PinnedSource
 
 _logger = get_logger("config")
 

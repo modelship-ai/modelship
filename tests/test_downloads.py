@@ -10,8 +10,8 @@ from unittest.mock import MagicMock
 import pytest
 from ray.exceptions import ActorDiedError, ActorUnavailableError
 
-from modelship.infer import downloads
-from modelship.infer.sources import ArchiveSource, HfSource, LocalSource, ModelDownloadError
+from modelship.utils import downloads
+from modelship.utils.sources import ArchiveSource, HfSource, LocalSource, ModelDownloadError
 
 _SOURCE = HfSource("org/repo", "a" * 40, "model.gguf", None, None, None)
 

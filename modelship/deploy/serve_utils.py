@@ -23,13 +23,13 @@ from ray.serve.schema import ApplicationStatus, LoggingConfig
 
 from modelship.deploy.capabilities import node_capability_resources
 from modelship.deploy.local_nodes import kill_groups, worker_groups
-from modelship.infer.socket_dir import is_private_dir, socket_root
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_available_ram_bytes, detect_gpus
 from modelship.utils import parse_memory_bytes
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars, env_setting
+from modelship.utils.socket_dir import is_private_dir, socket_root
 
 if TYPE_CHECKING:
     from ray._private.node import Node

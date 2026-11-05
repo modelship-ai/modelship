@@ -3,8 +3,8 @@
 import os
 
 from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry, registry_name
-from modelship.infer.sources import ArchiveSource, LocalSource, check_archive_source, check_required
 from modelship.utils import is_pathy
+from modelship.utils.sources import ArchiveSource, LocalSource, check_archive_source, check_required
 
 
 def bundle_source(model: str) -> LocalSource | ArchiveSource:

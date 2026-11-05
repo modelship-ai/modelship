@@ -18,8 +18,8 @@ import ray
 from ray.serve.context import _get_global_client
 from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview
 
+from modelship.deploy.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator
 from modelship.deploy.routing import Routing, compute_routing, running_replica_ids, status_overview
-from modelship.infer.deploy_coordinator import COORDINATOR_NAMESPACE, find_coordinator
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import GATEWAY_REPLICAS_BEHIND, MODEL_UP
 from modelship.utils import head_node_options

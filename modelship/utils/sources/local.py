@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 from typing import NamedTuple
 
-from modelship.infer.sources.errors import ModelSourceError
 from modelship.logging import get_logger
+from modelship.utils.sources.errors import ModelSourceError
 
 logger = get_logger("startup")
 

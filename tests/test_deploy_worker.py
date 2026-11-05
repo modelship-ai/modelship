@@ -23,7 +23,7 @@ from modelship.deploy.ledger import DeployRequest, to_config
 from modelship.deploy.strategy import LiveApp, ServeApp, rescale_app, serve_apps, serve_scaling, submit_app
 from modelship.deploy.worker import DeployLedger, Run, roll_back
 from modelship.infer.infer_config import ModelshipModelConfig
-from modelship.infer.sources import LocalSource
+from modelship.utils.sources import LocalSource
 
 
 def _raw(name: str, **overrides) -> dict:
