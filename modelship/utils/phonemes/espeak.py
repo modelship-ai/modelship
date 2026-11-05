@@ -46,6 +46,7 @@ class Espeak:
                 self._parent.send((text, voice))
                 return self._parent.recv()
             except (EOFError, BrokenPipeError) as err:
+                self._proc.join()
                 code = self._proc.exitcode
                 self._start()
                 raise EspeakError(f"espeak phonemizer crashed (exit {code})") from err
@@ -53,4 +54,5 @@ class Espeak:
     def close(self) -> None:
         with self._lock:
             self._proc.terminate()
+            self._proc.join()
             self._parent.close()
