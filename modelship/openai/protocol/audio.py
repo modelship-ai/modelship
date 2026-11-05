@@ -115,7 +115,7 @@ class TranslationResponseVerbose(OpenAIBaseModel):
 
 
 class SpeechRequest(OpenAIBaseModel):
-    input: str = Field(..., description="The text to generate audio for")
+    input: str = Field(..., max_length=4096, description="The text to generate audio for")
     model: str = Field(
         ...,
         description="The model to use for generation.",

@@ -14,6 +14,7 @@ from modelship.openai.protocol import (
     ErrorInfo,
     ErrorResponse,
     ImageGenerationRequest,
+    SpeechRequest,
     TranscriptionRequest,
     TranscriptionResponseVerbose,
     TranscriptionSegment,
@@ -174,3 +175,13 @@ def test_chat_request_reasoning_effort_matches_openai():
 def test_chat_request_rejects_an_unknown_reasoning_effort():
     with pytest.raises(ValidationError):
         ChatCompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}], reasoning_effort="turbo")
+
+
+def test_speech_input_accepts_the_openai_maximum():
+    req = SpeechRequest(model="tts", voice="af_bella", input="a" * 4096)
+    assert len(req.input) == 4096
+
+
+def test_speech_input_rejects_over_the_openai_maximum():
+    with pytest.raises(ValidationError):
+        SpeechRequest(model="tts", voice="af_bella", input="a" * 4097)
