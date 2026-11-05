@@ -44,11 +44,16 @@ metal = [
     "numba>=0.61.0",
     "scipy>=1.16.1",
     "soundfile>=0.13.0",
-    "onnxruntime>=1.28.0",
     "stable-diffusion-cpp-python>=0.4.7",
     "pywhispercpp>=1.5.0",
-    "sherpa-onnx>=1.13.4",
-    "sherpa-onnx-core==1.13.4",
+    "sherpa-onnx>=2.0.1",
+    "sherpa-onnx-core==2.0.1",
+    "piper-phonemize==1.5.9 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "misaki>=0.9.4",
+    "fugashi>=1.5.2",
+    "unidic-lite>=1.0.8",
+    "jaconv>=0.5.0",
+    "mojimoji>=0.0.13",
 ]
 cuda = [
     "torch>=2.10.0",
@@ -61,26 +66,36 @@ cuda = [
     "bitsandbytes>=0.49.0",
     "diffusers>=0.42.1",
     "stable-diffusion-cpp-python>=0.4.7",
-    "onnxruntime-gpu>=1.28.0",
     "nvidia-ml-py",
     "librosa>=0.11.0",
     "numba>=0.61.0",
     "scipy>=1.16.1",
     "soundfile>=0.13.0",
     "pywhispercpp>=1.5.0",
-    "sherpa-onnx>=1.13.4",
-    "sherpa-onnx-core==1.13.4",
+    "sherpa-onnx>=2.0.1",
+    "sherpa-onnx-core==2.0.1",
+    "piper-phonemize==1.5.9 ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "misaki>=0.9.4",
+    "fugashi>=1.5.2",
+    "unidic-lite>=1.0.8",
+    "jaconv>=0.5.0",
+    "mojimoji>=0.0.13",
 ]
 cpu = [
     "stable-diffusion-cpp-python>=0.4.7",
-    "onnxruntime>=1.28.0",
     "librosa>=0.11.0",
     "numba>=0.61.0",
     "scipy>=1.16.1",
     "soundfile>=0.13.0",
     "pywhispercpp>=1.5.0",
-    "sherpa-onnx>=1.13.4",
-    "sherpa-onnx-core==1.13.4",
+    "sherpa-onnx>=2.0.1",
+    "sherpa-onnx-core==2.0.1",
+    "piper-phonemize==1.5.9 ; sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')",
+    "misaki>=0.9.4",
+    "fugashi>=1.5.2",
+    "unidic-lite>=1.0.8",
+    "jaconv>=0.5.0",
+    "mojimoji>=0.0.13",
 ]
 # Adds CPU-only vLLM on top of `cpu`.
 vllm-cpu = [
@@ -160,6 +175,13 @@ vllm = [
 triton = [
   { url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", extra = "vllm-cpu", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
 ]
+# Not on PyPI (PyPI `piper-phonemize` is rhasspy 1.1.0, no cp312); the extras
+# pin the version, the URL rides here, one wheel per platform we ship.
+piper-phonemize = [
+  { url = "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { url = "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+  { url = "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-macosx_11_0_arm64.whl", marker = "sys_platform == 'darwin' and platform_machine == 'arm64'" },
+]
 
 [tool.uv]
 required-version = "==0.12.23"
@@ -204,6 +226,8 @@ select = [
 ignore = [
     "E501",   # line length handled by formatter
 ]
+# CJK punctuation the TTS frontends normalize by hand — not typos for ASCII.
+allowed-confusables = ["，", "。", "？", "！", "；", "：", "、", "．"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["modelship"]
