@@ -128,6 +128,13 @@ class TestRequestsWithoutAKey:
         [group] = await _choose(router, _request())
         assert [r.replica_id.unique_id for r in group] == ["a"]
 
+    @pytest.mark.asyncio
+    async def test_an_unkeyed_request_backs_off_once_every_replica_is_tried(self):
+        router = await _router(_replicas("a", "b"))
+        request = _request()
+        await _choose(router, request)
+        assert request.routing_context.should_backoff is True
+
 
 class _Recorder:
     def __init__(self):

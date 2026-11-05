@@ -22,10 +22,11 @@ class AffinityRouter(LocalityMixin, RequestRouter):
     async def choose_replicas(
         self, candidate_replicas: list[RunningReplica], pending_request: PendingRequest | None = None
     ) -> list[list[RunningReplica]]:
+        if pending_request is not None:
+            pending_request.routing_context.should_backoff = True
         if pending_request is None or not pending_request.metadata.session_id or not candidate_replicas:
             return self._two_random(pending_request)
         key = pending_request.metadata.session_id
-        pending_request.routing_context.should_backoff = True
         mean = sum(self._load(r) for r in candidate_replicas) / len(candidate_replicas)
         limit = self._balance_factor * mean + self._spare_requests
         ranked = sorted(candidate_replicas, key=lambda r: _score(key, r.replica_id), reverse=True)
