@@ -13,9 +13,10 @@ from modelship.utils import is_pathy
 
 class SherpaOnnxRegistryEntry(NamedTuple):
     """`files`/`dirs` keys are sherpa's own `OfflineTtsKokoroModelConfig`
-    attribute names, values are paths relative to the bundle root. `lexicon`
-    is the list form of sherpa's single comma-joined field. `voice_names[i]`
-    is the OpenAI voice name for sid i."""
+    attribute names, values are paths relative to the bundle root.
+    `chinese_lexicon` is the Chinese lexicon the frontend reads, relative to the
+    bundle root (None when the bundle has none). `voice_names[i]` is the OpenAI
+    voice name for sid i."""
 
     tarball_url: str
     sha256: str
@@ -23,7 +24,7 @@ class SherpaOnnxRegistryEntry(NamedTuple):
     usecase: str
     files: dict[str, str]
     dirs: dict[str, str]
-    lexicon: tuple[str, ...]
+    chinese_lexicon: str | None
     voice_names: tuple[str, ...]
 
 
@@ -41,10 +42,8 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
             "tokens": "tokens.txt",
             "voices": "voices.bin",
         },
-        dirs={
-            "data_dir": "espeak-ng-data",
-        },
-        lexicon=(),
+        dirs={},
+        chinese_lexicon=None,
         voice_names=(
             "af",
             "af_bella",
@@ -59,9 +58,6 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
             "bm_lewis",
         ),
     ),
-    # lexicon order/set matches upstream's own example (kokoro multi-lang needs
-    # us-en + zh; gb-en is an alternative to us-en, not additive). dict/ and the
-    # *-zh.fst rule files are unused optional extras, left out on purpose.
     "kokoro-multi-lang-v1_0": SherpaOnnxRegistryEntry(
         tarball_url=f"{_RELEASE_BASE}/kokoro-multi-lang-v1_0-c5f7e2d2.tar.bz2",
         sha256="c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298",
@@ -72,13 +68,8 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
             "tokens": "tokens.txt",
             "voices": "voices.bin",
         },
-        dirs={
-            "data_dir": "espeak-ng-data",
-        },
-        lexicon=(
-            "lexicon-us-en.txt",
-            "lexicon-zh.txt",
-        ),
+        dirs={},
+        chinese_lexicon="lexicon-zh.txt",
         voice_names=(
             "af_alloy",
             "af_aoede",

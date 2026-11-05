@@ -9,12 +9,14 @@ import numpy as np
 
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
+from modelship.infer.sherpa_onnx.family.kokoro import KokoroFrontend
 from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry, registry_name
 from modelship.logging import get_logger
 from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest, create_error_response
 from modelship.openai.utils.audio import sse_stream_speech
 from modelship.utils import base_request_id
 from modelship.utils.audio import to_pcm16, to_wav
+from modelship.utils.phonemes.tokens import TokenTable
 
 logger = get_logger("infer.sherpa_onnx")
 
@@ -27,18 +29,22 @@ class SherpaOnnxInfer(BaseInfer):
         super().__init__(model_config)
         self.tts: Any = None
         self.entry: SherpaOnnxRegistryEntry | None = None
+        self.frontend: KokoroFrontend | None = None
 
     def shutdown(self) -> None:
         self.tts = None
+        if self.frontend is not None:
+            self.frontend.close()
+            self.frontend = None
 
     def __del__(self):
         self.shutdown()
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()
-        self.tts, self.entry = await loop.run_in_executor(None, self._load)
+        self.tts, self.entry, self.frontend = await loop.run_in_executor(None, self._load)
 
-    def _load(self) -> tuple[Any, SherpaOnnxRegistryEntry]:
+    def _load(self) -> tuple[Any, SherpaOnnxRegistryEntry, KokoroFrontend]:
         import sherpa_onnx
 
         assert self.model_config.model is not None
@@ -56,8 +62,6 @@ class SherpaOnnxInfer(BaseInfer):
             setattr(family_cfg, slot, os.path.join(bundle_dir, rel_path))
         for slot, rel_path in entry.dirs.items():
             setattr(family_cfg, slot, os.path.join(bundle_dir, rel_path))
-        if entry.lexicon:
-            family_cfg.lexicon = ",".join(os.path.join(bundle_dir, rel_path) for rel_path in entry.lexicon)
         # CPU only: CoreML fails under Ray's forked actor processes (macOS TCC
         # check on the coremlcompiler XPC call).
         cfg.model.provider = "cpu"
@@ -71,7 +75,10 @@ class SherpaOnnxInfer(BaseInfer):
                 f"registry entry {self.model_config.model!r} expects {len(entry.voice_names)}. The bundle on disk "
                 f"doesn't match this registry entry."
             )
-        return tts, entry
+        tokens = TokenTable.load(os.path.join(bundle_dir, entry.files["tokens"]))
+        chinese_lexicon = os.path.join(bundle_dir, entry.chinese_lexicon) if entry.chinese_lexicon else None
+        frontend = KokoroFrontend(tokens, chinese_lexicon)
+        return tts, entry, frontend
 
     async def warmup(self) -> None:
         pass
@@ -99,30 +106,39 @@ class SherpaOnnxInfer(BaseInfer):
 
         if "stream_format" in request.model_fields_set and request.stream_format == "sse":
             logger.info("%s: voice=%s sid=%d stream=sse", request_id, request.voice, sid)
-            return self._stream(request.input, sid, request.speed)
+            return self._stream(request.input, request.voice, sid, request.speed)
 
         logger.info("%s: voice=%s sid=%d", request_id, request.voice, sid)
-        wav = await self._generate(request.input, sid, request.speed)
+        wav = await self._generate(request.input, request.voice, sid, request.speed)
         return RawSpeechResponse(audio=wav)
 
-    async def _generate(self, text: str, sid: int, speed: float) -> bytes:
-        result = await self.run_blocking(
-            lambda stop: self.tts.generate(
-                text, sid, speed, callback=lambda _samples, _progress: 0 if stop.is_set() else 1
-            ),
-            exclusive=False,
-        )
+    def _gen_config(self, text: str, voice: str, sid: int, speed: float) -> Any:
+        import sherpa_onnx
+
+        assert self.frontend is not None
+        gen = sherpa_onnx.GenerationConfig()
+        gen.sid = sid
+        gen.speed = speed
+        gen.phoneme_codepoints = self.frontend.chunks(text, voice)
+        return gen
+
+    async def _generate(self, text: str, voice: str, sid: int, speed: float) -> bytes:
+        def run(stop: threading.Event) -> Any:
+            gen = self._gen_config(text, voice, sid, speed)
+            return self.tts.generate("", gen, lambda _samples, _progress: 0 if stop.is_set() else 1)
+
+        result = await self.run_blocking(run, exclusive=False)
         samples = np.asarray(result.samples, dtype=np.float32)
         return to_wav(samples, result.sample_rate)
 
-    async def _stream(self, text: str, sid: int, speed: float) -> AsyncGenerator[str, None]:
-        async with contextlib.aclosing(self._generate_chunks(text, sid, speed)) as chunks:
+    async def _stream(self, text: str, voice: str, sid: int, speed: float) -> AsyncGenerator[str, None]:
+        async with contextlib.aclosing(self._generate_chunks(text, voice, sid, speed)) as chunks:
             async for event in sse_stream_speech(chunks):
                 yield event
 
-    async def _generate_chunks(self, text: str, sid: int, speed: float) -> AsyncGenerator[tuple[bytes, int], None]:
-        """callback fires once per sentence group (offline models aren't autoregressive).
-        Return 0 to abort, nonzero to continue — inverted from the bundled docstring."""
+    async def _generate_chunks(
+        self, text: str, voice: str, sid: int, speed: float
+    ) -> AsyncGenerator[tuple[bytes, int], None]:
         sample_rate = self.tts.sample_rate
 
         def run(emit: Callable[[bytes], None], stop: threading.Event) -> None:
@@ -130,7 +146,8 @@ class SherpaOnnxInfer(BaseInfer):
                 emit(to_pcm16(np.asarray(samples, dtype=np.float32)))
                 return 0 if stop.is_set() else 1
 
-            self.tts.generate(text, sid, speed, callback=on_chunk)
+            gen = self._gen_config(text, voice, sid, speed)
+            self.tts.generate("", gen, on_chunk)
 
         async with contextlib.aclosing(self.stream_blocking(run, exclusive=False)) as chunks:
             async for pcm in chunks:

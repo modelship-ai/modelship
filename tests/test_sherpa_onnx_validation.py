@@ -15,8 +15,8 @@ def _entry(**overrides) -> SherpaOnnxRegistryEntry:
         family="kokoro",
         usecase="tts",
         files={"model": "model.onnx", "tokens": "tokens.txt", "voices": "voices.bin"},
-        dirs={"data_dir": "espeak-ng-data"},
-        lexicon=(),
+        dirs={},
+        chinese_lexicon=None,
         voice_names=("af_bella",),
     )
     return SherpaOnnxRegistryEntry(**{**defaults, **overrides})
@@ -26,14 +26,16 @@ def _write_valid_bundle(root):
     (root / "model.onnx").write_bytes(b"x" * 8)
     (root / "tokens.txt").write_bytes(b"hello")
     (root / "voices.bin").write_bytes(b"x" * 4)
-    data_dir = root / "espeak-ng-data"
-    data_dir.mkdir()
-    (data_dir / "a").write_bytes(b"1")
+
+
+def test_bundle_paths_lists_files_then_lexicon():
+    entry = _entry(chinese_lexicon="lexicon-zh.txt")
+    assert bundle_paths(entry) == ("model.onnx", "tokens.txt", "voices.bin", "lexicon-zh.txt")
 
 
 def test_bundle_paths_mark_dirs_with_a_trailing_slash():
-    entry = _entry(lexicon=("lexicon-us-en.txt",))
-    assert bundle_paths(entry) == ("model.onnx", "tokens.txt", "voices.bin", "lexicon-us-en.txt", "espeak-ng-data/")
+    entry = _entry(dirs={"data_dir": "espeak-ng-data"})
+    assert bundle_paths(entry) == ("model.onnx", "tokens.txt", "voices.bin", "espeak-ng-data/")
 
 
 def test_valid_bundle_passes(tmp_path):
@@ -48,17 +50,9 @@ def test_missing_file(tmp_path):
         check_required(str(tmp_path), bundle_paths(_entry()))
 
 
-def test_missing_dir(tmp_path):
-    _write_valid_bundle(tmp_path)
-    (tmp_path / "espeak-ng-data" / "a").unlink()
-    (tmp_path / "espeak-ng-data").rmdir()
-    with pytest.raises(ValueError, match="espeak-ng-data"):
-        check_required(str(tmp_path), bundle_paths(_entry()))
-
-
 def test_missing_lexicon_file(tmp_path):
     _write_valid_bundle(tmp_path)
-    entry = _entry(lexicon=("lexicon-us-en.txt",))
+    entry = _entry(chinese_lexicon="lexicon-zh.txt")
     with pytest.raises(ValueError, match="lexicon"):
         check_required(str(tmp_path), bundle_paths(entry))
 
