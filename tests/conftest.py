@@ -334,6 +334,13 @@ MODEL_CONFIGS: dict[str, dict] = {
         "loader": "sherpa_onnx",
         "num_cpus": 1,
     },
+    "tts-multi-model": {
+        "name": "tts-multi-model",
+        "model": "kokoro-multi-lang-v1_0",
+        "usecase": "tts",
+        "loader": "sherpa_onnx",
+        "num_cpus": 1,
+    },
     "image-model": {
         "name": "image-model",
         "model": "stabilityai/sd-turbo",

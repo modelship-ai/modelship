@@ -21,5 +21,6 @@ def bundle_source(model: str) -> LocalSource | ArchiveSource:
 
 
 def bundle_paths(entry: SherpaOnnxRegistryEntry) -> tuple[str, ...]:
-    """Every path the entry points sherpa at, relative to the bundle root."""
-    return (*entry.files.values(), *entry.lexicon, *(f"{d}/" for d in entry.dirs.values()))
+    """Every path the loader reads from the bundle, relative to its root."""
+    lexicon = (entry.chinese_lexicon,) if entry.chinese_lexicon else ()
+    return (*entry.files.values(), *lexicon, *(f"{d}/" for d in entry.dirs.values()))

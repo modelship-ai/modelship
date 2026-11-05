@@ -33,8 +33,8 @@ class TestEntries:
                 assert path, f"{name}.files[{slot}]"
             for slot, path in entry.dirs.items():
                 assert path, f"{name}.dirs[{slot}]"
-            for i, path in enumerate(entry.lexicon):
-                assert path, f"{name}.lexicon[{i}]"
+            if entry.chinese_lexicon is not None:
+                assert entry.chinese_lexicon, f"{name}.chinese_lexicon"
 
     def test_required_kokoro_slots_present(self):
         for name, entry in REGISTRY.items():

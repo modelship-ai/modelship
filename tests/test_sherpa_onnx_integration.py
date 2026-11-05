@@ -114,3 +114,58 @@ class TestSherpaOnnx:
         assert response.status_code == 200
         assert response.headers["content-type"] == "audio/wav"
         assert response.content.startswith(b"RIFF")
+
+
+_RUN_ON = (
+    "the river ran wide and slow past the mill and the orchard and the long line of willows that leaned over the "
+    "water where the children of the village used to swim on summer afternoons while their parents worked the fields "
+    "and the old men sat on the bench outside the inn telling the same stories they had told for fifty years about "
+    "the winter the river froze solid and the year the bridge was washed away by the spring floods and rebuilt by hand"
+)
+
+
+def _frames(audio: bytes) -> int:
+    with wave.open(io.BytesIO(audio)) as w:
+        return w.getnframes()
+
+
+@pytest.mark.integration
+@pytest.mark.sherpa_onnx
+class TestSherpaOnnxMultiLang:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy("tts-multi-model", "stt-cpp-model")
+
+    def _speak(self, client, voice, text):
+        return client.audio.speech.create(model="tts-multi-model", voice=voice, input=text).content
+
+    def test_chinese_produces_non_trivial_audio(self, client):
+        audio = self._speak(client, "zf_xiaobei", "今天天气很好，我们去公园散步吧。")
+        assert audio.startswith(b"RIFF")
+        assert _frames(audio) > 16000
+
+    def test_japanese_produces_non_trivial_audio(self, client):
+        audio = self._speak(client, "jf_alpha", "東京駅で友達と待ち合わせをしました。")
+        assert audio.startswith(b"RIFF")
+        assert _frames(audio) > 16000
+
+    def test_spanish_and_english_voices_differ(self, client):
+        spanish = self._speak(client, "ef_dora", "Hola, ¿cómo estás? Hoy hace mucho sol.")
+        english = self._speak(client, "af_heart", "Hola, ¿cómo estás? Hoy hace mucho sol.")
+        assert spanish != english
+
+    def test_long_run_on_sentence_is_intelligible_end_to_end(self, client, tmp_path):
+        # >400 phoneme tokens: the frontend splits at a word boundary, so the
+        # whole sentence should still transcribe, late words included.
+        audio = self._speak(client, "af_heart", _RUN_ON)
+        text = _transcribe(client, audio, tmp_path)
+        assert "washed" in text
+        assert "hand" in text
+
+    def test_hostile_input_does_not_kill_the_replica(self, client):
+        # A short string that segfaults espeak: the helper process dies, the
+        # request fails, and the replica keeps serving.
+        with pytest.raises(openai.APIError):
+            self._speak(client, "ef_dora", ":-ॠ")
+        recovered = self._speak(client, "af_heart", "Still serving after the crash.")
+        assert recovered.startswith(b"RIFF")
