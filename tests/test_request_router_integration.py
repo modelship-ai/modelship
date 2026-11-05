@@ -10,7 +10,7 @@ from ray.serve.config import RequestRouterConfig
 from modelship.deploy.request_router import AffinityRouter
 from modelship.deploy.serve_utils import local_ray_clusters
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.own_head]
 
 _MODEL_APP = "gw.m-0123456789"
 

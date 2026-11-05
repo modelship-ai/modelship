@@ -10,7 +10,7 @@ import yaml
 
 from modelship.deploy.serve_utils import local_ray_clusters
 from openai import OpenAI
-from tests.conftest import MODEL_CONFIGS
+from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD
 from tests.test_cluster_join import _poll, _terminate_process_group
 from tests.test_responses_store_integration import _redis_server
 
@@ -22,7 +22,7 @@ _IDENTITY_HEADER = "X-Mship-Test-Identity"
 
 _MODEL = {**MODEL_CONFIGS["chat-capable"], "num_gpus": 0.4, "num_replicas": 2}
 
-pytestmark = [pytest.mark.integration, pytest.mark.vllm, pytest.mark.state_store]
+pytestmark = [pytest.mark.integration, pytest.mark.vllm, pytest.mark.state_store, pytest.mark.own_head]
 
 
 def _model_listed() -> bool:
@@ -63,7 +63,8 @@ def client(request, tmp_path_factory):
         env.pop("RAY_AUTH_MODE", None)  # Ray 2.60's ray.init leaks RAY_AUTH_MODE into the session env
         with open(log_path, "a") as log_file:
             head = subprocess.Popen(
-                ["uv", "run", "python", "-m", "modelship.launcher", *args],
+                [*MSHIP, *args],
+                cwd=MSHIP_CWD,
                 env=env,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
