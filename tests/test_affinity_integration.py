@@ -60,6 +60,7 @@ def client(request, tmp_path_factory):
             "MSHIP_GATEWAY_MIN_REPLICAS": "2",
             "MSHIP_GATEWAY_MAX_REPLICAS": "2",
         }
+        env.pop("RAY_AUTH_MODE", None)  # Ray 2.60's ray.init leaks RAY_AUTH_MODE into the session env
         with open(log_path, "a") as log_file:
             head = subprocess.Popen(
                 ["uv", "run", "python", "-m", "modelship.launcher", *args],
