@@ -26,7 +26,7 @@ imagePullSecrets: []
 
 # Ray version baked into the image above. KubeRay gates its features on it and never checks the image,
 # so keep it in lockstep with the image.
-rayVersion: "2.59.0"
+rayVersion: "2.60.0"
 
 # -- Optional bootstrap of the KubeRay operator + CRDs as a subchart.
 # OFF by default: cluster-scoped, install-once, needs cluster-admin. Turn on for
