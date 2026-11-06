@@ -154,10 +154,6 @@ def _to_error_response(
 
 
 def _from_vllm[T: BaseModel](target: type[T], result: BaseModel) -> T:
-    """Validate a vLLM response into its modelship counterpart, dropping
-    vLLM's explicit None for fields it leaves unset (e.g. `words`,
-    `no_speech_prob`): a modelship default fills an absent key, not an
-    explicit None."""
     return target.model_validate(result.model_dump(exclude_none=True))
 
 
