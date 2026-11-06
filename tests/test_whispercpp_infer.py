@@ -188,7 +188,15 @@ class TestTranscribeOnce:
         assert isinstance(result, TranslationResponseVerbose if translate else TranscriptionResponseVerbose)
         assert result.duration == pytest.approx(3.6)
         assert result.segments[-1].end == pytest.approx(result.duration)
-        assert result.usage is not None and result.usage.seconds == 3
+        assert result.usage is not None and result.usage.seconds == pytest.approx(3.6)
+
+    @pytest.mark.asyncio
+    async def test_plain_json_usage_keeps_fractional_seconds(self):
+        audio = to_wav(np.zeros(int(3.6 * 16000), dtype=np.float32), 16000)
+        infer = _infer(_StubModel([_Segment("hello")]))
+        result = await infer._transcribe_once(audio, _transcription_request(), translate=False, request_id="r1")
+        assert isinstance(result, TranscriptionResponse)
+        assert result.usage.seconds == pytest.approx(3.6)
 
     @pytest.mark.asyncio
     async def test_bad_audio_returns_error_response(self):
