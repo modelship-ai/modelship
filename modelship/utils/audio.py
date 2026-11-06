@@ -58,12 +58,12 @@ def to_wav(audio: np.ndarray, sample_rate: int) -> bytes:
     return wrap_pcm16_wav(to_pcm16(audio), sample_rate)
 
 
-def decode_audio(data: bytes, target_sr: int) -> tuple[np.ndarray, int]:
+def decode_audio(data: bytes, target_sr: int) -> tuple[np.ndarray, float]:
     """Decode audio bytes and resample to `target_sr`. Returns (samples, duration_seconds)."""
     samples, source_sr = sf.read(io.BytesIO(data), dtype="float32")
     if samples.ndim > 1:
         samples = np.mean(samples, axis=1)
-    duration_seconds = int(len(samples) / source_sr)
+    duration_seconds = len(samples) / source_sr
     if source_sr != target_sr:
         samples = librosa.resample(samples, orig_sr=source_sr, target_sr=target_sr)
     return samples, duration_seconds
