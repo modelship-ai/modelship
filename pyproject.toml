@@ -61,8 +61,8 @@ cuda = [
     "torchaudio>=2.10.0",
     "transformers>=5.5.3",
     "flashinfer-python>=0.6.1",
-    "vllm==0.31.0",
-    "vllm[audio]==0.31.0",
+    "vllm==0.32.0",
+    "vllm[audio]==0.32.0",
     "bitsandbytes>=0.49.0",
     "diffusers>=0.42.1",
     "stable-diffusion-cpp-python>=0.4.7",
@@ -103,8 +103,8 @@ vllm-cpu = [
     "torchvision==0.28.0+cpu ; sys_platform == 'linux'",
     "torchaudio==2.11.0+cpu ; sys_platform == 'linux'",
     "transformers>=5.5.3",
-    "vllm==0.31.0+cpu ; sys_platform == 'linux'",
-    "vllm[audio]==0.31.0+cpu ; sys_platform == 'linux'",
+    "vllm==0.32.0+cpu ; sys_platform == 'linux'",
+    "vllm[audio]==0.32.0+cpu ; sys_platform == 'linux'",
     "triton==3.8.0+cpu ; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 otel = [
@@ -150,7 +150,7 @@ explicit = true
 
 [[tool.uv.index]]
 name = "vllm-cpu"
-url = "https://wheels.vllm.ai/0.31.0/cpu"
+url = "https://wheels.vllm.ai/0.32.0/cpu"
 explicit = true
 
 [tool.uv.sources]
