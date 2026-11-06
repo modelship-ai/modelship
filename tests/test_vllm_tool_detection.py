@@ -5,8 +5,8 @@ import pytest
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase
 
 _PICKS = [
-    ("Qwen/Qwen3-0.6B", "hermes"),
-    ("Qwen/Qwen2.5-0.5B-Instruct", "hermes"),
+    ("Qwen/Qwen3-0.6B", "qwen3_json"),
+    ("Qwen/Qwen2.5-0.5B-Instruct", "qwen3_json"),
     ("cyankiwi/Qwen3.8-27B-AWQ-INT4", "qwen3_coder"),
     ("cyankiwi/Qwen3.5-9B-AWQ-4bit", "qwen3_coder"),
     ("Qwen/Qwen3-Coder-30B-A3B-Instruct", "qwen3_coder"),
@@ -25,7 +25,7 @@ _PICKS = [
     ("tencent/Hunyuan-A13B-Instruct", None),
     ("openai/gpt-oss-20b", None),
     ("google/gemma-4-12B-it-qat-w4a16-ct", "gemma4"),
-    ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "mimo"),
+    ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "qwen3_coder"),
     ("HuggingFaceTB/SmolLM3-3B", "hermes"),
     ("NousResearch/Hermes-3-Llama-3.1-8B", "hermes"),
     ("unsloth/Llama-3.2-3B-Instruct", "llama3_json"),

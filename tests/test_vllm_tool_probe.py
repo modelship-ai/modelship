@@ -58,7 +58,7 @@ class TestRenderedToolCall:
 
 class TestToolParsersReading:
     def test_the_grammar_narrows_the_parsers_that_read_a_call(self):
-        assert tool_parsers_reading(_tokenizer(), _HERMES_CALL) == ["hermes"]
+        assert tool_parsers_reading(_tokenizer(), _HERMES_CALL) == ["hermes", "qwen3_json"]
 
     def test_every_reader_is_kept_when_no_grammar_accepts(self):
         call = '[get_weather(city="Paris")]'

@@ -42,6 +42,7 @@ _READERS = [
     "kimi_k2",
     "ling3",
     "mimo",
+    "minicpmv",
     "minimax_m2",
     "nemotron_v3",
     "qwen3",
