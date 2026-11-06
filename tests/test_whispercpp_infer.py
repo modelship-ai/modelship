@@ -9,6 +9,7 @@ import io
 import threading
 import time
 
+import numpy as np
 import pytest
 from fastapi import UploadFile
 
@@ -24,6 +25,7 @@ from modelship.openai.protocol import (
     TranslationResponse,
     TranslationResponseVerbose,
 )
+from modelship.utils.audio import to_wav
 from tests.test_base_infer_run_blocking import wait_for_turn
 
 
@@ -173,6 +175,28 @@ class TestTranscribeOnce:
         result = await infer._transcribe_once(MINIMAL_WAV, _translation_request(), translate=True, request_id="r1")
         assert isinstance(result, TranslationResponse)
         assert result.text == "hello"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("translate", [False, True])
+    async def test_verbose_duration_keeps_fractional_seconds(self, translate):
+        audio = to_wav(np.zeros(int(3.6 * 16000), dtype=np.float32), 16000)
+        infer = _infer(_StubModel([_Segment("hello", t0=0, t1=360)]))
+        make_request = _translation_request if translate else _transcription_request
+        result = await infer._transcribe_once(
+            audio, make_request(response_format="verbose_json"), translate=translate, request_id="r1"
+        )
+        assert isinstance(result, TranslationResponseVerbose if translate else TranscriptionResponseVerbose)
+        assert result.duration == pytest.approx(3.6)
+        assert result.segments[-1].end == pytest.approx(result.duration)
+        assert result.usage is not None and result.usage.seconds == pytest.approx(3.6)
+
+    @pytest.mark.asyncio
+    async def test_plain_json_usage_keeps_fractional_seconds(self):
+        audio = to_wav(np.zeros(int(3.6 * 16000), dtype=np.float32), 16000)
+        infer = _infer(_StubModel([_Segment("hello")]))
+        result = await infer._transcribe_once(audio, _transcription_request(), translate=False, request_id="r1")
+        assert isinstance(result, TranscriptionResponse)
+        assert result.usage.seconds == pytest.approx(3.6)
 
     @pytest.mark.asyncio
     async def test_bad_audio_returns_error_response(self):

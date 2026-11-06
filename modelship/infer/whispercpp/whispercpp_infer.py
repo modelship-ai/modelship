@@ -156,7 +156,7 @@ class WhispercppInfer(BaseInfer):
         if not verbose:
             if translate:
                 return TranslationResponse(text=text)
-            return TranscriptionResponse(text=text, usage=TranscriptionUsageAudio(seconds=int(duration_seconds)))
+            return TranscriptionResponse(text=text, usage=TranscriptionUsageAudio(seconds=duration_seconds))
 
         if translate:
             detected_language = _TRANSLATION_OUTPUT_LANGUAGE
@@ -168,7 +168,7 @@ class WhispercppInfer(BaseInfer):
             TranscriptionSegment(id=i, start=s.t0 / 100.0, end=s.t1 / 100.0, text=s.text.strip())
             for i, s in enumerate(segments)
         ]
-        usage = TranscriptionUsageAudio(seconds=int(duration_seconds))
+        usage = TranscriptionUsageAudio(seconds=duration_seconds)
         if translate:
             return TranslationResponseVerbose(
                 language=detected_language,

@@ -16,7 +16,7 @@ AudioResponseFormat = Literal["json", "text", "srt", "verbose_json", "vtt"]
 
 class TranscriptionUsageAudio(OpenAIBaseModel):
     type: Literal["duration"] = "duration"
-    seconds: int
+    seconds: float
 
 
 class TranscriptionRequest(OpenAIBaseModel):
