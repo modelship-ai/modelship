@@ -111,16 +111,8 @@ async def render_and_params(
 
 
 def extract_prompt_token_ids(render: VllmOnlineRenderer, engine_input: VllmEngineInput) -> list[int]:
-    """Extract the rendered prompt's token IDs, needed for `derive_reasoning_ended`."""
+    """Extract the rendered prompt's token IDs."""
     return list(vllm_extract_prompt_components(render.model_config, engine_input).token_ids or [])
-
-
-def resolved_chat_template_kwargs(render: VllmOnlineRenderer, vllm_req: VllmChatCompletionRequest) -> dict[str, Any]:
-    return (
-        vllm_req.build_chat_params(render.chat_template, render.chat_template_content_format)
-        .with_defaults(render.default_chat_template_kwargs)
-        .chat_template_kwargs
-    )
 
 
 def make_parsers(
@@ -140,36 +132,11 @@ def make_parsers(
     if render.parser is None:
         return [None] * n
     parser_cls = render.parser
-    chat_template_kwargs = resolved_chat_template_kwargs(render, vllm_req)
+    chat_template_kwargs = render.effective_chat_template_kwargs(vllm_req)
     return [
         parser_cls(tokenizer, vllm_req.tools, chat_template_kwargs=chat_template_kwargs)  # type: ignore[arg-type]
         for _ in range(n)
     ]
-
-
-def derive_reasoning_ended(
-    vllm_req: VllmChatCompletionRequest,
-    parser: VllmParser | None,
-    prompt_token_ids: list[int],
-) -> bool | None:
-    """Replicates the reasoning_ended precedence in vLLM's own chat completion serving.
-
-    Mistral's grammar (when built) already encodes an optional `think?` rule
-    covering both reasoning and non-reasoning outputs, so `reasoning_ended`
-    is forced True whenever `_grammar_from_parser` is set. But that flag
-    is only set on the grammar-building branch of
-    `MistralParser.adjust_request` — a request with tools but no
-    structured-outputs constraint active takes an early-return branch that
-    leaves it False, so this must not assume the flag is reliably True
-    whenever a mistral tool parser is in play.
-    """
-    if not vllm_req.include_reasoning:
-        return True
-    if vllm_req._grammar_from_parser:
-        return True
-    if parser is not None and parser.reasoning_parser is not None:
-        return parser.is_reasoning_end(prompt_token_ids)
-    return None
 
 
 def generate(
@@ -461,7 +428,7 @@ async def stream_chat_completion(
     num_choices = vllm_req.n or 1
     parsers = make_parsers(render, tokenizer, vllm_req, n=num_choices)
     prompt_token_ids = extract_prompt_token_ids(render, engine_input)
-    reasoning_ended = derive_reasoning_ended(vllm_req, parsers[0], prompt_token_ids)
+    reasoning_ended = vllm_req.resolve_reasoning_ended(parsers[0], prompt_token_ids)
 
     stream_options = vllm_req.stream_options
     include_usage = bool(stream_options and stream_options.include_usage)
@@ -489,7 +456,7 @@ async def stream_chat_completion(
         request_id,
         reasoning_ended=reasoning_ended,
         parser=parsers[0],
-        chat_template_kwargs=resolved_chat_template_kwargs(render, vllm_req),
+        chat_template_kwargs=render.effective_chat_template_kwargs(vllm_req),
     ):
         if res.prompt_token_ids is not None:
             num_prompt_tokens = len(res.prompt_token_ids)

@@ -37,13 +37,17 @@ def _vllm_req(**overrides: Any) -> VllmChatCompletionRequest:
 
 
 def _render(parser_cls: Any, **default_chat_template_kwargs: Any) -> Mock:
-    return Mock(
+    render = Mock(
         spec=VllmOnlineRenderer,
         parser=parser_cls,
         chat_template=None,
         chat_template_content_format="auto",
         default_chat_template_kwargs=default_chat_template_kwargs,
     )
+    render.effective_chat_template_kwargs.side_effect = lambda req: (
+        req.build_chat_params(None, "auto").with_defaults(default_chat_template_kwargs).chat_template_kwargs
+    )
+    return render
 
 
 class TestBuildVllmRequest:
@@ -96,19 +100,19 @@ class TestBuildVllmRequest:
 class TestDeriveReasoningEnded:
     def test_include_reasoning_false_forces_true(self):
         vllm_req = _vllm_req(include_reasoning=False)
-        assert engine_ops.derive_reasoning_ended(vllm_req, parser=None, prompt_token_ids=[]) is True
+        assert vllm_req.resolve_reasoning_ended(parser=None, prompt_token_ids=[]) is True
 
     def test_grammar_from_parser_forces_true(self):
         vllm_req = _vllm_req()
         vllm_req._grammar_from_parser = True
-        assert engine_ops.derive_reasoning_ended(vllm_req, parser=None, prompt_token_ids=[]) is True
+        assert vllm_req.resolve_reasoning_ended(parser=None, prompt_token_ids=[]) is True
 
     def test_reasoning_parser_present_defers_to_is_reasoning_end(self):
         vllm_req = _vllm_req()
         parser = Mock(spec=VllmParser)
         parser.reasoning_parser = Mock()
         parser.is_reasoning_end.return_value = True
-        result = engine_ops.derive_reasoning_ended(vllm_req, parser=parser, prompt_token_ids=[1, 2, 3])
+        result = vllm_req.resolve_reasoning_ended(parser=parser, prompt_token_ids=[1, 2, 3])
         assert result is True
         parser.is_reasoning_end.assert_called_once_with([1, 2, 3])
 
@@ -116,11 +120,11 @@ class TestDeriveReasoningEnded:
         vllm_req = _vllm_req()
         parser = Mock(spec=VllmParser)
         parser.reasoning_parser = None
-        assert engine_ops.derive_reasoning_ended(vllm_req, parser=parser, prompt_token_ids=[]) is None
+        assert vllm_req.resolve_reasoning_ended(parser=parser, prompt_token_ids=[]) is None
 
     def test_no_parser_at_all_is_none(self):
         vllm_req = _vllm_req()
-        assert engine_ops.derive_reasoning_ended(vllm_req, parser=None, prompt_token_ids=[]) is None
+        assert vllm_req.resolve_reasoning_ended(parser=None, prompt_token_ids=[]) is None
 
 
 class TestResolvedChatTemplateKwargs:
@@ -139,14 +143,14 @@ class TestResolvedChatTemplateKwargs:
     ):
         vllm_req = _vllm_req(chat_template_kwargs=request_kwargs, reasoning_effort=effort)
 
-        resolved = engine_ops.resolved_chat_template_kwargs(_render(None, **defaults), vllm_req)
+        resolved = _render(None, **defaults).effective_chat_template_kwargs(vllm_req)
 
         assert resolved["enable_thinking"] is expected
 
     def test_an_effort_leaves_the_other_defaults_alone(self):
         vllm_req = _vllm_req(reasoning_effort="none")
 
-        resolved = engine_ops.resolved_chat_template_kwargs(_render(None, clear_thinking=False), vllm_req)
+        resolved = _render(None, clear_thinking=False).effective_chat_template_kwargs(vllm_req)
 
         assert resolved["clear_thinking"] is False
 
@@ -521,7 +525,7 @@ class TestVllmParserAcceptsOurRequest:
         assert len(parsers) == n
         assert all(p is not None for p in parsers)
 
-        reasoning_ended = engine_ops.derive_reasoning_ended(vllm_req, parsers[0], prompt_ids)
+        reasoning_ended = vllm_req.resolve_reasoning_ended(parsers[0], prompt_ids)
         assert reasoning_ended is False  # prompt has no prior reasoning to have already ended
 
         fake_output = (
@@ -610,7 +614,7 @@ class TestVllmParserAcceptsOurRequest:
         parser = parsers[0]
         assert parser is not None
 
-        reasoning_ended = engine_ops.derive_reasoning_ended(vllm_req, parser, prompt_ids)
+        reasoning_ended = vllm_req.resolve_reasoning_ended(parser, prompt_ids)
         assert reasoning_ended is None  # no reasoning parser configured for this model
 
         # No AttributeError on a plain-text (non-tool-call) output.

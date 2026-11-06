@@ -13,7 +13,6 @@ from starlette.responses import Response
 from vllm.config.model import ModelDType as VllmModelDType
 from vllm.config.reasoning import ReasoningConfig as VllmReasoningConfig
 from vllm.engine.arg_utils import AsyncEngineArgs as VllmAsyncEngineArgs
-from vllm.entrypoints.chat_utils import ChatTemplateConfig as VllmChatTemplateConfig
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest as VllmChatCompletionRequest,
 )
@@ -52,6 +51,7 @@ from vllm.entrypoints.speech_to_text.translation.serving import (
 from vllm.exceptions import VLLMValidationError as VllmValidationError
 from vllm.inputs import EngineInput as VllmEngineInput
 from vllm.parser import Parser as VllmParser
+from vllm.renderers.chat_utils import ChatTemplateConfig as VllmChatTemplateConfig
 from vllm.renderers.online_renderer import OnlineRenderer as VllmOnlineRenderer
 from vllm.sampling_params import SamplingParams as VllmSamplingParams
 from vllm.tokenizers import TokenizerLike as VllmTokenizerLike
@@ -237,7 +237,7 @@ def _trace_request(
         "%s request: max_tokens=%s chat_template_kwargs=%s messages=%s tools=%s",
         request_id,
         sampling_params.max_tokens,
-        engine_ops.resolved_chat_template_kwargs(render, vllm_request),
+        render.effective_chat_template_kwargs(vllm_request),
         vllm_request.messages,
         vllm_request.tools,
     )
@@ -793,7 +793,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
 
         parser = self._make_parser(vllm_request)
         prompt_token_ids = engine_ops.extract_prompt_token_ids(self.openai_serving_render, engine_input)
-        reasoning_ended = engine_ops.derive_reasoning_ended(vllm_request, parser, prompt_token_ids)
+        reasoning_ended = vllm_request.resolve_reasoning_ended(parser, prompt_token_ids)
 
         request_id = f"chatcmpl-{base_request_id(raw_request)}"
         _trace_request(request_id, self.openai_serving_render, vllm_request, sampling_params)
@@ -806,9 +806,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     request_id,
                     reasoning_ended=reasoning_ended,
                     parser=parser,
-                    chat_template_kwargs=engine_ops.resolved_chat_template_kwargs(
-                        self.openai_serving_render, vllm_request
-                    ),
+                    chat_template_kwargs=self.openai_serving_render.effective_chat_template_kwargs(vllm_request),
                 ),
                 raw_request,
             )
@@ -900,7 +898,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
 
         parser = self._make_parser(vllm_request)
         prompt_token_ids = engine_ops.extract_prompt_token_ids(self.openai_serving_render, engine_input)
-        reasoning_ended = engine_ops.derive_reasoning_ended(vllm_request, parser, prompt_token_ids)
+        reasoning_ended = vllm_request.resolve_reasoning_ended(parser, prompt_token_ids)
 
         request_id = f"resp-{base_request_id(raw_request)}"
         _trace_request(request_id, self.openai_serving_render, vllm_request, sampling_params)
@@ -913,9 +911,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     request_id,
                     reasoning_ended=reasoning_ended,
                     parser=parser,
-                    chat_template_kwargs=engine_ops.resolved_chat_template_kwargs(
-                        self.openai_serving_render, vllm_request
-                    ),
+                    chat_template_kwargs=self.openai_serving_render.effective_chat_template_kwargs(vllm_request),
                 ),
                 raw_request,
             )
