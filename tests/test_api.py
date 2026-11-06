@@ -489,6 +489,50 @@ class TestHandleResponse:
         assert b'"model":"test"' in result.body
 
     @pytest.mark.asyncio
+    async def test_render_hook_replaces_the_json_body(self, api):
+        from fastapi.responses import Response
+
+        from modelship.openai.protocol import TranscriptionResponse, TranscriptionUsageAudio
+
+        resp = TranscriptionResponse(text="hello", usage=TranscriptionUsageAudio(seconds=1))
+
+        async def mock_gen():
+            yield resp
+
+        result = await api._handle_response(
+            mock_gen(),
+            RequestTracker("m", "create_transcriptions"),
+            render=lambda r: Response(content=r.text, media_type="text/plain; charset=utf-8"),
+        )
+
+        assert isinstance(result, Response)
+        assert result.body == b"hello"
+        assert result.media_type == "text/plain; charset=utf-8"
+
+    @pytest.mark.asyncio
+    async def test_render_hook_error_becomes_a_400(self, api):
+        from fastapi.responses import JSONResponse
+
+        from modelship.openai.protocol import (
+            TranscriptionResponseVerbose,
+            create_error_response,
+        )
+
+        resp = TranscriptionResponseVerbose(language="en", duration=0.0, text="", segments=[])
+
+        async def mock_gen():
+            yield resp
+
+        result = await api._handle_response(
+            mock_gen(),
+            RequestTracker("m", "create_transcriptions"),
+            render=lambda r: create_error_response("no segments", err_type="invalid_request_error"),
+        )
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+
+    @pytest.mark.asyncio
     async def test_handle_streaming_chat(self, api):
         from fastapi.responses import StreamingResponse
 

@@ -65,6 +65,31 @@ class TestWhispercpp:
         assert first["end"] >= first["start"]
         assert body["usage"]["seconds"] >= 0
 
+    def test_transcription_text_format(self, speech):
+        response = _post_audio("transcriptions", ENGLISH_ONLY_MODEL, speech, response_format="text")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/plain")
+        assert "test" in response.text.lower()
+        assert not response.text.lstrip().startswith("{")
+
+    def test_transcription_srt_format(self, speech):
+        response = _post_audio("transcriptions", ENGLISH_ONLY_MODEL, speech, response_format="srt")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/plain")
+        assert "-->" in response.text and "," in response.text.split("-->")[1]
+        assert response.text.lstrip().startswith("1")
+
+    def test_transcription_vtt_format(self, speech):
+        response = _post_audio("transcriptions", ENGLISH_ONLY_MODEL, speech, response_format="vtt")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/plain")
+        assert response.text.startswith("WEBVTT")
+        assert "-->" in response.text
+
+    def test_subtitle_format_cannot_stream(self, speech):
+        response = _post_audio("transcriptions", ENGLISH_ONLY_MODEL, speech, response_format="srt", stream="true")
+        assert response.status_code == 400
+
     def test_explicit_language_is_accepted(self, speech):
         response = _post_audio(
             "transcriptions", MULTILINGUAL_MODEL, speech, response_format="verbose_json", language="en"
@@ -124,6 +149,13 @@ class TestWhispercpp:
         assert body["language"] == "english"
         assert body["duration"] > 0
         assert body["segments"]
+
+    def test_translation_srt_format(self, speech):
+        response = _post_audio("translations", MULTILINGUAL_MODEL, speech, response_format="srt")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/plain")
+        assert "-->" in response.text
+        assert response.text.lstrip().startswith("1")
 
     def test_source_language_does_not_change_output_language(self, speech):
         response = _post_audio(

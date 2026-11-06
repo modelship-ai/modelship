@@ -3,6 +3,7 @@ import contextlib
 import json
 import os
 import time
+from collections.abc import Callable
 from http import HTTPStatus
 from typing import Annotated, Any, cast
 
@@ -69,6 +70,7 @@ from modelship.openai.protocol.responses.streaming import RESPONSE_FAILED_SSE_PR
 from modelship.openai.state.responses import mcp_listings_in
 from modelship.openai.utils import affinity
 from modelship.openai.utils import responses as responses_utils
+from modelship.openai.utils.audio import transcript_render_plan
 from modelship.state import get_state_store
 from modelship.utils import random_uuid
 
@@ -421,6 +423,7 @@ class ModelshipAPI:
         response_gen,
         tracker: RequestTracker,
         stream_media_type: str = "text/event-stream",
+        render: Callable[..., Response | ErrorResponse] | None = None,
     ):
         model, endpoint = tracker.model, tracker.operation
         first, error_type = await self._await_first(response_gen, model)
@@ -460,6 +463,13 @@ class ModelshipAPI:
             | TranslationResponseVerbose
             | ImageGenerationResponse,
         ):
+            if render is not None:
+                rendered = render(first)
+                if isinstance(rendered, ErrorResponse):
+                    tracker.finish("error", "invalid_request")
+                    return _error_response(rendered)
+                tracker.finish("ok")
+                return rendered
             tracker.finish("ok")
             return JSONResponse(content=first.model_dump(mode="json"))
 
@@ -1030,17 +1040,29 @@ class ModelshipAPI:
             handle = self._get_handle(request.model, tracker)
             headers = dict(raw_request.headers)
             logger.info("transcription model=%s", model)
+            if request.stream and request.response_format in ("srt", "vtt", "verbose_json"):
+                tracker.finish("error", "http_400")
+                return _error_response(
+                    create_error_response(
+                        f"response_format `{request.response_format}` cannot be streamed; "
+                        "drop `stream` to receive the document body",
+                        err_type="invalid_request_error",
+                    )
+                )
+            internal_format, render = transcript_render_plan(request.response_format, model)
             # Read audio bytes before crossing process boundary — UploadFile is not serializable.
             # The bytes are passed separately; the request is reconstructed without the file field.
             try:
                 audio_data = await request.file.read()
             finally:
                 await request.file.close()
-            request_no_file = TranscriptionRequest.model_construct(**request.model_dump(exclude={"file"}))
+            dump = request.model_dump(exclude={"file"})
+            dump["response_format"] = internal_format
+            request_no_file = TranscriptionRequest.model_construct(**dump)
             response_gen = handle.transcribe.options(stream=True).remote(
                 audio_data, request_no_file, headers, None, req_id, identity
             )
-            return await self._handle_response(response_gen, tracker)
+            return await self._handle_response(response_gen, tracker, render=render)
 
     @app.post("/v1/audio/translations")
     async def create_translations(self, request: Annotated[TranslationRequest, Form()], raw_request: Request):
@@ -1053,17 +1075,29 @@ class ModelshipAPI:
             handle = self._get_handle(request.model, tracker)
             headers = dict(raw_request.headers)
             logger.info("translation model=%s", model)
+            if request.stream and request.response_format in ("srt", "vtt", "verbose_json"):
+                tracker.finish("error", "http_400")
+                return _error_response(
+                    create_error_response(
+                        f"response_format `{request.response_format}` cannot be streamed; "
+                        "drop `stream` to receive the document body",
+                        err_type="invalid_request_error",
+                    )
+                )
+            internal_format, render = transcript_render_plan(request.response_format, model)
             # Read audio bytes before crossing process boundary — UploadFile is not serializable.
             # The bytes are passed separately; the request is reconstructed without the file field.
             try:
                 audio_data = await request.file.read()
             finally:
                 await request.file.close()
-            request_no_file = TranslationRequest.model_construct(**request.model_dump(exclude={"file"}))
+            dump = request.model_dump(exclude={"file"})
+            dump["response_format"] = internal_format
+            request_no_file = TranslationRequest.model_construct(**dump)
             response_gen = handle.translate.options(stream=True).remote(
                 audio_data, request_no_file, headers, None, req_id, identity
             )
-            return await self._handle_response(response_gen, tracker)
+            return await self._handle_response(response_gen, tracker, render=render)
 
     @app.post("/v1/audio/speech")
     async def create_speech(self, request: SpeechRequest, raw_request: Request):
