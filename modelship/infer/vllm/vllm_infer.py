@@ -1030,9 +1030,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if isinstance(result, VllmErrorResponse):
             return _to_error_response(result)
         if isinstance(result, VllmTranscriptionResponseVerbose):
-            return TranscriptionResponseVerbose.model_validate(result.model_dump())
+            return TranscriptionResponseVerbose.model_validate(result.model_dump(exclude_none=True))
         if isinstance(result, VllmTranscriptionResponse):
-            return TranscriptionResponse.model_validate(result.model_dump())
+            return TranscriptionResponse.model_validate(result.model_dump(exclude_none=True))
         if isinstance(result, AsyncGenerator):
             return cast("AsyncGenerator[str, None]", result)
         raise TypeError(f"Unexpected transcription result type: {type(result).__name__}")
@@ -1055,9 +1055,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if isinstance(result, VllmErrorResponse):
             return _to_error_response(result)
         if isinstance(result, VllmTranslationResponseVerbose):
-            return TranslationResponseVerbose.model_validate(result.model_dump())
+            return TranslationResponseVerbose.model_validate(result.model_dump(exclude_none=True))
         if isinstance(result, VllmTranslationResponse):
-            return TranslationResponse.model_validate(result.model_dump())
+            return TranslationResponse.model_validate(result.model_dump(exclude_none=True))
         if isinstance(result, AsyncGenerator):
             return cast("AsyncGenerator[str, None]", result)
         raise TypeError(f"Unexpected translation result type: {type(result).__name__}")
