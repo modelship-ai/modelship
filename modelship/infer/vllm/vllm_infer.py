@@ -7,7 +7,7 @@ from http import HTTPStatus
 from typing import Any, ClassVar, cast
 
 from fastapi import UploadFile
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from starlette.requests import Request
 from starlette.responses import Response
 from vllm.config.model import ModelDType as VllmModelDType
@@ -151,6 +151,14 @@ def _to_error_response(
             param=info.param,
         )
     return create_error_response(err, err_type=err_type, status_code=status_code)
+
+
+def _from_vllm[T: BaseModel](target: type[T], result: BaseModel) -> T:
+    """Validate a vLLM response into its modelship counterpart, dropping
+    vLLM's explicit None for fields it leaves unset (e.g. `words`,
+    `no_speech_prob`): a modelship default fills an absent key, not an
+    explicit None."""
+    return target.model_validate(result.model_dump(exclude_none=True))
 
 
 def _vllm_stream_error(exc: Exception) -> str | None:
@@ -1030,9 +1038,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if isinstance(result, VllmErrorResponse):
             return _to_error_response(result)
         if isinstance(result, VllmTranscriptionResponseVerbose):
-            return TranscriptionResponseVerbose.model_validate(result.model_dump(exclude_none=True))
+            return _from_vllm(TranscriptionResponseVerbose, result)
         if isinstance(result, VllmTranscriptionResponse):
-            return TranscriptionResponse.model_validate(result.model_dump(exclude_none=True))
+            return _from_vllm(TranscriptionResponse, result)
         if isinstance(result, AsyncGenerator):
             return cast("AsyncGenerator[str, None]", result)
         raise TypeError(f"Unexpected transcription result type: {type(result).__name__}")
@@ -1055,9 +1063,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if isinstance(result, VllmErrorResponse):
             return _to_error_response(result)
         if isinstance(result, VllmTranslationResponseVerbose):
-            return TranslationResponseVerbose.model_validate(result.model_dump(exclude_none=True))
+            return _from_vllm(TranslationResponseVerbose, result)
         if isinstance(result, VllmTranslationResponse):
-            return TranslationResponse.model_validate(result.model_dump(exclude_none=True))
+            return _from_vllm(TranslationResponse, result)
         if isinstance(result, AsyncGenerator):
             return cast("AsyncGenerator[str, None]", result)
         raise TypeError(f"Unexpected translation result type: {type(result).__name__}")
