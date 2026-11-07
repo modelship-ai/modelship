@@ -4,6 +4,112 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.10.0] - 2026-11-07
+
+### Added
+- render text/srt/vtt transcription and translation formats
+- route a conversation's requests to one model replica
+- accept prompt_cache_key on chat and Responses requests
+- cap speech input at 4096 characters
+- run the sherpa_onnx loader on sherpa-onnx 2.x
+- kokoro text frontend for sherpa-onnx 2.x
+- engine token counters for llama_server and vLLM
+- time to first token for every loader that streams
+- vLLM metrics carry the modelship model name
+- model_up reports whether each model's routed deployment can serve
+- model availability alerts come from Serve's app status
+- model loads record download and engine-load time
+- PodMonitor names its scrape job after the chart
+
+### Fixed
+- transcription usage seconds is a float, as in OpenAI's API
+- verbose transcription duration keeps fractional seconds
+- drop vLLM's None audio fields before validating verbose responses
+- back off unkeyed requests once every replica is tried
+- keep one routing key across a request's MCP rounds
+- reap the crashed espeak helper before restarting it
+- pass the resolved voice name to the kokoro frontend
+- vLLM IPC sockets in /tmp/mship-<uid>/<ray session>/
+- start refuses two port flags set to the same port
+- start checks its ports before Ray starts; a failed start stops cleanly
+- llama-server sockets in /tmp/mship-<uid>/<ray session>/
+- llama-server listens on a UNIX socket in the Ray session folder
+- a background request's ValueError is stored as the client's error
+- a dropped request's thread keeps the replica's turn until it exits
+- gateway-built Responses failures carry a code and no raw exception text
+- vLLM request validation errors are 400s
+- server errors reach clients as a fixed message with the request id
+- dashboard and alerts read generic metrics for generic signals
+- ModelshipHighQueueDepth reads Serve's queued requests
+- gateway handlers record any exception that escapes them
+- a background run that fails to dispatch is recorded and marked failed
+- gateway records a WebSocket frame rejected before validation
+- a request that failed before its client left is recorded as an error
+- gateway records each request once, with its outcome
+- model_up is not set while a model's routed deployment is missing or deploying
+- deploy coordinator counters carry their series' creation time
+- Models Loaded shows 0 for a gateway with no running model
+- Models Changed counts a deploy coordinator's first changes
+- Model Load Time quantiles come from Serve's cumulative buckets
+- deploy lifecycle metrics come from the deploy coordinator
+- /readyz drops its load-time and time-to-ready fields
+- the gateway coordinator no longer sets replicas behind for a gateway missing from Serve
+- a deploy's switch check counts only the gateway replicas Serve lists RUNNING
+- the gateway coordinator reads Serve once per pass
+- replicas behind counts only the gateway replicas Serve lists RUNNING
+- the gateway coordinator sets replicas behind to zero for a gateway missing from Serve
+- drop the in-flight requests gauge
+- gateway replicas behind the routing generation come from the gateway coordinator
+- PodMonitor keeps the scrape job modelship under nameOverride
+
+### Changed
+- note the vllm 0.31 -> 0.32 bump
+- update vllm parser picks and readers for 0.32
+- adopt vLLM 0.32 reasoning/chat-template methods
+- bump vllm to 0.32.0
+- drop _from_vllm docstring
+- factor vLLM audio response conversion into _from_vllm
+- run the router integration suites alone, via the bootstrapped engine
+- strip RAY_AUTH_MODE from the affinity fixture's start env
+- conversation-affinity routing
+- Serve and vLLM integration tests for conversation routing
+- bump Ray to 2.60.0
+- sherpa-onnx 2.0.1 and phoneme dependencies
+- infer/ holds the loaders only
+- diffusers 0.42.1
+- bump llama.cpp to b11769
+- remove RequestWatcher (modelship)
+- dropped and cancelled requests stop the vllm and llama_server engines
+- parser detection tests resolve through _resolve_chat_parsers (modelship)
+- transformers 5.17.0
+- chat-capable, chat-reasoning and chat-vlm run with CUDA graphs
+- the session cluster prints its dashboard URL and token once up
+- chat-capable detects its tool parser like a default deploy
+- integration tests run the mship that make bootstrap installs
+- make wheel and make bootstrap
+- make test becomes make unit-test
+- sherpa_onnx fake returns the generated audio in callback mode
+- whispercpp and sherpa_onnx streams run through stream_blocking (modelship)
+- image loaders name their blocking function run
+- sherpa_onnx speech runs a lambda through run_blocking (modelship)
+- rename run_exclusive (modelship) to run_blocking
+- drop section comments from the engine token metrics
+- dashboard panels say whose requests they count
+- drop the load-phase and deploy duration histograms
+- load-failure tests patch serve.get_replica_context on the module
+- drop the gateway coordinator's report-shape comment
+- the gateway coordinator builds the app table from Serve's raw details
+- make the deploy coordinator's replica states read public
+- drop a docstring from the gateway coordinator's report helper
+- the 5xx alert's probe exclusion matches the route labels Ray gives the gateway
+- monitoring assets reference only defined metrics and documented alerts
+- drop monitoring references to an auth panel and a logger that don't exist
+- dashboard panels for model app status, gateway reconciles and Serve requests
+- alerts on scrape targets, Serve app status, HTTP 5xx and per-model errors
+- a timed-out MCP call leaves the next call a new connection
+- reuse a conversation's stored MCP tool list, one connection per server
+- include the PR or issue description in Discord posts
+
 ## [0.9.1] - 2026-10-19
 
 ### Added
