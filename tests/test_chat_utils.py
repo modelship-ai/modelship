@@ -1,7 +1,88 @@
 """Tests for modelship.openai.utils.chat."""
 
+import pytest
+
 from modelship.openai.protocol import FunctionCall, ToolCall, UsageInfo
-from modelship.openai.utils.chat import ParsedChatOutput, build_from_parsed, normalize_chat_messages
+from modelship.openai.utils.chat import (
+    ParsedChatOutput,
+    build_from_parsed,
+    normalize_chat_messages,
+    truncate_messages_to_fit,
+)
+
+
+async def _char_count(messages: list[dict]) -> int:
+    return sum(len(m.get("content") or "") for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_truncate_under_budget_returns_unchanged():
+    messages = [{"role": "user", "content": "x" * 10}]
+    out = await truncate_messages_to_fit(messages, 100, _char_count)
+    assert out is messages
+
+
+@pytest.mark.asyncio
+async def test_truncate_zero_budget_returns_unchanged():
+    messages = [{"role": "user", "content": "x" * 10}]
+    out = await truncate_messages_to_fit(messages, 0, _char_count)
+    assert out is messages
+
+
+@pytest.mark.asyncio
+async def test_truncate_drops_oldest_keeping_system_and_final():
+    messages = [
+        {"role": "system", "content": "S" * 10},
+        {"role": "user", "content": "a" * 20},
+        {"role": "assistant", "content": "b" * 20},
+        {"role": "user", "content": "c" * 5},
+    ]
+    out = await truncate_messages_to_fit(messages, 40, _char_count)
+    assert out == [messages[0], messages[2], messages[3]]
+
+
+@pytest.mark.asyncio
+async def test_truncate_keeps_all_leading_system_messages():
+    messages = [
+        {"role": "system", "content": "A" * 5},
+        {"role": "developer", "content": "B" * 5},
+        {"role": "user", "content": "a" * 20},
+        {"role": "user", "content": "c" * 5},
+    ]
+    out = await truncate_messages_to_fit(messages, 20, _char_count)
+    assert out == [messages[0], messages[1], messages[3]]
+
+
+@pytest.mark.asyncio
+async def test_truncate_falls_back_to_system_plus_final():
+    messages = [
+        {"role": "system", "content": "S" * 10},
+        {"role": "user", "content": "a" * 20},
+        {"role": "assistant", "content": "b" * 20},
+        {"role": "user", "content": "c" * 5},
+    ]
+    out = await truncate_messages_to_fit(messages, 16, _char_count)
+    assert out == [messages[0], messages[3]]
+
+
+@pytest.mark.asyncio
+async def test_truncate_never_orphans_a_tool_result():
+    messages = [
+        {"role": "system", "content": "S" * 5},
+        {"role": "assistant", "content": "a" * 10},
+        {"role": "tool", "tool_call_id": "x", "content": "t" * 10},
+        {"role": "user", "content": "u" * 5},
+    ]
+    out = await truncate_messages_to_fit(messages, 22, _char_count)
+    assert out == [messages[0], messages[3]]
+    assert messages[2] not in out
+
+
+@pytest.mark.asyncio
+async def test_truncate_all_system_returns_unchanged():
+    messages = [{"role": "system", "content": "x" * 50}]
+    out = await truncate_messages_to_fit(messages, 10, _char_count)
+    assert out is messages
 
 
 def test_tool_message_name_backfilled_from_assistant_call():

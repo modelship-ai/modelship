@@ -5,6 +5,7 @@ Responses helpers live in the sibling :mod:`.responses` module instead.
 """
 
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -211,6 +212,30 @@ def _validate_part(
         return part
 
     raise UnsupportedContentError(f"messages[{msg_idx}].content: unsupported content part type {ptype!r}")
+
+
+async def truncate_messages_to_fit(
+    messages: list[dict],
+    budget: int,
+    count_tokens: Callable[[list[dict]], Awaitable[int]],
+) -> list[dict]:
+    """Drop oldest messages until ``count_tokens`` of the kept list fits ``budget``,
+    always keeping leading system/developer messages, the final message, and each
+    tool result's preceding call."""
+    if budget <= 0 or await count_tokens(messages) <= budget:
+        return messages
+    head = 0
+    while head < len(messages) and messages[head].get("role") in ("system", "developer"):
+        head += 1
+    leading, rest = messages[:head], messages[head:]
+    for drop in range(1, len(rest)):
+        kept = rest[drop:]
+        if kept[0].get("role") == "tool":
+            continue
+        candidate = leading + kept
+        if await count_tokens(candidate) <= budget:
+            return candidate
+    return leading + rest[-1:] if rest else messages
 
 
 @dataclass(frozen=True)

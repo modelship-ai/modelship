@@ -372,6 +372,7 @@ def build_response_object(
         "parallel_tool_calls": request.parallel_tool_calls if request.parallel_tool_calls is not None else True,
         "text": request.text if request.text else {"format": {"type": "text"}},
         "reasoning": request.reasoning,
+        "truncation": request.truncation,
         "metadata": request.metadata or {},
         "prompt_cache_key": request.prompt_cache_key,
         # OpenAI stores by default; only an explicit `store: false` opts out.

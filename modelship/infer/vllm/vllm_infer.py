@@ -107,6 +107,7 @@ from modelship.openai.utils.chat import (
     build_from_parsed,
     encode_chat_sse_chunk,
     normalize_chat_messages,
+    truncate_messages_to_fit,
 )
 from modelship.openai.utils.responses import build_response_from_parsed, responses_validation_error
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight
@@ -873,6 +874,18 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             )
         except UnsupportedContentError as exc:
             return _to_error_response(exc)
+
+        if request.truncation == "auto":
+            tools = chat_request.model_dump(exclude_none=True).get("tools")
+            tokenizer = cast(Any, self._tokenizer)
+
+            async def _count_tokens(msgs: list[dict]) -> int:
+                prompt = tokenizer.apply_chat_template(msgs, tools=tools, tokenize=False, add_generation_prompt=True)
+                return len(tokenizer.encode(prompt, add_special_tokens=False))
+
+            budget = self._max_model_len - (request.max_output_tokens or 0)
+            chat_request.messages = await truncate_messages_to_fit(chat_request.messages, budget, _count_tokens)
+
         chat_request.stream = request.stream or False
         try:
             vllm_request = engine_ops.build_vllm_request(chat_request, cache_salt=raw_request.identity)

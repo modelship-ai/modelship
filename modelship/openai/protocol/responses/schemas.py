@@ -41,6 +41,7 @@ class ResponsesRequest(OpenAIBaseModel):
     parallel_tool_calls: bool | None = None
     text: dict[str, Any] | None = None
     reasoning: dict[str, Any] | None = None
+    truncation: Literal["auto", "disabled"] = "disabled"
     stream: bool | None = False
     metadata: dict[str, Any] | None = None
     prompt_cache_key: str | None = None
