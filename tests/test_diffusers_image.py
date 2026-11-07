@@ -326,3 +326,40 @@ class TestProtocolResponseFormat:
         with pytest.raises(ValidationError) as exc:
             ImageEditRequest(image=self._upload(), prompt="p", model="m", strength=2.0)
         assert any(e["loc"] == ("strength",) for e in exc.value.errors())
+
+    def test_generation_rejects_unknown_output_format(self):
+        with pytest.raises(ValidationError) as exc:
+            ImageGenerationRequest(model="m", prompt="p", output_format="gif")  # type: ignore[arg-type]
+        assert any(e["loc"] == ("output_format",) for e in exc.value.errors())
+
+
+@pytest.mark.asyncio
+class TestImageOutputFormat:
+    @pytest.mark.parametrize(("output_format", "pil_format"), [("png", "PNG"), ("jpeg", "JPEG"), ("webp", "WEBP")])
+    async def test_generation_encodes_in_the_requested_format(self, output_format, pil_format):
+        serving = _serving()
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16", output_format=output_format)
+
+        result = await serving.create_image_generation(request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        raw = base64.b64decode(result.data[0].b64_json)
+        assert Image.open(io.BytesIO(raw)).format == pil_format
+
+    async def test_generation_defaults_to_png(self):
+        serving = _serving()
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
+
+        result = await serving.create_image_generation(request, _proxy())
+
+        raw = base64.b64decode(result.data[0].b64_json)
+        assert Image.open(io.BytesIO(raw)).format == "PNG"
+
+
+def test_jpeg_encoding_flattens_rgba():
+    from modelship.infer.image_serving_common import build_response
+
+    result = build_response([Image.new("RGBA", (8, 8), (10, 20, 30, 128))], revised_prompt=None, output_format="jpeg")
+
+    raw = base64.b64decode(result.data[0].b64_json)
+    assert Image.open(io.BytesIO(raw)).format == "JPEG"

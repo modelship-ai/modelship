@@ -87,7 +87,7 @@ class OpenAIServingImage:
 
         def run(_stop: threading.Event) -> ImageGenerationResponse:
             images = self._generate(prompt=request.prompt, width=width, height=height, batch_count=request.n)
-            return build_response(images, revised_prompt=request.prompt)
+            return build_response(images, revised_prompt=request.prompt, output_format=request.output_format)
 
         response: ImageGenerationResponse = await self._run_blocking(run)
         logger.log(TRACE, "image response %s: num_images=%d", request_id, len(response.data))
@@ -142,7 +142,7 @@ class OpenAIServingImage:
             if inpaint:
                 kwargs["mask_image"] = mask
             images = self._generate(**kwargs)
-            return build_response(images, revised_prompt=request.prompt)
+            return build_response(images, revised_prompt=request.prompt, output_format=request.output_format)
 
         response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(run)
         if isinstance(response, ImageGenerationResponse):
@@ -170,7 +170,7 @@ class OpenAIServingImage:
             images = self._generate(
                 prompt="", init_image=image, width=width, height=height, strength=strength, batch_count=request.n
             )
-            return build_response(images, revised_prompt=None)
+            return build_response(images, revised_prompt=None, output_format=request.output_format)
 
         response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(run)
         if isinstance(response, ImageGenerationResponse):
