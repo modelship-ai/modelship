@@ -355,6 +355,28 @@ class TestImageOutputFormat:
         raw = base64.b64decode(result.data[0].b64_json)
         assert Image.open(io.BytesIO(raw)).format == "PNG"
 
+    async def test_edit_honors_output_format(self):
+        serving = _serving(img2img=_StubPipeline())
+        request = ImageEditRequest.model_construct(
+            model="m", prompt="x", n=1, size="16x16", strength=None, output_format="webp"
+        )
+
+        result = await serving.create_image_edit(_png_bytes(), None, request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        assert Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).format == "WEBP"
+
+    async def test_variation_honors_output_format(self):
+        serving = _serving(img2img=_StubPipeline())
+        request = ImageVariationRequest.model_construct(
+            model="m", n=1, size="16x16", strength=None, output_format="webp"
+        )
+
+        result = await serving.create_image_variation(_png_bytes(), request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        assert Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).format == "WEBP"
+
 
 def test_jpeg_composites_transparent_pixels_onto_white():
     from modelship.infer.image_serving_common import build_response
