@@ -326,3 +326,74 @@ class TestProtocolResponseFormat:
         with pytest.raises(ValidationError) as exc:
             ImageEditRequest(image=self._upload(), prompt="p", model="m", strength=2.0)
         assert any(e["loc"] == ("strength",) for e in exc.value.errors())
+
+    def test_generation_rejects_unknown_output_format(self):
+        with pytest.raises(ValidationError) as exc:
+            ImageGenerationRequest(model="m", prompt="p", output_format="gif")  # type: ignore[arg-type]
+        assert any(e["loc"] == ("output_format",) for e in exc.value.errors())
+
+
+@pytest.mark.asyncio
+class TestImageOutputFormat:
+    @pytest.mark.parametrize(("output_format", "pil_format"), [("png", "PNG"), ("jpeg", "JPEG"), ("webp", "WEBP")])
+    async def test_generation_encodes_in_the_requested_format(self, output_format, pil_format):
+        serving = _serving()
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16", output_format=output_format)
+
+        result = await serving.create_image_generation(request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        raw = base64.b64decode(result.data[0].b64_json)
+        assert Image.open(io.BytesIO(raw)).format == pil_format
+
+    async def test_generation_defaults_to_png(self):
+        serving = _serving()
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
+
+        result = await serving.create_image_generation(request, _proxy())
+
+        raw = base64.b64decode(result.data[0].b64_json)
+        assert Image.open(io.BytesIO(raw)).format == "PNG"
+
+    async def test_edit_honors_output_format(self):
+        serving = _serving(img2img=_StubPipeline())
+        request = ImageEditRequest.model_construct(
+            model="m", prompt="x", n=1, size="16x16", strength=None, output_format="webp"
+        )
+
+        result = await serving.create_image_edit(_png_bytes(), None, request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        assert Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).format == "WEBP"
+
+    async def test_variation_honors_output_format(self):
+        serving = _serving(img2img=_StubPipeline())
+        request = ImageVariationRequest.model_construct(
+            model="m", n=1, size="16x16", strength=None, output_format="webp"
+        )
+
+        result = await serving.create_image_variation(_png_bytes(), request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        assert Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).format == "WEBP"
+
+
+def test_jpeg_composites_transparent_pixels_onto_white():
+    from modelship.infer.image_serving_common import build_response
+
+    result = build_response([Image.new("RGBA", (8, 8), (10, 20, 30, 0))], revised_prompt=None, output_format="jpeg")
+
+    decoded = Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json)))
+    assert decoded.format == "JPEG"
+    r, g, b = decoded.convert("RGB").getpixel((0, 0))
+    assert min(r, g, b) > 245
+
+
+def test_jpeg_composites_semi_transparent_pixels_onto_white():
+    from modelship.infer.image_serving_common import build_response
+
+    result = build_response([Image.new("RGBA", (8, 8), (0, 0, 0, 128))], revised_prompt=None, output_format="jpeg")
+
+    decoded = Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json)))
+    r, g, b = decoded.convert("RGB").getpixel((0, 0))
+    assert all(110 < c < 145 for c in (r, g, b))

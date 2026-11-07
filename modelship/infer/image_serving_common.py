@@ -11,13 +11,18 @@ from PIL import Image
 
 from modelship.openai.protocol import ImageGenerationResponse, ImageObject
 
+_PIL_FORMAT = {"png": "PNG", "jpeg": "JPEG", "webp": "WEBP"}
 
-def build_response(images: list, revised_prompt: str | None) -> ImageGenerationResponse:
-    """Encode generated PIL images as base64 PNGs in an OpenAI images response."""
+
+def build_response(images: list, revised_prompt: str | None, output_format: str = "png") -> ImageGenerationResponse:
+    fmt = _PIL_FORMAT[output_format]
     data = []
     for img in images:
+        if fmt == "JPEG" and img.mode != "RGB":
+            background = Image.new("RGBA", img.size, (255, 255, 255, 255))
+            img = Image.alpha_composite(background, img.convert("RGBA")).convert("RGB")
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        img.save(buf, format=fmt)
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
         data.append(ImageObject(b64_json=b64, revised_prompt=revised_prompt))
     return ImageGenerationResponse(created=int(time.time()), data=data)

@@ -112,9 +112,9 @@ class OpenAIServingImage:
                 guidance_scale=guidance,
                 **_stop_kwargs(self.pipeline, stop),
             ).images
-            return build_response(images, revised_prompt=request.prompt)
+            return build_response(images, revised_prompt=request.prompt, output_format=request.output_format)
 
-        # Inference and PNG/base64 encoding are both CPU-bound; run the whole
+        # Inference and image/base64 encoding are both CPU-bound; run the whole
         # chain in the executor so the event loop stays responsive.
         response: ImageGenerationResponse = await self._run_blocking(run)
         logger.log(TRACE, "image response %s: num_images=%d", request_id, len(response.data))
@@ -186,7 +186,7 @@ class OpenAIServingImage:
                 **kwargs,
                 **_stop_kwargs(pipeline, stop),
             ).images
-            return build_response(images, revised_prompt=request.prompt)
+            return build_response(images, revised_prompt=request.prompt, output_format=request.output_format)
 
         response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(run)
         if isinstance(response, ImageGenerationResponse):
@@ -226,7 +226,7 @@ class OpenAIServingImage:
                 strength=strength,
                 **_stop_kwargs(self.img2img_pipeline, stop),
             ).images
-            return build_response(images, revised_prompt=None)
+            return build_response(images, revised_prompt=None, output_format=request.output_format)
 
         response: ImageGenerationResponse | ErrorResponse = await self._run_blocking(run)
         if isinstance(response, ImageGenerationResponse):

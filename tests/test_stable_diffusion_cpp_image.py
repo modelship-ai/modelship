@@ -216,3 +216,37 @@ class TestImageVariation:
         request = ImageVariationRequest.model_construct(model="m", n=1, size="bad", strength=None)
         result = await serving.create_image_variation(_png_bytes(), request, _proxy())
         assert isinstance(result, ErrorResponse)
+
+
+@pytest.mark.asyncio
+class TestOutputFormatPropagation:
+    async def test_generation_honors_output_format(self):
+        serving = _serving()
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16", output_format="webp")
+
+        result = await serving.create_image_generation(request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        assert Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).format == "WEBP"
+
+    async def test_edit_honors_output_format(self):
+        serving = _serving()
+        request = ImageEditRequest.model_construct(
+            model="m", prompt="x", n=1, size="16x16", strength=None, output_format="webp"
+        )
+
+        result = await serving.create_image_edit(_png_bytes(), None, request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        assert Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).format == "WEBP"
+
+    async def test_variation_honors_output_format(self):
+        serving = _serving()
+        request = ImageVariationRequest.model_construct(
+            model="m", n=1, size="16x16", strength=None, output_format="webp"
+        )
+
+        result = await serving.create_image_variation(_png_bytes(), request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        assert Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).format == "WEBP"

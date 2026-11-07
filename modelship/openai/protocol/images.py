@@ -17,6 +17,10 @@ class ImageGenerationRequest(OpenAIBaseModel):
         default="b64_json",
         description="The format in which the generated images are returned.",
     )
+    output_format: Literal["png", "jpeg", "webp"] = Field(
+        default="png",
+        description="The image codec the returned base64 data is encoded in.",
+    )
 
 
 # Type for the OpenAI `image[]` array field: a single upload, a list of uploads
@@ -62,6 +66,10 @@ class ImageEditRequest(OpenAIBaseModel):
         default="b64_json",
         description="The format in which the generated images are returned.",
     )
+    output_format: Literal["png", "jpeg", "webp"] = Field(
+        default="png",
+        description="The image codec the returned base64 data is encoded in.",
+    )
     # modelship extension (not in OpenAI spec) — controls how far the output may
     # diverge from the input image (0.0 keeps it, 1.0 ignores it). Defaults are
     # applied serving-side. Documented in docs/extensions.md.
@@ -83,6 +91,10 @@ class ImageVariationRequest(OpenAIBaseModel):
     response_format: Literal["b64_json"] = Field(
         default="b64_json",
         description="The format in which the generated images are returned.",
+    )
+    output_format: Literal["png", "jpeg", "webp"] = Field(
+        default="png",
+        description="The image codec the returned base64 data is encoded in.",
     )
     # modelship extension (not in OpenAI spec) — controls how far each variation
     # diverges from the input image (0.0 keeps it, 1.0 ignores it). Defaults are
