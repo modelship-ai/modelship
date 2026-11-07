@@ -356,10 +356,22 @@ class TestImageOutputFormat:
         assert Image.open(io.BytesIO(raw)).format == "PNG"
 
 
-def test_jpeg_encoding_flattens_rgba():
+def test_jpeg_composites_transparent_pixels_onto_white():
     from modelship.infer.image_serving_common import build_response
 
-    result = build_response([Image.new("RGBA", (8, 8), (10, 20, 30, 128))], revised_prompt=None, output_format="jpeg")
+    result = build_response([Image.new("RGBA", (8, 8), (10, 20, 30, 0))], revised_prompt=None, output_format="jpeg")
 
-    raw = base64.b64decode(result.data[0].b64_json)
-    assert Image.open(io.BytesIO(raw)).format == "JPEG"
+    decoded = Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json)))
+    assert decoded.format == "JPEG"
+    r, g, b = decoded.convert("RGB").getpixel((0, 0))
+    assert min(r, g, b) > 245
+
+
+def test_jpeg_composites_semi_transparent_pixels_onto_white():
+    from modelship.infer.image_serving_common import build_response
+
+    result = build_response([Image.new("RGBA", (8, 8), (0, 0, 0, 128))], revised_prompt=None, output_format="jpeg")
+
+    decoded = Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json)))
+    r, g, b = decoded.convert("RGB").getpixel((0, 0))
+    assert all(110 < c < 145 for c in (r, g, b))

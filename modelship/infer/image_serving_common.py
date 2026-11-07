@@ -19,7 +19,8 @@ def build_response(images: list, revised_prompt: str | None, output_format: str 
     data = []
     for img in images:
         if fmt == "JPEG" and img.mode != "RGB":
-            img = img.convert("RGB")
+            background = Image.new("RGBA", img.size, (255, 255, 255, 255))
+            img = Image.alpha_composite(background, img.convert("RGBA")).convert("RGB")
         buf = io.BytesIO()
         img.save(buf, format=fmt)
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
