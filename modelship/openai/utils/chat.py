@@ -234,17 +234,16 @@ async def truncate_messages_to_fit(
     max_drop = len(rest) - 1
     while max_drop > 0 and rest[max_drop].get("role") == "tool":
         max_drop -= 1
-    lo, hi, drop = 1, max_drop, None
+    starts = [i for i in range(1, max_drop + 1) if rest[i].get("role") != "tool"]
+    lo, hi, drop = 0, len(starts) - 1, None
     while lo <= hi:
         mid = (lo + hi) // 2
-        if await count_tokens(leading + rest[mid:]) <= budget:
-            drop, hi = mid, mid - 1
+        if await count_tokens(leading + rest[starts[mid] :]) <= budget:
+            drop, hi = starts[mid], mid - 1
         else:
             lo = mid + 1
     if drop is None:
         return leading + rest[max_drop:]
-    while drop < max_drop and rest[drop].get("role") == "tool":
-        drop += 1
     return leading + rest[drop:]
 
 

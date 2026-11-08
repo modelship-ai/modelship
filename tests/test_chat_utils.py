@@ -98,6 +98,25 @@ async def test_truncate_keeps_trailing_tool_result_with_its_call():
 
 
 @pytest.mark.asyncio
+async def test_truncate_never_probes_an_orphaned_tool():
+    async def strict_count(messages: list[dict]) -> int:
+        body = [m for m in messages if m.get("role") not in ("system", "developer")]
+        if body and body[0].get("role") == "tool":
+            raise AssertionError("count_tokens received an orphaned tool result")
+        return sum(len(m.get("content") or "") for m in messages)
+
+    messages = [
+        {"role": "system", "content": "S" * 5},
+        {"role": "user", "content": "u" * 20},
+        {"role": "assistant", "content": "a" * 20},
+        {"role": "tool", "tool_call_id": "x", "content": "t" * 20},
+        {"role": "user", "content": "f" * 5},
+    ]
+    out = await truncate_messages_to_fit(messages, 30, strict_count)
+    assert out == [messages[0], messages[4]]
+
+
+@pytest.mark.asyncio
 async def test_truncate_trailing_tool_pair_preserved_when_overflowing():
     messages = [
         {"role": "system", "content": "S" * 5},
