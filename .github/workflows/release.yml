@@ -146,13 +146,6 @@ jobs:
       - name: Log in to GHCR
         run: helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password ${{ secrets.GITHUB_TOKEN }}
 
-      # Vendor the kuberay-operator subchart (pinned in Chart.lock) before packaging
-      # so `--set kuberay-operator.enabled=true` works from the published chart.
-      - name: Build chart dependencies
-        run: |
-          helm repo add kuberay https://ray-project.github.io/kuberay-helm/
-          helm dependency build helm/modelship
-
       # Chart version is stamped to the app version at release time (make _release),
       # so it equals the tag and packages to modelship-<version>.tgz.
       - name: Package chart

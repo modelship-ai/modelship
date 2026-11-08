@@ -107,6 +107,7 @@ from modelship.openai.utils.chat import (
     build_from_parsed,
     encode_chat_sse_chunk,
     normalize_chat_messages,
+    truncate_messages_to_fit,
 )
 from modelship.openai.utils.responses import build_response_from_parsed, responses_validation_error
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight
@@ -873,9 +874,30 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
             )
         except UnsupportedContentError as exc:
             return _to_error_response(exc)
+
         chat_request.stream = request.stream or False
         try:
             vllm_request = engine_ops.build_vllm_request(chat_request, cache_salt=raw_request.identity)
+            if request.truncation == "auto":
+                tokenizer = cast(Any, self._tokenizer)
+                tools = chat_request.model_dump(exclude_none=True).get("tools")
+                template_kwargs = self.openai_serving_render.effective_chat_template_kwargs(vllm_request)
+
+                async def _count_tokens(msgs: list[dict]) -> int:
+                    template_args = {
+                        "add_generation_prompt": True,
+                        "tools": tools,
+                        **template_kwargs,
+                        "tokenize": False,
+                    }
+                    prompt = tokenizer.apply_chat_template(msgs, **template_args)
+                    return len(tokenizer.encode(prompt, add_special_tokens=False))
+
+                budget = self.vllm_config.model_config.max_model_len - (request.max_output_tokens or 0)
+                truncated = await truncate_messages_to_fit(chat_request.messages, budget, _count_tokens)
+                if truncated is not chat_request.messages:
+                    chat_request.messages = truncated
+                    vllm_request = engine_ops.build_vllm_request(chat_request, cache_salt=raw_request.identity)
         except ValidationError as exc:
             # Same 400 as the `responses_request_to_chat` failure above.
             logger.info("Validation error building vllm request: %s", exc)

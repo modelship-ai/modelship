@@ -39,9 +39,8 @@ helm install modelship \
   -f my-values.yaml
 ```
 
-Or from a checkout, after fetching the vendored operator subchart with
-`helm dependency build ./helm/modelship` (it needs the `kuberay` repo added, as
-above): `helm install modelship ./helm/modelship -f my-values.yaml`.
+Or from a checkout (the operator subchart is vendored in `helm/modelship/charts/`):
+`helm install modelship ./helm/modelship -f my-values.yaml`.
 
 Images and model weights take time to pull, so raise Helm's timeout:
 `--timeout 20m --wait --wait-for-jobs` waits for the deploy Job too. Without

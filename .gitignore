@@ -13,10 +13,13 @@ models-cache
 config/models.yaml
 config/models_stack_*.yaml
 
-# Helm: vendored subcharts are fetched via `helm dependency build` (Chart.lock
-# is committed for reproducibility); never commit the downloaded artifacts.
-helm/**/charts/
+# Helm: the kuberay-operator subchart tarball is committed (github.com release
+# assets time out in CI); any other chart output stays ignored.
+helm/**/charts/*
+!helm/modelship/charts/
+!helm/modelship/charts/kuberay-operator-*.tgz
 helm/**/*.tgz
+!helm/modelship/charts/kuberay-operator-*.tgz
 # Dev-only deps for the bootstrapper; nothing ships from this lock.
 bootstrap/uv.lock
 

@@ -4,6 +4,11 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  UV_HTTP_RETRIES: 10
+  UV_HTTP_TIMEOUT: 120
+  UV_CONCURRENT_DOWNLOADS: 4
+
 jobs:
   # Detect whether this PR touches the Helm chart, so the heavy `chart` job (which
   # spins up a kind cluster) only runs when it's relevant.
@@ -116,8 +121,6 @@ jobs:
 
       - name: Lint chart
         run: |
-          helm repo add kuberay https://ray-project.github.io/kuberay-helm/
-          helm dependency build helm/modelship
           helm lint helm/modelship
 
       - name: Validate rendered manifests (kubeconform)
@@ -180,8 +183,7 @@ jobs:
           # The API server validates every rendered object, hooks included, against the
           # operator's CRDs and persists nothing. Head-only: nothing needs GPUs or PVCs.
           # The locked dependency (Chart.lock), not the repo's latest: the CRDs must be
-          # the version the chart declares. Already fetched by the lint step; a no-op here.
-          helm dependency build helm/modelship
+          # the version the chart declares. Vendored in helm/modelship/charts/.
           helm install kuberay-operator helm/modelship/charts/kuberay-operator-*.tgz --wait --timeout 5m
           for args in "" "--set redis.password=pw" "--set rayAuth.existingSecret=ray-token"; do
             echo "== dry-run ${args:-defaults} =="

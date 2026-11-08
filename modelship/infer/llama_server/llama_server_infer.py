@@ -49,6 +49,7 @@ from modelship.openai.utils.chat import (
     build_from_parsed,
     encode_chat_sse_chunk,
     normalize_chat_messages,
+    truncate_messages_to_fit,
 )
 from modelship.openai.utils.responses import build_response_from_parsed, responses_validation_error
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight
@@ -499,6 +500,30 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         except UnsupportedContentError as e:
             logger.warning("responses request %s rejected: %s", request_id, e)
             return create_error_response(e)
+
+        if request.truncation == "auto":
+
+            async def _count_tokens(msgs: list[dict]) -> int:
+                assert self._client is not None
+                payload = _build_payload(
+                    chat_request,
+                    msgs,
+                    model_name=self.model_config.name,
+                    reasoning_budget=self.config.reasoning_budget,
+                    reasoning_preserve=self.config.reasoning_preserve,
+                )
+                body = {k: payload[k] for k in ("messages", "tools", "chat_template_kwargs") if k in payload}
+                rendered = await self._client.post("/apply-template", json=body)
+                rendered.raise_for_status()
+                counted = await self._client.post("/tokenize", json={"content": rendered.json()["prompt"]})
+                counted.raise_for_status()
+                return len(counted.json()["tokens"])
+
+            budget = self.config.n_ctx - (request.max_output_tokens or 0)
+            try:
+                messages = await truncate_messages_to_fit(messages, budget, _count_tokens)
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
+                logger.warning("responses request %s: truncation skipped (%s)", request_id, e)
 
         chat_request.stream = bool(request.stream)
         return _build_payload(

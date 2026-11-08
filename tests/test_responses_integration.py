@@ -40,6 +40,16 @@ def _iter_sse_events(lines):
             yield payload
 
 
+def _oversized_conversation() -> list[dict]:
+    filler = "The quick brown fox jumps over the lazy dog. " * 60
+    items: list[dict] = []
+    for i in range(20):
+        items.append({"role": "user", "content": f"Fact {i}: {filler}"})
+        items.append({"role": "assistant", "content": f"Noted {i}. {filler}"})
+    items.append({"role": "user", "content": "Reply with just the word: hello."})
+    return items
+
+
 @pytest.mark.integration
 @pytest.mark.llama_server
 class TestResponsesLlamaServer:
@@ -80,6 +90,25 @@ class TestResponsesLlamaServer:
         assert completed is not None
         assert completed.status in {"completed", "incomplete"}
         assert 0 < completed.usage.output_tokens_details.reasoning_tokens < completed.usage.output_tokens
+
+    def test_truncation_auto_fits_oversized_input(self, client):
+        resp = client.responses.create(
+            model="chat-llama-server",
+            input=_oversized_conversation(),
+            truncation="auto",
+            max_output_tokens=512,
+        )
+        assert resp.status in {"completed", "incomplete"}
+        assert resp.truncation == "auto"
+        assert resp.usage.input_tokens <= 4096
+
+    def test_truncation_disabled_errors_on_overflow(self):
+        response = httpx.post(
+            f"{OPENAI_API_BASE}/responses",
+            json={"model": "chat-llama-server", "input": _oversized_conversation(), "max_output_tokens": 512},
+            timeout=120,
+        )
+        assert response.status_code >= 400, response.text
 
 
 # Responses tools use the *flattened* function shape (name/parameters at the
@@ -205,6 +234,25 @@ class TestResponsesEndpoint:
         assert resp.incomplete_details is not None
         assert resp.incomplete_details.reason == "max_output_tokens"
         assert resp.output_text.strip()
+
+    def test_truncation_auto_fits_oversized_input(self, client):
+        resp = client.responses.create(
+            model="chat-capable",
+            input=_oversized_conversation(),
+            truncation="auto",
+            max_output_tokens=20,
+        )
+        assert resp.status in {"completed", "incomplete"}
+        assert resp.truncation == "auto"
+        assert resp.usage.input_tokens <= 2048
+
+    def test_truncation_disabled_errors_on_overflow(self):
+        response = httpx.post(
+            f"{OPENAI_API_BASE}/responses",
+            json={"model": "chat-capable", "input": _oversized_conversation(), "max_output_tokens": 20},
+            timeout=120,
+        )
+        assert response.status_code >= 400, response.text
 
     def test_unknown_previous_response_id_404(self):
         response = httpx.post(

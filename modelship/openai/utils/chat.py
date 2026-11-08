@@ -5,6 +5,7 @@ Responses helpers live in the sibling :mod:`.responses` module instead.
 """
 
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -211,6 +212,39 @@ def _validate_part(
         return part
 
     raise UnsupportedContentError(f"messages[{msg_idx}].content: unsupported content part type {ptype!r}")
+
+
+async def truncate_messages_to_fit(
+    messages: list[dict],
+    budget: int,
+    count_tokens: Callable[[list[dict]], Awaitable[int]],
+) -> list[dict]:
+    """Drop oldest messages until ``count_tokens`` of the kept list fits ``budget``,
+    always keeping leading system/developer messages, the final message, and each
+    tool result's preceding call. Binary-searches the drop point, assuming
+    ``count_tokens`` never rises as messages are dropped."""
+    if budget <= 0 or await count_tokens(messages) <= budget:
+        return messages
+    head = 0
+    while head < len(messages) and messages[head].get("role") in ("system", "developer"):
+        head += 1
+    leading, rest = messages[:head], messages[head:]
+    if len(rest) <= 1:
+        return messages
+    max_drop = len(rest) - 1
+    while max_drop > 0 and rest[max_drop].get("role") == "tool":
+        max_drop -= 1
+    starts = [i for i in range(1, max_drop + 1) if rest[i].get("role") != "tool"]
+    lo, hi, drop = 0, len(starts) - 1, None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if await count_tokens(leading + rest[starts[mid] :]) <= budget:
+            drop, hi = starts[mid], mid - 1
+        else:
+            lo = mid + 1
+    if drop is None:
+        return leading + rest[max_drop:]
+    return leading + rest[drop:]
 
 
 @dataclass(frozen=True)
