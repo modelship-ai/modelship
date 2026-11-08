@@ -55,9 +55,7 @@ itself after a head restart.
 ## Install
 
 ```bash
-# From the repo (path install; fetch the vendored operator subchart first):
-helm repo add kuberay https://ray-project.github.io/kuberay-helm/
-helm dependency build ./helm/modelship
+# From the repo (path install; the operator subchart is vendored in charts/):
 helm install mship ./helm/modelship -f my-values.yaml
 
 # From GHCR (OCI). Chart version is kept in lockstep with the app/image version

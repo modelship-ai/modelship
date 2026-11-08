@@ -119,16 +119,8 @@ jobs:
         with:
           version: v4.3.0
 
-      - name: Cache chart dependencies
-        uses: actions/cache@v4
-        with:
-          path: helm/modelship/charts
-          key: helm-deps-${{ hashFiles('helm/modelship/Chart.lock') }}
-
       - name: Lint chart
         run: |
-          helm repo add kuberay https://ray-project.github.io/kuberay-helm/
-          for i in 1 2 3 4 5; do helm dependency build helm/modelship && break; [ "$i" = 5 ] && exit 1; sleep $((i * 10)); done
           helm lint helm/modelship
 
       - name: Validate rendered manifests (kubeconform)
@@ -191,8 +183,7 @@ jobs:
           # The API server validates every rendered object, hooks included, against the
           # operator's CRDs and persists nothing. Head-only: nothing needs GPUs or PVCs.
           # The locked dependency (Chart.lock), not the repo's latest: the CRDs must be
-          # the version the chart declares. Already fetched by the lint step; a no-op here.
-          helm dependency build helm/modelship
+          # the version the chart declares. Vendored in helm/modelship/charts/.
           helm install kuberay-operator helm/modelship/charts/kuberay-operator-*.tgz --wait --timeout 5m
           for args in "" "--set redis.password=pw" "--set rayAuth.existingSecret=ray-token"; do
             echo "== dry-run ${args:-defaults} =="
