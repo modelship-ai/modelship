@@ -221,21 +221,31 @@ async def truncate_messages_to_fit(
 ) -> list[dict]:
     """Drop oldest messages until ``count_tokens`` of the kept list fits ``budget``,
     always keeping leading system/developer messages, the final message, and each
-    tool result's preceding call."""
+    tool result's preceding call. Binary-searches the drop point, assuming
+    ``count_tokens`` never rises as messages are dropped."""
     if budget <= 0 or await count_tokens(messages) <= budget:
         return messages
     head = 0
     while head < len(messages) and messages[head].get("role") in ("system", "developer"):
         head += 1
     leading, rest = messages[:head], messages[head:]
-    for drop in range(1, len(rest)):
-        kept = rest[drop:]
-        if kept[0].get("role") == "tool":
-            continue
-        candidate = leading + kept
-        if await count_tokens(candidate) <= budget:
-            return candidate
-    return leading + rest[-1:] if rest else messages
+    if len(rest) <= 1:
+        return messages
+    max_drop = len(rest) - 1
+    while max_drop > 0 and rest[max_drop].get("role") == "tool":
+        max_drop -= 1
+    lo, hi, drop = 1, max_drop, None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if await count_tokens(leading + rest[mid:]) <= budget:
+            drop, hi = mid, mid - 1
+        else:
+            lo = mid + 1
+    if drop is None:
+        return leading + rest[max_drop:]
+    while drop < max_drop and rest[drop].get("role") == "tool":
+        drop += 1
+    return leading + rest[drop:]
 
 
 @dataclass(frozen=True)

@@ -85,6 +85,31 @@ async def test_truncate_all_system_returns_unchanged():
     assert out is messages
 
 
+@pytest.mark.asyncio
+async def test_truncate_keeps_trailing_tool_result_with_its_call():
+    messages = [
+        {"role": "system", "content": "S" * 5},
+        {"role": "user", "content": "u" * 30},
+        {"role": "assistant", "content": "a" * 10},
+        {"role": "tool", "tool_call_id": "x", "content": "t" * 10},
+    ]
+    out = await truncate_messages_to_fit(messages, 30, _char_count)
+    assert out == [messages[0], messages[2], messages[3]]
+
+
+@pytest.mark.asyncio
+async def test_truncate_trailing_tool_pair_preserved_when_overflowing():
+    messages = [
+        {"role": "system", "content": "S" * 5},
+        {"role": "user", "content": "u" * 30},
+        {"role": "assistant", "content": "a" * 40},
+        {"role": "tool", "tool_call_id": "x", "content": "t" * 40},
+    ]
+    out = await truncate_messages_to_fit(messages, 30, _char_count)
+    assert out == [messages[0], messages[2], messages[3]]
+    assert out[1].get("role") != "tool"
+
+
 def test_tool_message_name_backfilled_from_assistant_call():
     messages = [
         {"role": "user", "content": "turn off the lights"},
