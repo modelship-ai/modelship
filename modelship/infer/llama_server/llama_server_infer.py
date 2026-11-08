@@ -522,7 +522,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             budget = self.config.n_ctx - (request.max_output_tokens or 0)
             try:
                 messages = await truncate_messages_to_fit(messages, budget, _count_tokens)
-            except (httpx.HTTPError, KeyError, TypeError) as e:
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
                 logger.warning("responses request %s: truncation skipped (%s)", request_id, e)
 
         chat_request.stream = bool(request.stream)
