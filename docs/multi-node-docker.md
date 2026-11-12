@@ -184,15 +184,16 @@ and of a replica's first startup lines.
 
 ## Capability-aware scheduling
 
-Every node advertises `mship_<loader>` Ray custom resources for whatever it can
-actually run (probed via `importlib.util.find_spec()`, plus a real-binary check
-for `llama_server`), and every deploy requests its loader's resource regardless
-of `num_gpus`. A thin head advertises none — it never accidentally schedules a
-model onto itself. A worker missing the right extras (e.g. a `-cpu` node given a
-`loader: vllm` config that needs `cuda`) just leaves that deploy pending; Ray's
-own scheduling message names the missing resource, nothing hard-fails at driver
-time. Override the probe wholesale with `MSHIP_NODE_CAPABILITIES` (JSON) if
-auto-detection is wrong or you want to disable a loader on one node.
+Every node advertises `mship_<loader>_<gpu|cpu>` Ray custom resources for the
+loaders its variant runs and the devices it runs them on, and every deploy
+requests its loader's resource for its device (`gpu` when `num_gpus > 0`). A thin
+head advertises none — it never accidentally schedules a model onto itself. A
+deploy no node can run (e.g. a `loader: vllm` model with `num_gpus: 1` and only
+`-cpu` workers) just stays pending; Ray's own scheduling message names the
+missing resource, nothing hard-fails at driver time. Replace a node's set with
+`MSHIP_NODE_CAPABILITIES` (JSON), e.g. to disable a loader on one node. See
+[Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling)
+for the table.
 
 ## `MSHIP_STATE_STORE=redis://` is the multi-node recommendation
 

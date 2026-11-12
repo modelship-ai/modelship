@@ -162,6 +162,7 @@ RUN apt-get update -y && \
 ENV UV_PROJECT_ENVIRONMENT=/.venv
 ENV VIRTUAL_ENV=/.venv
 ENV PATH="/.venv/bin:$PATH"
+ENV MSHIP_VARIANT=${MSHIP_VARIANT}
 
 RUN mkdir -p /.venv && chown -R $UID:$GID /.venv
 

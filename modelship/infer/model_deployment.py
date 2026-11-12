@@ -1,5 +1,4 @@
 import os
-import platform
 import time
 import traceback
 from collections.abc import AsyncGenerator
@@ -32,44 +31,10 @@ from modelship.openai.protocol import (
     client_safe,
 )
 from modelship.preflight import ModelNotSizedError
-from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.cache import reject_unset_cache_roots
 from modelship.utils.sources import ModelDownloadError
 
 logger = get_logger("infer.deployment")
-
-# llama_server, stable_diffusion_cpp, and whispercpp all have Metal backends; sherpa_onnx is
-# CPU-only; vllm/diffusers don't run on Darwin at all.
-_DARWIN_UNSUPPORTED_LOADERS = {ModelLoader.vllm, ModelLoader.diffusers}
-
-
-def _reject_unsupported_darwin_loader(config: ModelshipModelConfig) -> None:
-    """Checked on the actor's platform, not the driver's."""
-    if platform.system() != "Darwin":
-        return
-    if config.loader in _DARWIN_UNSUPPORTED_LOADERS:
-        raise RuntimeError(
-            f"loader={config.loader.value} is not supported on macOS/Apple Silicon (model '{config.name}'). "
-            "Use loader: llama_server for GGUF models on Metal."
-        )
-
-
-# No loader offloads to AMD or Intel GPUs: vllm ships CUDA-only wheels here, and the
-# llama.cpp/ggml binaries are built for CPU, CUDA and Metal.
-_UNSUPPORTED_ACCELERATORS = {"rocm": "AMD (ROCm)", "xpu": "Intel (XPU)"}
-
-
-def _reject_unsupported_accelerator(config: ModelshipModelConfig) -> None:
-    """Checked on the actor's platform, not the driver's."""
-    if config.num_gpus <= 0:
-        return
-    vendor = _UNSUPPORTED_ACCELERATORS.get(detect_accelerator())
-    if vendor is not None:
-        raise RuntimeError(
-            f"this node's GPU is {vendor}, which no modelship loader can offload to "
-            f"(model '{config.name}' asks for num_gpus={config.num_gpus}). "
-            "Set num_gpus: 0 to run on CPU."
-        )
 
 
 async def _report_load_failure(config: ModelshipModelConfig, reason: str, fatal: bool) -> None:
@@ -96,8 +61,6 @@ class ModelDeployment:
         self.infer: BaseInfer
         try:
             reject_unset_cache_roots()
-            _reject_unsupported_darwin_loader(config)
-            _reject_unsupported_accelerator(config)
             # Must run before the loader is constructed: preflight (which
             # needs the model file on disk) runs synchronously inside a
             # loader's own __init__, so `_resolved_path` has to be populated

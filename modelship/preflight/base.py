@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
+from modelship.utils.variant import current_variant
 
 logger = get_logger("preflight")
 
@@ -20,10 +21,9 @@ class ModelNotSizedError(Exception):
 @dataclass(frozen=True)
 class GPUInfo:
     index: int
-    available_bytes: int  # free VRAM when the probe read it, else capacity
+    available_bytes: int
     name: str
     uuid: str | None = None  # "GPU-<uuid>"; None when the probe can't read it
-    kind: str = "cuda"  # "cuda" | "rocm" | "xpu" | "mps"
     total_bytes: int = 0  # device capacity; 0 when the probe couldn't read it
 
     @property
@@ -35,8 +35,7 @@ class GPUInfo:
 @dataclass(frozen=True)
 class HardwareProfile:
     """Per-actor view of the hardware Ray assigned. GPU indices are CUDA-visible,
-    i.e. already filtered through `CUDA_VISIBLE_DEVICES`; an "mps" GPUInfo is
-    always index 0."""
+    i.e. already filtered through `CUDA_VISIBLE_DEVICES`."""
 
     gpus: list[GPUInfo] = field(default_factory=list)
     ram_bytes: int = 0
@@ -66,42 +65,23 @@ def get_preflight(loader: ModelLoader) -> BasePreflight | None:
     return _REGISTRY.get(loader)
 
 
-def discover_hardware(*, read_free_memory: bool = False) -> HardwareProfile:
-    """Snapshot the hardware available to this deployment. `read_free_memory` is
-    passed through to `detect_gpus`."""
+def discover_hardware() -> HardwareProfile:
+    """Snapshot the hardware available to this deployment."""
     return HardwareProfile(
-        gpus=detect_gpus(read_free_memory=read_free_memory),
+        gpus=detect_gpus(),
         ram_bytes=detect_ram_bytes(),
         available_ram_bytes=detect_available_ram_bytes(),
     )
 
 
-def detect_gpus(*, read_free_memory: bool = False) -> list[GPUInfo]:
-    """GPUs visible to this process.
-
-    `torch.cuda` first, which honors `CUDA_VISIBLE_DEVICES`; the node-level probes
-    are fallbacks for when the actor owns no GPU directly, as with vLLM's ray
-    backend where worker sub-actors hold them. Metal is checked last so no CUDA
-    host reaches it.
-
-    `read_free_memory=False` (the default) leaves `available_bytes` carrying
-    capacity. True fills in free VRAM: from NVML on CUDA (no context), from
-    `hipMemGetInfo` on ROCm (one HIP context per device). The node fallbacks
-    report free either way."""
-    gpus = _torch_cuda_discover(read_free_memory=read_free_memory)
-    if read_free_memory:
-        gpus = _join_nvml_free(gpus)
-    if not gpus:
-        gpus = _pynvml_node_discover()
-        if gpus:
-            logger.debug(
-                "preflight: actor has no direct GPU ownership; using node-level pynvml view (%d GPU(s))", len(gpus)
-            )
-    if not gpus:
-        gpus = _rocm_smi_node_discover()
-    if not gpus:
-        gpus = _apple_metal_discover()
-    return gpus
+def detect_gpus() -> list[GPUInfo]:
+    variant = current_variant()
+    if variant == "cuda":
+        node = _nvml_gpus()
+        return _visible_gpus(node, os.environ.get("CUDA_VISIBLE_DEVICES")) or node
+    if variant == "metal":
+        return _metal_gpus()
+    return []
 
 
 def detect_ram_bytes() -> int:
@@ -250,207 +230,96 @@ def _cgroup_reclaimable_cache_bytes(stat_paths: tuple[str, ...]) -> int | None:
     return None
 
 
-def _torch_cuda_discover(*, read_free_memory: bool = False) -> list[GPUInfo]:
-    try:
-        import torch
-    except Exception:
-        logger.debug("preflight: torch import failed", exc_info=True)
-        return []
-    try:
-        if not torch.cuda.is_available():
-            return []
-        # ROCm PyTorch maps torch.cuda onto HIP; torch.version.hip distinguishes it.
-        kind = "rocm" if torch.version.hip is not None else "cuda"
-        gpus: list[GPUInfo] = []
-        for i in range(torch.cuda.device_count()):
-            props = torch.cuda.get_device_properties(i)
-            available = int(props.total_memory)
-            if read_free_memory and kind == "rocm":
-                # CUDA takes free from `_join_nvml_free`; no NVML equivalent for AMD.
-                try:
-                    free, _total = torch.cuda.mem_get_info(i)
-                    available = int(free)
-                except Exception:
-                    logger.debug("preflight: hipMemGetInfo failed on device %d; using capacity", i, exc_info=True)
-            # `props.uuid` is absent on older torch builds.
-            uuid = f"GPU-{props.uuid}" if getattr(props, "uuid", None) is not None else None
-            gpus.append(
-                GPUInfo(
-                    index=i,
-                    available_bytes=available,
-                    name=props.name,
-                    uuid=uuid,
-                    kind=kind,
-                    total_bytes=int(props.total_memory),
-                )
-            )
-        return gpus
-    except Exception:
-        logger.debug("preflight: torch.cuda probe failed", exc_info=True)
-        return []
-
-
-def _join_nvml_free(gpus: list[GPUInfo]) -> list[GPUInfo]:
-    """Fill `available_bytes` with NVML's free VRAM, matched by uuid.
-
-    NVML needs no CUDA context but enumerates the whole node, so the uuid join is
-    what lines it up with the `CUDA_VISIBLE_DEVICES`-filtered list. `total_bytes`
-    keeps torch's figure — NVML reports nameplate capacity, several hundred MiB
-    above the driver-usable total. Unmatched entries keep their capacity."""
-    if not any(g.kind == "cuda" and g.uuid for g in gpus):
-        return gpus
-    free_by_uuid = {g.uuid: g.available_bytes for g in _pynvml_node_discover() if g.uuid}
-    if not free_by_uuid:
-        logger.debug("preflight: NVML reported no GPUs; free VRAM falls back to capacity")
-        return gpus
-    joined = []
-    for gpu in gpus:
-        free = free_by_uuid.get(gpu.uuid) if gpu.kind == "cuda" and gpu.uuid else None
-        if free is None:
-            logger.debug("preflight: no NVML match for GPU %d (%s); using capacity", gpu.index, gpu.uuid)
-        joined.append(gpu if free is None else replace(gpu, available_bytes=free))
-    return joined
-
-
-def _pynvml_node_discover() -> list[GPUInfo]:
-    """The physical node's GPUs via NVML, ignoring `CUDA_VISIBLE_DEVICES`.
-
-    `pynvml` is the module name of NVIDIA's `nvidia-ml-py`, pinned transitively by
-    vllm/torch; the deprecated third-party package of that name registers it too."""
+def _nvml_gpus() -> list[GPUInfo]:
     try:
         import pynvml
-    except Exception:
-        logger.debug("preflight: pynvml not installed; node GPU discovery unavailable")
-        return []
-    try:
+
         pynvml.nvmlInit()
     except Exception:
-        logger.debug("preflight: nvmlInit failed; node GPU discovery unavailable", exc_info=True)
+        logger.warning("preflight: NVML unavailable; sizing without GPU figures", exc_info=True)
         return []
     try:
         gpus: list[GPUInfo] = []
         for i in range(pynvml.nvmlDeviceGetCount()):
             handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            name = pynvml.nvmlDeviceGetName(handle)
-            if isinstance(name, bytes):
-                name = name.decode("utf-8", errors="replace")
-            uuid = pynvml.nvmlDeviceGetUUID(handle)
-            if isinstance(uuid, bytes):
-                uuid = uuid.decode("utf-8", errors="replace")
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle, version=pynvml.nvmlMemory_v2)
             gpus.append(
-                GPUInfo(index=i, available_bytes=int(mem.free), name=name, uuid=uuid, total_bytes=int(mem.total))
+                GPUInfo(
+                    index=i,
+                    available_bytes=int(mem.free),
+                    name=pynvml.nvmlDeviceGetName(handle),
+                    uuid=pynvml.nvmlDeviceGetUUID(handle),
+                    total_bytes=int(mem.total) - int(mem.reserved),
+                )
             )
         return gpus
     except Exception:
-        logger.debug("preflight: pynvml node discovery failed", exc_info=True)
+        logger.warning("preflight: NVML read failed; sizing without GPU figures", exc_info=True)
         return []
     finally:
         with contextlib.suppress(Exception):
             pynvml.nvmlShutdown()
 
 
-def _card_sort_key(card: str) -> tuple[int, int | str]:
-    """Sorts rocm-smi's "card0".."card10" keys numerically, not lexicographically
-    (plain string sort would put "card10" before "card2")."""
-    match = re.search(r"\d+$", card)
-    return (0, int(match.group())) if match else (1, card)
+def _visible_gpus(node: list[GPUInfo], devices: str | None) -> list[GPUInfo]:
+    if devices is None:
+        return node
+    visible: list[GPUInfo] = []
+    for entry in filter(None, (d.strip() for d in devices.split(","))):
+        if entry.isdigit():
+            gpu = node[int(entry)] if int(entry) < len(node) else None
+        else:
+            gpu = next((g for g in node if g.uuid and g.uuid.startswith(entry)), None)
+        if gpu is None:
+            break
+        visible.append(replace(gpu, index=len(visible)))
+    return visible
 
 
-def _rocm_smi_node_discover() -> list[GPUInfo]:
-    """AMD GPUs via `rocm-smi --json`, for a torch-less process (pynvml above is
-    NVIDIA-only). Best-effort: any failure returns []."""
-    import json
-    import shutil
-    import subprocess
-
-    binary = shutil.which("rocm-smi")
-    if binary is None:
+def _metal_gpus() -> list[GPUInfo]:
+    try:
+        limit = _metal_working_set_limit()
+    except Exception:
+        logger.warning("preflight: Metal probe failed; sizing without GPU figures", exc_info=True)
         return []
+    available = max(0, min(limit - _metal_bytes_in_use(), detect_available_ram_bytes()))
+    name = _sysctl_str("machdep.cpu.brand_string") or "Apple GPU"
+    return [GPUInfo(index=0, available_bytes=available, name=name, uuid=None, total_bytes=limit)]
+
+
+def _metal_working_set_limit() -> int:
+    import ctypes
+
+    objc = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
+    metal = ctypes.CDLL("/System/Library/Frameworks/Metal.framework/Metal")
+    metal.MTLCreateSystemDefaultDevice.restype = ctypes.c_void_p
+    objc.sel_registerName.restype = ctypes.c_void_p
+    objc.sel_registerName.argtypes = [ctypes.c_char_p]
+    device = metal.MTLCreateSystemDefaultDevice()
+    if not device:
+        raise RuntimeError("MTLCreateSystemDefaultDevice returned no device")
+    send = ctypes.CFUNCTYPE(ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p)(("objc_msgSend", objc))
+    release = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)(("objc_msgSend", objc))
+    try:
+        return int(send(device, objc.sel_registerName(b"recommendedMaxWorkingSetSize")))
+    finally:
+        release(device, objc.sel_registerName(b"release"))
+
+
+def _metal_bytes_in_use() -> int:
     try:
         out = subprocess.run(
-            [binary, "--showproductname", "--showmeminfo", "vram", "--json"],
+            ["ioreg", "-r", "-d", "1", "-w", "0", "-c", "AGXAccelerator"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=5,
             check=True,
-        )
-        data = json.loads(out.stdout)
+        ).stdout
     except Exception:
-        logger.debug("preflight: rocm-smi node discovery failed", exc_info=True)
-        return []
-    gpus: list[GPUInfo] = []
-    for i, card in enumerate(sorted(data, key=_card_sort_key)):
-        info = data[card]
-        try:
-            total = int(info["VRAM Total Memory (B)"])
-            used = int(info["VRAM Total Used Memory (B)"])
-        except (KeyError, ValueError, TypeError):
-            continue
-        name = info.get("Card series") or info.get("Card model") or card
-        gpus.append(
-            GPUInfo(
-                index=i,
-                available_bytes=max(0, total - used),
-                name=str(name),
-                uuid=None,
-                kind="rocm",
-                total_bytes=total,
-            )
-        )
-    return gpus
-
-
-# Fraction of total RAM assumed usable by Metal when `iogpu.wired_limit_mb` reads 0
-# (its default). macOS's real cap is undocumented, so this is a guess — the
-# torch.mps path below reports the OS's own figure and is preferred.
-_METAL_DEFAULT_WORKING_SET_FRACTION = 0.7
-
-
-def _apple_metal_discover() -> list[GPUInfo]:
-    """Apple Silicon's unified-memory GPU as a single synthetic GPUInfo (index 0,
-    kind="mps"). Intel Macs are excluded; torch MPS is Apple-Silicon-only.
-
-    Prefers `torch.mps.recommended_max_memory()`, an OS-reported figure, and falls
-    back to sysctl + psutil so the probe works without torch installed."""
-    import platform
-
-    if platform.system() != "Darwin" or platform.machine() != "arm64":
-        return []
-
-    try:
-        import psutil
-
-        total_ram = psutil.virtual_memory().total
-        available_ram = psutil.virtual_memory().available
-
-        try:
-            import torch
-
-            cap = int(torch.mps.recommended_max_memory()) if torch.backends.mps.is_available() else None
-        except Exception:
-            cap = None
-
-        if cap is None:
-            wired_limit_mb = _sysctl_int("iogpu.wired_limit_mb")
-            cap = (
-                wired_limit_mb * 1024 * 1024 if wired_limit_mb else int(total_ram * _METAL_DEFAULT_WORKING_SET_FRACTION)
-            )
-
-        available_bytes = min(cap, available_ram)
-        name = _sysctl_str("machdep.cpu.brand_string") or "Apple GPU"
-        return [GPUInfo(index=0, available_bytes=available_bytes, name=name, uuid=None, kind="mps", total_bytes=cap)]
-    except Exception:
-        logger.debug("preflight: apple metal probe failed", exc_info=True)
-        return []
-
-
-def _sysctl_int(name: str) -> int | None:
-    try:
-        out = subprocess.run(["sysctl", "-n", name], capture_output=True, text=True, timeout=5, check=True)
-        return int(out.stdout.strip())
-    except Exception:
-        return None
+        logger.debug("preflight: ioreg failed; counting no Metal memory in use", exc_info=True)
+        return 0
+    match = re.search(r'"In use system memory"=(\d+)', out)
+    return int(match.group(1)) if match else 0
 
 
 def _sysctl_str(name: str) -> str | None:

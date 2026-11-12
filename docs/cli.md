@@ -107,7 +107,7 @@ Exits `0` once nothing of the nodes is left, or when none was running, and `1` w
 mship info [--cuda|--cpu|--metal|--thin]
 ```
 
-Plain `mship info` reports the bootstrapper's state: its version, `MSHIP_HOME`, the recorded role, and each provisioned environment with its size (flagging stale ones, and a missing CUDA toolkit). The recorded role does not select the engine report: that needs an explicit role flag or `MSHIP_VARIANT`, and then it runs inside that environment and reports the engine's view: accelerator, Python, cache directories, Ray version and the `llama-server` binary in use. In a container, `docker run <image> info` gives the bootstrapper report; pass the image's role (`info --cpu`) for the engine's.
+Plain `mship info` reports the bootstrapper's state: its version, `MSHIP_HOME`, the recorded role, and each provisioned environment with its size (flagging stale ones, and a missing CUDA toolkit). The recorded role does not select the engine report: that needs an explicit role flag or `MSHIP_VARIANT`, and then it runs inside that environment and reports the engine's view: variant, Python, cache directories, Ray version and the `llama-server` binary in use. In a container, `docker run <image> info` gives the bootstrapper report; pass the image's role (`info --cpu`) for the engine's.
 
 ## Flags
 

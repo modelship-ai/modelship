@@ -50,10 +50,11 @@ def main(argv: list[str] | None = None) -> None:
             if not os.path.isfile(paths.venv_python(variant.name)):
                 sys.exit(engine.describe_staleness(variant, __version__))
         else:
-            gates.check_hardware(variant.requires_accelerator)
+            if command in ("start", "join", "info"):
+                gates.check_hardware(variant.requires_accelerator)
             if not engine.is_current(variant, __version__):
                 sys.exit(engine.describe_staleness(variant, __version__))
-    except (VariantError, gates.GateError, uv_binary.UvError, engine.EngineError) as e:
+    except (VariantError, gates.GateError, uv_binary.UvError, engine.EngineError, llama_cpp.LlamaCppError) as e:
         sys.exit(str(e))
 
     python = paths.venv_python(variant.name)
@@ -80,8 +81,11 @@ def _bootstrap(variant, rest: list[str]) -> None:
 
 def _engine_env(variant) -> dict[str, str]:
     env = dict(os.environ)
+    env["MSHIP_VARIANT"] = variant.name
     env.setdefault("MSHIP_CACHE_DIR", os.path.join(paths.home(), "cache"))
     env.setdefault("MSHIP_NODE_CACHE_DIR", os.path.join(paths.home(), "node-cache"))
+    if variant.name == "cuda":
+        env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 
     if variant.serves_models and (wrapper := llama_cpp.locate(variant)):
         env["MSHIP_LLAMA_SERVER_BIN"] = wrapper

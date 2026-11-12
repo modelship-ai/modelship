@@ -182,6 +182,9 @@ if [[ "$LOADER" == "llama_server" ]]; then
     [[ -n "$LLAMA_SERVER_BIN" ]] || { echo "no llama-server.sh in $IMAGE" >&2; exit 2; }
     BASELINE_ENV_ARGS+=(-e "MSHIP_LLAMA_SERVER_BIN=$LLAMA_SERVER_BIN")
 fi
+VARIANT="$(docker run --rm --entrypoint sh "$IMAGE" -c 'sed -n "s/^MSHIP_VARIANT=//p" "$MSHIP_HOME/env"')"
+[[ -n "$VARIANT" ]] || { echo "no recorded variant in $IMAGE" >&2; exit 2; }
+BASELINE_ENV_ARGS+=(-e "MSHIP_VARIANT=$VARIANT")
 
 start_modelship() {
     docker run -d "${DOCKER_GPU_ARGS[@]}" --ipc=host \

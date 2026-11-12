@@ -78,3 +78,18 @@ def test_locate_without_wrapper_returns_none(tag_dir, capsys):
 def test_locate_never_fetches(tag_dir, monkeypatch):
     monkeypatch.setattr(llama_cpp, "fetch_and_extract_archive", lambda *a, **k: pytest.fail("fetched"))
     assert llama_cpp.locate(_CPU) is None
+
+
+def test_provision_fails_when_the_download_fails(tag_dir, monkeypatch):
+    def fail(*args, **kwargs):
+        raise OSError("HTTP 404")
+
+    monkeypatch.setattr(llama_cpp, "fetch_and_extract_archive", fail)
+    with pytest.raises(llama_cpp.LlamaCppError, match="HTTP 404"):
+        llama_cpp.provision(_CPU)
+
+
+def test_provision_fails_without_a_build_for_the_platform(tag_dir, monkeypatch):
+    monkeypatch.setattr(llama_cpp.platform, "machine", lambda: "riscv64")
+    with pytest.raises(llama_cpp.LlamaCppError, match="no llama.cpp build for Linux/riscv64"):
+        llama_cpp.provision(_CPU)

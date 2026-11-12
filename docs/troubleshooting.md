@@ -56,7 +56,7 @@ A `llama_server` model on `num_gpus: 0` is sized against the RAM its node has fr
 
 ## Deploy stuck pending, never schedules
 
-Every deploy requests an `mship_<loader>` Ray resource; nodes only advertise the loaders they can run. A node missing the right extras (e.g. `-cpu` given a `loader: vllm` config) pends the deploy instead of failing it. Check `ray status`/dashboard for the missing `mship_*` resource, and override a bad probe with `MSHIP_NODE_CAPABILITIES` (JSON). A pending deploy has no timeout and holds its gateway's deploy queue, so later deploys to that gateway wait behind it; `mship deploy --cancel ID` cancels it and rolls back what it submitted.
+Every deploy requests an `mship_<loader>_<gpu|cpu>` Ray resource; nodes only advertise the loaders their variant runs, on the devices it runs them on. A deploy no node can run (e.g. `loader: vllm` with `num_gpus: 1` on `-cpu` nodes only, or with `num_gpus: 0` on `-cuda` nodes only) pends instead of failing. Check `ray status`/dashboard for the missing `mship_*` resource; `MSHIP_NODE_CAPABILITIES` (JSON) replaces a node's set. A pending deploy has no timeout and holds its gateway's deploy queue, so later deploys to that gateway wait behind it; `mship deploy --cancel ID` cancels it and rolls back what it submitted.
 
 ## Can't reach the server from another host
 

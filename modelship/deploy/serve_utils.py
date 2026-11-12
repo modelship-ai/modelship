@@ -17,6 +17,7 @@ import psutil
 import ray
 from ray import serve
 from ray._common.utils import get_default_ray_temp_dir
+from ray._private.accelerators import AppleGPUAcceleratorManager
 from ray.exceptions import AuthenticationError
 from ray.serve.config import HTTPOptions, ProxyLocation
 from ray.serve.schema import ApplicationStatus, LoggingConfig
@@ -26,9 +27,9 @@ from modelship.deploy.local_nodes import kill_groups, worker_groups
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_gpus
-from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars, env_setting
 from modelship.utils.socket_dir import is_private_dir, socket_root
+from modelship.utils.variant import current_variant
 
 if TYPE_CHECKING:
     from ray._private.node import Node
@@ -88,17 +89,16 @@ def shutdown_ray() -> None:
 
 
 def _resolve_node_num_gpus() -> int | None:
-    """GPU count for this node (own-head and join paths alike). Explicit
-    MSHIP_NODE_NUM_GPUS always wins; else metal -> 1 (no Ray Apple plugin), cpu ->
-    0 (closes the cpu-image-with-`--gpus` hole), else None so Ray autodetects the
-    real device count instead of pinning multi-GPU boxes to 1."""
     if gpus := os.environ.get("MSHIP_NODE_NUM_GPUS"):
         return int(gpus)
-    accelerator = detect_accelerator()
-    if accelerator == "metal":
-        return 1
-    if accelerator == "cpu":
+    variant = current_variant()
+    if variant in ("cpu", "thin"):
         return 0
+    if variant == "metal" and AppleGPUAcceleratorManager.get_current_node_num_accelerators() == 0:
+        sys.exit(
+            "error: Ray found no Apple GPU on this Mac (it asks `system_profiler SPDisplaysDataType`). "
+            "Set MSHIP_NODE_NUM_GPUS=1 to advertise it anyway."
+        )
     return None
 
 

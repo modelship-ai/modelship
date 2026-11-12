@@ -69,7 +69,7 @@ def main() -> int:
 
     # The same recommendation/override merge the actor runs; MSHIP_PREFLIGHT
     # applies to both arms.
-    recommendation = run_preflight(m, discover_hardware(read_free_memory=True))
+    recommendation = run_preflight(m, discover_hardware())
     print(f"rawllama preflight recommendation: {recommendation or 'none'}", flush=True)
     merged = merge_with_user_overrides(recommendation, user_config.model_dump(exclude_unset=True), model_name=m.name)
     k = user_config.model_copy(update=merged)

@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -41,69 +41,71 @@ class TestCheckPlatform:
             gates.check_platform()
 
 
-class TestDetectAccelerator:
-    def test_cuda_when_nvidia_smi_lists_a_gpu(self):
-        with patch.object(gates, "_nvidia_devices_present", return_value=True):
-            assert gates.detect_accelerator() == "cuda"
+def _nvml(count: int = 1, cuda: int = 13020, init: int = 0) -> MagicMock:
+    nvml = MagicMock()
+    nvml.nvmlInit_v2.return_value = init
+    nvml.nvmlDeviceGetCount_v2.side_effect = lambda ref: setattr(ref._obj, "value", count) or 0
+    nvml.nvmlSystemGetCudaDriverVersion_v2.side_effect = lambda ref: setattr(ref._obj, "value", cuda) or 0
+    return nvml
 
-    def test_metal_on_apple_silicon(self):
-        with (
-            patch.object(gates, "_nvidia_devices_present", return_value=False),
-            patch("os.path.exists", return_value=False),
-            patch("platform.system", return_value="Darwin"),
-            patch("platform.machine", return_value="arm64"),
-        ):
-            assert gates.detect_accelerator() == "metal"
 
-    def test_cpu_otherwise(self):
-        with (
-            patch.object(gates, "_nvidia_devices_present", return_value=False),
-            patch("os.path.exists", return_value=False),
-            patch("platform.system", return_value="Linux"),
-            patch("platform.machine", return_value="x86_64"),
-        ):
-            assert gates.detect_accelerator() == "cpu"
+class TestNvidiaDriver:
+    def test_reads_the_gpu_count_and_cuda_version(self):
+        nvml = _nvml(count=2, cuda=13020)
+        with patch("ctypes.CDLL", return_value=nvml):
+            assert gates._nvidia_driver() == (2, 13020)
+        nvml.nvmlShutdown.assert_called_once()
 
-    def test_nvidia_smi_present_but_listing_no_devices(self):
-        """A driverless container can still have the binary on PATH."""
-        with (
-            patch("shutil.which", return_value="/usr/bin/nvidia-smi"),
-            patch("subprocess.run") as run,
-        ):
-            run.return_value.returncode = 0
-            run.return_value.stdout = ""
-            assert gates._nvidia_devices_present() is False
+    def test_no_nvml_library(self):
+        with patch("ctypes.CDLL", side_effect=OSError("libnvidia-ml.so.1: cannot open shared object file")):
+            assert gates._nvidia_driver() is None
 
-    def test_nvidia_smi_absent(self):
-        with patch("shutil.which", return_value=None):
-            assert gates._nvidia_devices_present() is False
+    def test_nvml_that_fails_to_initialize(self):
+        with patch("ctypes.CDLL", return_value=_nvml(init=9)):
+            assert gates._nvidia_driver() is None
 
 
 class TestCheckHardware:
-    def test_none_required_always_passes(self):
-        gates.check_hardware(None)
+    @pytest.mark.parametrize("required", [None, "cpu", "thin"])
+    def test_a_variant_without_an_accelerator_always_passes(self, required):
+        with patch.object(gates, "_nvidia_driver") as driver:
+            gates.check_hardware(required)
+        driver.assert_not_called()
 
-    def test_cuda_without_a_gpu_is_refused(self):
+    @pytest.mark.parametrize("driver", [None, (0, 13020)])
+    def test_cuda_without_a_gpu_is_refused(self, driver):
         with (
-            patch.object(gates, "detect_accelerator", return_value="cpu"),
-            pytest.raises(gates.GateError, match="nvidia-smi"),
+            patch.object(gates, "_nvidia_driver", return_value=driver),
+            pytest.raises(gates.GateError, match="libnvidia-ml.so.1"),
         ):
+            gates.check_hardware("cuda")
+
+    def test_cuda_with_a_driver_older_than_cuda_13_is_refused(self):
+        with (
+            patch.object(gates, "_nvidia_driver", return_value=(1, 12080)),
+            pytest.raises(gates.GateError, match="supports CUDA 12.8"),
+        ):
+            gates.check_hardware("cuda")
+
+    def test_cuda_with_a_current_driver_passes(self):
+        with patch.object(gates, "_nvidia_driver", return_value=(1, 13000)):
             gates.check_hardware("cuda")
 
     def test_metal_on_linux_is_refused(self):
         with (
-            patch.object(gates, "detect_accelerator", return_value="cpu"),
+            patch("platform.system", return_value="Linux"),
+            patch("platform.machine", return_value="x86_64"),
             pytest.raises(gates.GateError, match="Apple Silicon"),
         ):
             gates.check_hardware("metal")
 
-    def test_match_passes(self):
-        with patch.object(gates, "detect_accelerator", return_value="cuda"):
-            gates.check_hardware("cuda")
+    def test_metal_on_apple_silicon_passes(self):
+        with patch("platform.system", return_value="Darwin"), patch("platform.machine", return_value="arm64"):
+            gates.check_hardware("metal")
 
     def test_the_toolchain_is_a_separate_check(self):
         with (
-            patch.object(gates, "detect_accelerator", return_value="cuda"),
+            patch.object(gates, "_nvidia_driver", return_value=(1, 13020)),
             patch.object(gates, "cuda_toolkit_gaps", return_value=["ninja"]),
         ):
             gates.check_hardware("cuda")
