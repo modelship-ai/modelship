@@ -25,8 +25,7 @@ from modelship.deploy.capabilities import node_capability_resources
 from modelship.deploy.local_nodes import kill_groups, worker_groups
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
-from modelship.preflight import detect_available_ram_bytes, detect_gpus
-from modelship.utils import parse_memory_bytes
+from modelship.preflight import detect_gpus
 from modelship.utils.accelerator import detect_accelerator
 from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars, env_setting
 from modelship.utils.socket_dir import is_private_dir, socket_root
@@ -88,35 +87,6 @@ def shutdown_ray() -> None:
         logger.exception("ray.shutdown() failed")
 
 
-# Buffer below the free-RAM snapshot, since usage can drift before Ray allocates against it.
-_AUTO_NODE_MEMORY_HEADROOM = 0.9
-
-
-def _resolve_node_memory_kwargs() -> dict[str, int]:
-    """Split this node's memory budget into Ray's object_store_memory and schedulable
-    'memory' resource via Ray's own resolve_object_store_memory, so the split matches
-    however Ray derives these from a total.
-
-    Total is MSHIP_NODE_MEMORY if set, else a host-wide free-RAM probe
-    (detect_available_ram_bytes) scaled by _AUTO_NODE_MEMORY_HEADROOM. Both keys are
-    always set together — leaving 'memory' to auto-derive would fall back to Ray's
-    own estimate instead. Empty if MSHIP_NODE_MEMORY is unset and the probe returns 0."""
-    total = os.environ.get("MSHIP_NODE_MEMORY")
-    if total:
-        total_bytes = parse_memory_bytes(total)
-    else:
-        available = detect_available_ram_bytes()
-        if not available:
-            return {}
-        total_bytes = int(available * _AUTO_NODE_MEMORY_HEADROOM)
-        logger.info("Auto-detected node memory budget: %.1f GiB free host RAM", total_bytes / 1024**3)
-
-    from ray._private.utils import resolve_object_store_memory
-
-    object_store_memory = resolve_object_store_memory(total_bytes)
-    return {"memory": total_bytes - object_store_memory, "object_store_memory": object_store_memory}
-
-
 def _resolve_node_num_gpus() -> int | None:
     """GPU count for this node (own-head and join paths alike). Explicit
     MSHIP_NODE_NUM_GPUS always wins; else metal -> 1 (no Ray Apple plugin), cpu ->
@@ -134,7 +104,7 @@ def _resolve_node_num_gpus() -> int | None:
 
 def _own_cluster_init_kwargs() -> dict[str, Any]:
     """ray.init kwargs to start our own head. Resources auto-detect when
-    MSHIP_NODE_NUM_*/MSHIP_NODE_MEMORY are unset."""
+    MSHIP_NODE_NUM_* are unset."""
     kwargs: dict[str, Any] = {
         "include_dashboard": True,
         "dashboard_host": os.environ.get("MSHIP_RAY_DASHBOARD_HOST", "127.0.0.1"),
@@ -146,9 +116,6 @@ def _own_cluster_init_kwargs() -> dict[str, Any]:
         kwargs["num_cpus"] = int(cpus)
     if (num_gpus := _resolve_node_num_gpus()) is not None:
         kwargs["num_gpus"] = num_gpus
-    if node_memory := _resolve_node_memory_kwargs():
-        kwargs["_memory"] = node_memory["memory"]
-        kwargs["object_store_memory"] = node_memory["object_store_memory"]
     if env_setting("MSHIP_METRICS").lower() == "true":
         # _metrics_export_port is a private ray.init kwarg; guarded by a start_head test.
         kwargs["_metrics_export_port"] = int(os.environ.get("MSHIP_METRICS_PORT", str(_DEFAULT_METRICS_PORT)))
@@ -249,7 +216,6 @@ def _join_ray_cluster(address: str) -> Node:
 
     cpus = os.environ.get("MSHIP_NODE_NUM_CPUS")
     num_gpus = _resolve_node_num_gpus()
-    node_memory = _resolve_node_memory_kwargs()
     # Unset, Ray picks a free port, which the head's Prometheus service-discovery list includes.
     metrics_port = os.environ.get("MSHIP_METRICS_PORT")
     ray_params = RayParams(
@@ -257,8 +223,6 @@ def _join_ray_cluster(address: str) -> Node:
         node_ip_address=services.get_node_ip_address(bootstrap),
         num_cpus=int(cpus) if cpus else None,
         num_gpus=num_gpus,
-        memory=node_memory.get("memory"),
-        object_store_memory=node_memory.get("object_store_memory"),
         metrics_export_port=int(metrics_port) if metrics_port else None,
         resources=node_capability_resources(),
     )
@@ -373,6 +337,8 @@ def start_head(lib_level: int) -> None:
     os.environ.setdefault("RAY_prestart_worker_first_driver", "0")
     os.environ.setdefault("RAY_kill_child_processes_on_worker_exit", "1")
     os.environ.setdefault("RAY_process_group_cleanup_enabled", "1")
+    os.environ.setdefault("RAY_max_direct_call_object_size", str(64 * 1024**2))
+    os.environ.setdefault("RAY_task_rpc_inlined_bytes_limit", str(64 * 1024**2))
     os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
     # ray.init's only hook for the GCS port; unset, Ray picks a random one per start.
     os.environ.setdefault("RAY_GCS_SERVER_PORT", os.environ.get("MSHIP_GCS_PORT", str(_DEFAULT_RAY_GCS_PORT)))
@@ -415,6 +381,8 @@ def join_cluster(address: str) -> None:
     os.environ.setdefault("RAY_prestart_worker_first_driver", "0")
     os.environ.setdefault("RAY_kill_child_processes_on_worker_exit", "1")
     os.environ.setdefault("RAY_process_group_cleanup_enabled", "1")
+    os.environ.setdefault("RAY_max_direct_call_object_size", str(64 * 1024**2))
+    os.environ.setdefault("RAY_task_rpc_inlined_bytes_limit", str(64 * 1024**2))
     os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
     if metrics_port := os.environ.get("MSHIP_METRICS_PORT"):
         _check_ports_free({"--metrics-port": int(metrics_port)})

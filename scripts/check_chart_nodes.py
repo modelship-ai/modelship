@@ -60,7 +60,7 @@ def main() -> int:
         {
             "workerGroups": [
                 _group("req", resources={"requests": {"cpu": "4", "memory": "8Gi"}}),
-                _group("lim", resources={"limits": {"cpu": "2"}}, env=[{"name": "MSHIP_NODE_MEMORY", "value": "4Gi"}]),
+                _group("lim", resources={"limits": {"cpu": "2"}}),
                 _group(
                     "own",
                     resources={"limits": {"cpu": "2", "memory": "4Gi"}},
@@ -123,13 +123,10 @@ def main() -> int:
     assert all(_ports(c)["metrics"] == 8079 for c in (head, req, lim, own, bare))
 
     assert _field_ref(req, "MSHIP_NODE_NUM_CPUS") == "requests.cpu"
-    assert _field_ref(req, "MSHIP_NODE_MEMORY") == "requests.memory"
     assert _field_ref(lim, "MSHIP_NODE_NUM_CPUS") == "limits.cpu"
-    assert _env(lim)["MSHIP_NODE_MEMORY"] == {"name": "MSHIP_NODE_MEMORY", "value": "4Gi"}
     assert [e["name"] for e in own["env"]].count("MSHIP_NODE_NUM_CPUS") == 1
     assert _env(own)["MSHIP_NODE_NUM_CPUS"]["value"] == "1"
-    assert _field_ref(own, "MSHIP_NODE_MEMORY") == "limits.memory"
-    assert not {"MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_MEMORY"} & (_env(bare).keys() | _env(head).keys())
+    assert "MSHIP_NODE_NUM_CPUS" not in _env(bare).keys() | _env(head).keys()
 
     assert cluster["spec"]["gcsFaultToleranceOptions"]["externalStorageNamespace"] == "modelship"
     for c in (head, req, lim, own, bare):

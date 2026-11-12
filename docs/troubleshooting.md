@@ -22,7 +22,7 @@ If you previously used the old `/root/.cache/huggingface` mount path, switch to 
 
 ## `shm-size` too small / deployment is slow
 
-Ray's object store needs shared memory covering `object_store_memory` (~30% of the node's memory budget). Pass `--shm-size=8g` (or larger for big models) — Docker's 64MB default falls well short. If it's too small, Ray doesn't error, it silently falls back to slower disk-backed Plasma storage. When co-locating containers, size it off `--node-memory` explicitly ([multi-node-docker.md](multi-node-docker.md#co-location-running-more-than-one-node-per-physical-box)).
+Ray's object store (up to 256 MiB per node) and vLLM/NCCL need shared memory. Pass `--shm-size=8g` (or larger for big models) — Docker's 64MB default falls well short. If it's too small, Ray doesn't error, it silently falls back to slower disk-backed Plasma storage.
 
 ## arm64 vs amd64 image selection
 
