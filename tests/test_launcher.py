@@ -1,11 +1,13 @@
 import os
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from modelship import launcher
 from modelship.utils.cli import parse_args
+from modelship.utils.config_schema import ModelLoader
 
 
 class TestGuardPythonVersion:
@@ -22,26 +24,21 @@ class TestGuardPythonVersion:
         assert exc.value.code == 1
 
 
-class TestCheckLoaderCapabilities:
-    def test_empty_set_is_noop(self):
-        launcher._check_loader_capabilities(set())  # no raise
+class TestCheckCapabilities:
+    @pytest.mark.parametrize(
+        ("loader", "num_gpus"),
+        [(ModelLoader.vllm, 1), (ModelLoader.llama_server, 0), (ModelLoader.sherpa_onnx, 1)],
+    )
+    def test_passes_a_model_the_node_runs(self, loader, num_gpus):
+        with patch.dict(os.environ, {"MSHIP_VARIANT": "cuda"}, clear=True):
+            launcher._check_capabilities([SimpleNamespace(name="m", loader=loader, num_gpus=num_gpus)])
 
-    def test_llama_server_loader_never_gated(self):
-        with patch("modelship.launcher.importlib.util.find_spec") as mock_find:
-            launcher._check_loader_capabilities({"llama_server"})
-        mock_find.assert_not_called()
-
-    def test_passes_when_module_importable(self):
-        with patch("modelship.launcher.importlib.util.find_spec", return_value=MagicMock()):
-            launcher._check_loader_capabilities({"vllm"})  # no raise
-
-    def test_exits_when_module_missing(self):
+    def test_exits_naming_a_model_the_node_doesnt_run(self):
         with (
-            patch("modelship.launcher.importlib.util.find_spec", return_value=None),
-            pytest.raises(SystemExit) as exc,
+            patch.dict(os.environ, {"MSHIP_VARIANT": "cuda"}, clear=True),
+            pytest.raises(SystemExit, match="model 'm' uses loader: vllm with num_gpus: 0, which a cuda node"),
         ):
-            launcher._check_loader_capabilities({"vllm"})
-        assert exc.value.code == 1
+            launcher._check_capabilities([SimpleNamespace(name="m", loader=ModelLoader.vllm, num_gpus=0)])
 
 
 class TestValidateConfig:
@@ -170,11 +167,11 @@ class TestAdvertisesNoCapacity:
 
 
 class TestCmdRun:
-    def _run(self, command, argv):
+    def _run(self, command, argv, env=None):
         with (
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(os.environ, {"MSHIP_VARIANT": "cpu"} if env is None else env, clear=True),
             patch.object(launcher, "_validate_config", return_value=MagicMock(models=[])) as mock_validate,
-            patch.object(launcher, "_check_loader_capabilities") as mock_gate,
+            patch.object(launcher, "_check_capabilities") as mock_gate,
             patch.object(launcher, "_guard_python_version") as mock_guard,
             patch("modelship.driver.run") as mock_run,
         ):
@@ -212,6 +209,15 @@ class TestCmdRun:
     def test_gate_skipped_on_a_zero_capacity_start(self):
         _, mock_gate, _, _ = self._run("start", ["--node-num-cpus", "0", "--node-num-gpus", "0"])
         mock_gate.assert_not_called()
+
+    @pytest.mark.parametrize("command", ["start", "join"])
+    def test_a_node_needs_a_variant(self, command):
+        with pytest.raises(SystemExit, match="MSHIP_VARIANT is not set"):
+            self._run(command, ["--gcs-address", "h:1"] if command == "join" else [], env={})
+
+    def test_deploy_needs_no_variant(self):
+        _, _, _, mock_run = self._run("deploy", [], env={})
+        mock_run.assert_called_once_with("deploy", [])
 
     def test_driver_not_run_when_guard_exits(self):
         with (
@@ -270,21 +276,27 @@ class TestMain:
 class TestCmdInfo:
     def test_prints_cpu_details(self, capsys):
         with (
-            patch.dict(os.environ, {}, clear=True),
-            patch.object(launcher, "detect_accelerator", return_value="cpu"),
+            patch.dict(os.environ, {"MSHIP_VARIANT": "cpu"}, clear=True),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
         ):
             launcher._cmd_info()
         out = capsys.readouterr().out
-        assert "accelerator: cpu" in out
+        assert "variant: cpu" in out
         assert "cache: /tmp/cache" in out
         assert "llama-server: unset" in out
+
+    def test_reports_an_unset_variant(self, capsys):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
+        ):
+            launcher._cmd_info()
+        assert "variant: unset" in capsys.readouterr().out
 
     def test_prints_inherited_llama_server_bin(self, capsys):
         """The bootstrapper (or the image) sets this before the engine starts."""
         with (
             patch.dict(os.environ, {"MSHIP_LLAMA_SERVER_BIN": "/builds/cuda/llama-server.sh"}, clear=True),
-            patch.object(launcher, "detect_accelerator", return_value="cuda"),
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
         ):
             launcher._cmd_info()

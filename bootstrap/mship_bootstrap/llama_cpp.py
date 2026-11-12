@@ -64,19 +64,27 @@ _ASSETS: dict[tuple[str, str], _Asset] = {
 }
 
 
+class LlamaCppError(Exception):
+    pass
+
+
 def provision(variant: Variant) -> str | None:
-    """Downloads the build if needed. Returns the wrapper path, or None when there
-    is no prebuilt asset for this platform. Never fatal — only the llama_server
-    loader needs it."""
-    return _resolve_or_warn(variant, fetch=True)
+    """Downloads the build if needed. Returns the wrapper path."""
+    if explicit := os.environ.get("MSHIP_LLAMA_SERVER_BIN"):
+        return explicit
+
+    asset = _ASSETS.get((platform.system(), platform.machine()))
+    if asset is None:
+        raise LlamaCppError(f"error: there is no llama.cpp build for {platform.system()}/{platform.machine()}.")
+
+    try:
+        return _resolve(variant, asset, fetch=True)
+    except Exception as e:
+        raise LlamaCppError(f"error: llama.cpp {_LLAMA_CPP_TAG} provisioning failed: {e}") from e
 
 
 def locate(variant: Variant) -> str | None:
     """Same, but never downloads: for `deploy`, which installs nothing."""
-    return _resolve_or_warn(variant, fetch=False)
-
-
-def _resolve_or_warn(variant: Variant, *, fetch: bool) -> str | None:
     if explicit := os.environ.get("MSHIP_LLAMA_SERVER_BIN"):
         return explicit
 
@@ -85,9 +93,9 @@ def _resolve_or_warn(variant: Variant, *, fetch: bool) -> str | None:
         return None
 
     try:
-        return _resolve(variant, asset, fetch=fetch)
+        return _resolve(variant, asset, fetch=False)
     except Exception as e:
-        print(f"warning: llama-server provisioning failed: {e}", file=sys.stderr)
+        print(f"warning: llama-server lookup failed: {e}", file=sys.stderr)
         return None
 
 

@@ -6,11 +6,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 
 from modelship.infer.infer_config import ModelLoader
-from modelship.infer.model_deployment import (
-    ModelDeployment,
-    _reject_unsupported_accelerator,
-    _reject_unsupported_darwin_loader,
-)
+from modelship.infer.model_deployment import ModelDeployment
 from modelship.preflight import ModelNotSizedError
 from modelship.utils.sources import ModelDownloadError
 
@@ -24,69 +20,6 @@ def _make_config():
     config.loader.value = "vllm"
     config.num_gpus = 0
     return config
-
-
-class TestRejectUnsupportedDarwinLoader:
-    @pytest.mark.parametrize("loader", [ModelLoader.vllm, ModelLoader.diffusers])
-    def test_darwin_rejects_unsupported_loaders(self, loader):
-        config = MagicMock(loader=loader, name="test-model")
-        with (
-            patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"),
-            pytest.raises(RuntimeError, match=f"loader={loader.value}"),
-        ):
-            _reject_unsupported_darwin_loader(config)
-
-    def test_darwin_allows_llama_server(self):
-        config = MagicMock(loader=ModelLoader.llama_server, name="test-model")
-        with patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"):
-            _reject_unsupported_darwin_loader(config)  # no raise
-
-    def test_darwin_allows_stable_diffusion_cpp(self):
-        # ggml's runtime backend registry picks up Metal automatically.
-        config = MagicMock(loader=ModelLoader.stable_diffusion_cpp, name="test-model")
-        with patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"):
-            _reject_unsupported_darwin_loader(config)  # no raise
-
-    def test_darwin_allows_whispercpp(self):
-        config = MagicMock(loader=ModelLoader.whispercpp, name="test-model")
-        with patch("modelship.infer.model_deployment.platform.system", return_value="Darwin"):
-            _reject_unsupported_darwin_loader(config)  # no raise
-
-    def test_linux_allows_everything(self):
-        config = MagicMock(loader=ModelLoader.vllm, name="test-model")
-        with patch("modelship.infer.model_deployment.platform.system", return_value="Linux"):
-            _reject_unsupported_darwin_loader(config)  # no raise
-
-
-class TestRejectUnsupportedAccelerator:
-    @pytest.mark.parametrize(("accel", "vendor"), [("rocm", "AMD"), ("xpu", "Intel")])
-    def test_rejects_amd_and_intel_when_gpus_requested(self, accel, vendor):
-        config = MagicMock(num_gpus=1, name="test-model")
-        with (
-            patch("modelship.infer.model_deployment.detect_accelerator", return_value=accel),
-            pytest.raises(RuntimeError, match=vendor),
-        ):
-            _reject_unsupported_accelerator(config)
-
-    def test_allows_amd_when_no_gpus_requested(self):
-        # A CPU-only deploy never touches the GPU, so the vendor is irrelevant.
-        config = MagicMock(num_gpus=0, name="test-model")
-        with patch("modelship.infer.model_deployment.detect_accelerator", return_value="rocm"):
-            _reject_unsupported_accelerator(config)  # no raise
-
-    def test_rejects_a_fractional_gpu_share(self):
-        config = MagicMock(num_gpus=0.5, name="test-model")
-        with (
-            patch("modelship.infer.model_deployment.detect_accelerator", return_value="rocm"),
-            pytest.raises(RuntimeError),
-        ):
-            _reject_unsupported_accelerator(config)
-
-    @pytest.mark.parametrize("accel", ["cuda", "metal", "cpu"])
-    def test_allows_supported_accelerators(self, accel):
-        config = MagicMock(num_gpus=1, name="test-model")
-        with patch("modelship.infer.model_deployment.detect_accelerator", return_value=accel):
-            _reject_unsupported_accelerator(config)  # no raise
 
 
 def _patch_init_globals(**kwargs):
@@ -227,8 +160,6 @@ async def test_loads_once_the_lease_is_granted():
             configure_logging=MagicMock(),
             stamp_gateway=MagicMock(),
             reject_unset_cache_roots=MagicMock(),
-            _reject_unsupported_darwin_loader=MagicMock(),
-            _reject_unsupported_accelerator=MagicMock(),
             BaseInfer=base_infer,
             wait_for_deploy_lease=lease,
         ),

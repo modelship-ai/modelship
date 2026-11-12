@@ -30,7 +30,7 @@ The recommended way to develop Modelship is with VS Code Dev Containers. The con
    uv run python -m modelship.launcher start
    ```
 
-> **Why not `mship start`?** That console script ships only in the separate `bootstrap/` package (the `mship` installer), never synced into this repo's venv; `python -m modelship.launcher <command>` is its equivalent here.
+> **Why not `mship start`?** That console script ships only in the separate `bootstrap/` package (the `mship` installer), never synced into this repo's venv; `python -m modelship.launcher <command>` is its equivalent here. `mship` also passes the engine its `MSHIP_VARIANT`, which `start`/`join` refuse to run without; the `dev` image sets it from its `MSHIP_VARIANT` build arg.
 >
 > **Why the extra steps?** The `dev` target is built for source work: it syncs dependencies from `uv.lock` into `/.venv` and never installs the project, so you sync and start it yourself. The published images instead run `mship bootstrap` at build time and start at `mship start` — see [Docker install](install-docker.md).
 

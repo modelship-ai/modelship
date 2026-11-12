@@ -61,7 +61,9 @@ one is the recorded default, and `mship start --thin` selects another explicitly
 
 Bootstrapping never checks for the accelerator itself, so `--cuda` provisions on a
 host with no GPU — a golden image, or a node whose driver is not up yet. The variant
-flag decides what to install; `deploy` is what refuses to run without the hardware.
+flag decides what to install; `start`, `join` and `info` are what refuse to run without
+the hardware: `--cuda` needs an NVIDIA driver that lists a GPU and supports CUDA 13.0.
+`bootstrap` fails if the llama.cpp download fails.
 
 ## Platform prerequisites
 

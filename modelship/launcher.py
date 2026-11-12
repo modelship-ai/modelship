@@ -6,7 +6,6 @@ Ray-free until it hands off to modelship.driver.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import os
 import platform
 import re
@@ -15,14 +14,14 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from modelship.deploy.capabilities import LOADER_MODULES
-from modelship.utils.accelerator import detect_accelerator
+from modelship.deploy.capabilities import deployment_capability_resources, node_capability_resources
 from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
+from modelship.utils.variant import VariantError, current_variant
 
 if TYPE_CHECKING:
     from pydantic import ValidationError
 
-    from modelship.utils.config_schema import ModelshipConfig
+    from modelship.utils.config_schema import ModelshipConfig, ModelshipModelConfig
 
 _REQUIRED_PYTHON = (3, 12, 10)
 
@@ -61,13 +60,18 @@ def _cmd_run(command: str, argv: list[str]) -> None:
     args = parse_args(command, argv)
     apply_args_to_env(args)
     _guard_python_version()
+    if command in ("start", "join"):
+        try:
+            current_variant()
+        except VariantError as e:
+            sys.exit(f"error: {e}")
 
     remote = command == "deploy" and bool(os.environ.get("MSHIP_RAY_DASHBOARD_URL"))
     if command in ("start", "deploy") and getattr(args, "cancel", None) is None and not remote:
         config = _validate_config(args)
         # Only a start with capacity of its own runs models in this environment.
         if config is not None and command == "start" and not _advertises_no_capacity():
-            _check_loader_capabilities({m.loader.value for m in config.models})
+            _check_capabilities(config.models)
 
     from modelship.driver import run
 
@@ -75,8 +79,7 @@ def _cmd_run(command: str, argv: list[str]) -> None:
 
 
 def _cmd_info() -> None:
-    accelerator = detect_accelerator()
-    print(f"accelerator: {accelerator}")
+    print(f"variant: {os.environ.get('MSHIP_VARIANT') or 'unset'}")
     print(f"python: {platform.python_version()}")
     print(f"cache: {resolve_cache_root()}")
     print(f"node cache: {resolve_node_cache_root()}")
@@ -140,16 +143,14 @@ def _flagged(error: ValidationError) -> str:
     )
 
 
-def _check_loader_capabilities(loaders: set[str]) -> None:
-    for loader in loaders:
-        module = LOADER_MODULES.get(loader)
-        if module and importlib.util.find_spec(module) is None:
-            print(
-                f"error: models.yaml uses loader: {loader}, but '{module}' isn't installed in this "
-                "environment. Use loader: llama_server for GGUF models on this hardware.",
-                file=sys.stderr,
+def _check_capabilities(models: list[ModelshipModelConfig]) -> None:
+    node = node_capability_resources()
+    for model in models:
+        if not deployment_capability_resources(model.loader.value, model.num_gpus).keys() <= node.keys():
+            sys.exit(
+                f"error: model '{model.name}' uses loader: {model.loader.value} with num_gpus: {model.num_gpus:g}, "
+                f"which a {current_variant()} node doesn't run."
             )
-            sys.exit(1)
 
 
 if __name__ == "__main__":

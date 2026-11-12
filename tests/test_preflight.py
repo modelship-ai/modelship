@@ -65,394 +65,127 @@ def _write_model_snapshot(
     return snapshot
 
 
-class TestGpuDiscoveryUuid:
-    """GPUInfo.uuid, populated by the pynvml/torch probes, lets an operator
-    co-locating node containers on one host verify each got a distinct physical GPU."""
-
-    def test_pynvml_probe_reads_uuid(self):
-        from modelship.preflight import base as preflight_base
-
-        mock_pynvml = MagicMock()
-        mock_pynvml.nvmlDeviceGetCount.return_value = 1
-        mock_pynvml.nvmlDeviceGetHandleByIndex.return_value = object()
-        mock_pynvml.nvmlDeviceGetMemoryInfo.return_value = SimpleNamespace(free=1024, total=2048)
-        mock_pynvml.nvmlDeviceGetName.return_value = "Test GPU"
-        mock_pynvml.nvmlDeviceGetUUID.return_value = "GPU-abc123"
-
-        with patch.dict(sys.modules, {"pynvml": mock_pynvml}):
-            gpus = preflight_base._pynvml_node_discover()
-
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid="GPU-abc123", total_bytes=2048)]
-
-    def test_pynvml_probe_decodes_bytes_uuid(self):
-        # Some pynvml builds return bytes for name/UUID rather than str.
-        from modelship.preflight import base as preflight_base
-
-        mock_pynvml = MagicMock()
-        mock_pynvml.nvmlDeviceGetCount.return_value = 1
-        mock_pynvml.nvmlDeviceGetHandleByIndex.return_value = object()
-        mock_pynvml.nvmlDeviceGetMemoryInfo.return_value = SimpleNamespace(free=1024, total=2048)
-        mock_pynvml.nvmlDeviceGetName.return_value = b"Test GPU"
-        mock_pynvml.nvmlDeviceGetUUID.return_value = b"GPU-abc123"
-
-        with patch.dict(sys.modules, {"pynvml": mock_pynvml}):
-            gpus = preflight_base._pynvml_node_discover()
-
-        assert gpus == [GPUInfo(index=0, available_bytes=1024, name="Test GPU", uuid="GPU-abc123", total_bytes=2048)]
-
-    def test_torch_probe_reads_uuid(self):
-        from modelship.preflight import base as preflight_base
-
-        mock_props = SimpleNamespace(name="Test GPU", total_memory=2048, uuid="abc123")
-        mock_torch = MagicMock()
-        mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.device_count.return_value = 1
-        mock_torch.cuda.get_device_properties.return_value = mock_props
-        mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
-        mock_torch.version.hip = None
-
-        with patch.dict(sys.modules, {"torch": mock_torch}):
-            gpus = preflight_base._torch_cuda_discover()
-
-        # torch's uuid has no "GPU-" prefix (unlike pynvml's); the probe adds it so both
-        # sources agree with nvidia-smi's own "GPU-<uuid>" format.
-        assert gpus == [GPUInfo(index=0, available_bytes=2048, name="Test GPU", uuid="GPU-abc123", total_bytes=2048)]
-
-    def test_torch_probe_uuid_none_when_attr_missing(self):
-        # Older torch builds predate the `uuid` device-properties field.
-        from modelship.preflight import base as preflight_base
-
-        mock_props = SimpleNamespace(name="Test GPU", total_memory=2048)
-        mock_torch = MagicMock()
-        mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.device_count.return_value = 1
-        mock_torch.cuda.get_device_properties.return_value = mock_props
-        mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
-        mock_torch.version.hip = None
-
-        with patch.dict(sys.modules, {"torch": mock_torch}):
-            gpus = preflight_base._torch_cuda_discover()
-
-        assert gpus == [GPUInfo(index=0, available_bytes=2048, name="Test GPU", uuid=None, total_bytes=2048)]
-
-    def _mock_torch(self):
-        mock_props = SimpleNamespace(name="Test GPU", total_memory=2048, uuid="abc123")
-        mock_torch = MagicMock()
-        mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.device_count.return_value = 2
-        mock_torch.cuda.get_device_properties.return_value = mock_props
-        mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
-        mock_torch.version.hip = None
-        return mock_torch
-
-    def test_detect_gpus_does_not_read_free_memory_by_default(self):
-        """available_bytes carries capacity, so sizing_total_bytes still holds."""
-        from modelship.preflight import base as preflight_base
-
-        mock_torch = self._mock_torch()
-        with (
-            patch.dict(sys.modules, {"torch": mock_torch}),
-            patch.object(preflight_base, "_pynvml_node_discover") as node,
-        ):
-            gpus = preflight_base.detect_gpus()
-
-        node.assert_not_called()
-        assert [g.available_bytes for g in gpus] == [2048, 2048]
-
-    def test_detect_gpus_joins_nvml_free_on_request(self):
-        """Free comes from NVML; total must stay torch's."""
-        from modelship.preflight import base as preflight_base
-
-        mock_torch = self._mock_torch()
-        node_view = [
-            GPUInfo(index=0, available_bytes=700, name="Test GPU", uuid="GPU-abc123", total_bytes=9999),
-            GPUInfo(index=1, available_bytes=500, name="Test GPU", uuid="GPU-other", total_bytes=9999),
-        ]
-        with (
-            patch.dict(sys.modules, {"torch": mock_torch}),
-            patch.object(preflight_base, "_pynvml_node_discover", return_value=node_view),
-        ):
-            gpus = preflight_base.detect_gpus(read_free_memory=True)
-
-        mock_torch.cuda.mem_get_info.assert_not_called()
-        assert [g.available_bytes for g in gpus] == [700, 700]
-        # NVML's total is the nameplate figure; sizing must keep torch's.
-        assert [g.total_bytes for g in gpus] == [2048, 2048]
-
-    def test_nvml_join_matches_by_uuid_not_position(self):
-        """NVML lists the whole node, torch only the CUDA_VISIBLE_DEVICES subset,
-        so pairing by index reads the wrong card."""
-        from modelship.preflight import base as preflight_base
-
-        masked = [GPUInfo(index=0, available_bytes=2048, name="B", uuid="GPU-b", total_bytes=2048)]
-        node_view = [
-            GPUInfo(index=0, available_bytes=111, name="A", uuid="GPU-a", total_bytes=2048),
-            GPUInfo(index=1, available_bytes=222, name="B", uuid="GPU-b", total_bytes=2048),
-        ]
-        with patch.object(preflight_base, "_pynvml_node_discover", return_value=node_view):
-            assert preflight_base._join_nvml_free(masked)[0].available_bytes == 222
-
-    def test_nvml_join_keeps_capacity_when_uuid_is_unmatched(self):
-        """An unmatched uuid must degrade to capacity, not pair with another card."""
-        from modelship.preflight import base as preflight_base
-
-        masked = [GPUInfo(index=0, available_bytes=2048, name="B", uuid="MIG-xyz", total_bytes=2048)]
-        node_view = [GPUInfo(index=0, available_bytes=111, name="A", uuid="GPU-a", total_bytes=2048)]
-        with patch.object(preflight_base, "_pynvml_node_discover", return_value=node_view):
-            assert preflight_base._join_nvml_free(masked)[0].available_bytes == 2048
-
-    def test_rocm_still_reads_free_through_torch(self):
-        """No NVML equivalent for AMD, so ROCm keeps the hipMemGetInfo path."""
-        from modelship.preflight import base as preflight_base
-
-        mock_torch = self._mock_torch()
-        mock_torch.version.hip = "6.2"
-        with patch.dict(sys.modules, {"torch": mock_torch}):
-            gpus = preflight_base.detect_gpus(read_free_memory=True)
-
-        assert mock_torch.cuda.mem_get_info.call_count == 2
-        assert [g.available_bytes for g in gpus] == [1024, 1024]
-
-    def test_torch_probe_derives_rocm_kind_from_hip_version(self):
-        """ROCm PyTorch maps torch.cuda onto HIP; torch.version.hip is the only
-        signal distinguishing an AMD device from a real CUDA one on this path."""
-        from modelship.preflight import base as preflight_base
-
-        mock_props = SimpleNamespace(name="MI300X", total_memory=2048)
-        mock_torch = MagicMock()
-        mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.device_count.return_value = 1
-        mock_torch.cuda.get_device_properties.return_value = mock_props
-        mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
-        mock_torch.version.hip = "5.7.1"
-
-        with patch.dict(sys.modules, {"torch": mock_torch}):
-            gpus = preflight_base._torch_cuda_discover()
-
-        assert gpus == [GPUInfo(index=0, available_bytes=2048, name="MI300X", uuid=None, kind="rocm", total_bytes=2048)]
-
-    def test_torch_probe_defaults_to_cuda_kind_when_hip_unset(self):
-        from modelship.preflight import base as preflight_base
-
-        mock_props = SimpleNamespace(name="A100", total_memory=2048)
-        mock_torch = MagicMock()
-        mock_torch.cuda.is_available.return_value = True
-        mock_torch.cuda.device_count.return_value = 1
-        mock_torch.cuda.get_device_properties.return_value = mock_props
-        mock_torch.cuda.mem_get_info.return_value = (1024, 2048)
-        mock_torch.version.hip = None
-
-        with patch.dict(sys.modules, {"torch": mock_torch}):
-            gpus = preflight_base._torch_cuda_discover()
-
-        assert gpus[0].kind == "cuda"
+def _gpu(index: int, uuid: str) -> GPUInfo:
+    return GPUInfo(index=index, available_bytes=100 + index, name="GPU", uuid=uuid, total_bytes=200 + index)
 
 
-class TestRocmSmiDiscovery:
-    """_rocm_smi_node_discover() — the non-torch ROCm probe for an
-    llama_server-only install, which has no torch to key off of at all."""
+_NODE = [_gpu(0, "GPU-aaa"), _gpu(1, "GPU-bbb")]
 
-    def test_no_binary_returns_empty(self):
-        from modelship.preflight import base as preflight_base
 
-        with patch("shutil.which", return_value=None):
-            assert preflight_base._rocm_smi_node_discover() == []
-
-    def test_parses_rocm_smi_json(self):
-        from modelship.preflight import base as preflight_base
-
-        payload = json.dumps(
-            {
-                "card0": {
-                    "Card series": "MI300X",
-                    "VRAM Total Memory (B)": "1000",
-                    "VRAM Total Used Memory (B)": "400",
-                }
-            }
+class TestNvmlGpus:
+    def _pynvml(self, **overrides):
+        pynvml = MagicMock(**overrides)
+        pynvml.nvmlDeviceGetCount.return_value = 2
+        pynvml.nvmlDeviceGetHandleByIndex.side_effect = lambda i: i
+        pynvml.nvmlDeviceGetMemoryInfo.side_effect = lambda i, version: SimpleNamespace(
+            total=16311 + i, reserved=461, free=15848 + i
         )
-        mock_result = SimpleNamespace(stdout=payload)
-        with (
-            patch("shutil.which", return_value="/opt/rocm/bin/rocm-smi"),
-            patch("subprocess.run", return_value=mock_result),
-        ):
-            gpus = preflight_base._rocm_smi_node_discover()
+        pynvml.nvmlDeviceGetName.side_effect = lambda i: f"GPU {i}"
+        pynvml.nvmlDeviceGetUUID.side_effect = lambda i: f"GPU-{i}"
+        return pynvml
 
-        assert gpus == [GPUInfo(index=0, available_bytes=600, name="MI300X", uuid=None, kind="rocm", total_bytes=1000)]
+    def test_total_leaves_out_the_driver_reservation(self):
+        from modelship.preflight import base as preflight_base
 
-    def test_binary_failure_returns_empty(self):
+        pynvml = self._pynvml()
+        with patch.dict(sys.modules, {"pynvml": pynvml}):
+            gpus = preflight_base._nvml_gpus()
+        assert gpus == [
+            GPUInfo(index=0, available_bytes=15848, name="GPU 0", uuid="GPU-0", total_bytes=15850),
+            GPUInfo(index=1, available_bytes=15849, name="GPU 1", uuid="GPU-1", total_bytes=15851),
+        ]
+        assert pynvml.nvmlDeviceGetMemoryInfo.call_args.kwargs == {"version": pynvml.nvmlMemory_v2}
+        pynvml.nvmlShutdown.assert_called_once()
+
+    def test_no_nvml_reads_no_gpus(self):
+        from modelship.preflight import base as preflight_base
+
+        pynvml = self._pynvml()
+        pynvml.nvmlInit.side_effect = RuntimeError("no driver")
+        with patch.dict(sys.modules, {"pynvml": pynvml}):
+            assert preflight_base._nvml_gpus() == []
+
+
+class TestVisibleGpus:
+    @pytest.mark.parametrize(
+        ("devices", "uuids"),
+        [
+            (None, ["GPU-aaa", "GPU-bbb"]),
+            ("1", ["GPU-bbb"]),
+            ("1,0", ["GPU-bbb", "GPU-aaa"]),
+            ("GPU-bb", ["GPU-bbb"]),
+            ("0,7,1", ["GPU-aaa"]),
+            ("", ["GPU-aaa", "GPU-bbb"]),
+            ("-1", []),
+        ],
+    )
+    def test_follows_cuda_visible_devices(self, devices, uuids):
+        from modelship.preflight import base as preflight_base
+
+        visible = preflight_base._visible_gpus(_NODE, devices)
+        assert [g.uuid for g in visible] == uuids
+        assert [g.index for g in visible] == list(range(len(uuids)))
+
+
+class TestDetectGpus:
+    @pytest.mark.parametrize(("devices", "uuids"), [("1", ["GPU-bbb"]), ("", ["GPU-aaa", "GPU-bbb"]), ("-1", [])])
+    def test_cuda_reads_the_visible_gpus_else_the_whole_node(self, monkeypatch, devices, uuids):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("MSHIP_VARIANT", "cuda")
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", devices)
+        with patch.object(preflight_base, "_nvml_gpus", return_value=_NODE):
+            assert [g.uuid for g in preflight_base.detect_gpus()] == uuids
+
+    def test_metal_reads_the_metal_device(self, monkeypatch):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("MSHIP_VARIANT", "metal")
+        with patch.object(preflight_base, "_metal_gpus", return_value=[_NODE[0]]):
+            assert preflight_base.detect_gpus() == [_NODE[0]]
+
+    @pytest.mark.parametrize("variant", ["cpu", "thin"])
+    def test_other_variants_read_no_gpu(self, monkeypatch, variant):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("MSHIP_VARIANT", variant)
+        with patch.object(preflight_base, "_nvml_gpus") as nvml:
+            assert preflight_base.detect_gpus() == []
+        nvml.assert_not_called()
+
+
+class TestMetalGpus:
+    @pytest.mark.parametrize(("in_use", "free_ram", "available"), [(2, 100, 8), (2, 5, 5), (12, 100, 0)])
+    def test_free_is_the_limit_less_what_is_in_use_capped_by_free_ram(self, in_use, free_ram, available):
         from modelship.preflight import base as preflight_base
 
         with (
-            patch("shutil.which", return_value="/opt/rocm/bin/rocm-smi"),
-            patch("subprocess.run", side_effect=OSError("boom")),
+            patch.object(preflight_base, "_metal_working_set_limit", return_value=10),
+            patch.object(preflight_base, "_metal_bytes_in_use", return_value=in_use),
+            patch.object(preflight_base, "detect_available_ram_bytes", return_value=free_ram),
+            patch.object(preflight_base, "_sysctl_str", return_value="Apple M2 Pro"),
         ):
-            assert preflight_base._rocm_smi_node_discover() == []
+            gpus = preflight_base._metal_gpus()
+        assert gpus == [GPUInfo(index=0, available_bytes=available, name="Apple M2 Pro", uuid=None, total_bytes=10)]
 
-    def test_orders_cards_numerically_not_lexicographically(self):
+    def test_a_failed_probe_reads_no_gpu(self):
         from modelship.preflight import base as preflight_base
 
-        def card(n):
-            return {
-                f"card{n}": {
-                    "Card series": f"MI300X-{n}",
-                    "VRAM Total Memory (B)": "1000",
-                    "VRAM Total Used Memory (B)": "0",
-                }
-            }
+        with patch.object(preflight_base, "_metal_working_set_limit", side_effect=OSError("no Metal")):
+            assert preflight_base._metal_gpus() == []
 
-        payload = {}
-        for n in (0, 1, 2, 10):
-            payload.update(card(n))
-        mock_result = SimpleNamespace(stdout=json.dumps(payload))
-        with (
-            patch("shutil.which", return_value="/opt/rocm/bin/rocm-smi"),
-            patch("subprocess.run", return_value=mock_result),
-        ):
-            gpus = preflight_base._rocm_smi_node_discover()
-
-        assert [gpu.name for gpu in gpus] == ["MI300X-0", "MI300X-1", "MI300X-2", "MI300X-10"]
-        assert [gpu.index for gpu in gpus] == [0, 1, 2, 3]
-
-
-class TestAppleMetalDiscovery:
-    """_apple_metal_discover() — darwin+arm64 only, torch.mps preferred over the
-    sysctl/psutil heuristic, checked last in detect_gpus() so CUDA wins when present."""
-
-    def _mock_psutil(self, total, available):
-        mock_psutil = MagicMock()
-        mock_psutil.virtual_memory.return_value = SimpleNamespace(total=total, available=available)
-        return mock_psutil
-
-    def test_non_darwin_returns_empty(self):
+    def test_reads_the_in_use_figure_from_ioreg(self):
         from modelship.preflight import base as preflight_base
 
-        with (
-            patch("platform.system", return_value="Linux"),
-            patch("platform.machine", return_value="x86_64"),
-        ):
-            assert preflight_base._apple_metal_discover() == []
+        out = '"PerformanceStatistics" = {"Alloc system memory"=999,"In use system memory"=236978176,"Tiler"=1}'
+        with patch.object(preflight_base.subprocess, "run", return_value=SimpleNamespace(stdout=out)):
+            assert preflight_base._metal_bytes_in_use() == 236978176
 
-    def test_darwin_intel_returns_empty(self):
+    def test_a_failed_ioreg_counts_nothing_in_use(self):
         from modelship.preflight import base as preflight_base
 
-        with (
-            patch("platform.system", return_value="Darwin"),
-            patch("platform.machine", return_value="x86_64"),
-        ):
-            assert preflight_base._apple_metal_discover() == []
-
-    def test_darwin_arm64_returns_single_mps_gpu(self):
-        from modelship.preflight import base as preflight_base
-
-        mock_psutil = self._mock_psutil(total=16 * 1024**3, available=8 * 1024**3)
-        with (
-            patch("platform.system", return_value="Darwin"),
-            patch("platform.machine", return_value="arm64"),
-            patch.dict(sys.modules, {"psutil": mock_psutil, "torch": None}),
-            patch.object(preflight_base, "_sysctl_int", return_value=None),
-            patch.object(preflight_base, "_sysctl_str", return_value="Apple M1 Pro"),
-        ):
-            gpus = preflight_base._apple_metal_discover()
-
-        assert len(gpus) == 1
-        assert gpus[0].kind == "mps"
-        assert gpus[0].index == 0
-        assert gpus[0].name == "Apple M1 Pro"
-
-    def test_torch_mps_recommendation_preferred_over_sysctl(self):
-        from modelship.preflight import base as preflight_base
-
-        mock_psutil = self._mock_psutil(total=16 * 1024**3, available=16 * 1024**3)
-        mock_torch = MagicMock()
-        mock_torch.backends.mps.is_available.return_value = True
-        mock_torch.mps.recommended_max_memory.return_value = 5 * 1024**3
-        with (
-            patch("platform.system", return_value="Darwin"),
-            patch("platform.machine", return_value="arm64"),
-            patch.dict(sys.modules, {"psutil": mock_psutil, "torch": mock_torch}),
-            patch.object(preflight_base, "_sysctl_str", return_value="Apple M1 Pro"),
-        ):
-            gpus = preflight_base._apple_metal_discover()
-
-        # cap (5 GiB, from torch) < available (16 GiB) -> cap wins.
-        assert gpus[0].available_bytes == 5 * 1024**3
-
-    def test_clamp_uses_available_when_smaller_than_cap(self):
-        from modelship.preflight import base as preflight_base
-
-        mock_psutil = self._mock_psutil(total=16 * 1024**3, available=2 * 1024**3)
-        mock_torch = MagicMock()
-        mock_torch.backends.mps.is_available.return_value = True
-        mock_torch.mps.recommended_max_memory.return_value = 10 * 1024**3
-        with (
-            patch("platform.system", return_value="Darwin"),
-            patch("platform.machine", return_value="arm64"),
-            patch.dict(sys.modules, {"psutil": mock_psutil, "torch": mock_torch}),
-            patch.object(preflight_base, "_sysctl_str", return_value="Apple M1 Pro"),
-        ):
-            gpus = preflight_base._apple_metal_discover()
-
-        # available (2 GiB) < cap (10 GiB) -> available wins.
-        assert gpus[0].available_bytes == 2 * 1024**3
-
-    def test_falls_back_to_wired_limit_sysctl_when_torch_unavailable(self):
-        from modelship.preflight import base as preflight_base
-
-        mock_psutil = self._mock_psutil(total=16 * 1024**3, available=16 * 1024**3)
-        with (
-            patch("platform.system", return_value="Darwin"),
-            patch("platform.machine", return_value="arm64"),
-            patch.dict(sys.modules, {"psutil": mock_psutil, "torch": None}),
-            patch.object(preflight_base, "_sysctl_int", return_value=4096),  # MB
-            patch.object(preflight_base, "_sysctl_str", return_value="Apple M1 Pro"),
-        ):
-            gpus = preflight_base._apple_metal_discover()
-
-        assert gpus[0].available_bytes == 4096 * 1024 * 1024
-
-    def test_detect_gpus_prefers_cuda_over_metal(self):
-        from modelship.preflight import base as preflight_base
-
-        cuda_gpu = GPUInfo(index=0, available_bytes=1, name="cuda-gpu", uuid=None)
-        with (
-            patch.object(preflight_base, "_torch_cuda_discover", return_value=[cuda_gpu]),
-            patch.object(preflight_base, "_apple_metal_discover") as mock_metal,
-        ):
-            gpus = preflight_base.detect_gpus()
-
-        assert gpus == [cuda_gpu]
-        mock_metal.assert_not_called()
-
-    def test_detect_gpus_falls_back_to_metal_when_no_cuda(self):
-        from modelship.preflight import base as preflight_base
-
-        mps_gpu = GPUInfo(index=0, available_bytes=1, name="Apple GPU", uuid=None, kind="mps")
-        with (
-            patch.object(preflight_base, "_torch_cuda_discover", return_value=[]),
-            patch.object(preflight_base, "_pynvml_node_discover", return_value=[]),
-            patch.object(preflight_base, "_rocm_smi_node_discover", return_value=[]),
-            patch.object(preflight_base, "_apple_metal_discover", return_value=[mps_gpu]),
-        ):
-            gpus = preflight_base.detect_gpus()
-
-        assert gpus == [mps_gpu]
-
-    def test_detect_gpus_tries_rocm_smi_before_metal(self):
-        """pynvml is NVIDIA-only, so a torch-less ROCm install (llama_server-only)
-        needs a chance to answer via rocm-smi before falling all the way to Metal."""
-        from modelship.preflight import base as preflight_base
-
-        rocm_gpu = GPUInfo(index=0, available_bytes=1, name="MI300X", uuid=None, kind="rocm")
-        with (
-            patch.object(preflight_base, "_torch_cuda_discover", return_value=[]),
-            patch.object(preflight_base, "_pynvml_node_discover", return_value=[]),
-            patch.object(preflight_base, "_rocm_smi_node_discover", return_value=[rocm_gpu]),
-            patch.object(preflight_base, "_apple_metal_discover") as mock_metal,
-        ):
-            gpus = preflight_base.detect_gpus()
-
-        assert gpus == [rocm_gpu]
-        mock_metal.assert_not_called()
+        with patch.object(preflight_base.subprocess, "run", side_effect=FileNotFoundError("ioreg")):
+            assert preflight_base._metal_bytes_in_use() == 0
 
 
 class TestMergeWithUserOverrides:

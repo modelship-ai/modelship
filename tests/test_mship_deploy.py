@@ -1077,22 +1077,9 @@ class TestBuildDeploymentOptions:
         )
         opts = build_deployment_options(config)
         assert opts["ray_actor_options"]["num_gpus"] == 0
+        assert opts["ray_actor_options"]["resources"] == {"mship_sherpa_onnx_cpu": 0.001}
 
-    def test_sherpa_onnx_num_gpus_forced_to_zero_on_darwin_too(self):
-        # Unlike the ggml loaders' Metal carve-out, sherpa_onnx has no CUDA path
-        # on any platform, so the force-zero applies unconditionally.
-        config = ModelshipModelConfig(
-            name="test-model",
-            model="kokoro-en-v0_19",
-            usecase=ModelUsecase.tts,
-            loader=ModelLoader.sherpa_onnx,
-            num_gpus=1,
-        )
-        with patch("modelship.deploy.actor_options.platform.system", return_value="Darwin"):
-            opts = build_deployment_options(config)
-        assert opts["ray_actor_options"]["num_gpus"] == 0
-
-    def test_stable_diffusion_cpp_force_cpu_off_darwin(self):
+    def test_stable_diffusion_cpp_keeps_its_gpu_and_asks_for_a_gpu_node(self):
         config = ModelshipModelConfig(
             name="test-model",
             model="some-model",
@@ -1100,23 +1087,9 @@ class TestBuildDeploymentOptions:
             loader=ModelLoader.stable_diffusion_cpp,
             num_gpus=1,
         )
-        with patch("modelship.deploy.actor_options.platform.system", return_value="Linux"):
-            opts = build_deployment_options(config)
-        assert opts["ray_actor_options"]["num_gpus"] == 0
-
-    def test_stable_diffusion_cpp_honors_num_gpus_on_darwin(self):
-        # ggml picks up Metal via its own runtime backend registry regardless of Ray —
-        # forcing 0 here would let Ray co-schedule another GPU actor onto the same GPU.
-        config = ModelshipModelConfig(
-            name="test-model",
-            model="some-model",
-            usecase=ModelUsecase.image,
-            loader=ModelLoader.stable_diffusion_cpp,
-            num_gpus=1,
-        )
-        with patch("modelship.deploy.actor_options.platform.system", return_value="Darwin"):
-            opts = build_deployment_options(config)
+        opts = build_deployment_options(config)
         assert opts["ray_actor_options"]["num_gpus"] == 1
+        assert opts["ray_actor_options"]["resources"] == {"mship_stable_diffusion_cpp_gpu": 0.001}
 
     def test_passthrough_env_vars_forwarded_to_replicas(self, monkeypatch):
         monkeypatch.setenv("MSHIP_METRICS", "false")
@@ -1283,15 +1256,12 @@ class TestBuildDeploymentOptions:
 
 
 class TestBuildDeploymentOptionsCapabilityResources:
-    """The `mship_<loader>` capability resource must gate scheduling regardless of
-    num_gpus, on single-slot, multi-slot (PG), and stable_diffusion_cpp deploys."""
-
     def test_single_slot_requests_capability(self):
         config = ModelshipModelConfig(
             name="m", model="x", usecase=ModelUsecase.generate, loader=ModelLoader.vllm, num_gpus=0
         )
         opts = build_deployment_options(config)
-        assert opts["ray_actor_options"]["resources"] == {"mship_vllm": 0.001}
+        assert opts["ray_actor_options"]["resources"] == {"mship_vllm_cpu": 0.001}
 
     def test_multi_slot_requests_capability_on_every_bundle_not_actor(self):
         config = ModelshipModelConfig(
@@ -1304,22 +1274,22 @@ class TestBuildDeploymentOptionsCapabilityResources:
         )
         opts = build_deployment_options(config)
         assert "resources" not in opts["ray_actor_options"]
-        assert all(b["mship_vllm"] == 0.001 for b in opts["placement_group_bundles"])
+        assert all(b["mship_vllm_gpu"] == 0.001 for b in opts["placement_group_bundles"])
 
     def test_stable_diffusion_cpp_requests_capability(self):
         config = ModelshipModelConfig(
             name="m", model="x", usecase=ModelUsecase.image, loader=ModelLoader.stable_diffusion_cpp, num_gpus=0
         )
-        with patch("modelship.deploy.actor_options.platform.system", return_value="Linux"):
-            opts = build_deployment_options(config)
-        assert opts["ray_actor_options"]["resources"] == {"mship_stable_diffusion_cpp": 0.001}
+        opts = build_deployment_options(config)
+        assert opts["ray_actor_options"]["resources"] == {"mship_stable_diffusion_cpp_cpu": 0.001}
 
-    def test_llama_server_requests_capability_regardless_of_num_gpus(self):
+    @pytest.mark.parametrize(("num_gpus", "resource"), [(0, "mship_llama_server_cpu"), (1, "mship_llama_server_gpu")])
+    def test_llama_server_requests_the_capability_for_its_device(self, num_gpus, resource):
         config = ModelshipModelConfig(
-            name="m", model="x", usecase=ModelUsecase.generate, loader=ModelLoader.llama_server, num_gpus=0
+            name="m", model="x", usecase=ModelUsecase.generate, loader=ModelLoader.llama_server, num_gpus=num_gpus
         )
         opts = build_deployment_options(config)
-        assert opts["ray_actor_options"]["resources"] == {"mship_llama_server": 0.001}
+        assert opts["ray_actor_options"]["resources"] == {resource: 0.001}
 
 
 class TestReservationTotals:
@@ -1538,6 +1508,18 @@ class TestValidateNodeGpuReservation:
         ):
             serve_utils._validate_node_gpu_reservation()
 
+    def test_reservation_against_a_mask_that_hides_every_gpu_raises(self):
+        from modelship.deploy import serve_utils
+        from modelship.preflight import base as preflight_base
+
+        env = {"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "1", "CUDA_VISIBLE_DEVICES": "-1"}
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch.object(preflight_base, "_nvml_gpus", return_value=self._fake_gpus(2)),
+            pytest.raises(RuntimeError, match="exceeds the 0 GPU"),
+        ):
+            serve_utils._validate_node_gpu_reservation()
+
     def test_reservation_unset_skips_check(self):
         from modelship.deploy import serve_utils
 
@@ -1575,6 +1557,10 @@ class TestValidateNodeGpuReservation:
 
 
 class TestStartHead:
+    @pytest.fixture(autouse=True)
+    def _cpu_variant(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_VARIANT", "cpu")
+
     @pytest.fixture(autouse=True)
     def ports_check(self):
         from modelship.deploy import serve_utils
@@ -1649,43 +1635,45 @@ class TestStartHead:
         kwargs = self._init_call({"MSHIP_METRICS": "true", "MSHIP_METRICS_PORT": "9090"})
         assert kwargs["_metrics_export_port"] == 9090
 
-    def test_cuda_multi_gpu_left_unset_for_autodetect(self):
-        """A cuda/rocm/xpu node must not be pinned to 1 GPU when MSHIP_NODE_NUM_GPUS
-        is unset — Ray autodetects the real device count."""
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils, "detect_accelerator", return_value="cuda"):
-            kwargs = self._init_call({}, pop=("MSHIP_NODE_NUM_GPUS",))
+    def test_a_cuda_node_leaves_the_count_to_ray(self):
+        kwargs = self._init_call({"MSHIP_VARIANT": "cuda"}, pop=("MSHIP_NODE_NUM_GPUS",))
         assert "num_gpus" not in kwargs
 
-    def test_cpu_accelerator_forces_zero_gpus(self):
-        """A torch CPU build must advertise 0 GPUs even if nvidia-smi/NVML sees hardware."""
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils, "detect_accelerator", return_value="cpu"):
-            kwargs = self._init_call({}, pop=("MSHIP_NODE_NUM_GPUS",))
+    @pytest.mark.parametrize("variant", ["cpu", "thin"])
+    def test_a_node_without_gpus_advertises_none(self, variant):
+        kwargs = self._init_call({"MSHIP_VARIANT": variant}, pop=("MSHIP_NODE_NUM_GPUS",))
         assert kwargs["num_gpus"] == 0
 
-    def test_metal_detected_advertises_one_gpu(self):
+    def test_a_metal_node_leaves_the_count_to_ray(self):
         from modelship.deploy import serve_utils
 
-        with patch.object(serve_utils, "detect_accelerator", return_value="metal"):
-            kwargs = self._init_call({}, pop=("MSHIP_NODE_NUM_GPUS",))
-        assert kwargs["num_gpus"] == 1
+        with patch.object(serve_utils.AppleGPUAcceleratorManager, "get_current_node_num_accelerators", return_value=1):
+            kwargs = self._init_call({"MSHIP_VARIANT": "metal"}, pop=("MSHIP_NODE_NUM_GPUS",))
+        assert "num_gpus" not in kwargs
 
-    def test_explicit_zero_gpus_wins_over_metal_detection(self):
+    def test_a_metal_node_ray_finds_no_gpu_on_refuses_to_start(self):
         from modelship.deploy import serve_utils
 
-        with patch.object(serve_utils, "detect_accelerator", return_value="metal"):
-            kwargs = self._init_call({"MSHIP_NODE_NUM_GPUS": "0"})
+        with (
+            patch.object(serve_utils.AppleGPUAcceleratorManager, "get_current_node_num_accelerators", return_value=0),
+            pytest.raises(SystemExit, match="Ray found no Apple GPU"),
+        ):
+            self._init_call({"MSHIP_VARIANT": "metal"}, pop=("MSHIP_NODE_NUM_GPUS",))
+
+    def test_explicit_gpu_count_wins_over_the_variant(self):
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils.AppleGPUAcceleratorManager, "get_current_node_num_accelerators") as count:
+            kwargs = self._init_call({"MSHIP_VARIANT": "metal", "MSHIP_NODE_NUM_GPUS": "0"})
         assert kwargs["num_gpus"] == 0
+        count.assert_not_called()
 
     def test_resources_forwarded_from_capability_probe(self):
         from modelship.deploy import serve_utils
 
-        with patch.object(serve_utils, "node_capability_resources", return_value={"mship_vllm": 1}):
+        with patch.object(serve_utils, "node_capability_resources", return_value={"mship_vllm_gpu": 1}):
             kwargs = self._init_call({})
-        assert kwargs["resources"] == {"mship_vllm": 1}
+        assert kwargs["resources"] == {"mship_vllm_gpu": 1}
 
     def test_dashboard_always_on_bound_localhost(self):
         kwargs = self._init_call({}, pop=("MSHIP_RAY_DASHBOARD_HOST",))
@@ -2023,6 +2011,10 @@ class TestJoinRayCluster:
     def _reset(self, _reset_join_node):
         yield
 
+    @pytest.fixture(autouse=True)
+    def _cpu_variant(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_VARIANT", "cpu")
+
     def _join(self, env, pop=(), bootstrap="10.0.0.1:6380"):
         from modelship.deploy import serve_utils
 
@@ -2061,43 +2053,28 @@ class TestJoinRayCluster:
         kw = self._join({}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))["params_kwargs"]
         assert kw["num_cpus"] is None
 
-    def test_cuda_multi_gpu_left_unset_for_autodetect(self):
-        """Regression test: a cuda/rocm/xpu joiner must NOT be pinned to 1 GPU
-        when MSHIP_NODE_NUM_GPUS is unset — Ray autodetects the real count."""
+    @pytest.mark.parametrize(("variant", "expected"), [("cuda", None), ("cpu", 0), ("thin", 0)])
+    def test_the_variant_decides_the_gpu_count(self, variant, expected):
+        kw = self._join({"MSHIP_VARIANT": variant}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))
+        assert kw["params_kwargs"]["num_gpus"] == expected
+
+    def test_a_metal_node_leaves_the_count_to_ray(self):
         from modelship.deploy import serve_utils
 
-        with patch.object(serve_utils, "detect_accelerator", return_value="cuda"):
-            kw = self._join({}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))["params_kwargs"]
+        with patch.object(serve_utils.AppleGPUAcceleratorManager, "get_current_node_num_accelerators", return_value=1):
+            kw = self._join({"MSHIP_VARIANT": "metal"}, pop=("MSHIP_NODE_NUM_GPUS",))["params_kwargs"]
         assert kw["num_gpus"] is None
 
-    def test_cpu_accelerator_forces_zero_gpus(self):
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils, "detect_accelerator", return_value="cpu"):
-            kw = self._join({}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))["params_kwargs"]
-        assert kw["num_gpus"] == 0
-
-    def test_metal_detected_advertises_one_gpu_when_unset(self):
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils, "detect_accelerator", return_value="metal"):
-            kw = self._join({}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))["params_kwargs"]
-        assert kw["num_gpus"] == 1
-
     def test_explicit_zero_gpus_honored(self):
-        # Thin-image case: MSHIP_NODE_NUM_GPUS=0 is a real reservation, not "unset".
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils, "detect_accelerator", return_value="metal"):
-            kw = self._join({"MSHIP_NODE_NUM_GPUS": "0"})["params_kwargs"]
+        kw = self._join({"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "0"})["params_kwargs"]
         assert kw["num_gpus"] == 0
 
     def test_resources_forwarded_from_capability_probe(self):
         from modelship.deploy import serve_utils
 
-        with patch.object(serve_utils, "node_capability_resources", return_value={"mship_vllm": 1}):
+        with patch.object(serve_utils, "node_capability_resources", return_value={"mship_vllm_gpu": 1}):
             kw = self._join({})["params_kwargs"]
-        assert kw["resources"] == {"mship_vllm": 1}
+        assert kw["resources"] == {"mship_vllm_gpu": 1}
 
     def test_metrics_port_random_when_unset(self):
         kw = self._join({}, pop=("MSHIP_METRICS_PORT",))["params_kwargs"]

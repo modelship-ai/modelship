@@ -77,7 +77,7 @@ docker run --rm ghcr.io/modelship-ai/modelship:latest-cpu info
 
 reports the bootstrapper's state: which variant the image was built for, where its
 environment lives, and whether it is current. Adding the variant flag
-(`info --cpu`) reports the engine's own view instead — accelerator, Python, cache
+(`info --cpu`) reports the engine's own view instead — variant, Python, cache
 directory, Ray version, and the `llama-server` binary in use.
 
 ## What is in the image

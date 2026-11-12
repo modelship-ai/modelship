@@ -2,7 +2,7 @@
 config must be a name here, or a local directory whose basename is one.
 
 No network access and no `import sherpa_onnx` — must be importable without the
-wheel installed, same as capabilities.py's LOADER_MODULES.
+wheel installed.
 """
 
 import os

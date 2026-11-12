@@ -44,15 +44,6 @@ class StableDiffusionCppInfer(BaseInfer):
         mship_log_level = env_setting("MSHIP_LOG_LEVEL").upper()
         self._verbose = mship_log_level == "TRACE"
 
-        # CPU-only in v1: the actor is given num_gpus=0 in actor_options, so warn
-        # if the config asked for GPUs (the request is ignored).
-        if model_config.num_gpus and model_config.num_gpus > 0:
-            logger.warning(
-                "num_gpus=%s is ignored for model '%s': stable_diffusion_cpp currently only supports CPU.",
-                model_config.num_gpus,
-                model_config.name,
-            )
-
         self.sd: StableDiffusion | None = None
         self.serving_image: OpenAIServingImage | None = None
         logger.info(

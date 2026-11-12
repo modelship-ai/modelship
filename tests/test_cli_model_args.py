@@ -1,6 +1,7 @@
 """The `--model` flags must produce a models.yaml entry indistinguishable from the
 hand-written one."""
 
+import os
 import subprocess
 import sys
 from typing import get_args
@@ -156,7 +157,8 @@ class TestFailsBeforeRay:
             "except SystemExit as e:\n"
             "    print('exit', e.code, 'ray' in sys.modules)\n"
         )
-        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+        env = {**os.environ, "MSHIP_VARIANT": "cpu"}
+        result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
         assert result.stdout.strip() == "exit 1 False"
 
 

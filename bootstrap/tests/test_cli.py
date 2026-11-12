@@ -141,6 +141,26 @@ class TestEngineEnvironment:
         cli.main(["deploy", "--cpu"])
         assert provisioned.call_args[0][2]["MSHIP_NODE_CACHE_DIR"] == "/scratch/node-cache"
 
+    @pytest.mark.parametrize("variant", ["cuda", "cpu", "metal", "thin"])
+    def test_the_engine_knows_its_variant(self, provisioned, variant):
+        cli.main(["deploy", f"--{variant}"])
+        assert provisioned.call_args[0][2]["MSHIP_VARIANT"] == variant
+
+    def test_cuda_numbers_gpus_in_pci_bus_order(self, provisioned, monkeypatch):
+        monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
+        cli.main(["deploy", "--cuda"])
+        assert provisioned.call_args[0][2]["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
+
+    def test_an_explicit_device_order_is_preserved(self, provisioned, monkeypatch):
+        monkeypatch.setenv("CUDA_DEVICE_ORDER", "FASTEST_FIRST")
+        cli.main(["deploy", "--cuda"])
+        assert provisioned.call_args[0][2]["CUDA_DEVICE_ORDER"] == "FASTEST_FIRST"
+
+    def test_other_variants_leave_the_device_order_alone(self, provisioned, monkeypatch):
+        monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
+        cli.main(["deploy", "--cpu"])
+        assert "CUDA_DEVICE_ORDER" not in provisioned.call_args[0][2]
+
     def test_cuda_checks_for_a_live_device(self, provisioned):
         cli.main(["deploy", "--cuda"])
         cli.llama_cpp.warn_if_no_cuda_device.assert_called_once()
@@ -235,6 +255,12 @@ class TestBootstrap:
             cli.main(["bootstrap", "--cpu"])
         assert not os.path.exists(paths.env_file())
 
+    def test_a_failed_llama_server_download_fails_the_bootstrap(self, provisioned):
+        cli.llama_cpp.provision.side_effect = cli.llama_cpp.LlamaCppError("error: llama.cpp provisioning failed: 404")
+        with pytest.raises(SystemExit, match="404"):
+            cli.main(["bootstrap", "--cpu"])
+        assert not os.path.exists(paths.env_file())
+
     def test_never_checks_the_hardware(self, provisioned):
         cli.main(["bootstrap", "--cuda"])
         cli.gates.check_hardware.assert_not_called()
@@ -257,11 +283,18 @@ class TestBootstrap:
         assert "takes no arguments" in str(exc.value)
 
 
-class TestDeployInstallsNothing:
-    def test_deploy_still_gates_on_hardware(self, provisioned):
-        cli.main(["deploy", "--cuda", "--config", "x"])
+class TestHardwareCheck:
+    @pytest.mark.parametrize("argv", [["start"], ["join", "--gcs-address", "h:1"], ["info"]])
+    def test_a_node_or_info_checks_the_hardware(self, provisioned, argv):
+        cli.main([argv[0], "--cuda", *argv[1:]])
         cli.gates.check_hardware.assert_called_once_with("cuda")
 
+    def test_deploy_skips_it(self, provisioned):
+        cli.main(["deploy", "--cuda", "--config", "x"])
+        cli.gates.check_hardware.assert_not_called()
+
+
+class TestDeployInstallsNothing:
     def test_deploy_never_provisions(self, provisioned):
         cli.main(["deploy", "--cpu", "--config", "x"])
         cli.uv_binary.ensure_uv.assert_not_called()

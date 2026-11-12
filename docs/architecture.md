@@ -45,7 +45,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 | `whispercpp` | `pywhispercpp` | STT | No — CPU everywhere, Metal on Apple Silicon |
 | `sherpa_onnx` | sherpa-onnx | TTS (Kokoro) | No — never touches CUDA |
 
-Every deployment also requests a `mship_<loader>` Ray custom resource (see [Capability-aware scheduling](#capability-aware-scheduling)) alongside `num_gpus`/`GPU`.
+Every deployment also requests a `mship_<loader>_<gpu|cpu>` Ray custom resource (see [Capability-aware scheduling](#capability-aware-scheduling)) alongside `num_gpus`/`GPU`.
 
 A chat or Responses request with `tool_choice: none` reaches every loader without its tools (`BaseInfer.create_chat_completion`, `responses_request_to_chat`), so they are never rendered into the prompt.
 
@@ -111,15 +111,24 @@ Ray schedules deployments across available GPUs based on the `num_gpus` fraction
 
 ### Capability-aware scheduling
 
-`num_gpus`/`num_cpus` describe *how much* hardware a deployment needs, not *whether the node can run the loader at all*. Every node advertises a `mship_<loader>` Ray custom resource (e.g. `mship_vllm`) for each loader whose backend is installed — probed via `importlib.util.find_spec()`, plus a real-binary check for `llama_server` (`modelship/deploy/capabilities.py`). Every deployment requests its loader's resource alongside `num_gpus`/`GPU`, so it only schedules onto a node with that backend present; an unsatisfiable deploy pends, and Ray Serve's own slow-start warning names the missing resource.
+`num_gpus`/`num_cpus` describe *how much* hardware a deployment needs, not *whether the node can run the loader at all*. Every node advertises a `mship_<loader>_<device>` Ray custom resource (e.g. `mship_vllm_gpu`) for each loader its variant runs and each device it runs it on, from one table per variant (`modelship/deploy/capabilities.py`):
 
-This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu` worker nodes, and what stops a `diffusers` model from landing on a `cpu`-image node without `diffusers` installed. `MSHIP_NODE_CAPABILITIES` (JSON) overrides a node's advertised set wholesale.
+| Variant | GPU | CPU |
+|---------|-----|-----|
+| `cuda` | `vllm`, `diffusers`, `llama_server` (x86_64 only) | `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
+| `cpu` | — | `vllm` (Linux only), `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
+| `metal` | `llama_server`, `stable_diffusion_cpp`, `whispercpp` | `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
+| `thin` | — | — |
+
+Every deployment requests its loader's resource for its device — `gpu` when `num_gpus > 0`, `cpu` otherwise — alongside `num_gpus`/`GPU`, so it only schedules onto a node that runs it there; an unsatisfiable deploy pends, and Ray Serve's own slow-start warning names the missing resource. `sherpa_onnx` has no GPU row, so its `num_gpus` is forced to `0`.
+
+This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu` worker nodes, what stops a `diffusers` model from landing on a `cpu` node, and what sends a `num_gpus: 0` `vllm` model to a `cpu` node rather than a `cuda` one. `MSHIP_NODE_CAPABILITIES` (JSON) replaces a node's advertised set.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `modelship/launcher.py` | Entry point behind `mship start` / `join` / `deploy` / `stop` (`python -m modelship.launcher <command>`) — resolves cache root, checks Python version, detects accelerator, hands off to `driver.py` |
+| `modelship/launcher.py` | Entry point behind `mship start` / `join` / `deploy` / `stop` (`python -m modelship.launcher <command>`) — resolves cache root, checks Python version and the variant, hands off to `driver.py` |
 | `modelship/driver.py` | `start` / `join` / `deploy` / `stop`: bring up or attach to Ray, then send a deploy request (`start` converges on its config; `deploy` is additive by default, `--reconcile` to converge exactly) or cancel one |
 | `modelship/deploy/deploy_coordinator.py` | Per-gateway deploy queues, routing versions, node load leases, replica-death counts and fatal errors |
 | `modelship/deploy/diff.py` | A deploy request's diff: each model's action and the order the actions run in |

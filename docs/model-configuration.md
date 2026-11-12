@@ -221,7 +221,7 @@ If it's unset (the default), or a request doesn't carry the header, the caller l
 | `model` | string | HuggingFace repo ID, local path, or `repo:filename` (see [Model source](#model-source)) |
 | `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image`. Defaults to `image` and is otherwise rejected for `diffusers`/`stable_diffusion_cpp`; must be `tts` for `sherpa_onnx` |
 | `loader` | string | `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
-| `num_gpus` | float \| int | Default `0`: the model gets no GPU, and the node's GPUs are hidden from it. Fractional `< 1` shares one GPU — supported by `vllm`, `diffusers`, `llama_server`, and (Metal-only) `whispercpp`; forced to `0` for `sherpa_onnx` and off-Darwin `stable_diffusion_cpp`/`whispercpp`. Integer `≥ 1` requests that many whole GPUs (for `vllm`, auto-sets `tensor_parallel_size = num_gpus` unless tp/pp is already specified). `llama_server`/`whispercpp` reject a non-integer `≥ 1`. See [Sharing one GPU](#sharing-one-gpu) |
+| `num_gpus` | float \| int | Default `0`: the model gets no GPU, and the node's GPUs are hidden from it. Fractional `< 1` shares one GPU — supported by `vllm`, `diffusers`, `llama_server`, and (Metal-only) `whispercpp`; forced to `0` for `sherpa_onnx`. `stable_diffusion_cpp`/`whispercpp` with `num_gpus > 0` schedule only onto a `metal` node. Integer `≥ 1` requests that many whole GPUs (for `vllm`, auto-sets `tensor_parallel_size = num_gpus` unless tp/pp is already specified). `llama_server`/`whispercpp` reject a non-integer `≥ 1`. See [Sharing one GPU](#sharing-one-gpu) |
 | `num_cpus` | float | CPU units to allocate. Default `0.1` |
 | `num_replicas` | int | Fixed Ray Serve replica count. Default `1`. Mutually exclusive with `autoscaling_config`. Above `1`, a `vllm` or `llama_server` model must [set its context length](#scaling-a-deployment) |
 | `autoscaling_config` | object | Autoscale replicas with load instead of a fixed `num_replicas` (see [Autoscaling](#autoscaling)). A `vllm` or `llama_server` model with it must [set its context length](#scaling-a-deployment) |
@@ -246,7 +246,8 @@ Each GPU-capable loader sizes and enforces its share differently:
 | `diffusers` | Hard — `torch.cuda.set_per_process_memory_fraction` caps the process; allocating past it OOMs |
 | `llama_server` | Static — preflight sizes `n_ctx`/`n_gpu_layers` to fit the declared share; llama.cpp allocates upfront and never grows |
 | `whispercpp` | None (Metal only) — `num_gpus > 0` is a plain on/off switch, no VRAM knob to size |
-| `sherpa_onnx`, `stable_diffusion_cpp` (off-Darwin) | N/A — never touch CUDA; `num_gpus` is ignored (forced to `0`) |
+| `stable_diffusion_cpp` | None (Metal only) — `num_gpus > 0` schedules only onto a `metal` node |
+| `sherpa_onnx` | N/A — never touches a GPU; `num_gpus` is ignored (forced to `0`) |
 
 Preflight sizes a fractional deploy from its **declared share of the GPU's total capacity**, not free VRAM at that moment; if free VRAM falls short, it logs a warning naming both numbers.
 
@@ -278,7 +279,7 @@ Each node downloads its own copy of whatever gets scheduled onto it — **not** 
 - Every node that can host a gated model needs `HF_TOKEN` in its own environment; replicas read it from the node, not the driver.
 - A local-path `model:` is resolved on whichever node hosts the replica — the path must exist on every node that could host it; there's no cross-node copying.
 
-A model also only schedules onto a node whose image has that loader's backend installed (`cpu` has no `diffusers`, for instance): every node advertises `mship_<loader>` Ray custom resources for what it can run, and every deploy requests its loader's resource. See [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling) and `MSHIP_NODE_CAPABILITIES` to override the probe.
+A model also only schedules onto a node whose variant runs its loader on the device it asks for (`cpu` has no `diffusers`, and `cuda` runs `vllm` only on a GPU, for instance): every node advertises `mship_<loader>_<gpu|cpu>` Ray custom resources for what it runs, and every deploy requests its loader's resource for its device. See [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling) and `MSHIP_NODE_CAPABILITIES` to replace a node's set.
 
 See [Multi-node without Kubernetes](multi-node-docker.md) for the full non-k8s cluster setup (auth, ports, co-location).
 
@@ -526,7 +527,7 @@ models:
 
 ## stable-diffusion.cpp Loader
 
-Runs [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) (via [stable-diffusion-cpp-python](https://github.com/william-murray1204/stable-diffusion-cpp-python)) for GGUF-quantized single-file diffusion checkpoints (SD1.5, SDXL, SD-Turbo, all-in-one Flux) in a few GB of RAM. CPU-only everywhere except Apple Silicon, where ggml's runtime backend registry picks up Metal automatically — no config needed. Off Darwin, any `num_gpus` is ignored (warning logged, actor allocated `num_gpus: 0`); on Darwin it's honored normally. `usecase` defaults to `image`; serves `/v1/images/generations`, `/v1/images/edits`, `/v1/images/variations`.
+Runs [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) (via [stable-diffusion-cpp-python](https://github.com/william-murray1204/stable-diffusion-cpp-python)) for GGUF-quantized single-file diffusion checkpoints (SD1.5, SDXL, SD-Turbo, all-in-one Flux) in a few GB of RAM. CPU-only everywhere except Apple Silicon, where ggml's runtime backend registry picks up Metal automatically — no config needed. A `num_gpus > 0` deploy schedules only onto a `metal` node, where it's honored. `usecase` defaults to `image`; serves `/v1/images/generations`, `/v1/images/edits`, `/v1/images/variations`.
 
 Configured via `stable_diffusion_cpp_config`:
 
@@ -558,7 +559,7 @@ models:
 
 ## whispercpp Loader
 
-Runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) speech-to-text in-process via [`pywhispercpp`](https://github.com/absadiki/pywhispercpp) bindings — no subprocess, unlike `llama_server`. CPU-only on Linux (`num_gpus` ignored, forced to `0`). On Apple Silicon, `num_gpus > 0` (including a fraction, to share the GPU) enables Metal offload — no separate VRAM knob, just a plain on/off switch, so the model's own footprint determines whether it fits its share.
+Runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) speech-to-text in-process via [`pywhispercpp`](https://github.com/absadiki/pywhispercpp) bindings — no subprocess, unlike `llama_server`. CPU-only on Linux, so a `num_gpus > 0` deploy schedules only onto a `metal` node. There, `num_gpus > 0` (including a fraction, to share the GPU) enables Metal offload — no separate VRAM knob, just a plain on/off switch, so the model's own footprint determines whether it fits its share.
 
 Configured via `whispercpp_config`:
 
@@ -695,7 +696,7 @@ Changing `autoscaling_config` on a deployed model is applied to the running depl
 | `MSHIP_RAY_AUTH_TOKEN` | The Ray auth token, never a flag. `join`/`deploy` send it to a cluster started with `--enable-ray-auth`; `start --enable-ray-auth` uses it instead of generating one, and refuses it without the flag | — |
 | `MSHIP_NODE_NUM_CPUS` | Override: CPUs this node reserves | auto-detect |
 | `MSHIP_NODE_NUM_GPUS` | Override: GPUs this node reserves. Refused at startup if it exceeds what the container can actually see | auto-detect |
-| `MSHIP_NODE_CAPABILITIES` | Override: this node's advertised `mship_<loader>` capability resources, as JSON (e.g. `{"mship_vllm": 1}`) — replaces the `find_spec()`/binary probe wholesale. See [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling) | auto-probed |
+| `MSHIP_NODE_CAPABILITIES` | Override: this node's advertised `mship_<loader>_<gpu\|cpu>` capability resources, as JSON (e.g. `{"mship_vllm_gpu": 1}`) — replaces its variant's set. See [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling) | from the variant |
 | `RAY_OBJECT_STORE_SHM_SIZE` | Shared memory for Ray object store | `8g` |
 | `VLLM_USE_V1` | Use vLLM v1 API | `1` |
 | `ONNX_PROVIDER` | ONNX Runtime execution provider | `CUDAExecutionProvider` |

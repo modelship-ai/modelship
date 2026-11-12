@@ -99,6 +99,11 @@ def _make_config(num_gpus: float = 0, **llama_server_kwargs) -> ModelshipModelCo
 
 
 @pytest.fixture(autouse=True)
+def cpu_variant(monkeypatch):
+    monkeypatch.setenv("MSHIP_VARIANT", "cpu")
+
+
+@pytest.fixture(autouse=True)
 def socket_root(monkeypatch):
     with tempfile.TemporaryDirectory() as temp_dir:
         root = os.path.join(temp_dir, "mship")

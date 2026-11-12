@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import platform
 import shutil
-import subprocess
 
 CUDA_TOOLKIT_DOCS = "https://docs.model-ship.ai/install-native/#platform-prerequisites"
 
@@ -45,49 +45,50 @@ def _ld_musl_present() -> bool:
     return False
 
 
-def detect_accelerator() -> str:
-    """Hardware-visible accelerator: "cuda", "rocm", "metal" or "cpu".
-
-    Mirrors `modelship.utils.accelerator._no_torch_fallback`, not
-    `detect_accelerator`, which keys on a torch build that doesn't exist yet.
-    """
-    if _nvidia_devices_present():
-        return "cuda"
-    if os.path.exists("/dev/kfd"):
-        return "rocm"
-    if (platform.system(), platform.machine()) == ("Darwin", "arm64"):
-        return "metal"
-    return "cpu"
-
-
-def _nvidia_devices_present() -> bool:
-    if shutil.which("nvidia-smi") is None:
-        return False
+def _nvidia_driver() -> tuple[int, int] | None:
     try:
-        result = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=30, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0 and any(line.startswith("GPU ") for line in result.stdout.splitlines())
+        nvml = ctypes.CDLL("libnvidia-ml.so.1")
+        if nvml.nvmlInit_v2() != 0:
+            return None
+    except (OSError, AttributeError):
+        return None
+    try:
+        count = ctypes.c_uint()
+        cuda = ctypes.c_int()
+        if nvml.nvmlDeviceGetCount_v2(ctypes.byref(count)) != 0:
+            return None
+        if nvml.nvmlSystemGetCudaDriverVersion_v2(ctypes.byref(cuda)) != 0:
+            return None
+        return count.value, cuda.value
+    except AttributeError:
+        return None
+    finally:
+        nvml.nvmlShutdown()
 
 
 def check_hardware(required: str | None) -> None:
-    if required is None:
-        return
-    found = detect_accelerator()
-    if found == required:
-        return
     if required == "cuda":
-        raise GateError(
-            "error: --cuda needs an NVIDIA GPU, and none was found.\n"
-            "`nvidia-smi -L` must list at least one device. Install the NVIDIA driver first,\n"
-            "or use --cpu for a CPU-only node."
-        )
-    if required == "metal":
+        _check_nvidia_driver()
+    elif required == "metal" and (platform.system(), platform.machine()) != ("Darwin", "arm64"):
         raise GateError(
             f"error: --metal needs Apple Silicon, found {platform.system()}/{platform.machine()}.\n"
             "Use --cuda for an NVIDIA host or --cpu for a CPU-only node."
         )
-    raise GateError(f"error: --{required} is unavailable on this machine (detected {found}).")
+
+
+def _check_nvidia_driver() -> None:
+    driver = _nvidia_driver()
+    if driver is None or driver[0] == 0:
+        raise GateError(
+            "error: --cuda needs an NVIDIA GPU, and none was found.\n"
+            "The NVIDIA driver's NVML (libnvidia-ml.so.1) must load and list at least one device.\n"
+            "Install the NVIDIA driver first, or use --cpu for a CPU-only node."
+        )
+    if driver[1] < 13000:
+        raise GateError(
+            f"error: --cuda needs a driver that supports CUDA 13.0, and this one supports CUDA "
+            f"{driver[1] // 1000}.{driver[1] % 1000 // 10}.\nUpdate the NVIDIA driver."
+        )
 
 
 def find_nvcc() -> str | None:

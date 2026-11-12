@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import platform
-
 from ray.serve.config import RequestRouterConfig
 
-from modelship.deploy.capabilities import deployment_capability_resources
+from modelship.deploy.capabilities import deployment_capability_resources, runs_on_gpu
 from modelship.deploy.request_router import AffinityRouter
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
@@ -69,16 +67,12 @@ def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] |
 
     runtime_env: dict = {"env_vars": env_vars}
 
-    capability_resources = deployment_capability_resources(config)
+    capability_resources = deployment_capability_resources(config.loader.value, config.num_gpus)
 
-    # CPU-only loaders. ggml ones use Metal on Darwin, where num_gpus stays so Ray doesn't co-schedule onto it.
-    force_zero_gpu = config.loader == ModelLoader.sherpa_onnx or (
-        config.loader in (ModelLoader.stable_diffusion_cpp, ModelLoader.whispercpp) and platform.system() != "Darwin"
-    )
-    if force_zero_gpu:
+    if not runs_on_gpu(config.loader.value):
         if config.num_gpus > 0:
             logger.warning(
-                "num_gpus=%s is ignored for model '%s': %s loader has no GPU backend here.",
+                "num_gpus=%s is ignored for model '%s': %s loader has no GPU backend.",
                 config.num_gpus,
                 config.name,
                 config.loader.value,
