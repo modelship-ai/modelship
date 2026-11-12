@@ -366,12 +366,14 @@ class ModelshipModelConfig(_StrictModel):
         if self.loader != ModelLoader.vllm:
             return self
 
-        if ng <= 0:
-            return self
-
         tp = self.vllm_engine_kwargs.tensor_parallel_size
         pp = self.vllm_engine_kwargs.pipeline_parallel_size
         world_size = tp * pp
+
+        if ng <= 0:
+            if world_size > 1 and "num_gpus" not in self.model_fields_set:
+                self.num_gpus = 1.0
+            return self
 
         if 0 < ng < 1:
             if world_size > 1:
