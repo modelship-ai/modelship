@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 import socket
+import subprocess
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
@@ -19,46 +20,9 @@ from modelship.deploy.actor_options import (
 )
 from modelship.deploy.gateway_sizing import GATEWAY_SIZING_ENV_VARS, gateway_sizing
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, VllmEngineConfig
-from modelship.utils import parse_memory_bytes, rand_suffix
+from modelship.utils import rand_suffix
 from modelship.utils.cli import apply_args_to_env, parse_args
 from modelship.utils.runtime_env import CLUSTER_ENV_DEFAULTS, NODE_ENV_DEFAULTS
-
-
-class TestParseMemoryBytes:
-    def test_bare_bytes(self):
-        assert parse_memory_bytes("1024") == 1024
-
-    def test_ki_suffix(self):
-        assert parse_memory_bytes("4Ki") == 4 * 1024
-
-    def test_mi_suffix(self):
-        assert parse_memory_bytes("512Mi") == 512 * 1024**2
-
-    def test_gi_suffix(self):
-        assert parse_memory_bytes("8Gi") == 8 * 1024**3
-
-    def test_ti_suffix(self):
-        assert parse_memory_bytes("2Ti") == 2 * 1024**4
-
-    def test_case_insensitive(self):
-        assert parse_memory_bytes("8gi") == 8 * 1024**3
-        assert parse_memory_bytes("8GI") == 8 * 1024**3
-
-    def test_whitespace_tolerant(self):
-        assert parse_memory_bytes(" 8Gi ") == 8 * 1024**3
-        assert parse_memory_bytes("8 Gi") == 8 * 1024**3
-
-    def test_rejects_decimal_units(self):
-        with pytest.raises(ValueError, match="Invalid memory size"):
-            parse_memory_bytes("8GB")
-
-    def test_rejects_garbage(self):
-        with pytest.raises(ValueError, match="Invalid memory size"):
-            parse_memory_bytes("not-a-size")
-
-    def test_rejects_negative(self):
-        with pytest.raises(ValueError, match="Invalid memory size"):
-            parse_memory_bytes("-8Gi")
 
 
 class TestParseArgs:
@@ -99,7 +63,6 @@ class TestParseArgs:
             ("join", ["--gcs-address", "mship-head:6380"], "gcs_address", "mship-head:6380"),
             ("start", ["--node-num-cpus", "4"], "node_num_cpus", 4),
             ("join", ["--gcs-address", "h:1", "--node-num-gpus", "2"], "node_num_gpus", 2),
-            ("join", ["--gcs-address", "h:1", "--node-memory", "8Gi"], "node_memory", 8 * 1024**3),
             ("deploy", ["--responses-ttl-s", "60"], "responses_ttl_s", 60.0),
             ("start", ["--state-sweep-interval-s", "30"], "state_sweep_interval_s", 30.0),
             ("start", ["--log-format", "json"], "log_format", "json"),
@@ -232,7 +195,6 @@ class TestApplyArgsToEnv:
             ("join", ["--gcs-address", "mship-head:6380"], "MSHIP_GCS_ADDRESS", "mship-head:6380"),
             ("join", ["--gcs-address", "h:1", "--node-num-cpus", "4"], "MSHIP_NODE_NUM_CPUS", "4"),
             ("start", ["--node-num-gpus", "2"], "MSHIP_NODE_NUM_GPUS", "2"),
-            ("start", ["--node-memory", "8Gi"], "MSHIP_NODE_MEMORY", str(8 * 1024**3)),
             ("join", ["--gcs-address", "h:1", "--prune-ray-sessions", "false"], "MSHIP_PRUNE_RAY_SESSIONS", "false"),
             ("start", ["--no-preflight"], "MSHIP_PREFLIGHT", "false"),
             ("start", ["--no-metrics"], "MSHIP_METRICS", "false"),
@@ -321,6 +283,16 @@ class TestDriverGrpcThreads:
     def test_the_count_is_set_before_ray_is_imported(self, given, expected):
         seen = TestDriverCacheEnv._env_before_ray(given, [])
         assert seen["RAY_num_grpc_internal_threads"] == expected
+
+
+class TestDriverObjectStoreCap:
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [({}, str(256 * 1024**2)), ({"RAY_DEFAULT_OBJECT_STORE_MAX_MEMORY_BYTES": "1024"}, "1024")],
+    )
+    def test_the_cap_is_set_before_ray_is_imported(self, given, expected):
+        seen = TestDriverCacheEnv._env_before_ray(given, [])
+        assert seen["RAY_DEFAULT_OBJECT_STORE_MAX_MEMORY_BYTES"] == expected
 
 
 _HEAD_SETTINGS = {
@@ -1708,43 +1680,6 @@ class TestStartHead:
             kwargs = self._init_call({"MSHIP_NODE_NUM_GPUS": "0"})
         assert kwargs["num_gpus"] == 0
 
-    def test_node_memory_splits_into_memory_and_object_store(self):
-        kwargs = self._init_call({"MSHIP_NODE_MEMORY": str(10 * 1024**3)})
-        # 30% object store (Ray's own resolve_object_store_memory), 70% schedulable 'memory'.
-        assert kwargs["object_store_memory"] == int(10 * 1024**3 * 0.3)
-        assert kwargs["_memory"] == 10 * 1024**3 - kwargs["object_store_memory"]
-
-    def test_node_memory_accepts_unit_suffix(self):
-        kwargs = self._init_call({"MSHIP_NODE_MEMORY": "10Gi"})
-        assert kwargs["object_store_memory"] == int(10 * 1024**3 * 0.3)
-        assert kwargs["_memory"] == 10 * 1024**3 - kwargs["object_store_memory"]
-
-    def test_node_memory_absent_when_unset(self):
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=0):
-            kwargs = self._init_call({}, pop=("MSHIP_NODE_MEMORY",))
-        assert "_memory" not in kwargs
-        assert "object_store_memory" not in kwargs
-
-    def test_node_memory_auto_detected_when_unset(self):
-        from modelship.deploy import serve_utils
-
-        available = 10 * 1024**3
-        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=available):
-            kwargs = self._init_call({}, pop=("MSHIP_NODE_MEMORY",))
-        total_bytes = int(available * serve_utils._AUTO_NODE_MEMORY_HEADROOM)
-        assert kwargs["object_store_memory"] == int(total_bytes * 0.3)
-        assert kwargs["_memory"] == total_bytes - kwargs["object_store_memory"]
-
-    def test_explicit_node_memory_wins_over_auto_detect(self):
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=999 * 1024**3):
-            kwargs = self._init_call({"MSHIP_NODE_MEMORY": str(10 * 1024**3)})
-        assert kwargs["object_store_memory"] == int(10 * 1024**3 * 0.3)
-        assert kwargs["_memory"] == 10 * 1024**3 - kwargs["object_store_memory"]
-
     def test_resources_forwarded_from_capability_probe(self):
         from modelship.deploy import serve_utils
 
@@ -1911,6 +1846,22 @@ class TestStartHead:
             serve_utils.start_head(20)
             assert os.environ[name] == expected
 
+    @pytest.mark.parametrize("name", ["RAY_max_direct_call_object_size", "RAY_task_rpc_inlined_bytes_limit"])
+    @pytest.mark.parametrize(("given", "expected"), [(None, str(64 * 1024**2)), ("1024", "1024")])
+    def test_ray_sends_calls_up_to_64_mib_inline(self, name, given, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ),
+            patch.object(serve_utils.ray, "init"),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop(name, None)
+            if given is not None:
+                os.environ[name] = given
+            serve_utils.start_head(20)
+            assert os.environ[name] == expected
+
 
 class TestCheckPortsFree:
     def test_exits_naming_a_port_another_socket_listens_on(self):
@@ -1967,6 +1918,21 @@ class TestRayReadsTheThreadSwitches:
     def test_ray_grpc_reads_the_thread_count(self, binary):
         with open(self._binaries()[binary], "rb") as f:
             assert b"RAY_num_grpc_internal_threads" in f.read()
+
+
+class TestRayReadsTheInlineLimits:
+    @pytest.mark.parametrize("name", [b"RAY_max_direct_call_object_size", b"RAY_task_rpc_inlined_bytes_limit"])
+    def test_ray_knows_the_limit(self, name):
+        with open(TestRayReadsTheThreadSwitches._binaries()["_raylet"], "rb") as f:
+            assert name in f.read()
+
+
+class TestRayCapsTheObjectStore:
+    def test_ray_reads_the_cap_at_import(self):
+        code = "from ray._private.utils import resolve_object_store_memory as r; print(r(64 * 1024**3))"
+        env = {**os.environ, "RAY_DEFAULT_OBJECT_STORE_MAX_MEMORY_BYTES": str(256 * 1024**2)}
+        out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+        assert int(out.stdout) == 256 * 1024**2
 
 
 class TestRayHidesGpusFromWorkersThatReserveNone:
@@ -2133,38 +2099,6 @@ class TestJoinRayCluster:
             kw = self._join({})["params_kwargs"]
         assert kw["resources"] == {"mship_vllm": 1}
 
-    def test_node_memory_splits_into_memory_and_object_store(self):
-        kw = self._join({"MSHIP_NODE_MEMORY": str(10 * 1024**3)})["params_kwargs"]
-        # 30% object store (Ray's own resolve_object_store_memory), 70% schedulable 'memory'.
-        assert kw["object_store_memory"] == int(10 * 1024**3 * 0.3)
-        assert kw["memory"] == 10 * 1024**3 - kw["object_store_memory"]
-
-    def test_node_memory_absent_when_unset(self):
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=0):
-            kw = self._join({}, pop=("MSHIP_NODE_MEMORY",))["params_kwargs"]
-        assert kw["memory"] is None
-        assert kw["object_store_memory"] is None
-
-    def test_node_memory_auto_detected_when_unset(self):
-        from modelship.deploy import serve_utils
-
-        available = 10 * 1024**3
-        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=available):
-            kw = self._join({}, pop=("MSHIP_NODE_MEMORY",))["params_kwargs"]
-        total_bytes = int(available * serve_utils._AUTO_NODE_MEMORY_HEADROOM)
-        assert kw["object_store_memory"] == int(total_bytes * 0.3)
-        assert kw["memory"] == total_bytes - kw["object_store_memory"]
-
-    def test_explicit_node_memory_wins_over_auto_detect(self):
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils, "detect_available_ram_bytes", return_value=999 * 1024**3):
-            kw = self._join({"MSHIP_NODE_MEMORY": str(10 * 1024**3)})["params_kwargs"]
-        assert kw["object_store_memory"] == int(10 * 1024**3 * 0.3)
-        assert kw["memory"] == 10 * 1024**3 - kw["object_store_memory"]
-
     def test_metrics_port_random_when_unset(self):
         kw = self._join({}, pop=("MSHIP_METRICS_PORT",))["params_kwargs"]
         assert kw["metrics_export_port"] is None
@@ -2309,6 +2243,22 @@ class TestJoinCluster:
     @pytest.mark.parametrize("name", ["RAY_kill_child_processes_on_worker_exit", "RAY_process_group_cleanup_enabled"])
     @pytest.mark.parametrize(("given", "expected"), [(None, "1"), ("0", "0")])
     def test_ray_cleans_up_worker_processes(self, name, given, expected):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.dict(os.environ),
+            patch.object(serve_utils, "_join_ray_cluster"),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop(name, None)
+            if given is not None:
+                os.environ[name] = given
+            serve_utils.join_cluster("head:6380")
+            assert os.environ[name] == expected
+
+    @pytest.mark.parametrize("name", ["RAY_max_direct_call_object_size", "RAY_task_rpc_inlined_bytes_limit"])
+    @pytest.mark.parametrize(("given", "expected"), [(None, str(64 * 1024**2)), ("1024", "1024")])
+    def test_ray_sends_calls_up_to_64_mib_inline(self, name, given, expected):
         from modelship.deploy import serve_utils
 
         with (

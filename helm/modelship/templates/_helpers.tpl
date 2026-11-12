@@ -137,8 +137,8 @@ This release's namespace in Redis, for Ray's GCS keys and modelship's state keys
 {{- end -}}
 
 {{/*
-MSHIP_NODE_NUM_CPUS/MSHIP_NODE_MEMORY for a worker, from its container's limits (else
-requests) via the downward API. Skips a var the group's own env sets.
+MSHIP_NODE_NUM_CPUS for a worker, from its container's limits (else requests) via the
+downward API. Skipped when the group's own env sets it.
 Call with (dict "resources" <resources> "env" <group env> "container" <container name>).
 */}}
 {{- define "modelship.nodeResourceEnv" -}}
@@ -147,14 +147,12 @@ Call with (dict "resources" <resources> "env" <group env> "container" <container
 {{- $requests := $resources.requests | default dict -}}
 {{- $names := list -}}
 {{- range .env }}{{- $names = append $names .name -}}{{- end -}}
-{{- range $var, $res := dict "MSHIP_NODE_NUM_CPUS" "cpu" "MSHIP_NODE_MEMORY" "memory" }}
-{{- if and (or (get $limits $res) (get $requests $res)) (not (has $var $names)) }}
-- name: {{ $var }}
+{{- if and (or $limits.cpu $requests.cpu) (not (has "MSHIP_NODE_NUM_CPUS" $names)) }}
+- name: MSHIP_NODE_NUM_CPUS
   valueFrom:
     resourceFieldRef:
-      containerName: {{ $.container }}
-      resource: {{ ternary "limits" "requests" (hasKey $limits $res) }}.{{ $res }}
-{{- end }}
+      containerName: {{ .container }}
+      resource: {{ ternary "limits" "requests" (hasKey $limits "cpu") }}.cpu
 {{- end }}
 {{- end -}}
 

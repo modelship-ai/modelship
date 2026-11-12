@@ -31,7 +31,6 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--ray-dashboard-port` | start | `MSHIP_RAY_DASHBOARD_PORT` | `8265` | Ray dashboard port. Only needed to run multiple modelship heads on one host under `--network=host` |
 | `--node-num-cpus` | start, join | `MSHIP_NODE_NUM_CPUS` | auto-detect | CPUs this node reserves |
 | `--node-num-gpus` | start, join | `MSHIP_NODE_NUM_GPUS` | auto-detect | GPUs this node reserves. Refused at startup if it exceeds what the container can actually see |
-| `--node-memory` | start, join | `MSHIP_NODE_MEMORY` | auto-detect | This node's total memory budget, e.g. `8Gi`. Set explicitly when co-locating multiple modelship containers on one host without per-container cgroup memory limits |
 | `--prune-ray-sessions` | start, join | `MSHIP_PRUNE_RAY_SESSIONS` | `true` | At node startup, delete stale `session_*` dirs left under the Ray temp root by previous, no-longer-running nodes. A live node's session is always kept |
 | `--reconcile` | deploy | — | `false` | Make the cluster match the config: add new models, remove dropped ones, replace changed ones (vs. the default additive union). With no `--config`, redeploys this gateway's committed models that are missing (self-heal) |
 | `--replace-strategy` | deploy | — | `blue_green` | How to replace a changed model: `blue_green` (deploy new before dropping old, no request loss) or `stop_start` (drop old first, brief unavailability) |
@@ -696,7 +695,6 @@ Changing `autoscaling_config` on a deployed model is applied to the running depl
 | `MSHIP_RAY_AUTH_TOKEN` | The Ray auth token, never a flag. `join`/`deploy` send it to a cluster started with `--enable-ray-auth`; `start --enable-ray-auth` uses it instead of generating one, and refuses it without the flag | — |
 | `MSHIP_NODE_NUM_CPUS` | Override: CPUs this node reserves | auto-detect |
 | `MSHIP_NODE_NUM_GPUS` | Override: GPUs this node reserves. Refused at startup if it exceeds what the container can actually see | auto-detect |
-| `MSHIP_NODE_MEMORY` | Override: this node's total memory budget, e.g. `8Gi`. Split into Ray's `object_store_memory` (30%) and schedulable `memory` (70%), matching Ray's own auto-detect proportion. Set when co-locating multiple modelship containers on one host without per-container cgroup memory limits | auto-detect |
 | `MSHIP_NODE_CAPABILITIES` | Override: this node's advertised `mship_<loader>` capability resources, as JSON (e.g. `{"mship_vllm": 1}`) — replaces the `find_spec()`/binary probe wholesale. See [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling) | auto-probed |
 | `RAY_OBJECT_STORE_SHM_SIZE` | Shared memory for Ray object store | `8g` |
 | `VLLM_USE_V1` | Use vLLM v1 API | `1` |

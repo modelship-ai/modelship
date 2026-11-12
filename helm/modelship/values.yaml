@@ -159,8 +159,7 @@ workerGroups: []
   #   minReplicas: 1
   #   maxReplicas: 1
   #   # Extra env for this group's `mship join` (e.g. MSHIP_LOG_LEVEL for this group's actors). Its node
-  #   # sizing comes from the `resources` limits, else requests (MSHIP_NODE_NUM_CPUS, MSHIP_NODE_MEMORY),
-  #   # unless set here.
+  #   # sizing comes from the `resources` limits, else requests (MSHIP_NODE_NUM_CPUS), unless set here.
   #   env: []
   #   resources:
   #     requests:

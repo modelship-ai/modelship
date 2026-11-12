@@ -218,8 +218,7 @@ below are deliberate ways to pack more onto hardware you already have. What
 gets, so two containers on one box don't both believe they own the same
 hardware. See [AGENTS.md's co-location
 note](https://github.com/modelship-ai/modelship/blob/main/AGENTS.md#gotchas) for the full fencing discipline
-(`--gpus device=N`, `--node-memory` + `--shm-size`, `--cpuset-cpus` +
-`--node-num-cpus`) — this page only covers the two topologies it unlocks.
+(`--gpus device=N`, `--cpuset-cpus` + `--node-num-cpus`) — this page only covers the two topologies it unlocks.
 Reserving more GPUs than a container can actually see is refused at startup
 (not silently broken later); each node also logs every GPU it sees, by index,
 name, and UUID, at startup — check that log to confirm two co-located

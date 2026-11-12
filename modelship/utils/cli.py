@@ -7,7 +7,6 @@ import os
 import re
 from pathlib import Path
 
-from modelship.utils import parse_memory_bytes
 from modelship.utils.config_schema import ModelLoader, ModelUsecase
 from modelship.utils.model_flags import (
     MODEL_ARG_KEYS,
@@ -45,7 +44,6 @@ _ARG_TO_ENV: dict[str, str] = {
     "metrics_port": "MSHIP_METRICS_PORT",
     "node_num_cpus": "MSHIP_NODE_NUM_CPUS",
     "node_num_gpus": "MSHIP_NODE_NUM_GPUS",
-    "node_memory": "MSHIP_NODE_MEMORY",
     "prune_ray_sessions": "MSHIP_PRUNE_RAY_SESSIONS",
     "max_request_body_bytes": "MSHIP_MAX_REQUEST_BODY_BYTES",
     "gateway_min_replicas": "MSHIP_GATEWAY_MIN_REPLICAS",
@@ -239,22 +237,6 @@ def _add_node_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--node-num-gpus", type=int, help="GPUs this node reserves (env: MSHIP_NODE_NUM_GPUS, default: auto-detect)"
-    )
-    parser.add_argument(
-        "--node-memory",
-        type=parse_memory_bytes,
-        help=(
-            "This node's total memory budget, e.g. '8Gi' (env: MSHIP_NODE_MEMORY, default: "
-            "auto-detect). Split into Ray's object_store_memory (30%%) and schedulable 'memory' "
-            "resource (70%%) the same way Ray splits an auto-detected total. Set this explicitly "
-            "when co-locating multiple modelship node containers on one physical host without "
-            "per-container cgroup memory limits — otherwise each node auto-detects the full "
-            "host's RAM independently, and the cluster total double/triple-counts the same "
-            "physical memory (mirrors --node-num-cpus/--node-num-gpus for the memory dimension). "
-            "Under Docker, also pass `--shm-size` >= the derived object_store_memory (~30%% of "
-            "this value) — Docker's 64MB default /dev/shm is far below that, and Ray silently "
-            "falls back to slower disk-backed storage instead of erroring when it doesn't fit."
-        ),
     )
     parser.add_argument(
         "--prune-ray-sessions",
