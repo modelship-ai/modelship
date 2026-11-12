@@ -1508,6 +1508,18 @@ class TestValidateNodeGpuReservation:
         ):
             serve_utils._validate_node_gpu_reservation()
 
+    def test_reservation_against_a_mask_that_hides_every_gpu_raises(self):
+        from modelship.deploy import serve_utils
+        from modelship.preflight import base as preflight_base
+
+        env = {"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "1", "CUDA_VISIBLE_DEVICES": "-1"}
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch.object(preflight_base, "_nvml_gpus", return_value=self._fake_gpus(2)),
+            pytest.raises(RuntimeError, match="exceeds the 0 GPU"),
+        ):
+            serve_utils._validate_node_gpu_reservation()
+
     def test_reservation_unset_skips_check(self):
         from modelship.deploy import serve_utils
 

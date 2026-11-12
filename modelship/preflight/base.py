@@ -78,7 +78,7 @@ def detect_gpus() -> list[GPUInfo]:
     variant = current_variant()
     if variant == "cuda":
         node = _nvml_gpus()
-        return _visible_gpus(node, os.environ.get("CUDA_VISIBLE_DEVICES")) or node
+        return _visible_gpus(node, os.environ.get("CUDA_VISIBLE_DEVICES"))
     if variant == "metal":
         return _metal_gpus()
     return []
@@ -262,7 +262,7 @@ def _nvml_gpus() -> list[GPUInfo]:
 
 
 def _visible_gpus(node: list[GPUInfo], devices: str | None) -> list[GPUInfo]:
-    if devices is None:
+    if not devices:
         return node
     visible: list[GPUInfo] = []
     for entry in filter(None, (d.strip() for d in devices.split(","))):

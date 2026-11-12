@@ -115,7 +115,8 @@ class TestVisibleGpus:
             ("1,0", ["GPU-bbb", "GPU-aaa"]),
             ("GPU-bb", ["GPU-bbb"]),
             ("0,7,1", ["GPU-aaa"]),
-            ("", []),
+            ("", ["GPU-aaa", "GPU-bbb"]),
+            ("-1", []),
         ],
     )
     def test_follows_cuda_visible_devices(self, devices, uuids):
@@ -127,7 +128,7 @@ class TestVisibleGpus:
 
 
 class TestDetectGpus:
-    @pytest.mark.parametrize(("devices", "uuids"), [("1", ["GPU-bbb"]), ("", ["GPU-aaa", "GPU-bbb"])])
+    @pytest.mark.parametrize(("devices", "uuids"), [("1", ["GPU-bbb"]), ("", ["GPU-aaa", "GPU-bbb"]), ("-1", [])])
     def test_cuda_reads_the_visible_gpus_else_the_whole_node(self, monkeypatch, devices, uuids):
         from modelship.preflight import base as preflight_base
 
