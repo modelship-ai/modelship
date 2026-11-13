@@ -91,6 +91,26 @@ def _cmd_info() -> None:
         print("ray: not installed")
 
     print(f"llama-server: {os.environ.get('MSHIP_LLAMA_SERVER_BIN') or 'unset'}")
+    if os.environ.get("MSHIP_VARIANT") == "vulkan":
+        _print_vulkan_devices()
+
+
+def _print_vulkan_devices() -> None:
+    from modelship.preflight.base import detect_available_ram_bytes
+    from modelship.utils import vulkan_probe
+
+    result = vulkan_probe.probe()
+    if result.error is not None:
+        print(f"vulkan: {result.error.message}")
+        return
+    available_ram = detect_available_ram_bytes()
+    for slot, device in enumerate(result.devices):
+        try:
+            memory = vulkan_probe.device_memory(device, available_ram)
+            size = f"{memory.total_bytes / 1024**3:.2f} GiB, {memory.free_bytes / 1024**3:.2f} GiB free"
+        except vulkan_probe.MemoryUnreadableError as e:
+            size = f"memory unknown: {e}"
+        print(f"vulkan GPU {slot}: {device.name} ({device.type}, Vulkan index {device.index}, {size})")
 
 
 def _guard_python_version() -> None:

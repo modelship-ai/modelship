@@ -1,5 +1,6 @@
 """ModelDeployment.__init__: which failures are fatal, and the order of a successful load."""
 
+import os
 import sys
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -20,6 +21,11 @@ def _make_config():
     config.loader.value = "vllm"
     config.num_gpus = 0
     return config
+
+
+@pytest.fixture(autouse=True)
+def _cpu_node(monkeypatch):
+    monkeypatch.setenv("MSHIP_VARIANT", "cpu")
 
 
 def _patch_init_globals(**kwargs):
@@ -168,3 +174,41 @@ async def test_loads_once_the_lease_is_granted():
         await _ModelDeployment.__init__(inst, config)
 
     assert events == ["download", "lease", "load", "warmup"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("variant", "expected"), [("vulkan", "2"), ("cpu", None), ("cuda", None), ("metal", None)])
+async def test_a_vulkan_replica_hands_its_gpu_slots_to_ggml(monkeypatch, variant, expected):
+    monkeypatch.setenv("MSHIP_VARIANT", variant)
+    monkeypatch.delenv("GGML_VK_VISIBLE_DEVICES", raising=False)
+    inst = _ModelDeployment.__new__(_ModelDeployment)
+    config = _make_config()
+    config.loader = ModelLoader.llama_server
+
+    ray_module = MagicMock()
+    ray_module.get_runtime_context.return_value.get_accelerator_ids.return_value = {"GPU": ["0"]}
+    probe = MagicMock()
+    probe.ggml_visible_devices.side_effect = lambda slots: "2" if slots == ["0"] else "?"
+    base_infer = MagicMock()
+    base_infer.ensure_downloaded = AsyncMock()
+    infer = MagicMock()
+    infer.start = AsyncMock()
+    infer.warmup = AsyncMock()
+    loader_module = MagicMock()
+    loader_module.LlamaServerInfer = MagicMock(return_value=infer)
+
+    with (
+        _patch_init_globals(
+            configure_logging=MagicMock(),
+            stamp_gateway=MagicMock(),
+            reject_unset_cache_roots=MagicMock(),
+            BaseInfer=base_infer,
+            wait_for_deploy_lease=AsyncMock(),
+            ray=ray_module,
+            vulkan_probe=probe,
+        ),
+        patch.dict(sys.modules, {"modelship.infer.llama_server.llama_server_infer": loader_module}),
+    ):
+        await _ModelDeployment.__init__(inst, config)
+
+    assert os.environ.get("GGML_VK_VISIBLE_DEVICES") == expected

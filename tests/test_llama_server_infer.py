@@ -37,6 +37,7 @@ from modelship.openai.protocol import (
     ErrorResponse,
     ResponsesRequest,
 )
+from modelship.preflight import HardwareProfile
 from modelship.utils import socket_dir
 
 # ---------------------------------------------------------------------------
@@ -173,6 +174,38 @@ class TestSubprocessLifecycle:
         try:
             args = list(infer._proc.args)
             assert args[args.index("-ngl") + 1] == expected_ngl
+        finally:
+            infer.shutdown()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("variant", "num_gpus", "expected"),
+        [
+            ("cpu", 0, "none"),
+            ("cuda", 0, "none"),
+            ("metal", 0, "none"),
+            ("vulkan", 0, "none"),
+            ("vulkan", 1, "Vulkan0"),
+            ("vulkan", 0.5, "Vulkan0"),
+            ("vulkan", 2, "Vulkan0,Vulkan1"),
+            ("cuda", 1, None),
+            ("metal", 1, None),
+        ],
+    )
+    async def test_device_follows_num_gpus(self, tmp_path, monkeypatch, variant, num_gpus, expected):
+        binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
+        monkeypatch.setenv("MSHIP_VARIANT", variant)
+
+        with patch.object(llama_server_infer, "discover_hardware", return_value=HardwareProfile()):
+            infer = LlamaServerInfer(_make_config(num_gpus=num_gpus))
+        await infer.start()
+        try:
+            args = list(infer._proc.args)
+            if expected is None:
+                assert "--device" not in args
+            else:
+                assert args[args.index("--device") + 1] == expected
         finally:
             infer.shutdown()
 

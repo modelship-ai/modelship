@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-VARIANTS = ("cuda", "cpu", "metal", "thin")
+VARIANTS = ("cuda", "cpu", "vulkan", "metal", "thin")
 
 
 class VariantError(RuntimeError):

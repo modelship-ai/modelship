@@ -53,6 +53,7 @@ from modelship.openai.utils.chat import (
 )
 from modelship.openai.utils.responses import build_response_from_parsed, responses_validation_error
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight
+from modelship.preflight.llama_cpp import device_args
 from modelship.utils import base_request_id, random_uuid
 from modelship.utils.socket_dir import session_socket_dir
 
@@ -222,6 +223,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             "--cache-ram",
             str(self.config.cache_ram_mib),
         ]
+        args += device_args(self.model_config.num_gpus)
         if self.model_config.num_gpus > 0:
             args += ["-ngl", str(self.config.n_gpu_layers)]
             if self.config.tensor_split:

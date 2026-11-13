@@ -83,6 +83,19 @@ class TestNodeCapabilityResources:
             "mship_sherpa_onnx_cpu": 1,
         }
 
+    def test_vulkan_node_runs_cpus_loaders_and_llama_server_on_its_gpu(self):
+        assert _node("vulkan") == {
+            "mship_vllm_cpu": 1,
+            "mship_llama_server_gpu": 1,
+            "mship_llama_server_cpu": 1,
+            "mship_stable_diffusion_cpp_cpu": 1,
+            "mship_whispercpp_cpu": 1,
+            "mship_sherpa_onnx_cpu": 1,
+        }
+
+    def test_a_gpu_vllm_deploy_never_lands_on_a_vulkan_node(self):
+        assert "mship_vllm_gpu" not in _node("vulkan")
+
     def test_thin_node_runs_nothing(self):
         assert _node("thin") == {}
 

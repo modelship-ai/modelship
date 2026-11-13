@@ -21,7 +21,7 @@ make lint        # ruff check + ruff format --check + pyright  (all three MUST p
 make lint-fix    # ruff check --fix + ruff format
 make unit-test   # uv run pytest tests/ -v -m "not integration"
 make wheel       # engine + bootstrapper wheels and sdists into dist/
-make bootstrap VARIANT=cuda   # make wheel, then `mship bootstrap --cuda` from dist/ into ~/.cache/mship-bootstrap (cuda|cpu|metal)
+make bootstrap VARIANT=cuda   # make wheel, then `mship bootstrap --cuda` from dist/ into ~/.cache/mship-bootstrap (cuda|cpu|vulkan|metal)
 make integration MARK=vllm ARGS=tests/test_vllm_integration.py   # integration suite against that mship; MARK, ARGS optional
 
 # Run a single test

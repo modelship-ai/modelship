@@ -25,17 +25,21 @@ class GPUInfo:
     name: str
     uuid: str | None = None  # "GPU-<uuid>"; None when the probe can't read it
     total_bytes: int = 0  # device capacity; 0 when the probe couldn't read it
+    engine_free_bytes: int | None = None
 
     @property
     def sizing_total_bytes(self) -> int:
         """Total capacity when known, else free."""
         return self.total_bytes or self.available_bytes
 
+    @property
+    def engine_free(self) -> int:
+        return self.available_bytes if self.engine_free_bytes is None else self.engine_free_bytes
+
 
 @dataclass(frozen=True)
 class HardwareProfile:
-    """Per-actor view of the hardware Ray assigned. GPU indices are CUDA-visible,
-    i.e. already filtered through `CUDA_VISIBLE_DEVICES`."""
+    """Per-actor view of the hardware Ray assigned."""
 
     gpus: list[GPUInfo] = field(default_factory=list)
     ram_bytes: int = 0
@@ -79,6 +83,8 @@ def detect_gpus() -> list[GPUInfo]:
     if variant == "cuda":
         node = _nvml_gpus()
         return _visible_gpus(node, os.environ.get("CUDA_VISIBLE_DEVICES"))
+    if variant == "vulkan":
+        return _vulkan_gpus(os.environ.get("GGML_VK_VISIBLE_DEVICES"))
     if variant == "metal":
         return _metal_gpus()
     return []
@@ -274,6 +280,34 @@ def _visible_gpus(node: list[GPUInfo], devices: str | None) -> list[GPUInfo]:
             break
         visible.append(replace(gpu, index=len(visible)))
     return visible
+
+
+def _vulkan_gpus(mask: str | None) -> list[GPUInfo]:
+    from modelship.utils import vulkan_probe
+
+    result = vulkan_probe.probe(fresh=True)
+    if result.error is not None:
+        logger.warning("preflight: %s; sizing without GPU figures", result.error.message)
+        return []
+    available_ram = detect_available_ram_bytes()
+    gpus: list[GPUInfo] = []
+    for position, device in enumerate(vulkan_probe.visible(result, mask)):
+        try:
+            memory = vulkan_probe.device_memory(device, available_ram)
+        except vulkan_probe.MemoryUnreadableError as e:
+            logger.warning("preflight: %s; sizing Vulkan%d without GPU figures", e, position)
+            continue
+        gpus.append(
+            GPUInfo(
+                index=position,
+                available_bytes=memory.free_bytes,
+                name=device.name,
+                uuid=device.uuid,
+                total_bytes=memory.total_bytes,
+                engine_free_bytes=memory.engine_free_bytes,
+            )
+        )
+    return gpus
 
 
 def _metal_gpus() -> list[GPUInfo]:

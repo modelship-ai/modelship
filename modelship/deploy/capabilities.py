@@ -32,6 +32,13 @@ VARIANT_LOADERS: dict[str, dict[str, frozenset[str]]] = {
         "whispercpp": frozenset({CPU}),
         "sherpa_onnx": frozenset({CPU}),
     },
+    "vulkan": {
+        "vllm": frozenset({CPU}),
+        "llama_server": frozenset({GPU, CPU}),
+        "stable_diffusion_cpp": frozenset({CPU}),
+        "whispercpp": frozenset({CPU}),
+        "sherpa_onnx": frozenset({CPU}),
+    },
     "metal": {
         "llama_server": frozenset({GPU, CPU}),
         "stable_diffusion_cpp": frozenset({GPU, CPU}),
@@ -44,7 +51,7 @@ VARIANT_LOADERS: dict[str, dict[str, frozenset[str]]] = {
 
 def variant_loaders(variant: str, system: str, machine: str) -> dict[str, frozenset[str]]:
     loaders = dict(VARIANT_LOADERS[variant])
-    if variant == "cpu" and system != "Linux":
+    if variant in ("cpu", "vulkan") and system != "Linux":
         del loaders["vllm"]
     if variant == "cuda" and machine != "x86_64":
         loaders["llama_server"] = frozenset({CPU})

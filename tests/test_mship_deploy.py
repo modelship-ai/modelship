@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -1475,6 +1476,10 @@ class TestValidateNodeGpuReservation:
     """--node-num-gpus must not exceed what this container can actually see — an
     inflated value would surface much later, at a replica's model load, instead of at startup."""
 
+    @pytest.fixture(autouse=True)
+    def _cuda_node(self, monkeypatch):
+        monkeypatch.setenv("MSHIP_VARIANT", "cuda")
+
     def _fake_gpus(self, count):
         from modelship.preflight import GPUInfo
 
@@ -1519,6 +1524,25 @@ class TestValidateNodeGpuReservation:
             pytest.raises(RuntimeError, match="exceeds the 0 GPU"),
         ):
             serve_utils._validate_node_gpu_reservation()
+
+    @pytest.mark.parametrize(("reserved", "raises"), [("1", False), ("2", True)])
+    def test_a_vulkan_reservation_is_checked_against_the_probe(self, monkeypatch, reserved, raises):
+        from modelship.deploy import serve_utils
+        from modelship.utils import vulkan_probe
+
+        device = vulkan_probe.VulkanDevice(0, "gpu", "integrated", 0x1002, "u", (226, 128))
+        monkeypatch.setenv("MSHIP_VARIANT", "vulkan")
+        monkeypatch.setenv("MSHIP_NODE_NUM_GPUS", reserved)
+        with (
+            patch.object(vulkan_probe, "probe", return_value=vulkan_probe.VulkanProbe([device], [device])),
+            patch.object(serve_utils, "detect_gpus") as detect,
+        ):
+            if raises:
+                with pytest.raises(RuntimeError, match=r"exceeds the 1 GPU.*--device /dev/dri"):
+                    serve_utils._validate_node_gpu_reservation()
+            else:
+                serve_utils._validate_node_gpu_reservation()
+        detect.assert_not_called()
 
     def test_reservation_unset_skips_check(self):
         from modelship.deploy import serve_utils
@@ -1667,6 +1691,78 @@ class TestStartHead:
             kwargs = self._init_call({"MSHIP_VARIANT": "metal", "MSHIP_NODE_NUM_GPUS": "0"})
         assert kwargs["num_gpus"] == 0
         count.assert_not_called()
+
+    def _vulkan_probe(self, count):
+        from modelship.utils import vulkan_probe
+
+        devices = [
+            vulkan_probe.VulkanDevice(
+                index=i, name=f"gpu{i}", type="discrete", vendor_id=0x1002, uuid=f"u{i}", render=None
+            )
+            for i in range(count)
+        ]
+        return vulkan_probe.VulkanProbe(devices=devices, all_devices=devices)
+
+    @pytest.mark.parametrize("count", [1, 2])
+    def test_a_vulkan_node_advertises_the_probes_gpus(self, count):
+        from modelship.utils import vulkan_probe
+
+        with patch.object(vulkan_probe, "probe", return_value=self._vulkan_probe(count)):
+            kwargs = self._init_call({"MSHIP_VARIANT": "vulkan"}, pop=("MSHIP_NODE_NUM_GPUS",))
+        assert kwargs["num_gpus"] == count
+
+    def test_a_vulkan_node_without_a_usable_gpu_refuses_to_start(self):
+        from modelship.utils import vulkan_probe
+
+        failed = vulkan_probe.VulkanProbe(error=vulkan_probe.ProbeError("no_device", "Vulkan lists no GPU"))
+        with (
+            patch.object(vulkan_probe, "probe", return_value=failed),
+            pytest.raises(SystemExit, match=r"Vulkan lists no GPU.*MSHIP_NODE_NUM_GPUS=0"),
+        ):
+            self._init_call({"MSHIP_VARIANT": "vulkan"}, pop=("MSHIP_NODE_NUM_GPUS",))
+
+    def test_an_explicit_gpu_count_skips_the_vulkan_probe(self):
+        from modelship.utils import vulkan_probe
+
+        with patch.object(vulkan_probe, "probe") as probe:
+            kwargs = self._init_call({"MSHIP_VARIANT": "vulkan", "MSHIP_NODE_NUM_GPUS": "0"})
+        assert kwargs["num_gpus"] == 0
+        probe.assert_not_called()
+
+    _VENDOR_VARS: ClassVar[dict[str, str]] = {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "HIP_VISIBLE_DEVICES": "1",
+        "ROCR_VISIBLE_DEVICES": "1",
+        "ZE_AFFINITY_MASK": "0",
+        "ONEAPI_DEVICE_SELECTOR": "level_zero:0",
+    }
+
+    def _vendor_vars_ray_sees(self, variant):
+        from modelship.deploy import serve_utils
+        from modelship.utils import vulkan_probe
+
+        seen = {}
+
+        def init(**_kwargs):
+            seen.update({name: os.environ.get(name) for name in self._VENDOR_VARS})
+
+        with (
+            patch.dict(os.environ, {"MSHIP_VARIANT": variant, **self._VENDOR_VARS}, clear=False),
+            patch.object(vulkan_probe, "probe", return_value=self._vulkan_probe(1)),
+            patch.object(serve_utils.ray, "init", side_effect=init),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            os.environ.pop("MSHIP_NODE_NUM_GPUS", None)
+            serve_utils.start_head(20)
+        return seen
+
+    def test_a_vulkan_head_clears_the_vendor_visible_devices_before_ray_starts(self, caplog):
+        assert self._vendor_vars_ray_sees("vulkan") == dict.fromkeys(self._VENDOR_VARS)
+        for name in self._VENDOR_VARS:
+            assert f"Ignoring {name}=" in caplog.text
+
+    def test_other_variants_keep_the_vendor_visible_devices(self):
+        assert self._vendor_vars_ray_sees("cpu") == self._VENDOR_VARS
 
     def test_resources_forwarded_from_capability_probe(self):
         from modelship.deploy import serve_utils
@@ -1942,6 +2038,88 @@ class TestRayHidesGpusFromWorkersThatReserveNone:
             assert os.environ["CUDA_VISIBLE_DEVICES"] == ""
 
 
+class TestRayReadsOnlyTheVisibleDevicesAVulkanNodeClears:
+    def _gpu_managers(self):
+        from ray._private.accelerators import get_all_accelerator_managers
+
+        return [m for m in get_all_accelerator_managers() if m.get_resource_name() == "GPU"]
+
+    def test_every_gpu_managers_variable_is_cleared(self, monkeypatch):
+        from modelship.deploy.serve_utils import _VENDOR_VISIBLE_DEVICES
+
+        monkeypatch.delenv("ROCR_VISIBLE_DEVICES", raising=False)
+        names = {m.get_visible_accelerator_ids_env_var() for m in self._gpu_managers()} - {None}
+        assert names <= set(_VENDOR_VISIBLE_DEVICES)
+
+    def test_with_them_cleared_no_gpu_manager_sees_a_preset_list(self, monkeypatch):
+        from modelship.deploy.serve_utils import _VENDOR_VISIBLE_DEVICES
+
+        for name in _VENDOR_VISIBLE_DEVICES:
+            monkeypatch.delenv(name, raising=False)
+        assert [m.get_current_process_visible_accelerator_ids() for m in self._gpu_managers()] == [None] * len(
+            self._gpu_managers()
+        )
+
+    @pytest.mark.parametrize("name", ["ZE_AFFINITY_MASK", "ONEAPI_DEVICE_SELECTOR"])
+    def test_intel_reads_both_of_its_variables(self, monkeypatch, name):
+        from ray._private.accelerators import IntelGPUAcceleratorManager
+
+        for other in ("ZE_AFFINITY_MASK", "ONEAPI_DEVICE_SELECTOR"):
+            monkeypatch.delenv(other, raising=False)
+        monkeypatch.setenv(name, "0")
+        assert IntelGPUAcceleratorManager.get_current_process_visible_accelerator_ids() == ["0"]
+
+
+class TestRayTakesAVulkanNodesGpuCount:
+    @pytest.fixture(autouse=True)
+    def _no_gpu_detected(self, monkeypatch):
+        from ray._private import accelerators
+
+        from modelship.deploy.serve_utils import _VENDOR_VISIBLE_DEVICES
+
+        for name in _VENDOR_VISIBLE_DEVICES:
+            monkeypatch.delenv(name, raising=False)
+        choose = accelerators.get_accelerator_manager_for_resource
+        monkeypatch.delattr(choose, "_resource_name_to_accelerator_manager", raising=False)
+        for manager in (
+            accelerators.AMDGPUAcceleratorManager,
+            accelerators.IntelGPUAcceleratorManager,
+            accelerators.AppleGPUAcceleratorManager,
+            accelerators.NvidiaGPUAcceleratorManager,
+        ):
+            monkeypatch.setattr(manager, "get_current_node_num_accelerators", staticmethod(lambda: 0))
+        yield
+        if hasattr(choose, "_resource_name_to_accelerator_manager"):
+            del choose._resource_name_to_accelerator_manager
+
+    def _resolved_gpus(self, num_gpus):
+        from ray._private.resource_and_label_spec import ResourceAndLabelSpec
+
+        return ResourceAndLabelSpec(num_gpus=num_gpus).resolve(is_head=True, node_ip_address="127.0.0.1").num_gpus
+
+    def test_a_declared_count_stands_without_a_detectable_gpu(self):
+        assert self._resolved_gpus(2) == 2
+
+    def test_a_preset_list_shorter_than_the_count_refuses_the_node(self, monkeypatch):
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+        with pytest.raises(ValueError, match="Attempting to start raylet with 2 GPU"):
+            self._resolved_gpus(2)
+
+    def _slot_ids(self, preset):
+        from ray._private.worker import Worker
+
+        worker = MagicMock(original_visible_accelerator_ids={"GPU": preset})
+        worker.core_worker.resource_ids.return_value = {"GPU": [(1, 1.0)]}
+        ids = Worker.get_accelerator_ids_for_accelerator_resource(worker, "GPU", "^GPU_group_[0-9A-Za-z]+$")
+        return [str(i) for i in ids]
+
+    def test_a_replica_gets_its_slot_id_as_is(self):
+        assert self._slot_ids(None) == ["1"]
+
+    def test_a_preset_list_renumbers_the_slot(self):
+        assert self._slot_ids(["3", "5"]) == ["5"]
+
+
 class TestAttachCluster:
     @pytest.mark.parametrize(
         "error",
@@ -2125,8 +2303,23 @@ class TestJoinCluster:
     TestJoinRayCluster covers its internals) and connects no driver."""
 
     @pytest.fixture(autouse=True)
-    def _reset(self, _reset_join_node):
+    def _reset(self, _reset_join_node, monkeypatch):
+        monkeypatch.setenv("MSHIP_VARIANT", "cpu")
         yield
+
+    def test_a_vulkan_node_clears_the_vendor_visible_devices_before_joining(self, monkeypatch, caplog):
+        from modelship.deploy import serve_utils
+
+        monkeypatch.setenv("MSHIP_VARIANT", "vulkan")
+        monkeypatch.setenv("HIP_VISIBLE_DEVICES", "1")
+        seen = {}
+        with (
+            patch.object(serve_utils, "_join_ray_cluster", side_effect=lambda _: seen.update(os.environ)),
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            serve_utils.join_cluster("head:6380")
+        assert "HIP_VISIBLE_DEVICES" not in seen
+        assert "Ignoring HIP_VISIBLE_DEVICES='1'" in caplog.text
 
     def test_starts_the_node_without_a_driver(self):
         from modelship.deploy import serve_utils

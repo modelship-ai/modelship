@@ -4,6 +4,7 @@ import traceback
 from collections.abc import AsyncGenerator
 from typing import Any
 
+import ray
 from ray import serve
 
 from modelship.deploy.deploy_leases import DeployLeaseError, wait_for_deploy_lease
@@ -31,8 +32,10 @@ from modelship.openai.protocol import (
     client_safe,
 )
 from modelship.preflight import ModelNotSizedError
+from modelship.utils import vulkan_probe
 from modelship.utils.cache import reject_unset_cache_roots
 from modelship.utils.sources import ModelDownloadError
+from modelship.utils.variant import current_variant
 
 logger = get_logger("infer.deployment")
 
@@ -60,6 +63,10 @@ class ModelDeployment:
         self.config = config
         self.infer: BaseInfer
         try:
+            if current_variant() == "vulkan":
+                slots = ray.get_runtime_context().get_accelerator_ids().get("GPU", [])
+                os.environ["GGML_VK_VISIBLE_DEVICES"] = vulkan_probe.ggml_visible_devices(slots)
+                logger.info("GPU slots %s -> GGML_VK_VISIBLE_DEVICES=%r", slots, os.environ["GGML_VK_VISIBLE_DEVICES"])
             reject_unset_cache_roots()
             # Must run before the loader is constructed: preflight (which
             # needs the model file on disk) runs synchronously inside a

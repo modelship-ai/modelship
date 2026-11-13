@@ -117,6 +117,7 @@ Ray schedules deployments across available GPUs based on the `num_gpus` fraction
 |---------|-----|-----|
 | `cuda` | `vllm`, `diffusers`, `llama_server` (x86_64 only) | `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
 | `cpu` | — | `vllm` (Linux only), `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
+| `vulkan` | `llama_server` | `vllm` (Linux only), `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
 | `metal` | `llama_server`, `stable_diffusion_cpp`, `whispercpp` | `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
 | `thin` | — | — |
 

@@ -251,6 +251,8 @@ Each GPU-capable loader sizes and enforces its share differently:
 
 Preflight sizes a fractional deploy from its **declared share of the GPU's total capacity**, not free VRAM at that moment; if free VRAM falls short, it logs a warning naming both numbers.
 
+On a `vulkan` node whose GPU is integrated (an AMD APU such as Strix Halo), the GPU's memory is system RAM. Preflight sizes a `llama_server` deploy, whole or fractional, against what is really free: on AMD, the free part of the BIOS carve-out plus the free GTT, capped by the RAM free right now. llama.cpp's own free figure ignores RAM that other processes hold, so without this a model loaded next to a `vllm` CPU deploy would be sized as if that RAM were still free.
+
 Sharp edges:
 - No SM/compute isolation between co-tenants — they time-slice like any two CUDA processes sharing a device (fine for one large + one small model; not a MIG/MPS substitute if both are large).
 - On a multi-GPU node you can't pin which physical GPU a fractional deploy lands on — Ray picks.
