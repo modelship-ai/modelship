@@ -49,15 +49,11 @@ lint-fix:
 	uv run ruff check --fix .
 	uv run ruff format .
 
-# Fires all four platform builds for a new llama.cpp tag and returns immediately
-# — it does not wait. The workflow publishes one release holding every platform's
-# binary, gated on all four succeeding. Updating the llama_cpp.py/Dockerfile pins
-# to the new tag is still manual.
 llama-cpp-bump:
-	@if [ -z "$(TAG)" ]; then echo "Error: usage: make llama-cpp-bump TAG=b10375" >&2; exit 1; fi
-	@gh workflow run llama-cpp-build.yml -f tag=$(TAG)
-	@echo "Triggered llama.cpp build for $(TAG) (~2h, gated on the CUDA job)."
-	@echo "Publishes https://github.com/modelship-ai/llama-cpp-builds/releases/tag/llamacpp-$(TAG)"
+	@if [ -z "$(TAG)" ]; then echo "Error: usage: make llama-cpp-bump TAG=b10375 [REBUILD=2]" >&2; exit 1; fi
+	@gh workflow run llama-cpp-build.yml -f tag=$(TAG) $(if $(REBUILD),-f rebuild=$(REBUILD))
+	@echo "Triggered llama.cpp build for $(TAG) (~1h, gated on the CUDA job)."
+	@echo "Publishes https://github.com/modelship-ai/llama-cpp-builds/releases/tag/llamacpp-$(TAG)$(if $(REBUILD),-r$(REBUILD))"
 
 release-patch:
 	$(eval NEW_VERSION := $(MAJOR).$(MINOR).$(shell echo $$(($(PATCH)+1))))
