@@ -27,6 +27,7 @@ from modelship.deploy.local_nodes import kill_groups, worker_groups
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_gpus
+from modelship.utils import vulkan_probe
 from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars, env_setting
 from modelship.utils.socket_dir import is_private_dir, socket_root
 from modelship.utils.variant import current_variant
@@ -99,7 +100,42 @@ def _resolve_node_num_gpus() -> int | None:
             "error: Ray found no Apple GPU on this Mac (it asks `system_profiler SPDisplaysDataType`). "
             "Set MSHIP_NODE_NUM_GPUS=1 to advertise it anyway."
         )
+    if variant == "vulkan":
+        return len(_vulkan_node_gpus())
     return None
+
+
+def _vulkan_node_gpus() -> list[vulkan_probe.VulkanDevice]:
+    result = vulkan_probe.probe()
+    if result.error is not None:
+        sys.exit(
+            f"error: {result.error.message}. "
+            "`mship info` shows what the node sees; set MSHIP_NODE_NUM_GPUS=0 to run it CPU-only."
+        )
+    return result.devices
+
+
+_VENDOR_VISIBLE_DEVICES = (
+    "CUDA_VISIBLE_DEVICES",
+    "HIP_VISIBLE_DEVICES",
+    "ROCR_VISIBLE_DEVICES",
+    "ZE_AFFINITY_MASK",
+    "ONEAPI_DEVICE_SELECTOR",
+)
+
+
+def _clear_vendor_visible_devices() -> None:
+    if current_variant() != "vulkan":
+        return
+    for name in _VENDOR_VISIBLE_DEVICES:
+        value = os.environ.pop(name, None)
+        if value is not None:
+            logger.warning(
+                "Ignoring %s=%r: a vulkan node picks its GPUs through Vulkan, and Ray would number its GPU slots "
+                "through this list.",
+                name,
+                value,
+            )
 
 
 def _own_cluster_init_kwargs() -> dict[str, Any]:
@@ -307,15 +343,17 @@ def _validate_node_gpu_reservation() -> None:
     unrelated configuration and is left alone; only the reservation-vs-visible
     relationship on THIS node is checked."""
     reserved = os.environ.get("MSHIP_NODE_NUM_GPUS")
-    if not reserved:
+    if not reserved or int(reserved) == 0:
         return
-    visible = len(detect_gpus())
+    vulkan = current_variant() == "vulkan"
+    visible = len(vulkan_probe.probe().devices) if vulkan else len(detect_gpus())
     if int(reserved) > visible:
+        expose = "`docker run --device /dev/dri`" if vulkan else "`docker run --gpus ...`"
         raise RuntimeError(
             f"--node-num-gpus={reserved} (MSHIP_NODE_NUM_GPUS) exceeds the {visible} GPU(s) this "
             "container can actually see. Ray would advertise phantom capacity, and a replica "
-            "scheduled against it would fail at model load with a CUDA device error, not here. "
-            "Check that `docker run --gpus ...` exposes at least this many devices to this "
+            "scheduled against it would fail at model load with a device error, not here. "
+            f"Check that {expose} exposes at least this many devices to this "
             "container."
         )
 
@@ -331,6 +369,7 @@ def local_ray_clusters() -> set[str]:
 
 def start_head(lib_level: int) -> None:
     """Start this machine's Ray head in-process, sized from MSHIP_NODE_*."""
+    _clear_vendor_visible_devices()
     _validate_node_gpu_reservation()
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
@@ -375,6 +414,7 @@ def _check_ports_free(ports: dict[str, int]) -> None:
 
 def join_cluster(address: str) -> None:
     """Start this machine's Ray node as a worker of the cluster at *address*."""
+    _clear_vendor_visible_devices()
     _validate_node_gpu_reservation()
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")

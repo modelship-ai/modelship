@@ -301,3 +301,37 @@ class TestCmdInfo:
         ):
             launcher._cmd_info()
         assert "llama-server: /builds/cuda/llama-server.sh" in capsys.readouterr().out
+
+
+class TestCmdInfoVulkan:
+    def _info(self, capsys, result, memory=None):
+        from modelship.utils import vulkan_probe
+
+        with (
+            patch.dict(os.environ, {"MSHIP_VARIANT": "vulkan"}, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
+            patch.object(vulkan_probe, "probe", return_value=result),
+            patch.object(vulkan_probe, "device_memory", side_effect=memory),
+            patch("modelship.preflight.base.detect_available_ram_bytes", return_value=0),
+        ):
+            launcher._cmd_info()
+        return capsys.readouterr().out
+
+    def test_prints_each_gpu_the_node_offers(self, capsys):
+        from modelship.utils import vulkan_probe
+
+        device = vulkan_probe.VulkanDevice(
+            0, "Radeon 8060S Graphics (RADV STRIX_HALO)", "integrated", 0x1002, 3, "u", None
+        )
+        result = vulkan_probe.VulkanProbe(devices=[device], all_devices=[device])
+        out = self._info(capsys, result, memory=lambda *_: vulkan_probe.DeviceMemory(56 * 1024**3, 50 * 1024**3, 0))
+        assert (
+            "vulkan GPU 0: Radeon 8060S Graphics (RADV STRIX_HALO) (integrated, Vulkan index 0, 56.00 GiB, "
+            "50.00 GiB free)" in out
+        )
+
+    def test_prints_why_there_is_none(self, capsys):
+        from modelship.utils import vulkan_probe
+
+        failed = vulkan_probe.VulkanProbe(error=vulkan_probe.ProbeError("loader", "libvulkan.so.1 did not load"))
+        assert "vulkan: libvulkan.so.1 did not load" in self._info(capsys, failed)

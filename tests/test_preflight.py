@@ -144,6 +144,15 @@ class TestDetectGpus:
         with patch.object(preflight_base, "_metal_gpus", return_value=[_NODE[0]]):
             assert preflight_base.detect_gpus() == [_NODE[0]]
 
+    def test_vulkan_reads_the_probes_devices(self, monkeypatch):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("MSHIP_VARIANT", "vulkan")
+        monkeypatch.delenv("GGML_VK_VISIBLE_DEVICES", raising=False)
+        with patch.object(preflight_base, "_vulkan_gpus", return_value=[_NODE[0]]) as vulkan:
+            assert preflight_base.detect_gpus() == [_NODE[0]]
+        vulkan.assert_called_once_with(None)
+
     @pytest.mark.parametrize("variant", ["cpu", "thin"])
     def test_other_variants_read_no_gpu(self, monkeypatch, variant):
         from modelship.preflight import base as preflight_base
@@ -152,6 +161,92 @@ class TestDetectGpus:
         with patch.object(preflight_base, "_nvml_gpus") as nvml:
             assert preflight_base.detect_gpus() == []
         nvml.assert_not_called()
+
+
+def _vulkan_device(index, render=(226, 128)):
+    from modelship.utils import vulkan_probe
+
+    heaps = (vulkan_probe.Heap(size=16 * 1024**3, device_local=True, budget=16 * 1024**3, usage=0),)
+    return vulkan_probe.VulkanDevice(
+        index=index,
+        name=f"gpu{index}",
+        type="discrete",
+        vendor_id=0x10DE,
+        driver_id=4,
+        uuid=f"u{index}",
+        render=render,
+        heaps=heaps,
+    )
+
+
+class TestVulkanGpus:
+    def _probe(self, *devices, selected=None):
+        from modelship.utils import vulkan_probe
+
+        chosen = [d for d in devices if selected is None or d.index in selected]
+        return vulkan_probe.VulkanProbe(devices=chosen, all_devices=list(devices))
+
+    def test_follows_ggml_vk_visible_devices_by_raw_index(self):
+        from modelship.preflight import base as preflight_base
+        from modelship.utils import vulkan_probe
+
+        result = self._probe(_vulkan_device(0), _vulkan_device(1), _vulkan_device(2))
+        with (
+            patch.object(vulkan_probe, "probe", return_value=result) as probe,
+            patch.object(preflight_base, "detect_available_ram_bytes", return_value=0),
+        ):
+            gpus = preflight_base._vulkan_gpus("2,0")
+        probe.assert_called_once_with(fresh=True)
+        assert [(g.index, g.uuid) for g in gpus] == [(0, "u2"), (1, "u0")]
+        assert gpus[0].total_bytes == gpus[0].available_bytes == gpus[0].engine_free_bytes == 16 * 1024**3
+
+    def test_unset_is_the_node_selection(self):
+        from modelship.preflight import base as preflight_base
+        from modelship.utils import vulkan_probe
+
+        result = self._probe(_vulkan_device(0), _vulkan_device(1), selected={1})
+        with (
+            patch.object(vulkan_probe, "probe", return_value=result),
+            patch.object(preflight_base, "detect_available_ram_bytes", return_value=0),
+        ):
+            assert [g.uuid for g in preflight_base._vulkan_gpus(None)] == ["u1"]
+
+    def test_a_device_without_memory_figures_is_left_out_with_its_position_kept(self, caplog):
+        from modelship.preflight import base as preflight_base
+        from modelship.utils import vulkan_probe
+
+        result = self._probe(_vulkan_device(0), _vulkan_device(1))
+
+        def memory(device, _available):
+            if device.index == 0:
+                raise vulkan_probe.MemoryUnreadableError("can't read mem_info_gtt_used")
+            return vulkan_probe.DeviceMemory(8, 4, 6)
+
+        with (
+            patch.object(vulkan_probe, "probe", return_value=result),
+            patch.object(vulkan_probe, "device_memory", side_effect=memory),
+            patch.object(preflight_base, "detect_available_ram_bytes", return_value=0),
+        ):
+            gpus = preflight_base._vulkan_gpus("0,1")
+        assert [(g.index, g.total_bytes, g.available_bytes, g.engine_free_bytes) for g in gpus] == [(1, 8, 4, 6)]
+        assert "sizing Vulkan0 without GPU figures" in caplog.text
+
+    def test_a_failed_probe_reads_no_gpu(self, caplog):
+        from modelship.preflight import base as preflight_base
+        from modelship.utils import vulkan_probe
+
+        failed = vulkan_probe.VulkanProbe(error=vulkan_probe.ProbeError("loader", "libvulkan.so.1 did not load"))
+        with patch.object(vulkan_probe, "probe", return_value=failed):
+            assert preflight_base._vulkan_gpus(None) == []
+        assert "libvulkan.so.1 did not load" in caplog.text
+
+
+class TestEngineFree:
+    def test_defaults_to_the_available_figure(self):
+        from modelship.preflight import GPUInfo
+
+        assert GPUInfo(0, 5, "g").engine_free == 5
+        assert GPUInfo(0, 5, "g", engine_free_bytes=9).engine_free == 9
 
 
 class TestMetalGpus:

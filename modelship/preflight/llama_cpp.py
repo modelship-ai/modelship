@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import subprocess
@@ -8,6 +9,7 @@ from typing import Any
 from modelship.infer.infer_config import LlamaServerConfig, ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.preflight.base import HardwareProfile, ModelNotSizedError, gpu_share_bytes
+from modelship.utils.variant import current_variant
 
 logger = get_logger("preflight.llama_cpp")
 
@@ -97,8 +99,7 @@ class LlamaServerPreflight:
             "-ctv",
             server_config.cache_type_v,
         ]
-        if config.num_gpus == 0:
-            args += ["-dev", "none"]
+        args += device_args(config.num_gpus)
         if pinned_ctx:
             args += ["-c", str(server_config.n_ctx * server_config.parallel)]
         if pinned_ngl:
@@ -126,14 +127,21 @@ class LlamaServerPreflight:
 
 
 def _fit_margin_mib(config: ModelshipModelConfig, hw: HardwareProfile) -> int:
-    """`-fitt` reads from *free* VRAM; convert a fractional num_gpus' declared
-    share of *total* capacity into a margin against that free figure."""
-    if not (0 < config.num_gpus < 1) or not hw.gpus:
+    if not hw.gpus:
         return _FIT_MARGIN_MIB
     gpu = hw.gpus[0] if len(hw.gpus) == 1 else min(hw.gpus, key=lambda g: g.available_bytes)
-    share_mib = gpu_share_bytes(config, gpu) / 1024**2
-    free_mib = gpu.available_bytes / 1024**2
-    return max(_FIT_MARGIN_MIB, int(free_mib - share_mib + _FIT_MARGIN_MIB))
+    budget = gpu.available_bytes
+    if 0 < config.num_gpus < 1:
+        budget = min(budget, int(gpu_share_bytes(config, gpu)))
+    return max(_FIT_MARGIN_MIB, int((gpu.engine_free - budget) / 1024**2 + _FIT_MARGIN_MIB))
+
+
+def device_args(num_gpus: float) -> list[str]:
+    if num_gpus <= 0:
+        return ["--device", "none"]
+    if current_variant() == "vulkan":
+        return ["--device", ",".join(f"Vulkan{i}" for i in range(math.ceil(num_gpus)))]
+    return []
 
 
 def _cpu_ram_budget_mib(hw: HardwareProfile) -> int | None:

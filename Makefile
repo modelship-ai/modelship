@@ -12,7 +12,7 @@ unit-test:
 
 integration:
 	@test -x $(BOOTSTRAP_DIR)/venv/bin/mship && test -f $(BOOTSTRAP_DIR)/home/env || \
-		{ echo "Error: no mship installed in $(BOOTSTRAP_DIR): run make bootstrap VARIANT=cuda|cpu|metal" >&2; exit 1; }
+		{ echo "Error: no mship installed in $(BOOTSTRAP_DIR): run make bootstrap VARIANT=cuda|cpu|vulkan|metal" >&2; exit 1; }
 	@if [ -n "$$MSHIP_LLAMA_SERVER_BIN" ]; then echo "Ignoring MSHIP_LLAMA_SERVER_BIN=$$MSHIP_LLAMA_SERVER_BIN: mship bootstrap provides llama-server"; fi
 	@bin=$$(uv run python -c "import os, sys; print(os.path.dirname(sys.executable))") && \
 	env -u MSHIP_LLAMA_SERVER_BIN PATH="$$bin:$$PATH" MSHIP_HOME=$(BOOTSTRAP_DIR)/home \
@@ -25,7 +25,7 @@ wheel:
 	uv build -o dist bootstrap
 
 bootstrap:
-	@case "$(VARIANT)" in cuda|cpu|metal) ;; *) echo "Error: usage: make bootstrap VARIANT=cuda|cpu|metal" >&2; exit 1;; esac
+	@case "$(VARIANT)" in cuda|cpu|vulkan|metal) ;; *) echo "Error: usage: make bootstrap VARIANT=cuda|cpu|vulkan|metal" >&2; exit 1;; esac
 	@$(MAKE) wheel
 	uv venv --allow-existing --python 3.12.10 $(BOOTSTRAP_DIR)/venv
 	uv pip install --python $(BOOTSTRAP_DIR)/venv/bin/python --reinstall --no-cache dist/mship-*.whl
@@ -122,6 +122,8 @@ pins:
 		-o bootstrap/mship_bootstrap/pins/thin.txt
 	@uv export --quiet --locked --no-emit-project --extra cpu --extra vllm-cpu --format requirements-txt \
 		-o bootstrap/mship_bootstrap/pins/cpu.txt
+	@uv export --quiet --locked --no-emit-project --extra cpu --extra vllm-cpu --format requirements-txt \
+		-o bootstrap/mship_bootstrap/pins/vulkan.txt
 	@uv export --quiet --locked --no-emit-project --extra cuda --format requirements-txt \
 		-o bootstrap/mship_bootstrap/pins/cuda.txt
 	@uv export --quiet --locked --no-emit-project --extra metal --format requirements-txt \

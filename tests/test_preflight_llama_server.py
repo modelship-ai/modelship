@@ -26,6 +26,11 @@ from modelship.preflight import (
 from modelship.preflight.llama_cpp import LlamaServerPreflight
 
 
+@pytest.fixture(autouse=True)
+def _cuda_node(monkeypatch):
+    monkeypatch.setenv("MSHIP_VARIANT", "cuda")
+
+
 def _make_config(
     *,
     resolved_path: str | None = None,
@@ -169,20 +174,34 @@ class TestLlamaServerPreflightParsing:
 
 
 class TestLlamaServerPreflightArgs:
-    def test_cpu_only_passes_dev_none(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("variant", ["cuda", "cpu", "vulkan", "metal"])
+    def test_cpu_only_passes_device_none(self, tmp_path, monkeypatch, variant):
+        monkeypatch.setenv("MSHIP_VARIANT", variant)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=0)
         with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl -1\n")) as run:
             LlamaServerPreflight().recommend(cfg, HardwareProfile())
         args = run.call_args[0][0]
-        assert args[args.index("-dev") + 1] == "none"
+        assert args[args.index("--device") + 1] == "none"
 
-    def test_gpu_deploy_omits_dev_flag(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("variant", ["cuda", "metal"])
+    def test_gpu_deploy_omits_device_flag(self, tmp_path, monkeypatch, variant):
+        monkeypatch.setenv("MSHIP_VARIANT", variant)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
         with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")) as run:
             LlamaServerPreflight().recommend(cfg, HardwareProfile())
-        assert "-dev" not in run.call_args[0][0]
+        assert "--device" not in run.call_args[0][0]
+
+    @pytest.mark.parametrize(("num_gpus", "devices"), [(1, "Vulkan0"), (0.5, "Vulkan0"), (2, "Vulkan0,Vulkan1")])
+    def test_a_vulkan_gpu_deploy_names_its_devices(self, tmp_path, monkeypatch, num_gpus, devices):
+        monkeypatch.setenv("MSHIP_VARIANT", "vulkan")
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=num_gpus)
+        with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")) as run:
+            LlamaServerPreflight().recommend(cfg, HardwareProfile())
+        args = run.call_args[0][0]
+        assert args[args.index("--device") + 1] == devices
 
     def test_pinned_n_ctx_forwarded_as_total(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
@@ -253,6 +272,33 @@ class TestLlamaServerPreflightArgs:
         args = run.call_args[0][0]
         assert args[args.index("-fitt") + 1] == "1024"
 
+    def test_a_whole_igpu_margin_absorbs_ram_held_elsewhere(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        gpu = GPUInfo(0, 35 * 1024**3, "igpu", total_bytes=56 * 1024**3, engine_free_bytes=56 * 1024**3)
+        with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")) as run:
+            LlamaServerPreflight().recommend(cfg, HardwareProfile(gpus=[gpu]))
+        args = run.call_args[0][0]
+        assert args[args.index("-fitt") + 1] == str((56 - 35) * 1024 + 1024)
+
+    def test_a_fractional_igpu_margin_is_against_llama_cpps_own_figure(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=0.5)
+        gpu = GPUInfo(0, 35 * 1024**3, "igpu", total_bytes=56 * 1024**3, engine_free_bytes=56 * 1024**3)
+        with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")) as run:
+            LlamaServerPreflight().recommend(cfg, HardwareProfile(gpus=[gpu]))
+        args = run.call_args[0][0]
+        assert args[args.index("-fitt") + 1] == str((56 - 28) * 1024 + 1024)
+
+    def test_a_share_above_free_memory_is_capped_at_it(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=0.9)
+        hw = HardwareProfile(gpus=[GPUInfo(0, 4 * 1024**3, "test", total_bytes=16 * 1024**3)])
+        with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")) as run:
+            LlamaServerPreflight().recommend(cfg, hw)
+        args = run.call_args[0][0]
+        assert args[args.index("-fitt") + 1] == "1024"
+
 
 _CPU_HW = HardwareProfile(ram_bytes=16 * 1024**3, available_ram_bytes=12 * 1024**3)
 # 12 GiB free, less 5% of 16 GiB and 1024 MiB.
@@ -310,7 +356,7 @@ class TestLlamaServerPreflightCpuBudget:
             LlamaServerPreflight().recommend(cfg, _CPU_HW)
         estimate_args = run.call_args_list[0][0][0]
         assert estimate_args[estimate_args.index("-fitp") + 1] == "on"
-        assert estimate_args[estimate_args.index("-dev") + 1] == "none"
+        assert estimate_args[estimate_args.index("--device") + 1] == "none"
         assert estimate_args[estimate_args.index("-c") + 1] == "8192"
         assert "-fitt" not in estimate_args
 
