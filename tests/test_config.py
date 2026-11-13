@@ -383,6 +383,28 @@ class TestModelshipModelConfig:
         assert config.vllm_engine_kwargs.tensor_parallel_size == 3
         assert config.num_gpus == 1.0
 
+    @pytest.mark.parametrize("key", ["tensor_parallel_size", "pipeline_parallel_size"])
+    def test_parallelism_without_num_gpus_takes_whole_gpus(self, key):
+        config = ModelshipModelConfig(
+            name="test-llm",
+            model="some-model",
+            usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
+            vllm_engine_kwargs={key: 2},
+        )
+        assert config.num_gpus == 1.0
+
+    def test_parallelism_with_num_gpus_zero_keeps_zero(self):
+        config = ModelshipModelConfig(
+            name="test-llm",
+            model="some-model",
+            usecase=ModelUsecase.generate,
+            loader=ModelLoader.vllm,
+            num_gpus=0,
+            vllm_engine_kwargs={"tensor_parallel_size": 2},
+        )
+        assert config.num_gpus == 0
+
     def test_explicit_tp_matching_num_gpus_accepted(self):
         config = ModelshipModelConfig(
             name="test-llm",
