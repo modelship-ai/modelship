@@ -21,7 +21,8 @@ the same cluster.
 - **[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)**
   — required only when running GPU models in Docker
 - **HuggingFace token** for gated models
-- **glibc** for a native install — Alpine and other musl distros are refused
+- **glibc 2.39 or newer** for a native install that serves models (Ubuntu 24.04, Debian 13,
+  RHEL 10 or later) — older distros, Alpine and other musl distros run the Docker images
 
 ## Node roles
 

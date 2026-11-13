@@ -7,6 +7,8 @@ import os
 import platform
 import shutil
 
+from .variants import Variant
+
 CUDA_TOOLKIT_DOCS = "https://docs.model-ship.ai/install-native/#platform-prerequisites"
 
 
@@ -14,7 +16,7 @@ class GateError(Exception):
     pass
 
 
-def check_platform() -> None:
+def check_platform(variant: Variant) -> None:
     if platform.system() == "Windows":
         raise GateError("error: Windows is not supported.\nRun the Docker images, or use WSL2 with a Linux install.")
     if _is_musl():
@@ -23,6 +25,13 @@ def check_platform() -> None:
             "ray publishes no musllinux wheels, so the engine cannot be installed.\n"
             "Use a glibc distro, or run the Docker images, which are Debian-based."
         )
+    if variant.serves_models and platform.system() == "Linux":
+        glibc = os.confstr("CS_GNU_LIBC_VERSION").split()[-1]
+        if tuple(int(part) for part in glibc.split(".")[:2]) < (2, 39):
+            raise GateError(
+                f"error: --{variant.name} needs glibc 2.39 or newer; this host has {glibc}.\n"
+                "Upgrade to Ubuntu 24.04, Debian 13, RHEL 10 or later, or run the Docker images."
+            )
 
 
 def _is_musl() -> bool:

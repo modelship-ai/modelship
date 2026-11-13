@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         variant = resolve_variant(flag, recorded=variants.read_recorded(paths.env_file()))
-        gates.check_platform()
+        gates.check_platform(variant)
         if command == "bootstrap":
             _bootstrap(variant, rest)
             return
