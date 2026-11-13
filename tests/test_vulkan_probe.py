@@ -13,19 +13,16 @@ import pytest
 from modelship.utils import vulkan_probe as vp
 
 GiB = 1024**3
-_AMD, _INTEL, _NVIDIA = 0x1002, 0x8086, 0x10DE
-_RADV, _AMDVLK, _AMD_PRO, _NV_PRO, _ANV, _NVK, _MOLTENVK, _LLVMPIPE = 3, 2, 1, 4, 6, 24, 14, 13
+_AMD, _INTEL, _NVIDIA, _MESA = 0x1002, 0x8086, 0x10DE, 0x10005
 
 
-def _dev(index, type_="integrated", *, vendor=_AMD, driver=_RADV, uuid=None, fp16=True, heaps=(), render=None):
+def _dev(index, type_="integrated", *, vendor=_AMD, uuid=None, fp16=True, heaps=(), render=None):
     return {
         "index": index,
         "name": f"gpu{index}",
         "type": type_,
         "vendor_id": vendor,
-        "driver_id": driver,
         "uuid": uuid or f"uuid-{index}",
-        "luid": None,
         "fp16_storage": fp16,
         "render": render,
         "heaps": list(heaps),
@@ -51,7 +48,6 @@ class TestStructLayouts:
             ),
             (vp._PhysicalDeviceProperties2, 840, {"properties": 16}),
             (vp._PhysicalDeviceIDProperties, 64, {"deviceUUID": 16, "deviceLUID": 48, "deviceLUIDValid": 60}),
-            (vp._PhysicalDeviceDriverProperties, 536, {"driverID": 16, "conformanceVersion": 532}),
             (vp._PhysicalDeviceDrmProperties, 56, {"hasRender": 20, "renderMajor": 40, "renderMinor": 48}),
             (vp._PhysicalDeviceFeatures2, 240, {}),
             (vp._PhysicalDevice16BitStorageFeatures, 32, {"storageBuffer16BitAccess": 16}),
@@ -70,7 +66,6 @@ class TestStructLayouts:
     def test_every_chained_struct_starts_with_stype_and_pnext(self):
         for struct in (
             vp._PhysicalDeviceIDProperties,
-            vp._PhysicalDeviceDriverProperties,
             vp._PhysicalDeviceDrmProperties,
             vp._PhysicalDevice16BitStorageFeatures,
             vp._PhysicalDeviceMemoryBudgetProperties,
@@ -80,13 +75,13 @@ class TestStructLayouts:
 
 class TestSelectDevices:
     def test_an_igpu_alone_is_used_and_llvmpipe_never(self):
-        assert _picked([_dev(0), _dev(1, "cpu", vendor=0x10005, driver=_LLVMPIPE)]) == [0]
+        assert _picked([_dev(0), _dev(1, "cpu", vendor=_MESA)]) == [0]
 
     def test_llvmpipe_alone_is_no_gpu(self):
-        assert _picked([_dev(0, "cpu", vendor=0x10005, driver=_LLVMPIPE)]) == []
+        assert _picked([_dev(0, "cpu", vendor=_MESA)]) == []
 
     def test_a_discrete_gpu_hides_the_igpu(self):
-        assert _picked([_dev(0, "integrated"), _dev(1, "discrete", vendor=_NVIDIA, driver=_NV_PRO)]) == [1]
+        assert _picked([_dev(0, "integrated"), _dev(1, "discrete", vendor=_NVIDIA)]) == [1]
 
     def test_every_discrete_gpu_counts_in_enumeration_order(self):
         assert _picked([_dev(0, "discrete"), _dev(1, "integrated"), _dev(2, "discrete")]) == [0, 2]
@@ -94,42 +89,14 @@ class TestSelectDevices:
     def test_a_gpu_without_16_bit_storage_is_skipped(self):
         assert _picked([_dev(0, "discrete", fp16=False), _dev(1, "discrete")]) == [1]
 
-    def test_with_no_usable_gpu_the_first_non_cpu_device_is_used_without_the_16_bit_check(self):
-        devices = [_dev(0, "cpu"), _dev(1, "virtual", fp16=False), _dev(2, "other")]
-        assert _picked(devices) == [1]
+    def test_virtual_and_other_devices_are_never_used(self):
+        assert _picked([_dev(0, "virtual"), _dev(1, "other")]) == []
 
-    @pytest.mark.parametrize(
-        ("first", "second", "kept"),
-        [
-            (_AMDVLK, _RADV, 1),
-            (_RADV, _AMDVLK, 0),
-            (_AMD_PRO, _AMDVLK, 1),
-            (_RADV, 999, 0),
-        ],
-    )
-    def test_one_gpu_under_two_drivers_is_kept_once_by_ggml_priority(self, first, second, kept):
-        devices = [_dev(0, "discrete", driver=first, uuid="same"), _dev(1, "discrete", driver=second, uuid="same")]
-        assert _picked(devices) == [kept]
-
-    def test_the_replacing_driver_moves_to_the_end_as_in_ggml(self):
+    def test_one_gpu_under_two_drivers_is_kept_once_as_first_listed(self):
         devices = [
-            _dev(0, "discrete", driver=_AMDVLK, uuid="a"),
-            _dev(1, "discrete", vendor=_NVIDIA, driver=_NV_PRO, uuid="b"),
-            _dev(2, "discrete", driver=_RADV, uuid="a"),
-        ]
-        assert _picked(devices) == [1, 2]
-
-    def test_nvidia_prefers_its_proprietary_driver_over_nvk(self):
-        devices = [
-            _dev(0, "discrete", vendor=_NVIDIA, driver=_NVK, uuid="n"),
-            _dev(1, "discrete", vendor=_NVIDIA, driver=_NV_PRO, uuid="n"),
-        ]
-        assert _picked(devices) == [1]
-
-    def test_two_moltenvk_devices_sharing_a_uuid_are_both_kept(self):
-        devices = [
-            _dev(0, "discrete", driver=_MOLTENVK, uuid="m"),
-            _dev(1, "discrete", driver=_MOLTENVK, uuid="m"),
+            _dev(0, "discrete", uuid="same"),
+            _dev(1, "discrete", vendor=_NVIDIA),
+            _dev(2, "discrete", uuid="same"),
         ]
         assert _picked(devices) == [0, 1]
 
@@ -144,7 +111,6 @@ def _device(type_="integrated", *, vendor=_AMD, heaps=(), render=(226, 128)):
         name="gpu",
         type=type_,
         vendor_id=vendor,
-        driver_id=_RADV,
         uuid="u",
         render=render,
         heaps=tuple(heaps),
@@ -261,7 +227,7 @@ class TestParseAndVisible:
 class TestGgmlVisibleDevices:
     @pytest.fixture
     def probe(self):
-        devices = [vp.VulkanDevice(i, f"gpu{i}", "discrete", _AMD, _RADV, f"u{i}", None) for i in (2, 0)]
+        devices = [vp.VulkanDevice(i, f"gpu{i}", "discrete", _AMD, f"u{i}", None) for i in (2, 0)]
         with patch.object(vp, "probe", return_value=vp.VulkanProbe(devices=devices, all_devices=devices)) as probe:
             yield probe
 
@@ -400,7 +366,6 @@ def test_a_device_dict_has_every_field_the_parent_reads():
         name="gpu3",
         type="discrete",
         vendor_id=_AMD,
-        driver_id=_RADV,
         uuid="uuid-3",
         render=(226, 129),
         heaps=(),

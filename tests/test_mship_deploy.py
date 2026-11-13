@@ -1530,7 +1530,7 @@ class TestValidateNodeGpuReservation:
         from modelship.deploy import serve_utils
         from modelship.utils import vulkan_probe
 
-        device = vulkan_probe.VulkanDevice(0, "gpu", "integrated", 0x1002, 3, "u", (226, 128))
+        device = vulkan_probe.VulkanDevice(0, "gpu", "integrated", 0x1002, "u", (226, 128))
         monkeypatch.setenv("MSHIP_VARIANT", "vulkan")
         monkeypatch.setenv("MSHIP_NODE_NUM_GPUS", reserved)
         with (
@@ -1697,7 +1697,7 @@ class TestStartHead:
 
         devices = [
             vulkan_probe.VulkanDevice(
-                index=i, name=f"gpu{i}", type="discrete", vendor_id=0x1002, driver_id=3, uuid=f"u{i}", render=None
+                index=i, name=f"gpu{i}", type="discrete", vendor_id=0x1002, uuid=f"u{i}", render=None
             )
             for i in range(count)
         ]

@@ -172,7 +172,6 @@ def _vulkan_device(index, render=(226, 128)):
         name=f"gpu{index}",
         type="discrete",
         vendor_id=0x10DE,
-        driver_id=4,
         uuid=f"u{index}",
         render=render,
         heaps=heaps,

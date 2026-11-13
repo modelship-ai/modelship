@@ -8,14 +8,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any
 
-_VK_API_VERSION_1_2 = (1 << 22) | (2 << 12)
-
 _VK_SUCCESS = 0
 _VK_INCOMPLETE = 5
-
-_VK_MEMORY_HEAP_DEVICE_LOCAL_BIT = 0x1
-
-_VENDOR_AMD = 0x1002
 
 
 class _ApplicationInfo(ctypes.Structure):
@@ -74,17 +68,6 @@ class _PhysicalDeviceIDProperties(ctypes.Structure):
         ("deviceLUID", ctypes.c_uint8 * 8),
         ("deviceNodeMask", ctypes.c_uint32),
         ("deviceLUIDValid", ctypes.c_uint32),
-    ]
-
-
-class _PhysicalDeviceDriverProperties(ctypes.Structure):
-    _fields_ = [
-        ("sType", ctypes.c_int),
-        ("pNext", ctypes.c_void_p),
-        ("driverID", ctypes.c_int),
-        ("driverName", ctypes.c_char * 256),
-        ("driverInfo", ctypes.c_char * 256),
-        ("conformanceVersion", ctypes.c_uint8 * 4),
     ]
 
 
@@ -181,7 +164,7 @@ def _read_devices() -> list[dict[str, Any]]:
     create_instance = function(
         None, "vkCreateInstance", ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
     )
-    app = _ApplicationInfo(sType=0, pApplicationName=b"modelship", apiVersion=_VK_API_VERSION_1_2)
+    app = _ApplicationInfo(sType=0, pApplicationName=b"modelship", apiVersion=(1 << 22) | (2 << 12))
     info = _InstanceCreateInfo(sType=1, pApplicationInfo=ctypes.pointer(app))
     instance = ctypes.c_void_p()
     result = create_instance(ctypes.byref(info), None, ctypes.byref(instance))
@@ -199,10 +182,8 @@ def _read_instance_devices(instance: ctypes.c_void_p, function: Any) -> list[dic
     enumerate_extensions = function(
         instance, "vkEnumerateDeviceExtensionProperties", ctypes.c_int, void_p, ctypes.c_char_p, u32_p, void_p
     )
-    get_properties = function(instance, "vkGetPhysicalDeviceProperties", None, void_p, void_p)
     get_properties2 = function(instance, "vkGetPhysicalDeviceProperties2", None, void_p, void_p)
     get_features2 = function(instance, "vkGetPhysicalDeviceFeatures2", None, void_p, void_p)
-    get_memory = function(instance, "vkGetPhysicalDeviceMemoryProperties", None, void_p, void_p)
     get_memory2 = function(instance, "vkGetPhysicalDeviceMemoryProperties2", None, void_p, void_p)
 
     count = ctypes.c_uint32()
@@ -217,28 +198,15 @@ def _read_instance_devices(instance: ctypes.c_void_p, function: Any) -> list[dic
     devices = []
     for index in range(count.value):
         handle = handles[index]
-        props = _PhysicalDeviceProperties()
-        get_properties(handle, ctypes.byref(props))
         extensions = _device_extensions(handle, enumerate_extensions)
-        device: dict[str, Any] = {
-            "index": index,
-            "name": props.deviceName.decode(errors="replace"),
-            "type": {0: "other", 1: "integrated", 2: "discrete", 3: "virtual", 4: "cpu"}.get(props.deviceType, "other"),
-            "vendor_id": props.vendorID,
-            "driver_id": None,
-            "uuid": None,
-            "luid": None,
-            "fp16_storage": False,
-            "render": None,
-            "heaps": [],
-        }
-        if props.apiVersion >= ((1 << 22) | (1 << 12)):
-            _read_identity(device, handle, props.apiVersion, extensions, get_properties2)
-            _read_features(device, handle, get_features2)
-            device["heaps"] = _read_heaps2(handle, "VK_EXT_memory_budget" in extensions, get_memory2)
-        else:
-            device["heaps"] = _read_heaps(handle, get_memory)
-        devices.append(device)
+        devices.append(
+            {
+                "index": index,
+                **_read_properties(handle, extensions, get_properties2),
+                "fp16_storage": _read_fp16_storage(handle, get_features2),
+                "heaps": _read_heaps(handle, "VK_EXT_memory_budget" in extensions, get_memory2),
+            }
+        )
     return devices
 
 
@@ -252,39 +220,32 @@ def _device_extensions(handle: Any, enumerate_extensions: Any) -> set[str]:
     return {entries[i].extensionName.decode(errors="replace") for i in range(count.value)}
 
 
-def _read_identity(device: dict[str, Any], handle: Any, api: int, extensions: set[str], get_properties2: Any) -> None:
+def _read_properties(handle: Any, extensions: set[str], get_properties2: Any) -> dict[str, Any]:
     ident = _PhysicalDeviceIDProperties(sType=1000071004)
-    driver = _PhysicalDeviceDriverProperties(sType=1000196000)
     drm = _PhysicalDeviceDrmProperties(sType=1000353000)
-    chain: list[ctypes.Structure] = [ident]
-    has_driver = api >= _VK_API_VERSION_1_2 or "VK_KHR_driver_properties" in extensions
-    if has_driver:
-        chain.append(driver)
     has_drm = "VK_EXT_physical_device_drm" in extensions
-    if has_drm:
-        chain.append(drm)
     props2 = _PhysicalDeviceProperties2(sType=1000059001)
-    _link(props2, chain)
+    _link(props2, [ident, drm] if has_drm else [ident])
     get_properties2(handle, ctypes.byref(props2))
+    props = props2.properties
+    return {
+        "name": props.deviceName.decode(errors="replace"),
+        "type": {0: "other", 1: "integrated", 2: "discrete", 3: "virtual", 4: "cpu"}.get(props.deviceType, "other"),
+        "vendor_id": props.vendorID,
+        "uuid": _format_uuid(bytes(ident.deviceUUID)),
+        "render": [drm.renderMajor, drm.renderMinor] if has_drm and drm.hasRender else None,
+    }
 
-    device["uuid"] = _format_uuid(bytes(ident.deviceUUID))
-    if ident.deviceLUIDValid:
-        device["luid"] = bytes(ident.deviceLUID).hex()
-    if has_driver:
-        device["driver_id"] = driver.driverID
-    if has_drm and drm.hasRender:
-        device["render"] = [drm.renderMajor, drm.renderMinor]
 
-
-def _read_features(device: dict[str, Any], handle: Any, get_features2: Any) -> None:
+def _read_fp16_storage(handle: Any, get_features2: Any) -> bool:
     storage16 = _PhysicalDevice16BitStorageFeatures(sType=1000083000)
     features2 = _PhysicalDeviceFeatures2(sType=1000059000)
     _link(features2, [storage16])
     get_features2(handle, ctypes.byref(features2))
-    device["fp16_storage"] = bool(storage16.storageBuffer16BitAccess)
+    return bool(storage16.storageBuffer16BitAccess)
 
 
-def _read_heaps2(handle: Any, has_budget: bool, get_memory2: Any) -> list[dict[str, Any]]:
+def _read_heaps(handle: Any, has_budget: bool, get_memory2: Any) -> list[dict[str, Any]]:
     budget = _PhysicalDeviceMemoryBudgetProperties(sType=1000237000)
     memory2 = _PhysicalDeviceMemoryProperties2(sType=1000059006)
     if has_budget:
@@ -294,23 +255,9 @@ def _read_heaps2(handle: Any, has_budget: bool, get_memory2: Any) -> list[dict[s
     return [
         {
             "size": memory.memoryHeaps[i].size,
-            "device_local": bool(memory.memoryHeaps[i].flags & _VK_MEMORY_HEAP_DEVICE_LOCAL_BIT),
+            "device_local": bool(memory.memoryHeaps[i].flags & 0x1),
             "budget": budget.heapBudget[i] if has_budget else None,
             "usage": budget.heapUsage[i] if has_budget else None,
-        }
-        for i in range(min(memory.memoryHeapCount, 16))
-    ]
-
-
-def _read_heaps(handle: Any, get_memory: Any) -> list[dict[str, Any]]:
-    memory = _PhysicalDeviceMemoryProperties()
-    get_memory(handle, ctypes.byref(memory))
-    return [
-        {
-            "size": memory.memoryHeaps[i].size,
-            "device_local": bool(memory.memoryHeaps[i].flags & _VK_MEMORY_HEAP_DEVICE_LOCAL_BIT),
-            "budget": None,
-            "usage": None,
         }
         for i in range(min(memory.memoryHeapCount, 16))
     ]
@@ -323,34 +270,12 @@ def _link(head: ctypes.Structure, chain: list[ctypes.Structure]) -> None:
         previous = struct
 
 
-def _priority(vendor_id: int, driver_id: int | None) -> int:
-    table = {
-        _VENDOR_AMD: {3: 1, 2: 2, 1: 3},
-        0x8086: {6: 1, 5: 2},
-        0x10DE: {4: 1, 24: 2},
-        0x5143: {8: 1, 18: 2},
-    }.get(vendor_id, {})
-    return {**table, 23: 100}.get(driver_id, sys.maxsize) if driver_id is not None else sys.maxsize
-
-
-def _same_gpu(a: dict[str, Any], b: dict[str, Any]) -> bool:
-    same = (a["uuid"] is not None and a["uuid"] == b["uuid"]) or (a["luid"] is not None and a["luid"] == b["luid"])
-    return same and not (a["driver_id"] == 14 and b["driver_id"] == 14)
-
-
 def select_devices(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
     chosen: list[dict[str, Any]] = []
     for device in devices:
-        if device["type"] not in ("discrete", "integrated") or not device["fp16_storage"]:
-            continue
-        kept = next((c for c in chosen if _same_gpu(c, device)), None)
-        if kept is None:
+        usable = device["type"] in ("discrete", "integrated") and device["fp16_storage"]
+        if usable and all(c["uuid"] != device["uuid"] for c in chosen):
             chosen.append(device)
-        elif _priority(kept["vendor_id"], device["driver_id"]) < _priority(kept["vendor_id"], kept["driver_id"]):
-            chosen.remove(kept)
-            chosen.append(device)
-    if not chosen:
-        chosen = [d for d in devices if d["type"] != "cpu"][:1]
     if any(d["type"] == "discrete" for d in chosen):
         chosen = [d for d in chosen if d["type"] == "discrete"]
     return chosen
@@ -389,8 +314,7 @@ class VulkanDevice:
     name: str
     type: str
     vendor_id: int
-    driver_id: int | None
-    uuid: str | None
+    uuid: str
     render: tuple[int, int] | None
     heaps: tuple[Heap, ...] = ()
 
@@ -423,8 +347,7 @@ def _device_from_json(d: dict[str, Any]) -> VulkanDevice:
         name=str(d["name"]),
         type=str(d["type"]),
         vendor_id=int(d["vendor_id"]),
-        driver_id=d["driver_id"],
-        uuid=d["uuid"],
+        uuid=str(d["uuid"]),
         render=tuple(d["render"]) if d["render"] else None,  # type: ignore[arg-type]
         heaps=tuple(Heap(int(h["size"]), bool(h["device_local"]), h["budget"], h["usage"]) for h in d["heaps"]),
     )
@@ -510,7 +433,7 @@ def device_memory(device: VulkanDevice, available_ram_bytes: int, sys_root: str 
     heaps = _counted_heaps(device)
     if device.type != "integrated":
         return DeviceMemory(sum(h.size for h in heaps), engine_free, engine_free)
-    if device.vendor_id == _VENDOR_AMD:
+    if device.vendor_id == 0x1002:
         vram_total, vram_used, gtt_total, gtt_used = _amdgpu_mem_info(device, sys_root)
         gtt_free = max(0, gtt_total - gtt_used)
         if available_ram_bytes:

@@ -321,7 +321,7 @@ class TestCmdInfoVulkan:
         from modelship.utils import vulkan_probe
 
         device = vulkan_probe.VulkanDevice(
-            0, "Radeon 8060S Graphics (RADV STRIX_HALO)", "integrated", 0x1002, 3, "u", None
+            0, "Radeon 8060S Graphics (RADV STRIX_HALO)", "integrated", 0x1002, "u", None
         )
         result = vulkan_probe.VulkanProbe(devices=[device], all_devices=[device])
         out = self._info(capsys, result, memory=lambda *_: vulkan_probe.DeviceMemory(56 * 1024**3, 50 * 1024**3, 0))
