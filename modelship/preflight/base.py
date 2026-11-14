@@ -4,7 +4,7 @@ import contextlib
 import os
 import re
 import subprocess
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
@@ -78,11 +78,37 @@ def discover_hardware() -> HardwareProfile:
     )
 
 
-def detect_gpus() -> list[GPUInfo]:
+@dataclass(frozen=True)
+class GpuCount:
+    count: int
+    why_none: str = ""  # what the probe found, when count is 0
+
+
+def count_gpus() -> GpuCount:
+    """The GPUs this process sees, by the variant's probe, without reading their memory."""
     variant = current_variant()
     if variant == "cuda":
-        node = _nvml_gpus()
-        return _visible_gpus(node, os.environ.get("CUDA_VISIBLE_DEVICES"))
+        result = nvml_probe()
+        # Empty hides every GPU from CUDA and Ray; only preflight's visible() reads it as the whole node.
+        visible = [] if os.environ.get("CUDA_VISIBLE_DEVICES") == "" else result.visible()
+        return GpuCount(len(visible), "" if visible else result.why_none_visible())
+    if variant == "vulkan":
+        from modelship.utils import vulkan_probe
+
+        found = vulkan_probe.probe()
+        if found.devices:
+            return GpuCount(len(found.devices))
+        return GpuCount(0, found.error.message if found.error else "the Vulkan probe found no GPU")
+    if variant == "metal":
+        return _metal_count()
+    return GpuCount(0, f"a {variant} node uses no GPU")
+
+
+def detect_gpus() -> list[GPUInfo]:
+    """count_gpus()'s GPUs with their memory."""
+    variant = current_variant()
+    if variant == "cuda":
+        return _nvml_gpus()
     if variant == "vulkan":
         return _vulkan_gpus(os.environ.get("GGML_VK_VISIBLE_DEVICES"))
     if variant == "metal":
@@ -236,49 +262,106 @@ def _cgroup_reclaimable_cache_bytes(stat_paths: tuple[str, ...]) -> int | None:
     return None
 
 
-def _nvml_gpus() -> list[GPUInfo]:
+@dataclass(frozen=True)
+class NvmlGpu:
+    index: int  # NVML's
+    name: str
+    uuid: str
+
+
+@dataclass(frozen=True)
+class NvmlProbe:
+    gpus: list[NvmlGpu] = field(default_factory=list)  # every GPU on the node
+    cuda_version: int | None = None  # the driver's, 13020 for 13.2
+    error: str | None = None
+
+    def visible(self) -> list[NvmlGpu]:
+        return _visible_gpus(self.gpus, os.environ.get("CUDA_VISIBLE_DEVICES"))
+
+    def why_none_visible(self) -> str:
+        if self.error is not None:
+            return self.error
+        if self.gpus:
+            mask = os.environ.get("CUDA_VISIBLE_DEVICES")
+            return f"CUDA_VISIBLE_DEVICES={mask!r} matches none of the {len(self.gpus)} GPU(s) NVML lists"
+        return "NVML lists no GPU"
+
+
+def nvml_probe() -> NvmlProbe:
+    """Every GPU NVML lists and the driver's CUDA version; no memory figures."""
     try:
         import pynvml
 
         pynvml.nvmlInit()
-    except Exception:
-        logger.warning("preflight: NVML unavailable; sizing without GPU figures", exc_info=True)
-        return []
+    except Exception as e:
+        return NvmlProbe(error=f"NVML unavailable: {e}")
     try:
-        gpus: list[GPUInfo] = []
+        gpus: list[NvmlGpu] = []
         for i in range(pynvml.nvmlDeviceGetCount()):
             handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-            mem = pynvml.nvmlDeviceGetMemoryInfo(handle, version=pynvml.nvmlMemory_v2)
-            gpus.append(
-                GPUInfo(
-                    index=i,
-                    available_bytes=int(mem.free),
-                    name=pynvml.nvmlDeviceGetName(handle),
-                    uuid=pynvml.nvmlDeviceGetUUID(handle),
-                    total_bytes=int(mem.total) - int(mem.reserved),
-                )
-            )
-        return gpus
-    except Exception:
-        logger.warning("preflight: NVML read failed; sizing without GPU figures", exc_info=True)
-        return []
+            gpus.append(NvmlGpu(index=i, name=pynvml.nvmlDeviceGetName(handle), uuid=pynvml.nvmlDeviceGetUUID(handle)))
+    except Exception as e:
+        return NvmlProbe(error=f"NVML read failed: {e}")
+    else:
+        cuda_version = None
+        with contextlib.suppress(Exception):
+            cuda_version = int(pynvml.nvmlSystemGetCudaDriverVersion_v2())
+        return NvmlProbe(gpus=gpus, cuda_version=cuda_version)
     finally:
         with contextlib.suppress(Exception):
             pynvml.nvmlShutdown()
 
 
-def _visible_gpus(node: list[GPUInfo], devices: str | None) -> list[GPUInfo]:
+def _nvml_gpus() -> list[GPUInfo]:
+    """The visible GPUs with their memory, numbered as CUDA numbers them."""
+    result = nvml_probe()
+    if result.error is not None:
+        logger.warning("preflight: %s; sizing without GPU figures", result.error)
+        return []
+    try:
+        return _nvml_memory(result.visible())
+    except Exception as e:
+        logger.warning("preflight: NVML memory read failed: %s; sizing without GPU figures", e)
+        return []
+
+
+def _nvml_memory(gpus: list[NvmlGpu]) -> list[GPUInfo]:
+    import pynvml
+
+    pynvml.nvmlInit()
+    try:
+        infos: list[GPUInfo] = []
+        for slot, gpu in enumerate(gpus):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu.index)
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle, version=pynvml.nvmlMemory_v2)
+            infos.append(
+                GPUInfo(
+                    index=slot,
+                    available_bytes=int(mem.free),
+                    name=gpu.name,
+                    uuid=gpu.uuid,
+                    total_bytes=int(mem.total) - int(mem.reserved),
+                )
+            )
+        return infos
+    finally:
+        with contextlib.suppress(Exception):
+            pynvml.nvmlShutdown()
+
+
+def _visible_gpus(node: list[NvmlGpu], devices: str | None) -> list[NvmlGpu]:
+    """The GPUs `devices` names, in its order, by index or uuid prefix, up to the first it doesn't match."""
     if not devices:
-        return node
-    visible: list[GPUInfo] = []
+        return list(node)
+    visible: list[NvmlGpu] = []
     for entry in filter(None, (d.strip() for d in devices.split(","))):
         if entry.isdigit():
             gpu = node[int(entry)] if int(entry) < len(node) else None
         else:
-            gpu = next((g for g in node if g.uuid and g.uuid.startswith(entry)), None)
+            gpu = next((g for g in node if g.uuid.startswith(entry)), None)
         if gpu is None:
             break
-        visible.append(replace(gpu, index=len(visible)))
+        visible.append(gpu)
     return visible
 
 
@@ -321,7 +404,23 @@ def _metal_gpus() -> list[GPUInfo]:
     return [GPUInfo(index=0, available_bytes=available, name=name, uuid=None, total_bytes=limit)]
 
 
+def _metal_count() -> GpuCount:
+    try:
+        found = _metal_ask(b"registryID") is not None
+    except Exception as e:
+        return GpuCount(0, f"Metal unavailable: {e}")
+    return GpuCount(1) if found else GpuCount(0, "Metal lists no GPU")
+
+
 def _metal_working_set_limit() -> int:
+    limit = _metal_ask(b"recommendedMaxWorkingSetSize")
+    if limit is None:
+        raise RuntimeError("Metal lists no GPU")
+    return limit
+
+
+def _metal_ask(selector: bytes) -> int | None:
+    """`selector`'s answer from the system default MTLDevice; None when Metal has none."""
     import ctypes
 
     objc = ctypes.CDLL("/usr/lib/libobjc.A.dylib")
@@ -331,11 +430,11 @@ def _metal_working_set_limit() -> int:
     objc.sel_registerName.argtypes = [ctypes.c_char_p]
     device = metal.MTLCreateSystemDefaultDevice()
     if not device:
-        raise RuntimeError("MTLCreateSystemDefaultDevice returned no device")
+        return None
     send = ctypes.CFUNCTYPE(ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p)(("objc_msgSend", objc))
     release = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)(("objc_msgSend", objc))
     try:
-        return int(send(device, objc.sel_registerName(b"recommendedMaxWorkingSetSize")))
+        return int(send(device, objc.sel_registerName(selector)))
     finally:
         release(device, objc.sel_registerName(b"release"))
 

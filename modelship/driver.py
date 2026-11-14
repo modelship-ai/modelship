@@ -99,12 +99,12 @@ def _start(args) -> None:
     _on_signals(_cleanup)
 
     try:
-        start_head(lib_level)
+        num_gpus = start_head(lib_level)
         # ray.init replaces the SIGTERM handler with its own.
         _on_signals(_cleanup)
         _log_cluster()
         _log_join_hint()
-        _log_gpus()
+        _log_gpus(num_gpus)
         start_serve(serve_logging_config)
         _prepare_state_store()
         get_or_create_gateway_coordinator()
@@ -172,7 +172,7 @@ def _join() -> None:
     _on_signals(_leave)
 
     try:
-        join_cluster(os.environ["MSHIP_GCS_ADDRESS"])
+        num_gpus = join_cluster(os.environ["MSHIP_GCS_ADDRESS"])
     except BaseException as e:
         if isinstance(e, SystemExit):
             raise
@@ -180,7 +180,7 @@ def _join() -> None:
         raise
     # Node() replaces the SIGTERM handler with one that exits 1.
     _on_signals(_leave)
-    _log_gpus()
+    _log_gpus(num_gpus)
     # Exits non-zero when a node process dies unexpectedly.
     supervise_join_node()
 
@@ -424,13 +424,17 @@ def _log_join_hint() -> None:
     )
 
 
-def _log_gpus() -> None:
+def _log_gpus(num_gpus: int) -> None:
+    """The GPUs this node gives Ray: its slots are the first *num_gpus* that detect_gpus() lists."""
+    if not num_gpus:
+        return
     from modelship.preflight import detect_gpus
 
-    # This node's physical GPUs, not Ray's cluster tally.
     for gpu in detect_gpus():
+        if gpu.index >= num_gpus:
+            continue
         logger.info(
-            "This node sees GPU %d: %s (uuid=%s, %.2f GiB)",
+            "This node advertises GPU %d: %s (uuid=%s, %.2f GiB)",
             gpu.index,
             gpu.name,
             gpu.uuid or "unknown",

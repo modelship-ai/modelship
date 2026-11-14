@@ -136,11 +136,15 @@ def _fit_margin_mib(config: ModelshipModelConfig, hw: HardwareProfile) -> int:
     return max(_FIT_MARGIN_MIB, int((gpu.engine_free - budget) / 1024**2 + _FIT_MARGIN_MIB))
 
 
+# The dlopen'd backends: naming one fails the launch when it didn't load. Metal is linked in.
+_DEVICE_PREFIXES = {"cuda": "CUDA", "vulkan": "Vulkan"}
+
+
 def device_args(num_gpus: float) -> list[str]:
     if num_gpus <= 0:
         return ["--device", "none"]
-    if current_variant() == "vulkan":
-        return ["--device", ",".join(f"Vulkan{i}" for i in range(math.ceil(num_gpus)))]
+    if prefix := _DEVICE_PREFIXES.get(current_variant()):
+        return ["--device", ",".join(f"{prefix}{i}" for i in range(math.ceil(num_gpus)))]
     return []
 
 
@@ -200,8 +204,10 @@ def _invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
     except (OSError, subprocess.SubprocessError) as e:
         raise _FitError(f"fit-params invocation failed: {e}") from None
     if result.returncode != 0:
-        lines = result.stderr.strip().splitlines()
-        detail = " ".join(_LOG_PREFIX_RE.sub("", lines[-1].strip()).split()).rstrip(".") if lines else ""
+        lines = [_LOG_PREFIX_RE.sub("", line.strip()) for line in result.stderr.strip().splitlines()]
+        # An argument error is followed by usage text.
+        line = next((line for line in reversed(lines) if line.startswith("error")), lines[-1] if lines else "")
+        detail = " ".join(line.split()).rstrip(".")
         raise _FitError(f"fit-params exited {result.returncode}" + (f": {detail}" if detail else ""))
     return result
 

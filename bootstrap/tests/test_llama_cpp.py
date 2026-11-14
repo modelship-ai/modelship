@@ -111,7 +111,7 @@ def _fake_fetch(fetched: list[str]):
         name = url.rsplit("/", 1)[1]
         fetched.append(name)
         os.makedirs(extract_dir)
-        target = "libggml-vulkan.so" if name.startswith("libggml-vulkan") else "llama"
+        target = name.split(f"-{llama_cpp._LLAMA_CPP_TAG}-")[0] + ".so" if name.startswith("libggml-") else "llama"
         open(os.path.join(extract_dir, target), "w").close()
 
     return fetch
@@ -149,6 +149,25 @@ def test_cpu_fetches_no_backend(release_dir, monkeypatch):
     monkeypatch.setattr(llama_cpp, "fetch_and_extract_archive", _fake_fetch(fetched))
     llama_cpp.provision(_CPU)
     assert fetched == [f"llama-server-{llama_cpp._LLAMA_CPP_TAG}-linux-x64.tar.gz"]
+
+
+def test_cuda_puts_torchs_cuda_libraries_on_the_loader_path(release_dir, monkeypatch):
+    torch_cuda_libs = os.path.join(paths.venv_dir("cuda"), llama_cpp._TORCH_CUDA_LIBS)
+    os.makedirs(torch_cuda_libs)
+    fetched: list[str] = []
+    monkeypatch.setattr(llama_cpp, "fetch_and_extract_archive", _fake_fetch(fetched))
+
+    wrapper = llama_cpp.provision(VARIANTS["cuda"])
+
+    assert fetched[1] == f"libggml-cuda-{llama_cpp._LLAMA_CPP_TAG}-linux-x64-cuda13.tar.gz"
+    with open(wrapper) as f:
+        assert f":{torch_cuda_libs}${{LD_LIBRARY_PATH" in f.read()
+
+
+def test_cuda_without_torchs_cuda_libraries_fails_before_fetching(release_dir, monkeypatch):
+    monkeypatch.setattr(llama_cpp, "fetch_and_extract_archive", lambda *a, **k: pytest.fail("fetched"))
+    with pytest.raises(llama_cpp.LlamaCppError, match=r"nvidia/cu13/lib is missing; llama.cpp's CUDA backend"):
+        llama_cpp.provision(VARIANTS["cuda"])
 
 
 def test_provision_fails_without_a_build_for_the_platform(release_dir, monkeypatch):

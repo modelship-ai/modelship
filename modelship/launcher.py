@@ -91,20 +91,43 @@ def _cmd_info() -> None:
         print("ray: not installed")
 
     print(f"llama-server: {os.environ.get('MSHIP_LLAMA_SERVER_BIN') or 'unset'}")
-    if os.environ.get("MSHIP_VARIANT") == "vulkan":
+    variant = os.environ.get("MSHIP_VARIANT")
+    if variant in ("cuda", "vulkan", "metal"):
+        _print_gpus(variant)
+
+
+def _print_gpus(variant: str) -> None:
+    """count_gpus()'s count, the one start and join advertise, then each GPU."""
+    from modelship.preflight.base import count_gpus, nvml_probe
+
+    if variant == "cuda" and (version := nvml_probe().cuda_version) is not None:
+        too_old = " (mship needs 13.0 or newer)" if version < 13000 else ""
+        print(f"cuda driver: supports CUDA {version // 1000}.{version % 1000 // 10}{too_old}")
+    found = count_gpus()
+    if not found.count:
+        print(f"{variant}: {found.why_none}")
+        return
+    print(f"{variant}: {found.count} GPU(s)")
+    if variant == "vulkan":
         _print_vulkan_devices()
+    else:
+        _print_gpu_memory(variant)
+
+
+def _print_gpu_memory(variant: str) -> None:
+    from modelship.preflight import detect_gpus
+
+    for gpu in detect_gpus():
+        size = f"{gpu.total_bytes / 1024**3:.2f} GiB, {gpu.available_bytes / 1024**3:.2f} GiB free"
+        print(f"{variant} GPU {gpu.index}: {gpu.name} ({size})")
 
 
 def _print_vulkan_devices() -> None:
     from modelship.preflight.base import detect_available_ram_bytes
     from modelship.utils import vulkan_probe
 
-    result = vulkan_probe.probe()
-    if result.error is not None:
-        print(f"vulkan: {result.error.message}")
-        return
     available_ram = detect_available_ram_bytes()
-    for slot, device in enumerate(result.devices):
+    for slot, device in enumerate(vulkan_probe.probe().devices):
         try:
             memory = vulkan_probe.device_memory(device, available_ram)
             size = f"{memory.total_bytes / 1024**3:.2f} GiB, {memory.free_bytes / 1024**3:.2f} GiB free"

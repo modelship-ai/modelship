@@ -56,6 +56,7 @@ from modelship.preflight import discover_hardware, merge_with_user_overrides, ru
 from modelship.preflight.llama_cpp import device_args
 from modelship.utils import base_request_id, random_uuid
 from modelship.utils.socket_dir import session_socket_dir
+from modelship.utils.variant import current_variant
 
 logger = get_logger("infer.llama_server")
 
@@ -156,7 +157,9 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         if not binary or not os.path.isfile(binary):
             raise ValueError(
                 f"llama_server deployment '{self.model_config.name}' requires MSHIP_LLAMA_SERVER_BIN "
-                f"to point at a llama-server executable; got {binary!r}. See docs/development.md."
+                f"to point at a llama-server executable; got {binary!r}. The node's start log says why the bootstrapper "
+                f"set none, and `mship bootstrap --{current_variant()}` provisions one. From source, see "
+                "docs/development.md."
             )
 
         model_path = self.model_config._resolved_path

@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -906,6 +907,25 @@ class TestShutdownRay:
         mock_ray.assert_called_once()
 
 
+class TestLogGpus:
+    def test_logs_only_the_gpus_the_node_advertises(self, caplog):
+        from modelship import driver
+        from modelship.preflight.base import GPUInfo
+
+        gpus = [GPUInfo(index=i, available_bytes=2**30, name=f"gpu{i}") for i in range(2)]
+        with patch("modelship.preflight.detect_gpus", return_value=gpus), caplog.at_level(logging.INFO):
+            driver._log_gpus(1)
+        assert "This node advertises GPU 0: gpu0" in caplog.text
+        assert "gpu1" not in caplog.text
+
+    def test_a_node_that_advertises_none_detects_nothing(self):
+        from modelship import driver
+
+        with patch("modelship.preflight.detect_gpus") as detect:
+            driver._log_gpus(0)
+        detect.assert_not_called()
+
+
 class TestSignalHandlersOutliveRay:
     """ray.init and Node() each install a SIGTERM handler of their own; ours must win."""
 
@@ -1472,112 +1492,104 @@ class TestGatewayFromEnv:
             driver._gateway_from_env()
 
 
-class TestValidateNodeGpuReservation:
-    """--node-num-gpus must not exceed what this container can actually see — an
-    inflated value would surface much later, at a replica's model load, instead of at startup."""
+class TestResolveNodeNumGpus:
+    """MSHIP_NODE_NUM_GPUS, else count_gpus()'s count; a count above what the node has never reaches Ray."""
 
-    @pytest.fixture(autouse=True)
-    def _cuda_node(self, monkeypatch):
-        monkeypatch.setenv("MSHIP_VARIANT", "cuda")
-
-    def _fake_gpus(self, count):
-        from modelship.preflight import GPUInfo
-
-        return [GPUInfo(index=i, available_bytes=0, name="test", uuid=None) for i in range(count)]
-
-    def test_reservation_within_visible_count_passes(self):
+    def _resolve(self, variant, reserved, found=None):
         from modelship.deploy import serve_utils
+        from modelship.preflight.base import GpuCount
 
-        with (
-            patch.dict(os.environ, {"MSHIP_NODE_NUM_GPUS": "1"}, clear=False),
-            patch.object(serve_utils, "detect_gpus", return_value=self._fake_gpus(2)),
-        ):
-            serve_utils._validate_node_gpu_reservation()  # no raise
-
-    def test_reservation_equal_to_visible_count_passes(self):
-        from modelship.deploy import serve_utils
-
-        with (
-            patch.dict(os.environ, {"MSHIP_NODE_NUM_GPUS": "2"}, clear=False),
-            patch.object(serve_utils, "detect_gpus", return_value=self._fake_gpus(2)),
-        ):
-            serve_utils._validate_node_gpu_reservation()  # no raise
-
-    def test_reservation_exceeding_visible_count_raises(self):
-        from modelship.deploy import serve_utils
-
-        with (
-            patch.dict(os.environ, {"MSHIP_NODE_NUM_GPUS": "2"}, clear=False),
-            patch.object(serve_utils, "detect_gpus", return_value=self._fake_gpus(1)),
-            pytest.raises(RuntimeError, match="exceeds the 1 GPU"),
-        ):
-            serve_utils._validate_node_gpu_reservation()
-
-    def test_reservation_against_a_mask_that_hides_every_gpu_raises(self):
-        from modelship.deploy import serve_utils
-        from modelship.preflight import base as preflight_base
-
-        env = {"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "1", "CUDA_VISIBLE_DEVICES": "-1"}
+        env = {"MSHIP_VARIANT": variant, **({"MSHIP_NODE_NUM_GPUS": reserved} if reserved is not None else {})}
         with (
             patch.dict(os.environ, env, clear=False),
-            patch.object(preflight_base, "_nvml_gpus", return_value=self._fake_gpus(2)),
-            pytest.raises(RuntimeError, match="exceeds the 0 GPU"),
+            patch.object(serve_utils, "count_gpus", return_value=found or GpuCount(0, "none here")) as count,
         ):
-            serve_utils._validate_node_gpu_reservation()
+            if reserved is None:
+                os.environ.pop("MSHIP_NODE_NUM_GPUS", None)
+            return serve_utils._resolve_node_num_gpus(), count
 
-    @pytest.mark.parametrize(("reserved", "raises"), [("1", False), ("2", True)])
-    def test_a_vulkan_reservation_is_checked_against_the_probe(self, monkeypatch, reserved, raises):
-        from modelship.deploy import serve_utils
-        from modelship.utils import vulkan_probe
+    @pytest.mark.parametrize(("variant", "count"), [("cuda", 2), ("vulkan", 1), ("metal", 1)])
+    def test_a_gpu_node_advertises_the_gpus_it_finds(self, variant, count):
+        from modelship.preflight.base import GpuCount
 
-        device = vulkan_probe.VulkanDevice(0, "gpu", "integrated", 0x1002, "u", (226, 128))
-        monkeypatch.setenv("MSHIP_VARIANT", "vulkan")
-        monkeypatch.setenv("MSHIP_NODE_NUM_GPUS", reserved)
-        with (
-            patch.object(vulkan_probe, "probe", return_value=vulkan_probe.VulkanProbe([device], [device])),
-            patch.object(serve_utils, "detect_gpus") as detect,
+        assert self._resolve(variant, None, GpuCount(count))[0] == count
+
+    @pytest.mark.parametrize("variant", ["cuda", "vulkan", "metal"])
+    def test_a_gpu_node_that_finds_none_refuses_to_start(self, variant):
+        from modelship.preflight.base import GpuCount
+
+        with pytest.raises(
+            SystemExit, match=rf"this {variant} node has no usable GPU: Metal lists no GPU\..*MSHIP_NODE_NUM_GPUS=0"
         ):
-            if raises:
-                with pytest.raises(RuntimeError, match=r"exceeds the 1 GPU.*--device /dev/dri"):
-                    serve_utils._validate_node_gpu_reservation()
-            else:
-                serve_utils._validate_node_gpu_reservation()
-        detect.assert_not_called()
+            self._resolve(variant, None, GpuCount(0, "Metal lists no GPU"))
 
-    def test_reservation_unset_skips_check(self):
+    @pytest.mark.parametrize("reserved", ["1", "2"])
+    def test_a_count_up_to_what_the_node_has_is_advertised(self, reserved):
+        from modelship.preflight.base import GpuCount
+
+        assert self._resolve("cuda", reserved, GpuCount(2))[0] == int(reserved)
+
+    def test_a_count_above_what_the_node_has_refuses_to_start(self):
+        from modelship.preflight.base import GpuCount
+
+        with pytest.raises(SystemExit, match=r"--node-num-gpus=2 \(MSHIP_NODE_NUM_GPUS\) is more than the 1 GPU"):
+            self._resolve("metal", "2", GpuCount(1))
+
+    def test_a_count_on_a_node_that_finds_none_names_why(self):
+        from modelship.preflight.base import GpuCount
+
+        with pytest.raises(SystemExit, match=r"more than the 0 GPU\(s\) this cuda node has: NVML lists no GPU\."):
+            self._resolve("cuda", "1", GpuCount(0, "NVML lists no GPU"))
+
+    @pytest.mark.parametrize("variant", ["cuda", "vulkan", "metal", "cpu"])
+    def test_zero_skips_the_count(self, variant):
+        gpus, count = self._resolve(variant, "0")
+        assert gpus == 0
+        count.assert_not_called()
+
+    @pytest.mark.parametrize("variant", ["cpu", "thin"])
+    def test_a_node_without_gpu_support_advertises_none_without_counting(self, variant):
+        gpus, count = self._resolve(variant, None)
+        assert gpus == 0
+        count.assert_not_called()
+
+    def test_a_count_on_a_node_without_gpu_support_refuses_to_start(self):
+        from modelship.preflight.base import GpuCount
+
+        with pytest.raises(SystemExit, match=r"more than the 0 GPU\(s\) this cpu node has: a cpu node uses no GPU"):
+            self._resolve("cpu", "1", GpuCount(0, "a cpu node uses no GPU"))
+
+    def test_start_head_refuses_before_ray_starts(self):
         from modelship.deploy import serve_utils
+        from modelship.preflight.base import GpuCount
 
         with (
-            patch.dict(os.environ, {}, clear=False),
-            patch.object(serve_utils, "detect_gpus") as mock_detect,
-        ):
-            os.environ.pop("MSHIP_NODE_NUM_GPUS", None)
-            serve_utils._validate_node_gpu_reservation()
-        mock_detect.assert_not_called()
-
-    def test_start_head_raises_on_gpu_mismatch(self):
-        from modelship.deploy import serve_utils
-
-        with (
-            patch.dict(os.environ, {"MSHIP_NODE_NUM_GPUS": "2"}, clear=False),
-            patch.object(serve_utils, "detect_gpus", return_value=self._fake_gpus(1)),
+            patch.dict(os.environ, {"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "2"}, clear=False),
+            patch.object(serve_utils, "count_gpus", return_value=GpuCount(1)),
             patch.object(serve_utils.ray, "init") as mock_init,
-            pytest.raises(RuntimeError, match="exceeds the 1 GPU"),
+            pytest.raises(SystemExit, match="more than the 1 GPU"),
         ):
             serve_utils.start_head(20)
         mock_init.assert_not_called()
 
-    def test_attach_skips_check(self):
-        # Attaching starts no node, so there is no reservation to check.
+    def test_attach_counts_nothing(self):
+        # Attaching starts no node, so there is no count to check.
         from modelship.deploy import serve_utils
 
         with (
             patch.dict(os.environ, {"MSHIP_NODE_NUM_GPUS": "99"}, clear=False),
-            patch.object(serve_utils, "detect_gpus") as mock_detect,
+            patch.object(serve_utils, "count_gpus") as count,
             patch.object(serve_utils.ray, "init"),
         ):
             serve_utils.attach_cluster(20)
-        mock_detect.assert_not_called()
+        count.assert_not_called()
+
+
+def _nvml_probe(count: int, error: str | None = None):
+    from modelship.preflight.base import NvmlGpu, NvmlProbe
+
+    gpus = [NvmlGpu(index=i, name=f"gpu{i}", uuid=f"GPU-{i}") for i in range(count)]
+    return NvmlProbe(gpus=gpus, cuda_version=13020, error=error)
 
 
 class TestStartHead:
@@ -1659,38 +1671,77 @@ class TestStartHead:
         kwargs = self._init_call({"MSHIP_METRICS": "true", "MSHIP_METRICS_PORT": "9090"})
         assert kwargs["_metrics_export_port"] == 9090
 
-    def test_a_cuda_node_leaves_the_count_to_ray(self):
-        kwargs = self._init_call({"MSHIP_VARIANT": "cuda"}, pop=("MSHIP_NODE_NUM_GPUS",))
-        assert "num_gpus" not in kwargs
+    def test_a_cuda_node_advertises_the_gpus_nvml_lists(self):
+        with patch("modelship.preflight.base.nvml_probe", return_value=_nvml_probe(2)):
+            kwargs = self._init_call({"MSHIP_VARIANT": "cuda"}, pop=("MSHIP_NODE_NUM_GPUS", "CUDA_VISIBLE_DEVICES"))
+        assert kwargs["num_gpus"] == 2
+
+    def test_returns_the_gpu_count_it_gave_ray(self):
+        from modelship.deploy import serve_utils
+        from modelship.preflight.base import GpuCount
+
+        with (
+            patch.dict(os.environ, {"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "1"}),
+            patch.object(serve_utils, "count_gpus", return_value=GpuCount(2)),
+            patch.object(serve_utils.ray, "init") as mock_init,
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            assert serve_utils.start_head(20) == 1
+        assert mock_init.call_args.kwargs["num_gpus"] == 1
+
+    @pytest.mark.parametrize(
+        ("count", "error", "mask", "reason"),
+        [
+            (0, "NVML unavailable: Driver Not Loaded", None, "NVML unavailable: Driver Not Loaded"),
+            (0, None, None, "NVML lists no GPU"),
+            (2, None, "-1", "CUDA_VISIBLE_DEVICES='-1' matches none of the 2 GPU(s) NVML lists"),
+        ],
+    )
+    def test_a_cuda_node_without_a_usable_gpu_refuses_to_start(self, count, error, mask, reason):
+        from modelship.deploy import serve_utils
+
+        env = {"MSHIP_VARIANT": "cuda", **({"CUDA_VISIBLE_DEVICES": mask} if mask else {})}
+        pop = ("MSHIP_NODE_NUM_GPUS",) if mask else ("MSHIP_NODE_NUM_GPUS", "CUDA_VISIBLE_DEVICES")
+        with (
+            patch("modelship.preflight.base.nvml_probe", return_value=_nvml_probe(count, error)),
+            patch.object(serve_utils.ray, "init") as init,
+            pytest.raises(
+                SystemExit, match=rf"cuda node has no usable GPU: {re.escape(reason)}\..*MSHIP_NODE_NUM_GPUS=0"
+            ),
+        ):
+            self._init_call(env, pop=pop)
+        init.assert_not_called()
+
+    def test_an_explicit_gpu_count_skips_the_nvml_probe(self):
+        with patch("modelship.preflight.base.nvml_probe") as probe:
+            kwargs = self._init_call({"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "0"})
+        assert kwargs["num_gpus"] == 0
+        probe.assert_not_called()
 
     @pytest.mark.parametrize("variant", ["cpu", "thin"])
     def test_a_node_without_gpus_advertises_none(self, variant):
         kwargs = self._init_call({"MSHIP_VARIANT": variant}, pop=("MSHIP_NODE_NUM_GPUS",))
         assert kwargs["num_gpus"] == 0
 
-    def test_a_metal_node_leaves_the_count_to_ray(self):
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils.AppleGPUAcceleratorManager, "get_current_node_num_accelerators", return_value=1):
+    def test_a_metal_node_advertises_the_metal_device(self):
+        with patch("modelship.preflight.base._metal_ask", return_value=4294968623):
             kwargs = self._init_call({"MSHIP_VARIANT": "metal"}, pop=("MSHIP_NODE_NUM_GPUS",))
-        assert "num_gpus" not in kwargs
+        assert kwargs["num_gpus"] == 1
 
-    def test_a_metal_node_ray_finds_no_gpu_on_refuses_to_start(self):
-        from modelship.deploy import serve_utils
-
+    def test_a_metal_node_without_a_metal_device_refuses_to_start(self):
         with (
-            patch.object(serve_utils.AppleGPUAcceleratorManager, "get_current_node_num_accelerators", return_value=0),
-            pytest.raises(SystemExit, match="Ray found no Apple GPU"),
+            patch("modelship.preflight.base._metal_ask", return_value=None),
+            pytest.raises(
+                SystemExit, match=r"metal node has no usable GPU: Metal lists no GPU\..*MSHIP_NODE_NUM_GPUS=0"
+            ),
         ):
             self._init_call({"MSHIP_VARIANT": "metal"}, pop=("MSHIP_NODE_NUM_GPUS",))
 
     def test_explicit_gpu_count_wins_over_the_variant(self):
-        from modelship.deploy import serve_utils
-
-        with patch.object(serve_utils.AppleGPUAcceleratorManager, "get_current_node_num_accelerators") as count:
+        with patch("modelship.preflight.base._metal_ask") as ask:
             kwargs = self._init_call({"MSHIP_VARIANT": "metal", "MSHIP_NODE_NUM_GPUS": "0"})
         assert kwargs["num_gpus"] == 0
-        count.assert_not_called()
+        ask.assert_not_called()
 
     def _vulkan_probe(self, count):
         from modelship.utils import vulkan_probe
@@ -2070,7 +2121,7 @@ class TestRayReadsOnlyTheVisibleDevicesAVulkanNodeClears:
         assert IntelGPUAcceleratorManager.get_current_process_visible_accelerator_ids() == ["0"]
 
 
-class TestRayTakesAVulkanNodesGpuCount:
+class TestRayTakesTheDeclaredGpuCount:
     @pytest.fixture(autouse=True)
     def _no_gpu_detected(self, monkeypatch):
         from ray._private import accelerators
@@ -2223,7 +2274,11 @@ class TestJoinRayCluster:
         }
 
     def test_builds_rayparams_with_cpus_and_gpus(self):
-        kw = self._join({"MSHIP_NODE_NUM_CPUS": "4", "MSHIP_NODE_NUM_GPUS": "2"})["params_kwargs"]
+        from modelship.preflight.base import GpuCount
+
+        env = {"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_CPUS": "4", "MSHIP_NODE_NUM_GPUS": "2"}
+        with patch("modelship.deploy.serve_utils.count_gpus", return_value=GpuCount(2)):
+            kw = self._join(env)["params_kwargs"]
         assert kw["num_cpus"] == 4
         assert kw["num_gpus"] == 2
 
@@ -2231,17 +2286,25 @@ class TestJoinRayCluster:
         kw = self._join({}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))["params_kwargs"]
         assert kw["num_cpus"] is None
 
-    @pytest.mark.parametrize(("variant", "expected"), [("cuda", None), ("cpu", 0), ("thin", 0)])
+    @pytest.mark.parametrize(("variant", "expected"), [("cuda", 1), ("cpu", 0), ("thin", 0)])
     def test_the_variant_decides_the_gpu_count(self, variant, expected):
-        kw = self._join({"MSHIP_VARIANT": variant}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))
+        with patch("modelship.preflight.base.nvml_probe", return_value=_nvml_probe(1)):
+            kw = self._join(
+                {"MSHIP_VARIANT": variant}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS", "CUDA_VISIBLE_DEVICES")
+            )
         assert kw["params_kwargs"]["num_gpus"] == expected
 
-    def test_a_metal_node_leaves_the_count_to_ray(self):
-        from modelship.deploy import serve_utils
+    def test_a_cuda_node_without_a_usable_gpu_refuses_to_join(self):
+        with (
+            patch("modelship.preflight.base.nvml_probe", return_value=_nvml_probe(0)),
+            pytest.raises(SystemExit, match=r"cuda node has no usable GPU: NVML lists no GPU"),
+        ):
+            self._join({"MSHIP_VARIANT": "cuda"}, pop=("MSHIP_NODE_NUM_GPUS", "CUDA_VISIBLE_DEVICES"))
 
-        with patch.object(serve_utils.AppleGPUAcceleratorManager, "get_current_node_num_accelerators", return_value=1):
+    def test_a_metal_node_advertises_the_metal_device(self):
+        with patch("modelship.preflight.base._metal_ask", return_value=4294968623):
             kw = self._join({"MSHIP_VARIANT": "metal"}, pop=("MSHIP_NODE_NUM_GPUS",))["params_kwargs"]
-        assert kw["num_gpus"] is None
+        assert kw["num_gpus"] == 1
 
     def test_explicit_zero_gpus_honored(self):
         kw = self._join({"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "0"})["params_kwargs"]
@@ -2278,12 +2341,12 @@ class TestJoinRayCluster:
         out = self._join({}, bootstrap="10.9.9.9:6380")
         out["write"].assert_called_once_with("10.9.9.9:6380", "/tmp/ray")
 
-    def test_sets_module_global_and_returns_node(self):
+    def test_sets_module_global_and_returns_the_gpu_count(self):
         from modelship.deploy import serve_utils
 
         out = self._join({})
         assert serve_utils._join_node is out["node"]
-        assert out["result"] is out["node"]
+        assert out["result"] == out["params_kwargs"]["num_gpus"]
 
     def test_calls_ensure_token_preflight(self):
         self._join({})["ensure"].assert_called_once()
@@ -2329,7 +2392,7 @@ class TestJoinCluster:
             patch.object(serve_utils, "prune_ray_sessions") as mock_prune,
             patch.object(serve_utils.ray, "init") as mock_init,
         ):
-            serve_utils.join_cluster("head:6380")
+            assert serve_utils.join_cluster("head:6380") is mock_join.return_value
         mock_join.assert_called_once_with("head:6380")
         mock_prune.assert_called_once()
         mock_init.assert_not_called()

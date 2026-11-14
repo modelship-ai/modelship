@@ -23,7 +23,7 @@ from modelship.preflight import (
     merge_with_user_overrides,
     run_preflight,
 )
-from modelship.preflight.llama_cpp import LlamaServerPreflight
+from modelship.preflight.llama_cpp import LlamaServerPreflight, _FitError, _invoke
 
 
 @pytest.fixture(autouse=True)
@@ -184,18 +184,29 @@ class TestLlamaServerPreflightArgs:
         args = run.call_args[0][0]
         assert args[args.index("--device") + 1] == "none"
 
-    @pytest.mark.parametrize("variant", ["cuda", "metal"])
-    def test_gpu_deploy_omits_device_flag(self, tmp_path, monkeypatch, variant):
-        monkeypatch.setenv("MSHIP_VARIANT", variant)
+    def test_a_metal_gpu_deploy_omits_device_flag(self, tmp_path, monkeypatch):
+        """Metal is linked into the build, so it can't fail to load."""
+        monkeypatch.setenv("MSHIP_VARIANT", "metal")
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
         with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")) as run:
             LlamaServerPreflight().recommend(cfg, HardwareProfile())
         assert "--device" not in run.call_args[0][0]
 
-    @pytest.mark.parametrize(("num_gpus", "devices"), [(1, "Vulkan0"), (0.5, "Vulkan0"), (2, "Vulkan0,Vulkan1")])
-    def test_a_vulkan_gpu_deploy_names_its_devices(self, tmp_path, monkeypatch, num_gpus, devices):
-        monkeypatch.setenv("MSHIP_VARIANT", "vulkan")
+    @pytest.mark.parametrize(
+        ("variant", "num_gpus", "devices"),
+        [
+            ("vulkan", 1, "Vulkan0"),
+            ("vulkan", 0.5, "Vulkan0"),
+            ("vulkan", 2, "Vulkan0,Vulkan1"),
+            ("cuda", 1, "CUDA0"),
+            ("cuda", 0.5, "CUDA0"),
+            ("cuda", 2, "CUDA0,CUDA1"),
+        ],
+    )
+    def test_a_gpu_deploy_names_its_devices(self, tmp_path, monkeypatch, variant, num_gpus, devices):
+        """A dlopen'd backend that didn't load then fails the deploy instead of running on CPU."""
+        monkeypatch.setenv("MSHIP_VARIANT", variant)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=num_gpus)
         with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")) as run:
@@ -406,6 +417,21 @@ class TestLlamaServerPreflightCpuBudget:
             "fit-params exited 1: llama_fit_params: failed to fit CLI arguments to free memory, exiting. "
             "Give the node more free memory or lower n_ctx on its models, "
             "or pass --no-preflight to load it without this check."
+        )
+
+    def test_an_argument_error_is_reported_not_the_usage_text_after_it(self):
+        stderr = (
+            'error while handling argument "--device": invalid device: CUDA0\n\n'
+            "usage:\n-dev,  --device <dev1,dev2,..>          comma-separated list of devices\n\n\n"
+            "to show complete usage, run with -h\n"
+        )
+        with (
+            patch("subprocess.run", return_value=_fit_result(returncode=1, stderr=stderr)),
+            pytest.raises(_FitError) as failure,
+        ):
+            _invoke(["llama", "fit-params"])
+        assert (
+            str(failure.value) == 'fit-params exited 1: error while handling argument "--device": invalid device: CUDA0'
         )
 
     @pytest.mark.parametrize(

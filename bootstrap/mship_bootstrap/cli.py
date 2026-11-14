@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> None:
             if not os.path.isfile(paths.venv_python(variant.name)):
                 sys.exit(engine.describe_staleness(variant, __version__))
         else:
-            if command in ("start", "join", "info"):
+            if command in ("start", "join"):
                 gates.check_hardware(variant.requires_accelerator)
             if not engine.is_current(variant, __version__):
                 sys.exit(engine.describe_staleness(variant, __version__))
@@ -89,8 +89,6 @@ def _engine_env(variant) -> dict[str, str]:
 
     if variant.serves_models and (wrapper := llama_cpp.locate(variant)):
         env["MSHIP_LLAMA_SERVER_BIN"] = wrapper
-        if variant.name == "cuda":
-            llama_cpp.warn_if_no_cuda_device(wrapper)
 
     if variant.name == "thin":
         # Same contract as the thin image.

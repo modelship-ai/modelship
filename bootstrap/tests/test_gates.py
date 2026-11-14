@@ -110,12 +110,10 @@ class TestCheckHardware:
             gates.check_hardware(required)
         driver.assert_not_called()
 
-    @pytest.mark.parametrize("driver", [None, (0, 13020)])
-    def test_cuda_without_a_gpu_is_refused(self, driver):
-        with (
-            patch.object(gates, "_nvidia_driver", return_value=driver),
-            pytest.raises(gates.GateError, match="libnvidia-ml.so.1"),
-        ):
+    @pytest.mark.parametrize("driver", [None, (0, 13020), (0, 12080)])
+    def test_cuda_without_a_gpu_is_left_to_the_engine(self, driver):
+        """The engine refuses it, unless MSHIP_NODE_NUM_GPUS=0 runs it CPU-only."""
+        with patch.object(gates, "_nvidia_driver", return_value=driver):
             gates.check_hardware("cuda")
 
     def test_cuda_with_a_driver_older_than_cuda_13_is_refused(self):
