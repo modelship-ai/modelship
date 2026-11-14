@@ -67,7 +67,7 @@ jobs:
             rpath: "$ORIGIN"
             defines: -DGGML_BACKEND_DL=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON
           - name: macos-arm64-metal
-            os: macos-14
+            os: macos-15
             rpath: "@loader_path"
             defines: -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_METAL_USE_BF16=ON -DLLAMA_BUILD_BORINGSSL=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3
     runs-on: ${{ matrix.os }}
