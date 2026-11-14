@@ -188,7 +188,9 @@ class TestSubprocessLifecycle:
             ("vulkan", 1, "Vulkan0"),
             ("vulkan", 0.5, "Vulkan0"),
             ("vulkan", 2, "Vulkan0,Vulkan1"),
-            ("cuda", 1, None),
+            ("cuda", 1, "CUDA0"),
+            ("cuda", 0.5, "CUDA0"),
+            ("cuda", 2, "CUDA0,CUDA1"),
             ("metal", 1, None),
         ],
     )

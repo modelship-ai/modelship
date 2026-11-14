@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import subprocess
 import sys
 from typing import NamedTuple
 
@@ -154,6 +153,11 @@ def _resolve(variant: Variant, server: _ServerBuild, *, fetch: bool) -> str | No
                 return None
         return wrapper_path
 
+    if cuda and not os.path.isdir(torch_cuda_libs := _torch_cuda_libs(variant)):
+        raise LlamaCppError(
+            f"{torch_cuda_libs} is missing; llama.cpp's CUDA backend loads torch's libcudart and libcublas from there"
+        )
+
     if not built:
         if os.path.isdir(extract_dir):
             shutil.rmtree(extract_dir, ignore_errors=True)
@@ -186,17 +190,12 @@ def _install_ggml_backend(backend: _GgmlBackend, variant: Variant, release_dir: 
     shutil.rmtree(backend_dir, ignore_errors=True)
 
 
+def _torch_cuda_libs(variant: Variant) -> str:
+    return os.path.join(paths.venv_dir(variant.name), _TORCH_CUDA_LIBS)
+
+
 def _write_wrapper(wrapper_path: str, extract_dir: str, lib_env: str, variant: Variant, *, cuda: bool) -> None:
-    lib_dirs = [extract_dir]
-    if cuda:
-        torch_cuda_libs = os.path.join(paths.venv_dir(variant.name), _TORCH_CUDA_LIBS)
-        if os.path.isdir(torch_cuda_libs):
-            lib_dirs.append(torch_cuda_libs)
-        else:
-            print(
-                f"warning: {torch_cuda_libs} is missing; llama.cpp will fall back to CPU",
-                file=sys.stderr,
-            )
+    lib_dirs = [extract_dir, _torch_cuda_libs(variant)] if cuda else [extract_dir]
     search_path = ":".join(lib_dirs)
     content = (
         f'#!/bin/sh\nexport {lib_env}="{search_path}${{{lib_env}:+:${lib_env}}}"\nexec "{extract_dir}/llama" "$@"\n'
@@ -204,17 +203,3 @@ def _write_wrapper(wrapper_path: str, extract_dir: str, lib_env: str, variant: V
     with open(wrapper_path, "w") as f:
         f.write(content)
     os.chmod(wrapper_path, 0o755)
-
-
-def warn_if_no_cuda_device(wrapper_path: str) -> None:
-    try:
-        result = subprocess.run(
-            [wrapper_path, "serve", "--list-devices"], capture_output=True, text=True, timeout=60, check=False
-        )
-    except (OSError, subprocess.SubprocessError):
-        return
-    if "CUDA" not in result.stdout:
-        print(
-            "warning: llama-server reports no CUDA device; GGUF models will run on CPU",
-            file=sys.stderr,
-        )

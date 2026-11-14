@@ -88,13 +88,10 @@ def check_hardware(required: str | None) -> None:
 
 
 def _check_nvidia_driver() -> None:
+    """A node without a GPU is the engine's refusal, which MSHIP_NODE_NUM_GPUS=0 overrides."""
     driver = _nvidia_driver()
     if driver is None or driver[0] == 0:
-        raise GateError(
-            "error: --cuda needs an NVIDIA GPU, and none was found.\n"
-            "The NVIDIA driver's NVML (libnvidia-ml.so.1) must load and list at least one device.\n"
-            "Install the NVIDIA driver first, or use --cpu for a CPU-only node."
-        )
+        return
     if driver[1] < 13000:
         raise GateError(
             f"error: --cuda needs a driver that supports CUDA 13.0, and this one supports CUDA "

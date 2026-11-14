@@ -335,3 +335,64 @@ class TestCmdInfoVulkan:
 
         failed = vulkan_probe.VulkanProbe(error=vulkan_probe.ProbeError("loader", "libvulkan.so.1 did not load"))
         assert "vulkan: libvulkan.so.1 did not load" in self._info(capsys, failed)
+
+
+class TestCmdInfoCuda:
+    def _info(self, capsys, result, env=None):
+        with (
+            patch.dict(os.environ, {"MSHIP_VARIANT": "cuda", **(env or {})}, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
+            patch("modelship.preflight.base.nvml_probe", return_value=result),
+        ):
+            launcher._cmd_info()
+        return capsys.readouterr().out
+
+    def _probe(self, count, cuda_version=13020, error=None):
+        from modelship.preflight import GPUInfo
+        from modelship.preflight.base import NvmlProbe
+
+        gpus = [
+            GPUInfo(index=i, available_bytes=20 * 1024**3, name="NVIDIA RTX 4090", total_bytes=24 * 1024**3)
+            for i in range(count)
+        ]
+        return NvmlProbe(gpus=gpus, cuda_version=cuda_version, error=error)
+
+    def test_prints_the_driver_and_each_gpu_the_node_offers(self, capsys):
+        out = self._info(capsys, self._probe(2))
+        assert "cuda driver: supports CUDA 13.2\n" in out
+        assert "cuda GPU 0: NVIDIA RTX 4090 (24.00 GiB, 20.00 GiB free)" in out
+        assert "cuda GPU 1: NVIDIA RTX 4090" in out
+
+    def test_lists_only_the_gpus_cuda_visible_devices_leaves(self, capsys):
+        out = self._info(capsys, self._probe(2), env={"CUDA_VISIBLE_DEVICES": "1"})
+        assert "cuda GPU 0:" in out
+        assert "cuda GPU 1:" not in out
+
+    def test_flags_a_driver_too_old_for_mship(self, capsys):
+        assert "cuda driver: supports CUDA 12.8 (mship needs 13.0 or newer)" in self._info(
+            capsys, self._probe(1, 12080)
+        )
+
+    @pytest.mark.parametrize(
+        ("count", "error", "env", "reason"),
+        [
+            (0, "NVML unavailable: Driver Not Loaded", {}, "NVML unavailable: Driver Not Loaded"),
+            (0, None, {}, "NVML lists no GPU"),
+            (2, None, {"CUDA_VISIBLE_DEVICES": "-1"}, "CUDA_VISIBLE_DEVICES='-1' matches none of the 2 GPU(s)"),
+        ],
+    )
+    def test_prints_why_there_is_none(self, capsys, count, error, env, reason):
+        assert f"cuda: {reason}" in self._info(capsys, self._probe(count, error=error), env=env)
+
+
+class TestCmdInfoMetal:
+    def test_prints_the_apple_gpus_ray_finds(self, capsys):
+        from ray._private.accelerators import AppleGPUAcceleratorManager
+
+        with (
+            patch.dict(os.environ, {"MSHIP_VARIANT": "metal"}, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
+            patch.object(AppleGPUAcceleratorManager, "get_current_node_num_accelerators", return_value=1),
+        ):
+            launcher._cmd_info()
+        assert "metal: Ray finds 1 Apple GPU(s)" in capsys.readouterr().out

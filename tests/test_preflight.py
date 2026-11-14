@@ -105,6 +105,34 @@ class TestNvmlGpus:
         with patch.dict(sys.modules, {"pynvml": pynvml}):
             assert preflight_base._nvml_gpus() == []
 
+    def test_reads_the_drivers_cuda_version(self):
+        from modelship.preflight import base as preflight_base
+
+        pynvml = self._pynvml()
+        pynvml.nvmlSystemGetCudaDriverVersion_v2.return_value = 13020
+        with patch.dict(sys.modules, {"pynvml": pynvml}):
+            assert preflight_base.nvml_probe().cuda_version == 13020
+
+    def test_an_unreadable_cuda_version_keeps_the_gpus(self):
+        from modelship.preflight import base as preflight_base
+
+        pynvml = self._pynvml()
+        pynvml.nvmlSystemGetCudaDriverVersion_v2.side_effect = RuntimeError("Not Supported")
+        with patch.dict(sys.modules, {"pynvml": pynvml}):
+            result = preflight_base.nvml_probe()
+        assert result.cuda_version is None
+        assert len(result.gpus) == 2
+
+    def test_no_nvml_names_the_reason(self):
+        from modelship.preflight import base as preflight_base
+
+        pynvml = self._pynvml()
+        pynvml.nvmlInit.side_effect = RuntimeError("Driver Not Loaded")
+        with patch.dict(sys.modules, {"pynvml": pynvml}):
+            result = preflight_base.nvml_probe()
+        assert result.gpus == []
+        assert result.error == "NVML unavailable: Driver Not Loaded"
+
 
 class TestVisibleGpus:
     @pytest.mark.parametrize(
