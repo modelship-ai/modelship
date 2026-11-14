@@ -267,7 +267,6 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DSHADERC_SKIP_TESTS=ON \
             -DSHADERC_SKIP_EXAMPLES=ON \
-            -DSHADERC_SKIP_INSTALL=ON \
             -DSHADERC_SKIP_COPYRIGHT_CHECK=ON
           cmake --build build --target glslc_exe -j "$(nproc)"
           mkdir ../glslc
