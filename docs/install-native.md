@@ -68,7 +68,7 @@ flag decides what to install; `start` and `join` are what refuse to run without 
 hardware: a `--cuda` node needs a GPU NVML lists, on a driver that supports CUDA 13.0,
 a `--vulkan` node a GPU Vulkan lists that llama.cpp can use, and a `--metal` node the GPU
 Metal lists. `mship info` with the node's variant flag shows what the node sees, and
-`MSHIP_NODE_NUM_GPUS=0` runs a node without one CPU-only. `bootstrap` fails if the
+`MSHIP_NODE_NUM_GPUS=0` runs a node CPU-only, without looking for a GPU. `bootstrap` fails if the
 llama.cpp download fails.
 
 ## Platform prerequisites
