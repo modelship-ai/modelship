@@ -138,8 +138,9 @@ class TestSubprocessLifecycle:
     @pytest.mark.asyncio
     async def test_missing_binary_raises(self, monkeypatch):
         monkeypatch.delenv("MSHIP_LLAMA_SERVER_BIN", raising=False)
+        monkeypatch.setenv("MSHIP_VARIANT", "cuda")
         infer = LlamaServerInfer(_make_config())
-        with pytest.raises(ValueError, match="MSHIP_LLAMA_SERVER_BIN"):
+        with pytest.raises(ValueError, match="`mship bootstrap --cuda` provisions one"):
             await infer.start()
 
     @pytest.mark.asyncio
