@@ -204,8 +204,10 @@ def _invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
     except (OSError, subprocess.SubprocessError) as e:
         raise _FitError(f"fit-params invocation failed: {e}") from None
     if result.returncode != 0:
-        lines = result.stderr.strip().splitlines()
-        detail = " ".join(_LOG_PREFIX_RE.sub("", lines[-1].strip()).split()).rstrip(".") if lines else ""
+        lines = [_LOG_PREFIX_RE.sub("", line.strip()) for line in result.stderr.strip().splitlines()]
+        # An argument error is followed by usage text.
+        line = next((line for line in reversed(lines) if line.startswith("error")), lines[-1] if lines else "")
+        detail = " ".join(line.split()).rstrip(".")
         raise _FitError(f"fit-params exited {result.returncode}" + (f": {detail}" if detail else ""))
     return result
 

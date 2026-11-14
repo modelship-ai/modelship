@@ -23,7 +23,7 @@ from modelship.preflight import (
     merge_with_user_overrides,
     run_preflight,
 )
-from modelship.preflight.llama_cpp import LlamaServerPreflight
+from modelship.preflight.llama_cpp import LlamaServerPreflight, _FitError, _invoke
 
 
 @pytest.fixture(autouse=True)
@@ -417,6 +417,21 @@ class TestLlamaServerPreflightCpuBudget:
             "fit-params exited 1: llama_fit_params: failed to fit CLI arguments to free memory, exiting. "
             "Give the node more free memory or lower n_ctx on its models, "
             "or pass --no-preflight to load it without this check."
+        )
+
+    def test_an_argument_error_is_reported_not_the_usage_text_after_it(self):
+        stderr = (
+            'error while handling argument "--device": invalid device: CUDA0\n\n'
+            "usage:\n-dev,  --device <dev1,dev2,..>          comma-separated list of devices\n\n\n"
+            "to show complete usage, run with -h\n"
+        )
+        with (
+            patch("subprocess.run", return_value=_fit_result(returncode=1, stderr=stderr)),
+            pytest.raises(_FitError) as failure,
+        ):
+            _invoke(["llama", "fit-params"])
+        assert (
+            str(failure.value) == 'fit-params exited 1: error while handling argument "--device": invalid device: CUDA0'
         )
 
     @pytest.mark.parametrize(
