@@ -59,6 +59,11 @@ def test_pin_job_rewrites_the_pinned_file():
     assert "s|^_LLAMA_CPP_RELEASE = .*|" in steps
 
 
+def test_pin_job_branches_from_the_current_default_branch():
+    checkout = next(s for s in _build_workflow()["jobs"]["pin"]["steps"] if s.get("name") == "Checkout modelship")
+    assert checkout["with"]["ref"] == "${{ github.event.repository.default_branch }}"
+
+
 def test_cuda_backend_shares_the_linux_x64_runner():
     """A newer runner image would raise the backend's glibc floor above the
     linux-x64 binaries it is dlopened beside."""
