@@ -22,33 +22,36 @@ def test_dockerfile_carries_no_pin_of_its_own():
     assert "LLAMA_CPP_TAG" not in (_REPO_ROOT / "Dockerfile").read_text()
 
 
-def test_asset_url_embeds_pinned_tag():
-    for asset in llama_cpp._ASSETS.values():
-        assert llama_cpp._LLAMA_CPP_TAG in asset.url
-        assert asset.url.startswith(f"https://github.com/{llama_cpp._LLAMA_CPP_BUILDS_REPO}/")
+def test_server_build_url_embeds_pinned_tag():
+    for server in llama_cpp._SERVER_BUILDS.values():
+        assert llama_cpp._LLAMA_CPP_TAG in server.url
+        assert server.url.startswith(f"https://github.com/{llama_cpp._LLAMA_CPP_BUILDS_REPO}/")
 
 
 def test_release_is_a_build_of_the_pinned_tag():
     assert re.fullmatch(rf"llamacpp-{llama_cpp._LLAMA_CPP_TAG}(-r\d+)?", llama_cpp._LLAMA_CPP_RELEASE)
-    for url in (*(a.url for a in llama_cpp._ASSETS.values()), *(a.url for a in llama_cpp._ADDONS.values())):
+    for url in (
+        *(a.url for a in llama_cpp._SERVER_BUILDS.values()),
+        *(a.url for a in llama_cpp._GGML_BACKENDS.values()),
+    ):
         assert f"/releases/download/{llama_cpp._LLAMA_CPP_RELEASE}/" in url
 
 
-def test_addons_come_from_the_same_build():
+def test_backends_come_from_the_same_build():
     """A backend is dlopened beside the server tarball's libggml-base.so; a
     different tag is an ABI mismatch."""
-    for addon in llama_cpp._ADDONS.values():
-        assert llama_cpp._LLAMA_CPP_TAG in addon.url
-        assert addon.url.startswith(f"https://github.com/{llama_cpp._LLAMA_CPP_BUILDS_REPO}/")
+    for backend in llama_cpp._GGML_BACKENDS.values():
+        assert llama_cpp._LLAMA_CPP_TAG in backend.url
+        assert backend.url.startswith(f"https://github.com/{llama_cpp._LLAMA_CPP_BUILDS_REPO}/")
 
 
-def test_every_addon_has_a_server_build_to_layer_over():
-    assert {(system, machine) for _, system, machine in llama_cpp._ADDONS} <= set(llama_cpp._ASSETS)
+def test_every_backend_has_a_server_build_to_layer_over():
+    assert {(system, machine) for _, system, machine in llama_cpp._GGML_BACKENDS} <= set(llama_cpp._SERVER_BUILDS)
 
 
-def test_vulkan_addons_are_what_the_workflow_packages():
+def test_vulkan_backends_are_what_the_workflow_packages():
     built = {m["name"] for m in _build_workflow()["jobs"]["vulkan-backend"]["strategy"]["matrix"]["include"]}
-    names = {a.url.rsplit("/", 1)[1] for (variant, *_), a in llama_cpp._ADDONS.items() if variant == "vulkan"}
+    names = {a.url.rsplit("/", 1)[1] for (variant, *_), a in llama_cpp._GGML_BACKENDS.items() if variant == "vulkan"}
     assert names == {f"libggml-vulkan-{llama_cpp._LLAMA_CPP_TAG}-{name}.tar.gz" for name in built}
 
 

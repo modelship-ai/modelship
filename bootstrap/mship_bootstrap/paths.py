@@ -47,6 +47,6 @@ def pins_staging(variant: str) -> str:
 
 
 def builds_dir(variant: str) -> str:
-    """Per-variant: the cuda addon mutates the extracted tree and the wrapper bakes
+    """Per-variant: a ggml backend mutates the extracted tree and the wrapper bakes
     in a venv-specific library path."""
     return os.path.join(home(), "builds", variant)
