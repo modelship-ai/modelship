@@ -33,7 +33,7 @@ uv run pytest tests/test_config.py::TestLlamaServerConfig::test_defaults -v
 
 CI mirrors `make lint` + `make unit-test`. Match it locally before pushing.
 
-`make lint` and the tests pass on either extra: `dev` also carries the cuda extra's `nvidia-ml-py` and `diffusers`, the cuda-only packages modelship imports, so pyright resolves them on a cpu sync.
+`make lint` and the tests pass on the cuda sync and on the CPU-only dev sync above: `dev` also carries the cuda extra's `nvidia-ml-py` and `diffusers`, the cuda-only packages modelship imports. A bare `--extra cpu` has no vllm or torch, so lint and tests fail there.
 
 When running tests on your own initiative, skip the slow integration suite: `make unit-test`. Only run `make integration` when explicitly requested; a plain `pytest -m integration` refuses to run.
 

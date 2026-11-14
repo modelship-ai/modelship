@@ -33,7 +33,7 @@ make lint        # ruff check + ruff format --check + pyright — all three must
 make lint-fix    # auto-fix ruff issues
 ```
 
-`make lint` passes on either extra: `dev` carries the cuda-only packages pyright needs to resolve. Line length is 120, not 88; config lives in `pyproject.toml`.
+`make lint` passes on the cuda sync and on the CPU-only one (`uv sync --extra dev --extra cpu --extra vllm-cpu`): `dev` carries the cuda-only packages pyright needs to resolve. Line length is 120, not 88; config lives in `pyproject.toml`.
 
 ## Submitting Changes
 

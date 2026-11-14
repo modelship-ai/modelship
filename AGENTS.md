@@ -30,7 +30,7 @@ uv run pytest tests/test_config.py::TestLlamaServerConfig::test_defaults -v
 
 CI (`.github/workflows/ci.yml`) runs `uv sync --extra dev --extra cuda` on Linux, then `ruff check`, `ruff format --check`, `pyright`, and `pytest tests/ -v -m "not integration"` — same filter as the "skip integration" guidance below. Separate CI jobs cover the `bootstrap/` package (multi-Python-version matrix), lockfile/pins parity, and the Helm chart. Match the lint+test job locally before pushing.
 
-`make lint` and the tests pass on either extra. Pyright resolves imports against the active venv, so `dev` also carries the cuda extra's `nvidia-ml-py` and `diffusers`, the cuda-only packages modelship imports; without them a cpu sync fails with `reportMissingImports`.
+`make lint` and the tests pass on the cuda sync and on the CPU-only dev sync (`--extra dev --extra cpu --extra vllm-cpu`). Pyright resolves imports against the active venv, so `dev` also carries the cuda extra's `nvidia-ml-py` and `diffusers`, the cuda-only packages modelship imports; without them the CPU-only sync fails with `reportMissingImports`. A bare `--extra cpu` has no vllm or torch, so lint and tests fail there.
 
 Agents: when running tests on your own initiative (sanity-checking a change, verifying a bump), skip the slow `integration`-marked suite by default — `make unit-test`. Only run `make integration` when explicitly requested; a plain `pytest -m integration` refuses to run.
 
