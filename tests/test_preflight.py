@@ -29,6 +29,7 @@ from modelship.preflight import (
     merge_with_user_overrides,
     run_preflight,
 )
+from modelship.preflight.base import GpuCount
 from modelship.preflight.vllm import VllmPreflight
 
 
@@ -95,7 +96,33 @@ class TestNvmlGpus:
             GPUInfo(index=1, available_bytes=15849, name="GPU 1", uuid="GPU-1", total_bytes=15851),
         ]
         assert pynvml.nvmlDeviceGetMemoryInfo.call_args.kwargs == {"version": pynvml.nvmlMemory_v2}
-        pynvml.nvmlShutdown.assert_called_once()
+        assert pynvml.nvmlInit.call_count == pynvml.nvmlShutdown.call_count == 2
+
+    def test_numbers_the_visible_gpus_as_cuda_does(self, monkeypatch):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+        with patch.dict(sys.modules, {"pynvml": self._pynvml()}):
+            gpus = preflight_base._nvml_gpus()
+        assert [(g.index, g.uuid) for g in gpus] == [(0, "GPU-1")]
+
+    def test_a_failed_memory_read_reads_no_gpus(self):
+        from modelship.preflight import base as preflight_base
+
+        pynvml = self._pynvml()
+        pynvml.nvmlDeviceGetMemoryInfo.side_effect = RuntimeError("Unknown Error")
+        with patch.dict(sys.modules, {"pynvml": pynvml}):
+            assert preflight_base._nvml_gpus() == []
+
+    def test_the_probe_reads_no_memory(self):
+        from modelship.preflight import base as preflight_base
+        from modelship.preflight.base import NvmlGpu
+
+        pynvml = self._pynvml()
+        with patch.dict(sys.modules, {"pynvml": pynvml}):
+            result = preflight_base.nvml_probe()
+        assert result.gpus == [NvmlGpu(0, "GPU 0", "GPU-0"), NvmlGpu(1, "GPU 1", "GPU-1")]
+        pynvml.nvmlDeviceGetMemoryInfo.assert_not_called()
 
     def test_no_nvml_reads_no_gpus(self):
         from modelship.preflight import base as preflight_base
@@ -149,21 +176,19 @@ class TestVisibleGpus:
     )
     def test_follows_cuda_visible_devices(self, devices, uuids):
         from modelship.preflight import base as preflight_base
+        from modelship.preflight.base import NvmlGpu
 
-        visible = preflight_base._visible_gpus(_NODE, devices)
-        assert [g.uuid for g in visible] == uuids
-        assert [g.index for g in visible] == list(range(len(uuids)))
+        node = [NvmlGpu(0, "GPU", "GPU-aaa"), NvmlGpu(1, "GPU", "GPU-bbb")]
+        assert [g.uuid for g in preflight_base._visible_gpus(node, devices)] == uuids
 
 
 class TestDetectGpus:
-    @pytest.mark.parametrize(("devices", "uuids"), [("1", ["GPU-bbb"]), ("", ["GPU-aaa", "GPU-bbb"]), ("-1", [])])
-    def test_cuda_reads_the_visible_gpus_else_the_whole_node(self, monkeypatch, devices, uuids):
+    def test_cuda_reads_nvml(self, monkeypatch):
         from modelship.preflight import base as preflight_base
 
         monkeypatch.setenv("MSHIP_VARIANT", "cuda")
-        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", devices)
         with patch.object(preflight_base, "_nvml_gpus", return_value=_NODE):
-            assert [g.uuid for g in preflight_base.detect_gpus()] == uuids
+            assert preflight_base.detect_gpus() == _NODE
 
     def test_metal_reads_the_metal_device(self, monkeypatch):
         from modelship.preflight import base as preflight_base
@@ -204,6 +229,95 @@ def _vulkan_device(index, render=(226, 128)):
         render=render,
         heaps=heaps,
     )
+
+
+class TestCountGpus:
+    def _pynvml(self, count):
+        pynvml = MagicMock()
+        pynvml.nvmlDeviceGetCount.return_value = count
+        pynvml.nvmlDeviceGetHandleByIndex.side_effect = lambda i: i
+        pynvml.nvmlDeviceGetName.side_effect = lambda i: f"GPU {i}"
+        pynvml.nvmlDeviceGetUUID.side_effect = lambda i: f"GPU-{i}"
+        return pynvml
+
+    @pytest.mark.parametrize(
+        ("count", "mask", "found"),
+        [
+            (2, None, GpuCount(2)),
+            (2, "1", GpuCount(1)),
+            (2, "-1", GpuCount(0, "CUDA_VISIBLE_DEVICES='-1' matches none of the 2 GPU(s) NVML lists")),
+            (0, None, GpuCount(0, "NVML lists no GPU")),
+        ],
+    )
+    def test_cuda_counts_the_gpus_cuda_visible_devices_leaves(self, monkeypatch, count, mask, found):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("MSHIP_VARIANT", "cuda")
+        if mask is None:
+            monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+        else:
+            monkeypatch.setenv("CUDA_VISIBLE_DEVICES", mask)
+        pynvml = self._pynvml(count)
+        with patch.dict(sys.modules, {"pynvml": pynvml}):
+            assert preflight_base.count_gpus() == found
+        pynvml.nvmlDeviceGetMemoryInfo.assert_not_called()
+
+    def test_cuda_without_nvml_names_the_reason(self, monkeypatch):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("MSHIP_VARIANT", "cuda")
+        pynvml = self._pynvml(1)
+        pynvml.nvmlInit.side_effect = RuntimeError("Driver Not Loaded")
+        with patch.dict(sys.modules, {"pynvml": pynvml}):
+            assert preflight_base.count_gpus() == GpuCount(0, "NVML unavailable: Driver Not Loaded")
+
+    def test_vulkan_counts_the_probes_devices(self, monkeypatch):
+        from modelship.preflight import base as preflight_base
+        from modelship.utils import vulkan_probe
+
+        monkeypatch.setenv("MSHIP_VARIANT", "vulkan")
+        devices = [_vulkan_device(0), _vulkan_device(1)]
+        with (
+            patch.object(vulkan_probe, "probe", return_value=vulkan_probe.VulkanProbe(devices, devices)),
+            patch.object(vulkan_probe, "device_memory") as memory,
+        ):
+            assert preflight_base.count_gpus() == GpuCount(2)
+        memory.assert_not_called()
+
+    def test_vulkan_names_the_probes_error(self, monkeypatch):
+        from modelship.preflight import base as preflight_base
+        from modelship.utils import vulkan_probe
+
+        monkeypatch.setenv("MSHIP_VARIANT", "vulkan")
+        failed = vulkan_probe.VulkanProbe(error=vulkan_probe.ProbeError("loader", "libvulkan.so.1 did not load"))
+        with patch.object(vulkan_probe, "probe", return_value=failed):
+            assert preflight_base.count_gpus() == GpuCount(0, "libvulkan.so.1 did not load")
+
+    @pytest.mark.parametrize(
+        ("answer", "found"),
+        [(4294968623, GpuCount(1)), (None, GpuCount(0, "Metal lists no GPU"))],
+    )
+    def test_metal_counts_the_default_device(self, monkeypatch, answer, found):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("MSHIP_VARIANT", "metal")
+        with patch.object(preflight_base, "_metal_ask", return_value=answer) as ask:
+            assert preflight_base.count_gpus() == found
+        ask.assert_called_once_with(b"registryID")
+
+    def test_metal_without_the_framework_names_the_reason(self, monkeypatch):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("MSHIP_VARIANT", "metal")
+        with patch.object(preflight_base, "_metal_ask", side_effect=OSError("no Metal.framework")):
+            assert preflight_base.count_gpus() == GpuCount(0, "Metal unavailable: no Metal.framework")
+
+    @pytest.mark.parametrize("variant", ["cpu", "thin"])
+    def test_other_variants_count_none(self, monkeypatch, variant):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("MSHIP_VARIANT", variant)
+        assert preflight_base.count_gpus().count == 0
 
 
 class TestVulkanGpus:
@@ -294,6 +408,12 @@ class TestMetalGpus:
         from modelship.preflight import base as preflight_base
 
         with patch.object(preflight_base, "_metal_working_set_limit", side_effect=OSError("no Metal")):
+            assert preflight_base._metal_gpus() == []
+
+    def test_no_metal_device_reads_no_gpu(self):
+        from modelship.preflight import base as preflight_base
+
+        with patch.object(preflight_base, "_metal_ask", return_value=None):
             assert preflight_base._metal_gpus() == []
 
     def test_reads_the_in_use_figure_from_ioreg(self):

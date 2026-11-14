@@ -66,9 +66,10 @@ Bootstrapping never checks for the accelerator itself, so `--cuda` provisions on
 host with no GPU — a golden image, or a node whose driver is not up yet. The variant
 flag decides what to install; `start` and `join` are what refuse to run without the
 hardware: a `--cuda` node needs a GPU NVML lists, on a driver that supports CUDA 13.0,
-and a `--vulkan` node a GPU Vulkan lists that llama.cpp can use. `mship info --cuda` or
-`mship info --vulkan` shows what the node sees, and `MSHIP_NODE_NUM_GPUS=0` runs a node
-without one CPU-only. `bootstrap` fails if the llama.cpp download fails.
+a `--vulkan` node a GPU Vulkan lists that llama.cpp can use, and a `--metal` node the GPU
+Metal lists. `mship info` with the node's variant flag shows what the node sees, and
+`MSHIP_NODE_NUM_GPUS=0` runs a node without one CPU-only. `bootstrap` fails if the
+llama.cpp download fails.
 
 ## Platform prerequisites
 
