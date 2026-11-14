@@ -246,6 +246,7 @@ class TestCountGpus:
             (2, None, GpuCount(2)),
             (2, "1", GpuCount(1)),
             (2, "-1", GpuCount(0, "CUDA_VISIBLE_DEVICES='-1' matches none of the 2 GPU(s) NVML lists")),
+            (2, "", GpuCount(0, "CUDA_VISIBLE_DEVICES='' matches none of the 2 GPU(s) NVML lists")),
             (0, None, GpuCount(0, "NVML lists no GPU")),
         ],
     )

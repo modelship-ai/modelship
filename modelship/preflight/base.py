@@ -89,7 +89,8 @@ def count_gpus() -> GpuCount:
     variant = current_variant()
     if variant == "cuda":
         result = nvml_probe()
-        visible = result.visible()
+        # Empty hides every GPU from CUDA and Ray; only preflight's visible() reads it as the whole node.
+        visible = [] if os.environ.get("CUDA_VISIBLE_DEVICES") == "" else result.visible()
         return GpuCount(len(visible), "" if visible else result.why_none_visible())
     if variant == "vulkan":
         from modelship.utils import vulkan_probe
