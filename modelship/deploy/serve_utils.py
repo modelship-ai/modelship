@@ -218,9 +218,11 @@ def prune_ray_sessions() -> None:
         logger.warning("Ray session pruning failed; continuing without it.", exc_info=True)
 
 
-def _join_ray_cluster(address: str) -> Node:
-    """Start THIS container's Ray node in-process and join the cluster whose GCS
-    is at `address` (host:port). Uses ray._private.node.Node(head=False) directly
+def _join_ray_cluster(address: str) -> int:
+    """Start THIS container's Ray node in-process, join the cluster whose GCS
+    is at `address` (host:port) and return the GPU count it gave Ray.
+
+    Uses ray._private.node.Node(head=False) directly
     — the same path `ray start --address` takes internally — rather than shelling
     out to `ray start --block`, so there's no wrapper subprocess to supervise or
     process-group-signal: the raylet/agent subprocesses are owned by this Node
@@ -274,7 +276,7 @@ def _join_ray_cluster(address: str) -> Node:
     write_ray_address(bootstrap, node.get_temp_dir_path())
     _join_node = node
     logger.info("Joined Ray cluster at %s.", address)
-    return node
+    return num_gpus
 
 
 # Return codes Ray treats as a graceful subprocess exit (SIGTERM is how the node
@@ -333,8 +335,8 @@ def local_ray_clusters() -> set[str]:
     return set(find_gcs_addresses())
 
 
-def start_head(lib_level: int) -> None:
-    """Start this machine's Ray head in-process, sized from MSHIP_NODE_*."""
+def start_head(lib_level: int) -> int:
+    """Start this machine's Ray head in-process, sized from MSHIP_NODE_*. Returns the GPU count it gave Ray."""
     _clear_vendor_visible_devices()
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
@@ -358,6 +360,7 @@ def start_head(lib_level: int) -> None:
     # "local" always starts a new instance, ignoring RAY_ADDRESS and the discovery marker.
     ray.init(address="local", ignore_reinit_error=True, logging_level=lib_level, **init_kwargs)
     _pin_ray_log_levels(lib_level)
+    return init_kwargs["num_gpus"]
 
 
 def _check_ports_distinct(ports: dict[str, int]) -> None:
@@ -377,8 +380,8 @@ def _check_ports_free(ports: dict[str, int]) -> None:
                 sys.exit(f"error: can't listen on port {port} ({e.strerror}); pick another one with {flag}.")
 
 
-def join_cluster(address: str) -> None:
-    """Start this machine's Ray node as a worker of the cluster at *address*."""
+def join_cluster(address: str) -> int:
+    """Start this machine's Ray node as a worker of the cluster at *address*. Returns the GPU count it gave Ray."""
     _clear_vendor_visible_devices()
     os.environ.setdefault("RAY_USAGE_STATS_ENABLED", "0")
     os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "1")
@@ -391,7 +394,7 @@ def join_cluster(address: str) -> None:
     if metrics_port := os.environ.get("MSHIP_METRICS_PORT"):
         _check_ports_free({"--metrics-port": int(metrics_port)})
     prune_ray_sessions()
-    _join_ray_cluster(_with_default_port(address, _DEFAULT_RAY_GCS_PORT))
+    return _join_ray_cluster(_with_default_port(address, _DEFAULT_RAY_GCS_PORT))
 
 
 def _with_default_port(address: str, port: int) -> str:

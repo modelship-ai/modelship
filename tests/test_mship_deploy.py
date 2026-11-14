@@ -907,6 +907,25 @@ class TestShutdownRay:
         mock_ray.assert_called_once()
 
 
+class TestLogGpus:
+    def test_logs_only_the_gpus_the_node_advertises(self, caplog):
+        from modelship import driver
+        from modelship.preflight.base import GPUInfo
+
+        gpus = [GPUInfo(index=i, available_bytes=2**30, name=f"gpu{i}") for i in range(2)]
+        with patch("modelship.preflight.detect_gpus", return_value=gpus), caplog.at_level(logging.INFO):
+            driver._log_gpus(1)
+        assert "This node advertises GPU 0: gpu0" in caplog.text
+        assert "gpu1" not in caplog.text
+
+    def test_a_node_that_advertises_none_detects_nothing(self):
+        from modelship import driver
+
+        with patch("modelship.preflight.detect_gpus") as detect:
+            driver._log_gpus(0)
+        detect.assert_not_called()
+
+
 class TestSignalHandlersOutliveRay:
     """ray.init and Node() each install a SIGTERM handler of their own; ours must win."""
 
@@ -1657,6 +1676,19 @@ class TestStartHead:
             kwargs = self._init_call({"MSHIP_VARIANT": "cuda"}, pop=("MSHIP_NODE_NUM_GPUS", "CUDA_VISIBLE_DEVICES"))
         assert kwargs["num_gpus"] == 2
 
+    def test_returns_the_gpu_count_it_gave_ray(self):
+        from modelship.deploy import serve_utils
+        from modelship.preflight.base import GpuCount
+
+        with (
+            patch.dict(os.environ, {"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "1"}),
+            patch.object(serve_utils, "count_gpus", return_value=GpuCount(2)),
+            patch.object(serve_utils.ray, "init") as mock_init,
+            patch.object(serve_utils, "prune_ray_sessions"),
+        ):
+            assert serve_utils.start_head(20) == 1
+        assert mock_init.call_args.kwargs["num_gpus"] == 1
+
     @pytest.mark.parametrize(
         ("count", "error", "mask", "reason"),
         [
@@ -2309,12 +2341,12 @@ class TestJoinRayCluster:
         out = self._join({}, bootstrap="10.9.9.9:6380")
         out["write"].assert_called_once_with("10.9.9.9:6380", "/tmp/ray")
 
-    def test_sets_module_global_and_returns_node(self):
+    def test_sets_module_global_and_returns_the_gpu_count(self):
         from modelship.deploy import serve_utils
 
         out = self._join({})
         assert serve_utils._join_node is out["node"]
-        assert out["result"] is out["node"]
+        assert out["result"] == out["params_kwargs"]["num_gpus"]
 
     def test_calls_ensure_token_preflight(self):
         self._join({})["ensure"].assert_called_once()
@@ -2360,7 +2392,7 @@ class TestJoinCluster:
             patch.object(serve_utils, "prune_ray_sessions") as mock_prune,
             patch.object(serve_utils.ray, "init") as mock_init,
         ):
-            serve_utils.join_cluster("head:6380")
+            assert serve_utils.join_cluster("head:6380") is mock_join.return_value
         mock_join.assert_called_once_with("head:6380")
         mock_prune.assert_called_once()
         mock_init.assert_not_called()
