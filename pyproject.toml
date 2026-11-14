@@ -121,6 +121,9 @@ dev = [
     "pytest-asyncio>=0.25.0",
     "pre-commit>=4.0.0",
     "fakeredis>=2.36.2",
+    # cuda-extra imports, for pyright on any sync.
+    "nvidia-ml-py",
+    "diffusers>=0.42.1",
 ]
 
 # vLLM runs these in each of its processes
