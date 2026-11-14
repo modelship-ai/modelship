@@ -12,6 +12,7 @@ Then pick the node's role once — the install command is the same on every mach
 ```bash
 mship bootstrap --cuda      # NVIDIA GPU node
 mship bootstrap --cpu       # CPU node (includes vLLM CPU)
+mship bootstrap --vulkan    # Vulkan GPU node (Linux; --cpu plus llama.cpp offload)
 mship bootstrap --metal     # Apple Silicon
 mship bootstrap --thin      # coordinator/head only, no capacity
 

@@ -19,6 +19,8 @@ class GateError(Exception):
 def check_platform(variant: Variant) -> None:
     if platform.system() == "Windows":
         raise GateError("error: Windows is not supported.\nRun the Docker images, or use WSL2 with a Linux install.")
+    if variant.name == "vulkan" and platform.system() != "Linux":
+        raise GateError(f"error: --vulkan needs Linux, found {platform.system()}.\nUse --metal on Apple Silicon.")
     if _is_musl():
         raise GateError(
             "error: musl-based distros (Alpine) are not supported.\n"

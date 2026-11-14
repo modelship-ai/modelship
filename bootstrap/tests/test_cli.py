@@ -141,7 +141,7 @@ class TestEngineEnvironment:
         cli.main(["deploy", "--cpu"])
         assert provisioned.call_args[0][2]["MSHIP_NODE_CACHE_DIR"] == "/scratch/node-cache"
 
-    @pytest.mark.parametrize("variant", ["cuda", "cpu", "metal", "thin"])
+    @pytest.mark.parametrize("variant", ["cuda", "cpu", "vulkan", "metal", "thin"])
     def test_the_engine_knows_its_variant(self, provisioned, variant):
         cli.main(["deploy", f"--{variant}"])
         assert provisioned.call_args[0][2]["MSHIP_VARIANT"] == variant
@@ -165,8 +165,9 @@ class TestEngineEnvironment:
         cli.main(["deploy", "--cuda"])
         cli.llama_cpp.warn_if_no_cuda_device.assert_called_once()
 
-    def test_non_cuda_skips_that_check(self, provisioned):
-        cli.main(["deploy", "--cpu"])
+    @pytest.mark.parametrize("variant", ["cpu", "vulkan"])
+    def test_non_cuda_skips_that_check(self, provisioned, variant):
+        cli.main(["deploy", f"--{variant}"])
         cli.llama_cpp.warn_if_no_cuda_device.assert_not_called()
 
 

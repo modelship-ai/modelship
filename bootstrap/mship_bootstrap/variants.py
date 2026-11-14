@@ -52,6 +52,15 @@ VARIANTS: dict[str, Variant] = {
         serves_models=True,
         summary="CPU node (vLLM CPU, llama.cpp, whisper.cpp, sherpa-onnx, SD)",
     ),
+    # cpu's engine environment; only the llama.cpp build differs.
+    "vulkan": Variant(
+        name="vulkan",
+        extras=("cpu", "vllm-cpu"),
+        index_args=_index_args(_PYTORCH_CPU_INDEX, _VLLM_CPU_INDEX),
+        requires_accelerator="vulkan",
+        serves_models=True,
+        summary="Vulkan GPU node (everything --cpu runs, plus llama.cpp GPU offload)",
+    ),
     "metal": Variant(
         name="metal",
         extras=("metal",),
@@ -70,7 +79,7 @@ VARIANTS: dict[str, Variant] = {
     ),
 }
 
-VARIANT_ORDER = ("cuda", "cpu", "metal", "thin")
+VARIANT_ORDER = ("cuda", "cpu", "vulkan", "metal", "thin")
 
 NO_VARIANT_ERROR = (
     "error: no variant selected\n\n"

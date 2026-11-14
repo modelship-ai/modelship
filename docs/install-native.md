@@ -10,6 +10,7 @@ uv tool install mship       # or: pipx install mship / pip install mship
 |---|---|
 | `mship bootstrap --cuda` | NVIDIA GPU node (vLLM, Diffusers, llama.cpp GPU offload) |
 | `mship bootstrap --cpu` | CPU node (vLLM CPU, llama.cpp, whisper.cpp, sherpa-onnx, stable-diffusion.cpp) |
+| `mship bootstrap --vulkan` | Vulkan GPU node, Linux only (everything `--cpu` runs, plus llama.cpp GPU offload) |
 | `mship bootstrap --metal` | Apple Silicon (Metal offload) |
 | `mship bootstrap --thin` | Coordinator/head only — serves nothing itself |
 
@@ -30,12 +31,13 @@ and overrides the recorded role for a single command.
 
 The `mship` package is a small installer that runs on any Python 3.10+. Bootstrapping:
 
-1. Refuses unsupported platforms (Windows, musl/Alpine, and glibc older than 2.39 for
-   every variant but `--thin`) before downloading anything.
+1. Refuses unsupported platforms (Windows, musl/Alpine, glibc older than 2.39 for
+   every variant but `--thin`, and `--vulkan` off Linux) before downloading anything.
 2. Checks the variant's build prerequisites — `--cuda` needs `nvcc` and `ninja`.
 3. Provisions `~/.modelship/envs/<variant>/` on **CPython 3.12.10**, installing from a
    hash-pinned dependency list shipped inside the package.
-4. Fetches the pinned `llama-server` build for the platform.
+4. Fetches the pinned `llama-server` build for the platform, plus its CUDA backend
+   for `--cuda` or its Vulkan backend for `--vulkan`.
 5. Records the variant in `~/.modelship/env`.
 
 Every node therefore lands on an identical interpreter and dependency set, which is
@@ -63,8 +65,10 @@ one is the recorded default, and `mship start --thin` selects another explicitly
 Bootstrapping never checks for the accelerator itself, so `--cuda` provisions on a
 host with no GPU — a golden image, or a node whose driver is not up yet. The variant
 flag decides what to install; `start`, `join` and `info` are what refuse to run without
-the hardware: `--cuda` needs an NVIDIA driver that lists a GPU and supports CUDA 13.0.
-`bootstrap` fails if the llama.cpp download fails.
+the hardware: `--cuda` needs an NVIDIA driver that lists a GPU and supports CUDA 13.0,
+and a `--vulkan` node's `start` and `join` refuse when Vulkan lists no GPU llama.cpp can
+use (`mship info --vulkan` shows what it found; `MSHIP_NODE_NUM_GPUS=0` runs the node
+CPU-only). `bootstrap` fails if the llama.cpp download fails.
 
 ## Platform prerequisites
 
@@ -80,9 +84,13 @@ xcode-select --install
 # Linux, all variants
 sudo apt-get install -y build-essential cmake
 
-# Linux --cpu, additionally (lscpu feeds vLLM's CPU NUMA detection; its absence
-# surfaces as an opaque `Engine core initialization failed`)
+# Linux --cpu and --vulkan, additionally (lscpu feeds vLLM's CPU NUMA detection; its
+# absence surfaces as an opaque `Engine core initialization failed`)
 sudo apt-get install -y libnuma1 openssl util-linux
+
+# Linux --vulkan, additionally: the Vulkan loader and the GPU's Vulkan driver
+# (Mesa's covers AMD and Intel GPUs)
+sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
 
 # Linux --cuda, additionally: flashinfer JIT-compiles kernels at model-load time
 sudo apt-get install -y ninja-build gnupg

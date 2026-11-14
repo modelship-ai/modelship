@@ -15,7 +15,7 @@
 
 ```bash
 uv tool install mship                  # once
-mship bootstrap --cuda                 # once per node role; --cpu, --metal or --thin
+mship bootstrap --cuda                 # once per node role; --cpu, --vulkan, --metal or --thin
 mship start --config models.yaml       # head node, gateway and models
 
 # on another machine, same two steps, then:
@@ -38,6 +38,7 @@ Docker images run the same commands: `docker run ghcr.io/modelship-ai/modelship:
 |---|---|
 | `--cuda` | NVIDIA GPU node |
 | `--cpu` | CPU node |
+| `--vulkan` | Vulkan GPU node (Linux) |
 | `--metal` | Apple Silicon |
 | `--thin` | Coordinator/head only, serves nothing itself |
 
@@ -46,7 +47,7 @@ Docker images run the same commands: `docker run ghcr.io/modelship-ai/modelship:
 ## `mship bootstrap`
 
 ```bash
-mship bootstrap --cuda|--cpu|--metal|--thin
+mship bootstrap --cuda|--cpu|--vulkan|--metal|--thin
 ```
 
 Provisions a pinned Python 3.12.10 environment for the role, the matching `llama-server` binary where the role serves models, and records the role. It takes no other arguments. After `uv tool upgrade mship`, run it again: the other commands refuse to run against an environment built by a different `mship` version. Details and platform prerequisites: [Native install](install-native.md).
@@ -104,7 +105,7 @@ Exits `0` once nothing of the nodes is left, or when none was running, and `1` w
 ## `mship info`
 
 ```bash
-mship info [--cuda|--cpu|--metal|--thin]
+mship info [--cuda|--cpu|--vulkan|--metal|--thin]
 ```
 
 Plain `mship info` reports the bootstrapper's state: its version, `MSHIP_HOME`, the recorded role, and each provisioned environment with its size (flagging stale ones, and a missing CUDA toolkit). The recorded role does not select the engine report: that needs an explicit role flag or `MSHIP_VARIANT`, and then it runs inside that environment and reports the engine's view: variant, Python, cache directories, Ray version and the `llama-server` binary in use. In a container, `docker run <image> info` gives the bootstrapper report; pass the image's role (`info --cpu`) for the engine's.

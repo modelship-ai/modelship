@@ -18,7 +18,7 @@ if str(_BOOTSTRAP_DIR) not in sys.path:
     sys.path.insert(0, str(_BOOTSTRAP_DIR))
 
 from mship_bootstrap.fetch import FetchError, fetch_and_extract_archive  # noqa: E402
-from mship_bootstrap.llama_cpp import _ASSETS  # noqa: E402
+from mship_bootstrap.llama_cpp import _SERVER_BUILDS  # noqa: E402
 
 # Every flag llama_server_infer.py's _launch sends to `llama serve`.
 _SERVE_FLAGS = [
@@ -78,11 +78,13 @@ def _flag_present(help_text: str, flag: str) -> bool:
 
 @pytest.fixture(scope="module")
 def llama_binary(tmp_path_factory) -> str:
-    asset = _ASSETS[("Linux", "x86_64")]
+    server = _SERVER_BUILDS[("Linux", "x86_64")]
     root = tmp_path_factory.mktemp("llama-cpp")
     extract_dir = root / "extracted"
     try:
-        fetch_and_extract_archive(asset.url, asset.sha256, str(root / "archive.tar.gz"), str(extract_dir), flatten=True)
+        fetch_and_extract_archive(
+            server.url, server.sha256, str(root / "archive.tar.gz"), str(extract_dir), flatten=True
+        )
     except FetchError as e:
         pytest.skip(f"could not fetch pinned llama.cpp build: {e}")
     binary = extract_dir / "llama"
