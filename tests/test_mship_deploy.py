@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -1580,6 +1581,14 @@ class TestValidateNodeGpuReservation:
         mock_detect.assert_not_called()
 
 
+def _nvml_probe(count: int, error: str | None = None):
+    from modelship.preflight import GPUInfo
+    from modelship.preflight.base import NvmlProbe
+
+    gpus = [GPUInfo(index=i, available_bytes=0, name=f"gpu{i}", uuid=f"GPU-{i}") for i in range(count)]
+    return NvmlProbe(gpus=gpus, cuda_version=13020, error=error)
+
+
 class TestStartHead:
     @pytest.fixture(autouse=True)
     def _cpu_variant(self, monkeypatch):
@@ -1660,8 +1669,40 @@ class TestStartHead:
         assert kwargs["_metrics_export_port"] == 9090
 
     def test_a_cuda_node_leaves_the_count_to_ray(self):
-        kwargs = self._init_call({"MSHIP_VARIANT": "cuda"}, pop=("MSHIP_NODE_NUM_GPUS",))
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils, "nvml_probe", return_value=_nvml_probe(1)):
+            kwargs = self._init_call({"MSHIP_VARIANT": "cuda"}, pop=("MSHIP_NODE_NUM_GPUS", "CUDA_VISIBLE_DEVICES"))
         assert "num_gpus" not in kwargs
+
+    @pytest.mark.parametrize(
+        ("count", "error", "mask", "reason"),
+        [
+            (0, "NVML unavailable: Driver Not Loaded", None, "NVML unavailable: Driver Not Loaded"),
+            (0, None, None, "NVML lists no GPU"),
+            (2, None, "-1", "CUDA_VISIBLE_DEVICES='-1' matches none of the 2 GPU(s) NVML lists"),
+        ],
+    )
+    def test_a_cuda_node_without_a_usable_gpu_refuses_to_start(self, count, error, mask, reason):
+        from modelship.deploy import serve_utils
+
+        env = {"MSHIP_VARIANT": "cuda", **({"CUDA_VISIBLE_DEVICES": mask} if mask else {})}
+        pop = ("MSHIP_NODE_NUM_GPUS",) if mask else ("MSHIP_NODE_NUM_GPUS", "CUDA_VISIBLE_DEVICES")
+        with (
+            patch.object(serve_utils, "nvml_probe", return_value=_nvml_probe(count, error)),
+            patch.object(serve_utils.ray, "init") as init,
+            pytest.raises(SystemExit, match=rf"no usable NVIDIA GPU: {re.escape(reason)}\..*MSHIP_NODE_NUM_GPUS=0"),
+        ):
+            self._init_call(env, pop=pop)
+        init.assert_not_called()
+
+    def test_an_explicit_gpu_count_skips_the_nvml_probe(self):
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils, "nvml_probe") as probe:
+            kwargs = self._init_call({"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "0"})
+        assert kwargs["num_gpus"] == 0
+        probe.assert_not_called()
 
     @pytest.mark.parametrize("variant", ["cpu", "thin"])
     def test_a_node_without_gpus_advertises_none(self, variant):
@@ -2233,8 +2274,22 @@ class TestJoinRayCluster:
 
     @pytest.mark.parametrize(("variant", "expected"), [("cuda", None), ("cpu", 0), ("thin", 0)])
     def test_the_variant_decides_the_gpu_count(self, variant, expected):
-        kw = self._join({"MSHIP_VARIANT": variant}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS"))
+        from modelship.deploy import serve_utils
+
+        with patch.object(serve_utils, "nvml_probe", return_value=_nvml_probe(1)):
+            kw = self._join(
+                {"MSHIP_VARIANT": variant}, pop=("MSHIP_NODE_NUM_CPUS", "MSHIP_NODE_NUM_GPUS", "CUDA_VISIBLE_DEVICES")
+            )
         assert kw["params_kwargs"]["num_gpus"] == expected
+
+    def test_a_cuda_node_without_a_usable_gpu_refuses_to_join(self):
+        from modelship.deploy import serve_utils
+
+        with (
+            patch.object(serve_utils, "nvml_probe", return_value=_nvml_probe(0)),
+            pytest.raises(SystemExit, match=r"no usable NVIDIA GPU: NVML lists no GPU"),
+        ):
+            self._join({"MSHIP_VARIANT": "cuda"}, pop=("MSHIP_NODE_NUM_GPUS", "CUDA_VISIBLE_DEVICES"))
 
     def test_a_metal_node_leaves_the_count_to_ray(self):
         from modelship.deploy import serve_utils

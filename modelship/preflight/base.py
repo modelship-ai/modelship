@@ -236,14 +236,31 @@ def _cgroup_reclaimable_cache_bytes(stat_paths: tuple[str, ...]) -> int | None:
     return None
 
 
-def _nvml_gpus() -> list[GPUInfo]:
+@dataclass(frozen=True)
+class NvmlProbe:
+    gpus: list[GPUInfo] = field(default_factory=list)  # every GPU on the node
+    cuda_version: int | None = None  # the driver's, 13020 for 13.2
+    error: str | None = None
+
+    def visible(self) -> list[GPUInfo]:
+        return _visible_gpus(self.gpus, os.environ.get("CUDA_VISIBLE_DEVICES"))
+
+    def why_none_visible(self) -> str:
+        if self.error is not None:
+            return self.error
+        if self.gpus:
+            mask = os.environ.get("CUDA_VISIBLE_DEVICES")
+            return f"CUDA_VISIBLE_DEVICES={mask!r} matches none of the {len(self.gpus)} GPU(s) NVML lists"
+        return "NVML lists no GPU"
+
+
+def nvml_probe() -> NvmlProbe:
     try:
         import pynvml
 
         pynvml.nvmlInit()
-    except Exception:
-        logger.warning("preflight: NVML unavailable; sizing without GPU figures", exc_info=True)
-        return []
+    except Exception as e:
+        return NvmlProbe(error=f"NVML unavailable: {e}")
     try:
         gpus: list[GPUInfo] = []
         for i in range(pynvml.nvmlDeviceGetCount()):
@@ -258,13 +275,23 @@ def _nvml_gpus() -> list[GPUInfo]:
                     total_bytes=int(mem.total) - int(mem.reserved),
                 )
             )
-        return gpus
-    except Exception:
-        logger.warning("preflight: NVML read failed; sizing without GPU figures", exc_info=True)
-        return []
+    except Exception as e:
+        return NvmlProbe(error=f"NVML read failed: {e}")
+    else:
+        cuda_version = None
+        with contextlib.suppress(Exception):
+            cuda_version = int(pynvml.nvmlSystemGetCudaDriverVersion_v2())
+        return NvmlProbe(gpus=gpus, cuda_version=cuda_version)
     finally:
         with contextlib.suppress(Exception):
             pynvml.nvmlShutdown()
+
+
+def _nvml_gpus() -> list[GPUInfo]:
+    result = nvml_probe()
+    if result.error is not None:
+        logger.warning("preflight: %s; sizing without GPU figures", result.error)
+    return result.gpus
 
 
 def _visible_gpus(node: list[GPUInfo], devices: str | None) -> list[GPUInfo]:

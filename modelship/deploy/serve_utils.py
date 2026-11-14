@@ -27,6 +27,7 @@ from modelship.deploy.local_nodes import kill_groups, worker_groups
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
 from modelship.preflight import detect_gpus
+from modelship.preflight.base import nvml_probe
 from modelship.utils import vulkan_probe
 from modelship.utils.runtime_env import GATEWAY_ENV_VARS, build_env_vars, env_setting
 from modelship.utils.socket_dir import is_private_dir, socket_root
@@ -102,7 +103,19 @@ def _resolve_node_num_gpus() -> int | None:
         )
     if variant == "vulkan":
         return len(_vulkan_node_gpus())
+    if variant == "cuda":
+        _check_cuda_node_gpus()
     return None
+
+
+def _check_cuda_node_gpus() -> None:
+    """detect_gpus()'s count, without preflight's warning."""
+    result = nvml_probe()
+    if not result.visible():
+        sys.exit(
+            f"error: this cuda node has no usable NVIDIA GPU: {result.why_none_visible()}. "
+            "`mship info` shows what the node sees; set MSHIP_NODE_NUM_GPUS=0 to run it CPU-only."
+        )
 
 
 def _vulkan_node_gpus() -> list[vulkan_probe.VulkanDevice]:

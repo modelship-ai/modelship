@@ -22,7 +22,6 @@ def provisioned(tmp_path, monkeypatch):
         patch.object(cli.engine, "is_current", return_value=True),
         patch.object(cli.llama_cpp, "provision", return_value="/builds/llama-server.sh"),
         patch.object(cli.llama_cpp, "locate", return_value="/builds/llama-server.sh"),
-        patch.object(cli.llama_cpp, "warn_if_no_cuda_device"),
         patch("os.execve") as execve,
     ):
         yield execve
@@ -88,7 +87,6 @@ class TestStop:
         cli.engine.is_current.return_value = False
         cli.main(["stop", "--cuda"])
         cli.gates.check_hardware.assert_not_called()
-        cli.llama_cpp.warn_if_no_cuda_device.assert_not_called()
         assert provisioned.called
 
     def test_needs_a_bootstrapped_environment(self, provisioned):
@@ -160,15 +158,6 @@ class TestEngineEnvironment:
         monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
         cli.main(["deploy", "--cpu"])
         assert "CUDA_DEVICE_ORDER" not in provisioned.call_args[0][2]
-
-    def test_cuda_checks_for_a_live_device(self, provisioned):
-        cli.main(["deploy", "--cuda"])
-        cli.llama_cpp.warn_if_no_cuda_device.assert_called_once()
-
-    @pytest.mark.parametrize("variant", ["cpu", "vulkan"])
-    def test_non_cuda_skips_that_check(self, provisioned, variant):
-        cli.main(["deploy", f"--{variant}"])
-        cli.llama_cpp.warn_if_no_cuda_device.assert_not_called()
 
 
 class TestInfo:
@@ -285,13 +274,15 @@ class TestBootstrap:
 
 
 class TestHardwareCheck:
-    @pytest.mark.parametrize("argv", [["start"], ["join", "--gcs-address", "h:1"], ["info"]])
-    def test_a_node_or_info_checks_the_hardware(self, provisioned, argv):
+    @pytest.mark.parametrize("argv", [["start"], ["join", "--gcs-address", "h:1"]])
+    def test_a_node_checks_the_hardware(self, provisioned, argv):
         cli.main([argv[0], "--cuda", *argv[1:]])
         cli.gates.check_hardware.assert_called_once_with("cuda")
 
-    def test_deploy_skips_it(self, provisioned):
-        cli.main(["deploy", "--cuda", "--config", "x"])
+    @pytest.mark.parametrize("argv", [["deploy", "--config", "x"], ["info"]])
+    def test_deploy_and_info_skip_it(self, provisioned, argv):
+        """info reports what the node sees instead."""
+        cli.main([argv[0], "--cuda", *argv[1:]])
         cli.gates.check_hardware.assert_not_called()
 
 

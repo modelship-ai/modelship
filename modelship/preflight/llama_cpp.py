@@ -136,11 +136,15 @@ def _fit_margin_mib(config: ModelshipModelConfig, hw: HardwareProfile) -> int:
     return max(_FIT_MARGIN_MIB, int((gpu.engine_free - budget) / 1024**2 + _FIT_MARGIN_MIB))
 
 
+# The dlopen'd backends: naming one fails the launch when it didn't load. Metal is linked in.
+_DEVICE_PREFIXES = {"cuda": "CUDA", "vulkan": "Vulkan"}
+
+
 def device_args(num_gpus: float) -> list[str]:
     if num_gpus <= 0:
         return ["--device", "none"]
-    if current_variant() == "vulkan":
-        return ["--device", ",".join(f"Vulkan{i}" for i in range(math.ceil(num_gpus)))]
+    if prefix := _DEVICE_PREFIXES.get(current_variant()):
+        return ["--device", ",".join(f"{prefix}{i}" for i in range(math.ceil(num_gpus)))]
     return []
 
 

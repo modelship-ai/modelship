@@ -91,8 +91,39 @@ def _cmd_info() -> None:
         print("ray: not installed")
 
     print(f"llama-server: {os.environ.get('MSHIP_LLAMA_SERVER_BIN') or 'unset'}")
-    if os.environ.get("MSHIP_VARIANT") == "vulkan":
+    variant = os.environ.get("MSHIP_VARIANT")
+    if variant == "cuda":
+        _print_cuda_devices()
+    elif variant == "vulkan":
         _print_vulkan_devices()
+    elif variant == "metal":
+        _print_metal_devices()
+
+
+def _print_cuda_devices() -> None:
+    from modelship.preflight.base import nvml_probe
+
+    result = nvml_probe()
+    if (version := result.cuda_version) is not None:
+        too_old = " (mship needs 13.0 or newer)" if version < 13000 else ""
+        print(f"cuda driver: supports CUDA {version // 1000}.{version % 1000 // 10}{too_old}")
+    if not (visible := result.visible()):
+        print(f"cuda: {result.why_none_visible()}")
+        return
+    for slot, gpu in enumerate(visible):
+        size = f"{gpu.total_bytes / 1024**3:.2f} GiB, {gpu.available_bytes / 1024**3:.2f} GiB free"
+        print(f"cuda GPU {slot}: {gpu.name} ({size})")
+
+
+def _print_metal_devices() -> None:
+    try:
+        from ray._private.accelerators import AppleGPUAcceleratorManager
+
+        count = AppleGPUAcceleratorManager.get_current_node_num_accelerators()
+    except Exception as e:
+        print(f"metal: Ray's Apple GPU count failed: {e}")
+        return
+    print(f"metal: Ray finds {count} Apple GPU(s)")
 
 
 def _print_vulkan_devices() -> None:

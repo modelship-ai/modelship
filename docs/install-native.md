@@ -64,11 +64,11 @@ one is the recorded default, and `mship start --thin` selects another explicitly
 
 Bootstrapping never checks for the accelerator itself, so `--cuda` provisions on a
 host with no GPU — a golden image, or a node whose driver is not up yet. The variant
-flag decides what to install; `start`, `join` and `info` are what refuse to run without
-the hardware: `--cuda` needs an NVIDIA driver that lists a GPU and supports CUDA 13.0,
-and a `--vulkan` node's `start` and `join` refuse when Vulkan lists no GPU llama.cpp can
-use (`mship info --vulkan` shows what it found; `MSHIP_NODE_NUM_GPUS=0` runs the node
-CPU-only). `bootstrap` fails if the llama.cpp download fails.
+flag decides what to install; `start` and `join` are what refuse to run without the
+hardware: a `--cuda` node needs a GPU NVML lists, on a driver that supports CUDA 13.0,
+and a `--vulkan` node a GPU Vulkan lists that llama.cpp can use. `mship info --cuda` or
+`mship info --vulkan` shows what the node sees, and `MSHIP_NODE_NUM_GPUS=0` runs a node
+without one CPU-only. `bootstrap` fails if the llama.cpp download fails.
 
 ## Platform prerequisites
 
@@ -115,9 +115,9 @@ wherever you provision — unlike the GPU, which bootstrap does not look for at 
 
 **Loader coverage on `--cuda`.** `vllm`, `diffusers`, and `llama_server` all get full
 GPU. `llama_server` gets a CUDA ggml backend beside the same binary every other
-platform runs. ggml skips a backend it cannot load without saying so, so if a GGUF
-deploy seems slow, check `"$MSHIP_LLAMA_SERVER_BIN" serve --list-devices` — it prints
-`(none)` instead of a `CUDA0:` line. `stable_diffusion_cpp`, `whispercpp`, and
+platform runs. A GPU deploy names its devices (`--device CUDA0`…), so a backend that
+didn't load fails the deploy with `invalid device: CUDA0` instead of running on CPU;
+`"$MSHIP_LLAMA_SERVER_BIN" serve --list-devices` shows what llama.cpp loaded. `stable_diffusion_cpp`, `whispercpp`, and
 `sherpa_onnx` are CPU-only here, same as in the image.
 
 ## Files on disk
