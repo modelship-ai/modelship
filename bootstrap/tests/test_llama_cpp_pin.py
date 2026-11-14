@@ -30,15 +30,35 @@ def test_asset_url_embeds_pinned_tag():
 
 def test_release_is_a_build_of_the_pinned_tag():
     assert re.fullmatch(rf"llamacpp-{llama_cpp._LLAMA_CPP_TAG}(-r\d+)?", llama_cpp._LLAMA_CPP_RELEASE)
-    for url in (*(asset.url for asset in llama_cpp._ASSETS.values()), llama_cpp._CUDA_ADDON_URL):
+    for url in (*(a.url for a in llama_cpp._ASSETS.values()), *(a.url for a in llama_cpp._ADDONS.values())):
         assert f"/releases/download/{llama_cpp._LLAMA_CPP_RELEASE}/" in url
 
 
-def test_cuda_addon_comes_from_the_same_build():
-    """The backend is dlopened beside the CPU tarball's libggml-base.so; a
+def test_addons_come_from_the_same_build():
+    """A backend is dlopened beside the server tarball's libggml-base.so; a
     different tag is an ABI mismatch."""
-    assert llama_cpp._LLAMA_CPP_TAG in llama_cpp._CUDA_ADDON_URL
-    assert llama_cpp._CUDA_ADDON_URL.startswith(f"https://github.com/{llama_cpp._LLAMA_CPP_BUILDS_REPO}/")
+    for addon in llama_cpp._ADDONS.values():
+        assert llama_cpp._LLAMA_CPP_TAG in addon.url
+        assert addon.url.startswith(f"https://github.com/{llama_cpp._LLAMA_CPP_BUILDS_REPO}/")
+
+
+def test_every_addon_has_a_server_build_to_layer_over():
+    assert {(system, machine) for _, system, machine in llama_cpp._ADDONS} <= set(llama_cpp._ASSETS)
+
+
+def test_vulkan_addons_are_what_the_workflow_packages():
+    built = {m["name"] for m in _build_workflow()["jobs"]["vulkan-backend"]["strategy"]["matrix"]["include"]}
+    names = {a.url.rsplit("/", 1)[1] for (variant, *_), a in llama_cpp._ADDONS.items() if variant == "vulkan"}
+    assert names == {f"libggml-vulkan-{llama_cpp._LLAMA_CPP_TAG}-{name}.tar.gz" for name in built}
+
+
+def test_pin_job_rewrites_every_pinned_hash():
+    """sed exits 0 on a pattern that matches nothing, so a constant missing here keeps its old hash."""
+    pinned = re.findall(r"^(_SHA256_\w+) = ", Path(llama_cpp.__file__).read_text(), re.MULTILINE)
+    steps = " ".join(step.get("run", "") for step in _build_workflow()["jobs"]["pin"]["steps"])
+    assert pinned
+    for name in pinned:
+        assert f"s|^{name} = .*|" in steps
 
 
 def test_build_workflow_matrix_names():

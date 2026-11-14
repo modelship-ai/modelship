@@ -453,6 +453,8 @@ jobs:
           ARM64=$(read_sha llama-server linux-arm64)
           METAL=$(read_sha llama-server macos-arm64-metal)
           CUDA=$(read_sha libggml-cuda linux-x64-cuda13)
+          VK_X64=$(read_sha libggml-vulkan linux-x64)
+          VK_ARM64=$(read_sha libggml-vulkan linux-arm64)
 
           sed -i \
             -e "s|^_LLAMA_CPP_TAG = .*|_LLAMA_CPP_TAG = \"${TAG}\"|" \
@@ -461,10 +463,12 @@ jobs:
             -e "s|^_SHA256_LINUX_ARM64 = .*|_SHA256_LINUX_ARM64 = \"${ARM64}\"|" \
             -e "s|^_SHA256_MACOS_ARM64_METAL = .*|_SHA256_MACOS_ARM64_METAL = \"${METAL}\"|" \
             -e "s|^_SHA256_CUDA_X64 = .*|_SHA256_CUDA_X64 = \"${CUDA}\"|" \
+            -e "s|^_SHA256_VULKAN_X64 = .*|_SHA256_VULKAN_X64 = \"${VK_X64}\"|" \
+            -e "s|^_SHA256_VULKAN_ARM64 = .*|_SHA256_VULKAN_ARM64 = \"${VK_ARM64}\"|" \
             bootstrap/mship_bootstrap/llama_cpp.py
 
           # sed exits 0 when a pattern matches nothing.
-          for value in "$TAG" "_LLAMA_CPP_RELEASE = \"${RELEASE}\"" "$X64" "$ARM64" "$METAL" "$CUDA"; do
+          for value in "$TAG" "_LLAMA_CPP_RELEASE = \"${RELEASE}\"" "$X64" "$ARM64" "$METAL" "$CUDA" "$VK_X64" "$VK_ARM64"; do
             grep -q "$value" bootstrap/mship_bootstrap/llama_cpp.py \
               || { echo "::error::llama_cpp.py kept its old pin for ${value}"; exit 1; }
           done

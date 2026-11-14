@@ -29,10 +29,8 @@ _SHA256_LINUX_X64 = "a5f36a720f2408065cf8efd05a7be991ffce2f8273ddb89e96e1eb56bb0
 _SHA256_LINUX_ARM64 = "01493ada9f64aec240a81f5d5cbf1e26233d69aed8d5f3d1b88a398932728d5a"
 _SHA256_MACOS_ARM64_METAL = "2228672fbe71732affbacfe32b4e74141e69f46c2b4d1e2619a9ce1c4df941b7"
 _SHA256_CUDA_X64 = "798760ec372c278342b9a2744ee4a8244765d83005d819cf9445fa40dc7a7711"
-
-# dlopen'd ggml backend, layered over the linux-x64 tarball.
-_CUDA_ADDON_URL = f"{_LLAMA_CPP_RELEASE_URL}/libggml-cuda-{_LLAMA_CPP_TAG}-linux-x64-cuda13.tar.gz"
-_CUDA_BACKEND_SO = "libggml-cuda.so"
+_SHA256_VULKAN_X64 = "71816c34e197b7eb17dda6a87d85748b8e2450f19f50c4306358a2e64aa02aad"
+_SHA256_VULKAN_ARM64 = "259551bcb59ea592f2f918028a7b507f690953bdd7996fdf1e6096854f8cc3a5"
 
 # Static because the engine environment is pinned to one CPython minor.
 _TORCH_CUDA_LIBS = os.path.join("lib", "python3.12", "site-packages", "nvidia", "cu13", "lib")
@@ -61,6 +59,33 @@ _ASSETS: dict[tuple[str, str], _Asset] = {
         url=f"{_LLAMA_CPP_RELEASE_URL}/llama-server-{_LLAMA_CPP_TAG}-linux-arm64.tar.gz",
         sha256=_SHA256_LINUX_ARM64,
         lib_env="LD_LIBRARY_PATH",
+    ),
+}
+
+
+class _Addon(NamedTuple):
+    """A dlopen'd ggml backend, layered over the server tarball of its platform."""
+
+    url: str
+    sha256: str
+    so_name: str
+
+
+_ADDONS: dict[tuple[str, str, str], _Addon] = {
+    ("cuda", "Linux", "x86_64"): _Addon(
+        url=f"{_LLAMA_CPP_RELEASE_URL}/libggml-cuda-{_LLAMA_CPP_TAG}-linux-x64-cuda13.tar.gz",
+        sha256=_SHA256_CUDA_X64,
+        so_name="libggml-cuda.so",
+    ),
+    ("vulkan", "Linux", "x86_64"): _Addon(
+        url=f"{_LLAMA_CPP_RELEASE_URL}/libggml-vulkan-{_LLAMA_CPP_TAG}-linux-x64.tar.gz",
+        sha256=_SHA256_VULKAN_X64,
+        so_name="libggml-vulkan.so",
+    ),
+    ("vulkan", "Linux", "aarch64"): _Addon(
+        url=f"{_LLAMA_CPP_RELEASE_URL}/libggml-vulkan-{_LLAMA_CPP_TAG}-linux-arm64.tar.gz",
+        sha256=_SHA256_VULKAN_ARM64,
+        so_name="libggml-vulkan.so",
     ),
 }
 
@@ -107,8 +132,9 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
     wrapper_path = os.path.join(release_dir, "llama-server.sh")
 
     binary = os.path.join(extract_dir, "llama")
-    cuda = variant.name == "cuda" and (platform.system(), platform.machine()) == ("Linux", "x86_64")
-    built = os.path.isfile(binary) and (not cuda or os.path.isfile(os.path.join(extract_dir, _CUDA_BACKEND_SO)))
+    addon = _ADDONS.get((variant.name, platform.system(), platform.machine()))
+    cuda = variant.name == "cuda" and addon is not None
+    built = os.path.isfile(binary) and (addon is None or os.path.isfile(os.path.join(extract_dir, addon.so_name)))
 
     if not fetch:
         # Read-only: deploy may run as a UID that doesn't own the build.
@@ -133,8 +159,8 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
             shutil.rmtree(extract_dir, ignore_errors=True)
         print(f"mship: fetching llama.cpp {_LLAMA_CPP_TAG}", flush=True)
         fetch_and_extract_archive(asset.url, asset.sha256, archive_path, extract_dir, flatten=True, keep_archive=True)
-        if cuda:
-            _install_cuda_backend(release_dir, extract_dir)
+        if addon is not None:
+            _install_addon(addon, variant, release_dir, extract_dir)
 
     # Also repairs an existing build.
     os.chmod(binary, 0o755)
@@ -143,20 +169,20 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
     return wrapper_path
 
 
-def _install_cuda_backend(release_dir: str, extract_dir: str) -> None:
+def _install_addon(addon: _Addon, variant: Variant, release_dir: str, extract_dir: str) -> None:
     """fetch_and_extract_archive swaps whole directories, so it can't merge into
     extract_dir."""
-    addon_dir = os.path.join(release_dir, "cuda")
+    addon_dir = os.path.join(release_dir, variant.name)
     shutil.rmtree(addon_dir, ignore_errors=True)
     fetch_and_extract_archive(
-        _CUDA_ADDON_URL,
-        _SHA256_CUDA_X64,
-        os.path.join(release_dir, "cuda.tar.gz"),
+        addon.url,
+        addon.sha256,
+        os.path.join(release_dir, f"{variant.name}.tar.gz"),
         addon_dir,
         flatten=True,
         keep_archive=True,
     )
-    os.replace(os.path.join(addon_dir, _CUDA_BACKEND_SO), os.path.join(extract_dir, _CUDA_BACKEND_SO))
+    os.replace(os.path.join(addon_dir, addon.so_name), os.path.join(extract_dir, addon.so_name))
     shutil.rmtree(addon_dir, ignore_errors=True)
 
 

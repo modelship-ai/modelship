@@ -12,7 +12,7 @@ from .variants import resolve as resolve_variant
 
 _COMMANDS = ("bootstrap", "start", "join", "deploy", "stop", "info")
 
-_USAGE = """usage: mship {bootstrap,start,join,deploy,stop,info} [--cuda|--cpu|--metal|--thin] [args]
+_USAGE = """usage: mship {bootstrap,start,join,deploy,stop,info} [--cuda|--cpu|--vulkan|--metal|--thin] [args]
 
   bootstrap   install the engine environment for a variant (run once)
   start       start a cluster on this machine and serve models; stays running

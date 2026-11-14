@@ -150,12 +150,16 @@ class TestVariantDefinitions:
         assert VARIANTS["cpu"].extras == ("cpu", "vllm-cpu")
 
     def test_only_the_torch_variants_pass_extra_indexes(self):
-        for name in ("cpu", "cuda"):
+        for name in ("cpu", "cuda", "vulkan"):
             assert VARIANTS[name].index_args
         for name in ("metal", "thin"):
             assert VARIANTS[name].index_args == ()
 
-    @pytest.mark.parametrize("name", ["cpu", "cuda"])
+    def test_vulkan_installs_the_cpu_engine_environment(self):
+        assert VARIANTS["vulkan"].extras == VARIANTS["cpu"].extras
+        assert VARIANTS["vulkan"].index_args == VARIANTS["cpu"].index_args
+
+    @pytest.mark.parametrize("name", ["cpu", "cuda", "vulkan"])
     def test_pypi_outranks_the_accelerator_indexes(self, name):
         """Both also serve triton/torchcodec as artifacts the lock never saw."""
         indexes = [a for a in VARIANTS[name].index_args if a.startswith("http")]
@@ -165,6 +169,7 @@ class TestVariantDefinitions:
     def test_hardware_requirements(self):
         assert VARIANTS["cuda"].requires_accelerator == "cuda"
         assert VARIANTS["metal"].requires_accelerator == "metal"
+        assert VARIANTS["vulkan"].requires_accelerator == "vulkan"
         assert VARIANTS["cpu"].requires_accelerator is None
         assert VARIANTS["thin"].requires_accelerator is None
 

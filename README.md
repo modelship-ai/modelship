@@ -187,6 +187,7 @@ uv tool install mship      # or: pipx install mship / pip install mship
 
 mship bootstrap --cuda     # NVIDIA GPU node
 mship bootstrap --cpu      # CPU node (includes vLLM CPU)
+mship bootstrap --vulkan   # Vulkan GPU node (Linux; --cpu plus llama.cpp offload)
 mship bootstrap --metal    # Apple Silicon
 mship bootstrap --thin     # coordinator/head only, no capacity
 

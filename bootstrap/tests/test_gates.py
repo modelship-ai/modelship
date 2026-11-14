@@ -38,7 +38,23 @@ class TestCheckPlatform:
         ):
             gates.check_platform(VARIANTS["cpu"])
 
-    @pytest.mark.parametrize("name", ["cpu", "cuda"])
+    def test_vulkan_on_glibc_linux_passes(self):
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch("platform.libc_ver", return_value=("glibc", "2.39")),
+            patch("os.listdir", return_value=["libc.so.6"]),
+            patch("os.confstr", return_value="glibc 2.39"),
+        ):
+            gates.check_platform(VARIANTS["vulkan"])
+
+    def test_vulkan_off_linux_is_refused(self):
+        with (
+            patch("platform.system", return_value="Darwin"),
+            pytest.raises(gates.GateError, match="--vulkan needs Linux, found Darwin.\nUse --metal on Apple Silicon."),
+        ):
+            gates.check_platform(VARIANTS["vulkan"])
+
+    @pytest.mark.parametrize("name", ["cpu", "cuda", "vulkan"])
     def test_glibc_older_than_2_39_is_refused(self, name):
         with (
             patch("platform.system", return_value="Linux"),
@@ -120,6 +136,12 @@ class TestCheckHardware:
             pytest.raises(gates.GateError, match="Apple Silicon"),
         ):
             gates.check_hardware("metal")
+
+    def test_vulkan_leaves_the_device_check_to_the_engine(self):
+        """The engine's probe refuses a node with no usable GPU; `info` prints its error."""
+        with patch.object(gates, "_nvidia_driver") as driver, patch("platform.system", return_value="Linux"):
+            gates.check_hardware("vulkan")
+        driver.assert_not_called()
 
     def test_metal_on_apple_silicon_passes(self):
         with patch("platform.system", return_value="Darwin"), patch("platform.machine", return_value="arm64"):

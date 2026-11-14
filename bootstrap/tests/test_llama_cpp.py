@@ -104,6 +104,53 @@ def test_provision_fails_when_the_download_fails(release_dir, monkeypatch):
         llama_cpp.provision(_CPU)
 
 
+def _fake_fetch(fetched: list[str]):
+    """Each archive extracts to the one file its consumer looks for."""
+
+    def fetch(url, sha256, archive_path, extract_dir, **kwargs):
+        name = url.rsplit("/", 1)[1]
+        fetched.append(name)
+        os.makedirs(extract_dir)
+        target = "libggml-vulkan.so" if name.startswith("libggml-vulkan") else "llama"
+        open(os.path.join(extract_dir, target), "w").close()
+
+    return fetch
+
+
+@pytest.mark.parametrize(("machine", "platform_name"), [("x86_64", "linux-x64"), ("aarch64", "linux-arm64")])
+def test_vulkan_layers_its_backend_over_the_server_build(release_dir, monkeypatch, machine, platform_name):
+    monkeypatch.setattr(llama_cpp.platform, "machine", lambda: machine)
+    fetched: list[str] = []
+    monkeypatch.setattr(llama_cpp, "fetch_and_extract_archive", _fake_fetch(fetched))
+
+    wrapper = llama_cpp.provision(VARIANTS["vulkan"])
+
+    tag = llama_cpp._LLAMA_CPP_TAG
+    assert fetched == [f"llama-server-{tag}-{platform_name}.tar.gz", f"libggml-vulkan-{tag}-{platform_name}.tar.gz"]
+    assert os.path.isfile(os.path.join(os.path.dirname(wrapper), "extracted", "libggml-vulkan.so"))
+
+
+def test_vulkan_build_without_its_backend_is_fetched_again(tmp_path, monkeypatch):
+    monkeypatch.setenv("MSHIP_HOME", str(tmp_path))
+    monkeypatch.delenv("MSHIP_LLAMA_SERVER_BIN", raising=False)
+    monkeypatch.setattr(llama_cpp.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(llama_cpp.platform, "machine", lambda: "x86_64")
+    _install_build(os.path.join(paths.builds_dir("vulkan"), "llama.cpp", llama_cpp._LLAMA_CPP_RELEASE))
+    assert llama_cpp.locate(VARIANTS["vulkan"]) is None
+
+    fetched: list[str] = []
+    monkeypatch.setattr(llama_cpp, "fetch_and_extract_archive", _fake_fetch(fetched))
+    llama_cpp.provision(VARIANTS["vulkan"])
+    assert len(fetched) == 2
+
+
+def test_cpu_fetches_no_backend(release_dir, monkeypatch):
+    fetched: list[str] = []
+    monkeypatch.setattr(llama_cpp, "fetch_and_extract_archive", _fake_fetch(fetched))
+    llama_cpp.provision(_CPU)
+    assert fetched == [f"llama-server-{llama_cpp._LLAMA_CPP_TAG}-linux-x64.tar.gz"]
+
+
 def test_provision_fails_without_a_build_for_the_platform(release_dir, monkeypatch):
     monkeypatch.setattr(llama_cpp.platform, "machine", lambda: "riscv64")
     with pytest.raises(llama_cpp.LlamaCppError, match="no llama.cpp build for Linux/riscv64"):
