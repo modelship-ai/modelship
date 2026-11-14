@@ -1,5 +1,6 @@
 import asyncio
 import collections
+import os
 import sys
 
 import pytest
@@ -42,6 +43,7 @@ def gateway():
     if running := local_ray_clusters():
         pytest.skip(f"a Ray node already runs on this machine (GCS at {', '.join(sorted(running))}); run this alone")
     cloudpickle.register_pickle_by_value(sys.modules[__name__])
+    auth_mode = os.environ.get("RAY_AUTH_MODE")
     ray.init(address="local", num_cpus=2, num_gpus=0, include_dashboard=False)
     try:
         serve.start(proxy_location="Disabled")
@@ -50,6 +52,11 @@ def gateway():
     finally:
         serve.shutdown()
         ray.shutdown()
+        # ray.init sets RAY_AUTH_MODE=token in this process when it is unset.
+        if auth_mode is None:
+            os.environ.pop("RAY_AUTH_MODE", None)
+        else:
+            os.environ["RAY_AUTH_MODE"] = auth_mode
         cloudpickle.unregister_pickle_by_value(sys.modules[__name__])
 
 
