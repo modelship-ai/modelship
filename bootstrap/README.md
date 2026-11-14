@@ -24,7 +24,8 @@ pin and nothing to match across machines: every node lands on the same footing, 
 a new one joins the cluster by running the same two commands. After upgrading
 `mship`, re-run `mship bootstrap` to move the environment with it.
 
-Alpine and other musl distros are unsupported — use a glibc distro or the Docker
+A native install that serves models needs glibc 2.39 or newer: Ubuntu 24.04, Debian
+13, RHEL 10 or later. On older distros, Alpine and other musl distros, use the Docker
 images.
 
 See the [installation docs](https://docs.model-ship.ai/installation/) for

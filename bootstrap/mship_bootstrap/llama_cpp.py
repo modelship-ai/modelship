@@ -20,8 +20,9 @@ from .variants import Variant
 
 # Own-CI builds for every platform; see .github/workflows/llama-cpp-build.yml.
 _LLAMA_CPP_TAG = "b11769"
+_LLAMA_CPP_RELEASE = "llamacpp-b11769"
 _LLAMA_CPP_BUILDS_REPO = "modelship-ai/llama-cpp-builds"
-_LLAMA_CPP_RELEASE_URL = f"https://github.com/{_LLAMA_CPP_BUILDS_REPO}/releases/download/llamacpp-{_LLAMA_CPP_TAG}"
+_LLAMA_CPP_RELEASE_URL = f"https://github.com/{_LLAMA_CPP_BUILDS_REPO}/releases/download/{_LLAMA_CPP_RELEASE}"
 
 # Line-anchored: llama-cpp-build.yml's pin job rewrites these by sed.
 _SHA256_LINUX_X64 = "02147ac6a5de9101663228bd11e72c1cbb652d50703ecb01fa992ee4155f3de3"
@@ -100,10 +101,10 @@ def locate(variant: Variant) -> str | None:
 
 
 def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
-    tag_dir = os.path.join(paths.builds_dir(variant.name), "llama.cpp", _LLAMA_CPP_TAG)
-    archive_path = os.path.join(tag_dir, "archive.tar.gz")
-    extract_dir = os.path.join(tag_dir, "extracted")
-    wrapper_path = os.path.join(tag_dir, "llama-server.sh")
+    release_dir = os.path.join(paths.builds_dir(variant.name), "llama.cpp", _LLAMA_CPP_RELEASE)
+    archive_path = os.path.join(release_dir, "archive.tar.gz")
+    extract_dir = os.path.join(release_dir, "extracted")
+    wrapper_path = os.path.join(release_dir, "llama-server.sh")
 
     binary = os.path.join(extract_dir, "llama")
     cuda = variant.name == "cuda" and (platform.system(), platform.machine()) == ("Linux", "x86_64")
@@ -113,7 +114,7 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
         # Read-only: deploy may run as a UID that doesn't own the build.
         if not (built and os.path.isfile(wrapper_path)):
             print(
-                f"warning: no llama.cpp {_LLAMA_CPP_TAG} build under {tag_dir}; "
+                f"warning: no llama.cpp {_LLAMA_CPP_TAG} build under {release_dir}; "
                 f"the llama_server loader will not work. Run: mship bootstrap --{variant.name}",
                 file=sys.stderr,
             )
@@ -133,7 +134,7 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
         print(f"mship: fetching llama.cpp {_LLAMA_CPP_TAG}", flush=True)
         fetch_and_extract_archive(asset.url, asset.sha256, archive_path, extract_dir, flatten=True, keep_archive=True)
         if cuda:
-            _install_cuda_backend(tag_dir, extract_dir)
+            _install_cuda_backend(release_dir, extract_dir)
 
     # Also repairs an existing build.
     os.chmod(binary, 0o755)
@@ -142,15 +143,15 @@ def _resolve(variant: Variant, asset: _Asset, *, fetch: bool) -> str | None:
     return wrapper_path
 
 
-def _install_cuda_backend(tag_dir: str, extract_dir: str) -> None:
+def _install_cuda_backend(release_dir: str, extract_dir: str) -> None:
     """fetch_and_extract_archive swaps whole directories, so it can't merge into
     extract_dir."""
-    addon_dir = os.path.join(tag_dir, "cuda")
+    addon_dir = os.path.join(release_dir, "cuda")
     shutil.rmtree(addon_dir, ignore_errors=True)
     fetch_and_extract_archive(
         _CUDA_ADDON_URL,
         _SHA256_CUDA_X64,
-        os.path.join(tag_dir, "cuda.tar.gz"),
+        os.path.join(release_dir, "cuda.tar.gz"),
         addon_dir,
         flatten=True,
         keep_archive=True,

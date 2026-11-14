@@ -1,6 +1,7 @@
 """The bootstrapper's pinned llama.cpp tag must not drift from what
 llama-cpp-build.yml actually builds; images carry no pin of their own, fetching through `mship bootstrap` instead."""
 
+import re
 from pathlib import Path
 
 import yaml
@@ -27,6 +28,12 @@ def test_asset_url_embeds_pinned_tag():
         assert asset.url.startswith(f"https://github.com/{llama_cpp._LLAMA_CPP_BUILDS_REPO}/")
 
 
+def test_release_is_a_build_of_the_pinned_tag():
+    assert re.fullmatch(rf"llamacpp-{llama_cpp._LLAMA_CPP_TAG}(-r\d+)?", llama_cpp._LLAMA_CPP_RELEASE)
+    for url in (*(asset.url for asset in llama_cpp._ASSETS.values()), llama_cpp._CUDA_ADDON_URL):
+        assert f"/releases/download/{llama_cpp._LLAMA_CPP_RELEASE}/" in url
+
+
 def test_cuda_addon_comes_from_the_same_build():
     """The backend is dlopened beside the CPU tarball's libggml-base.so; a
     different tag is an ABI mismatch."""
@@ -49,6 +56,7 @@ def test_pin_job_rewrites_the_pinned_file():
     assert pin["needs"] == "publish"
     steps = " ".join(step.get("run", "") for step in pin["steps"])
     assert "bootstrap/mship_bootstrap/llama_cpp.py" in steps
+    assert "s|^_LLAMA_CPP_RELEASE = .*|" in steps
 
 
 def test_cuda_backend_shares_the_linux_x64_runner():
@@ -57,3 +65,11 @@ def test_cuda_backend_shares_the_linux_x64_runner():
     workflow = _build_workflow()
     x64 = next(m for m in workflow["jobs"]["server"]["strategy"]["matrix"]["include"] if m["name"] == "linux-x64")
     assert workflow["jobs"]["cuda-backend"]["runs-on"] == x64["os"]
+
+
+def test_vulkan_jobs_share_the_server_runners():
+    workflow = _build_workflow()
+    servers = {m["name"]: m["os"] for m in workflow["jobs"]["server"]["strategy"]["matrix"]["include"]}
+    for job in ("vulkan-backend", "verify-vulkan"):
+        rows = {m["name"]: m["os"] for m in workflow["jobs"][job]["strategy"]["matrix"]["include"]}
+        assert rows == {name: servers[name] for name in ("linux-x64", "linux-arm64")}

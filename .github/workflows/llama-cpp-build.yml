@@ -6,16 +6,19 @@ on:
       tag:
         description: "llama.cpp tag to build (e.g. b10375)"
         required: true
+      rebuild:
+        description: "Rebuild number for a tag that already has a release (e.g. 2 publishes llamacpp-<tag>-r2)"
+        required: false
 
 permissions:
   contents: read
 
-# One release per tag; concurrent runs would overwrite each other's assets.
 concurrency:
   group: llama-cpp-build
 
 env:
   LLAMA_CPP_BUILDS_REPO: modelship-ai/llama-cpp-builds
+  RELEASE: llamacpp-${{ inputs.tag }}${{ inputs.rebuild && format('-r{0}', inputs.rebuild) || '' }}
   CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON -DGGML_RPC=ON"
   CUDA_VERSION_DASH: 13-0
   CUDA_HOME: /usr/local/cuda-13.0
@@ -38,8 +41,8 @@ jobs:
             echo "::error::LLAMA_CPP_BUILDS_TOKEN cannot write to ${LLAMA_CPP_BUILDS_REPO} (permissions.push=${PUSH}). A fine-grained PAT needs Contents: Read and write on that repo and, for an org-owned repo, org approval; a classic PAT needs the public_repo scope."
             exit 1
           fi
-          if gh release view "llamacpp-${{ inputs.tag }}" --repo "${LLAMA_CPP_BUILDS_REPO}" >/dev/null 2>&1; then
-            echo "::error::release llamacpp-${{ inputs.tag }} already exists — delete it first to rebuild that tag"
+          if gh release view "${RELEASE}" --repo "${LLAMA_CPP_BUILDS_REPO}" >/dev/null 2>&1; then
+            echo "::error::release ${RELEASE} already exists — pass a new rebuild number to build ${{ inputs.tag }} again"
             exit 1
           fi
 
@@ -56,7 +59,7 @@ jobs:
       matrix:
         include:
           - name: linux-x64
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             rpath: "$ORIGIN"
             defines: -DGGML_BACKEND_DL=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON
           - name: linux-arm64
@@ -139,7 +142,7 @@ jobs:
   cuda-backend:
     needs: preflight
     # Runner must match the linux-x64 job's: same glibc floor or lower.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout llama.cpp
         uses: actions/checkout@v4
@@ -149,9 +152,9 @@ jobs:
 
       - name: Install CUDA toolkit
         run: |
-          curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub \
+          curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
             | sudo gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" \
+          echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
             | sudo tee /etc/apt/sources.list.d/cuda.list > /dev/null
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
@@ -217,8 +220,154 @@ jobs:
           name: ${{ steps.package.outputs.name }}
           path: ${{ steps.package.outputs.name }}.tar.gz
 
+  vulkan-backend:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    env:
+      SHADERC_KNOWN_GOOD: 75137cca3b41a59b8b3e5c42177da8a9490c042f
+    steps:
+      - name: Checkout llama.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ inputs.tag }}
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-14 g++-14 libvulkan-dev spirv-headers ninja-build
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+
+      - name: Restore glslc
+        id: glslc
+        uses: actions/cache@v4
+        with:
+          path: glslc
+          key: glslc-${{ env.SHADERC_KNOWN_GOOD }}-${{ matrix.os }}
+
+      - name: Build glslc
+        if: steps.glslc.outputs.cache-hit != 'true'
+        run: |
+          git init -q shaderc
+          git -C shaderc fetch -q --depth 1 https://github.com/google/shaderc.git "${SHADERC_KNOWN_GOOD}"
+          git -C shaderc checkout -q FETCH_HEAD
+          cd shaderc
+          python3 update_shaderc_sources.py
+          cmake -S src -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSHADERC_SKIP_TESTS=ON \
+            -DSHADERC_SKIP_EXAMPLES=ON \
+            -DSHADERC_SKIP_INSTALL=ON \
+            -DSHADERC_SKIP_COPYRIGHT_CHECK=ON
+          cmake --build build --target glslc_exe -j "$(nproc)"
+          mkdir ../glslc
+          cp build/glslc/glslc ../glslc/
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          key: llama-cpp-vulkan-${{ matrix.name }}
+
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+            -DGGML_BACKEND_DL=ON \
+            -DGGML_NATIVE=OFF \
+            -DGGML_CPU=OFF \
+            -DGGML_VULKAN=ON \
+            -DVulkan_GLSLC_EXECUTABLE="${PWD}/glslc/glslc" \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_TOOLS=OFF \
+            -DLLAMA_BUILD_SERVER=OFF | tee configure.log
+          grep "supported by glslc" configure.log
+          if grep -q "not supported by glslc" configure.log; then
+            echo "::error::glslc lacks a shader extension ggml-vulkan tests for"
+            exit 1
+          fi
+          cmake --build build --config Release -j "$(nproc)" --target ggml-vulkan
+
+      - name: Verify ABI
+        run: |
+          SO=build/bin/libggml-vulkan.so
+          test -f "$SO"
+          readelf -d "$SO"
+          readelf -d "$SO" | grep -q '(RUNPATH).*\$ORIGIN' \
+            || { echo "::error::missing \$ORIGIN runpath"; exit 1; }
+          BAD=$(readelf -d "$SO" \
+            | sed -n 's/.*Shared library: \[\(.*\)\].*/\1/p' \
+            | grep -vxE 'libggml-base\.so\.0|libvulkan\.so\.1|libstdc\+\+\.so\.6|libm\.so\.6|libgcc_s\.so\.1|libc\.so\.6' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::unexpected dependency: ${BAD}"
+            exit 1
+          fi
+
+      - name: Package
+        id: package
+        run: |
+          NAME="libggml-vulkan-${{ inputs.tag }}-${{ matrix.name }}"
+          mkdir "$NAME"
+          cp build/bin/libggml-vulkan.so LICENSE "$NAME"/
+          tar czf "${NAME}.tar.gz" "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          ls -lh "${NAME}.tar.gz"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.name }}.tar.gz
+
+  verify-vulkan:
+    needs: [server, vulkan-backend]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Download server build
+        uses: actions/download-artifact@v4
+        with:
+          name: llama-server-${{ inputs.tag }}-${{ matrix.name }}
+
+      - name: Download Vulkan backend
+        uses: actions/download-artifact@v4
+        with:
+          name: libggml-vulkan-${{ inputs.tag }}-${{ matrix.name }}
+
+      - name: Install Mesa
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers
+
+      - name: List devices
+        run: |
+          mkdir x
+          for f in *.tar.gz; do tar xzf "$f" -C x --strip-components=1; done
+          GGML_VK_VISIBLE_DEVICES=0 x/llama serve --list-devices | tee devices.txt
+          grep -q 'Vulkan0' devices.txt || { echo "::error::ggml-vulkan found no device"; exit 1; }
+
   publish:
-    needs: [server, cuda-backend]
+    needs: [server, cuda-backend, vulkan-backend, verify-vulkan]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -234,8 +383,8 @@ jobs:
             sha256sum "$f" | awk '{print $1}' > "${f}.sha256"
           done
           ls -lh
-          test "$(ls -1 *.tar.gz | wc -l)" -eq 4 \
-            || { echo "::error::expected 4 tarballs, got $(ls -1 *.tar.gz | wc -l)"; exit 1; }
+          test "$(ls -1 *.tar.gz | wc -l)" -eq 6 \
+            || { echo "::error::expected 6 tarballs, got $(ls -1 *.tar.gz | wc -l)"; exit 1; }
 
       - name: Publish release
         env:
@@ -252,16 +401,20 @@ jobs:
             echo "| \`llama-server-${TAG}-linux-arm64.tar.gz\` | native Linux aarch64, Docker \`thin\`/\`cpu\` arm64 |"
             echo "| \`llama-server-${TAG}-macos-arm64-metal.tar.gz\` | native macOS arm64 (Metal) |"
             echo "| \`libggml-cuda-${TAG}-linux-x64-cuda13.tar.gz\` | extracted over the linux-x64 tarball for CUDA offload |"
+            echo "| \`libggml-vulkan-${TAG}-linux-x64.tar.gz\` | extracted over the linux-x64 tarball for Vulkan offload |"
+            echo "| \`libggml-vulkan-${TAG}-linux-arm64.tar.gz\` | extracted over the linux-arm64 tarball for Vulkan offload |"
             echo
             echo "\`libggml-cuda.so\` is a dlopen'd ggml backend, not a server: a CUDA node runs the same \`llama-server\` as a CPU node. It needs \`libcudart.so.13\`/\`libcublas.so.13\` (torch cu130 bundles both under \`site-packages/nvidia/cu13/lib\`) and \`libcuda.so.1\` from the driver."
+            echo
+            echo "\`libggml-vulkan.so\` is the same kind of backend. It needs \`libvulkan.so.1\` and the host's Vulkan driver."
             echo
             echo '```'
             sha256sum *.tar.gz
             echo '```'
           } > notes.md
-          gh release create "llamacpp-${TAG}" \
+          gh release create "${RELEASE}" \
             --repo "${LLAMA_CPP_BUILDS_REPO}" \
-            --title "llama.cpp ${TAG}" \
+            --title "llama.cpp ${RELEASE#llamacpp-}" \
             --notes-file notes.md \
             --prerelease \
             *.tar.gz *.sha256
@@ -300,6 +453,7 @@ jobs:
 
           sed -i \
             -e "s|^_LLAMA_CPP_TAG = .*|_LLAMA_CPP_TAG = \"${TAG}\"|" \
+            -e "s|^_LLAMA_CPP_RELEASE = .*|_LLAMA_CPP_RELEASE = \"${RELEASE}\"|" \
             -e "s|^_SHA256_LINUX_X64 = .*|_SHA256_LINUX_X64 = \"${X64}\"|" \
             -e "s|^_SHA256_LINUX_ARM64 = .*|_SHA256_LINUX_ARM64 = \"${ARM64}\"|" \
             -e "s|^_SHA256_MACOS_ARM64_METAL = .*|_SHA256_MACOS_ARM64_METAL = \"${METAL}\"|" \
@@ -307,7 +461,7 @@ jobs:
             bootstrap/mship_bootstrap/llama_cpp.py
 
           # sed exits 0 when a pattern matches nothing.
-          for value in "$TAG" "$X64" "$ARM64" "$METAL" "$CUDA"; do
+          for value in "$TAG" "_LLAMA_CPP_RELEASE = \"${RELEASE}\"" "$X64" "$ARM64" "$METAL" "$CUDA"; do
             grep -q "$value" bootstrap/mship_bootstrap/llama_cpp.py \
               || { echo "::error::llama_cpp.py kept its old pin for ${value}"; exit 1; }
           done
@@ -317,18 +471,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          TAG=${{ inputs.tag }}
-          BRANCH="llama-cpp/${TAG}"
+          BUILD="${RELEASE#llamacpp-}"
+          BRANCH="llama-cpp/${BUILD}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add bootstrap/mship_bootstrap/llama_cpp.py
-          git commit -m "build: bump llama.cpp to ${TAG}"
+          git commit -m "build: bump llama.cpp to ${BUILD}"
           git push origin "$BRANCH" --force
           gh pr create \
             --repo "${{ github.repository }}" \
-            --title "build: bump llama.cpp to ${TAG}" \
-            --body "Own-CI build published: https://github.com/${LLAMA_CPP_BUILDS_REPO}/releases/tag/llamacpp-${TAG}
+            --title "build: bump llama.cpp to ${BUILD}" \
+            --body "Own-CI build published: https://github.com/${LLAMA_CPP_BUILDS_REPO}/releases/tag/${RELEASE}
 
           Native installs and all three Docker variants fetch these same tarballs, so this bumps both in one go." \
             || echo "PR create failed or already exists for branch $BRANCH"

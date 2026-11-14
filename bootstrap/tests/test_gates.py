@@ -3,12 +3,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mship_bootstrap import gates
+from mship_bootstrap.variants import VARIANTS
 
 
 class TestCheckPlatform:
     def test_windows_is_refused(self):
         with patch("platform.system", return_value="Windows"), pytest.raises(gates.GateError, match="Windows"):
-            gates.check_platform()
+            gates.check_platform(VARIANTS["cpu"])
 
     def test_musl_is_refused_by_libc_ver(self):
         with (
@@ -16,7 +17,7 @@ class TestCheckPlatform:
             patch("platform.libc_ver", return_value=("musl", "1.2.5")),
             pytest.raises(gates.GateError, match="musllinux"),
         ):
-            gates.check_platform()
+            gates.check_platform(VARIANTS["cpu"])
 
     def test_musl_is_refused_by_loader_probe(self):
         """A glibc-built uv-managed CPython reports glibc even on Alpine."""
@@ -26,19 +27,40 @@ class TestCheckPlatform:
             patch("os.listdir", return_value=["ld-musl-x86_64.so.1"]),
             pytest.raises(gates.GateError, match="Alpine"),
         ):
-            gates.check_platform()
+            gates.check_platform(VARIANTS["cpu"])
 
     def test_glibc_linux_passes(self):
         with (
             patch("platform.system", return_value="Linux"),
             patch("platform.libc_ver", return_value=("glibc", "2.39")),
             patch("os.listdir", return_value=["libc.so.6"]),
+            patch("os.confstr", return_value="glibc 2.39"),
         ):
-            gates.check_platform()
+            gates.check_platform(VARIANTS["cpu"])
+
+    @pytest.mark.parametrize("name", ["cpu", "cuda"])
+    def test_glibc_older_than_2_39_is_refused(self, name):
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch("platform.libc_ver", return_value=("glibc", "2.38")),
+            patch("os.listdir", return_value=["libc.so.6"]),
+            patch("os.confstr", return_value="glibc 2.38"),
+            pytest.raises(gates.GateError, match=f"--{name} needs glibc 2.39 or newer; this host has 2.38"),
+        ):
+            gates.check_platform(VARIANTS[name])
+
+    def test_thin_runs_on_an_older_glibc(self):
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch("platform.libc_ver", return_value=("glibc", "2.35")),
+            patch("os.listdir", return_value=["libc.so.6"]),
+            patch("os.confstr", return_value="glibc 2.35"),
+        ):
+            gates.check_platform(VARIANTS["thin"])
 
     def test_macos_passes(self):
         with patch("platform.system", return_value="Darwin"):
-            gates.check_platform()
+            gates.check_platform(VARIANTS["metal"])
 
 
 def _nvml(count: int = 1, cuda: int = 13020, init: int = 0) -> MagicMock:

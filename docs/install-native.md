@@ -30,7 +30,8 @@ and overrides the recorded role for a single command.
 
 The `mship` package is a small installer that runs on any Python 3.10+. Bootstrapping:
 
-1. Refuses unsupported platforms (Windows, musl/Alpine) before downloading anything.
+1. Refuses unsupported platforms (Windows, musl/Alpine, and glibc older than 2.39 for
+   every variant but `--thin`) before downloading anything.
 2. Checks the variant's build prerequisites — `--cuda` needs `nvcc` and `ninja`.
 3. Provisions `~/.modelship/envs/<variant>/` on **CPython 3.12.10**, installing from a
    hash-pinned dependency list shipped inside the package.
@@ -68,6 +69,9 @@ the hardware: `--cuda` needs an NVIDIA driver that lists a GPU and supports CUDA
 ## Platform prerequisites
 
 These are not installed for you.
+
+On Linux, every variant but `--thin` needs glibc 2.39 or newer: Ubuntu 24.04, Debian 13,
+RHEL 10 or later. Older distros run the [Docker images](install-docker.md).
 
 ```bash
 # macOS — compiles stable-diffusion-cpp-python on first install
