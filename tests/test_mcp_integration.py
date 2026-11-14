@@ -65,6 +65,7 @@ def _mcp_tool(dice_server, **overrides):
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestMcpIntegration:
     """Real model + real MCP server, end to end through the actual gateway
     subprocess (mship deploy --reconcile), not the loop function directly."""

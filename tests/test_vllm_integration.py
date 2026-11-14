@@ -84,6 +84,7 @@ _ANSWER_FORMAT = {"type": "json_schema", "json_schema": {"name": "calc", "strict
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestChatCapable:
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
@@ -340,6 +341,7 @@ class TestChatCapable:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestIdentityScopedPrefixCache:
     """cache_salt must scope vLLM prefix-cache hits to one identity; a
     different identity sending an identical prompt must never see a hit."""
@@ -372,6 +374,7 @@ class TestIdentityScopedPrefixCache:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestChatReasoning:
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
@@ -556,6 +559,7 @@ class TestChatReasoning:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestChatVlm:
     """End-to-end vision: a real Qwen3-VL-2B deployment receiving an
     ``image_url`` content part through the modelship gateway."""
@@ -625,6 +629,8 @@ class TestChatVlm:
 
 
 @pytest.mark.integration
+@pytest.mark.vllm
+@pytest.mark.cuda
 def test_embeddings(client, model_deployer):
     model_deployer.deploy("embed-model")
     response = client.embeddings.create(model="embed-model", input=["Hello world", "Modelship is great"])

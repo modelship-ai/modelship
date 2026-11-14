@@ -32,17 +32,35 @@ def _audio(model: str, audio: bytes, **fields: str) -> dict:
     return {"data": {"model": model, **fields}, "files": {"file": ("speech.wav", audio, "audio/wav")}}
 
 
+def _assert_served_by_the_same_replica(model: str, drop, send) -> httpx.Response:
+    before = _replica(model)
+    drop()
+    resp = send()
+    assert resp.status_code == 200, resp.text
+    assert _replica(model) == before
+    return resp
+
+
+def _assert_an_image_after_a_dropped_one(model: str, after_s: float) -> None:
+    body = {"model": model, "prompt": "a red bicycle", "size": "512x512"}
+
+    resp = _assert_served_by_the_same_replica(
+        model,
+        lambda: _dropped_post("/images/generations", after_s, json=body),
+        lambda: _post("/images/generations", 600, json=body),
+    )
+    assert resp.json()["data"][0]["b64_json"]
+
+
 @pytest.mark.integration
 @pytest.mark.whispercpp
 @pytest.mark.sherpa_onnx
-@pytest.mark.diffusers
 @pytest.mark.stable_diffusion_cpp
 class TestTheRequestAfterADroppedOne:
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
-        image = {**MODEL_CONFIGS["image-model"], "diffusers_config": {"num_inference_steps": 30, "guidance_scale": 0.0}}
         model_deployer.deploy_raw(
-            [MODEL_CONFIGS["stt-cpp-model"], MODEL_CONFIGS["tts-model"], image, MODEL_CONFIGS["image-cpu-model"]]
+            [MODEL_CONFIGS["stt-cpp-model"], MODEL_CONFIGS["tts-model"], MODEL_CONFIGS["image-cpu-model"]]
         )
 
     @pytest.fixture(scope="class")
@@ -50,14 +68,6 @@ class TestTheRequestAfterADroppedOne:
         resp = _post("/audio/speech", 600, json={"model": "tts-model", "voice": "af_bella", "input": LONG_TEXT})
         resp.raise_for_status()
         return resp.content
-
-    def _assert_served_by_the_same_replica(self, model: str, drop, send) -> httpx.Response:
-        before = _replica(model)
-        drop()
-        resp = send()
-        assert resp.status_code == 200, resp.text
-        assert _replica(model) == before
-        return resp
 
     @pytest.mark.parametrize("stream", [False, True], ids=["plain", "stream"])
     def test_a_transcription(self, long_speech, stream):
@@ -69,7 +79,7 @@ class TestTheRequestAfterADroppedOne:
             else:
                 _dropped_post("/audio/transcriptions", 0.5, **audio)
 
-        resp = self._assert_served_by_the_same_replica(
+        resp = _assert_served_by_the_same_replica(
             "stt-cpp-model", drop, lambda: _post("/audio/transcriptions", 300, **audio)
         )
         assert "quick brown fox" in resp.json()["text"].lower()
@@ -84,22 +94,25 @@ class TestTheRequestAfterADroppedOne:
             else:
                 _dropped_post("/audio/speech", 0.5, json=long)
 
-        resp = self._assert_served_by_the_same_replica(
+        resp = _assert_served_by_the_same_replica(
             "tts-model",
             drop,
             lambda: _post("/audio/speech", 300, json={"model": "tts-model", "voice": "af_bella", "input": "Hello."}),
         )
         assert resp.content[:4] == b"RIFF"
 
-    @pytest.mark.parametrize(
-        ("model", "size", "after_s"), [("image-model", "512x512", 0.4), ("image-cpu-model", "512x512", 2.0)]
-    )
-    def test_an_image(self, model, size, after_s):
-        body = {"model": model, "prompt": "a red bicycle", "size": size}
+    def test_an_image(self):
+        _assert_an_image_after_a_dropped_one("image-cpu-model", after_s=2.0)
 
-        resp = self._assert_served_by_the_same_replica(
-            model,
-            lambda: _dropped_post("/images/generations", after_s, json=body),
-            lambda: _post("/images/generations", 600, json=body),
-        )
-        assert resp.json()["data"][0]["b64_json"]
+
+@pytest.mark.integration
+@pytest.mark.diffusers
+@pytest.mark.cuda
+class TestTheDiffusersImageAfterADroppedOne:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        diffusers_config = {"num_inference_steps": 30, "guidance_scale": 0.0}
+        model_deployer.deploy_raw([{**MODEL_CONFIGS["image-model"], "diffusers_config": diffusers_config}])
+
+    def test_an_image(self):
+        _assert_an_image_after_a_dropped_one("image-model", after_s=0.4)

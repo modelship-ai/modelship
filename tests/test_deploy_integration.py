@@ -120,7 +120,6 @@ def _empty_gateway(model_deployer):
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.deploy
 class TestQueue:
     def test_two_concurrent_deploys_both_land_and_stay(self, client, model_deployer):
         names = ("additive-a", "additive-b")
@@ -158,7 +157,6 @@ class TestQueue:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.deploy
 class TestCancel:
     def test_a_cancelled_deploy_is_rolled_back_including_models_already_up(self, model_deployer, tmp_path):
         deploy = model_deployer.spawn("--config", str(_half_placeable(tmp_path)), log_name="half-placeable")
@@ -179,7 +177,6 @@ class TestCancel:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.deploy
 class TestFirstDeploy:
     def test_a_gateways_first_deploy_is_not_routed_before_it_commits(self, model_deployer, tmp_path):
         base = f"http://localhost:8000/{_FIRST_GATEWAY}/v1"
@@ -203,7 +200,6 @@ class TestFirstDeploy:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.deploy
 class TestClientGone:
     def test_a_killed_client_does_not_stop_its_deploy(self, client, model_deployer):
         deploy = model_deployer.spawn(*_flags("orphan-model"), log_name="orphan-model")
@@ -217,7 +213,6 @@ class TestClientGone:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.deploy
 class TestFailedChange:
     def test_a_failed_change_keeps_the_old_app_through_a_replica_restart(self, model_deployer):
         model_deployer.run(*_flags("survivor"), log_name="survivor")
@@ -253,7 +248,6 @@ class TestFailedChange:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.deploy
 class TestTwoGateways:
     def test_each_gateway_keeps_its_own_apps(self, client, model_deployer, tmp_path):
         other = OpenAI(base_url=f"http://localhost:8000/{_OTHER_GATEWAY}/v1", api_key="not-needed")
@@ -292,7 +286,6 @@ class TestTwoGateways:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.deploy
 class TestDeployCoordinatorRestart:
     def test_a_restart_rolls_back_a_deploy_that_had_not_committed(self, model_deployer):
         deploy = model_deployer.spawn(*_flags("uncommitted", num_cpus=1000), log_name="uncommitted")
@@ -335,7 +328,6 @@ def _stamped(metric: str) -> bool:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.deploy
 class TestDeployMetrics:
     def test_a_failed_deploy_and_its_load_failure_are_scraped(self, model_deployer):
         failed = partial(_counted, "ray_modelship_deploy_requests_total", gateway="modelship", outcome="failed")
@@ -364,7 +356,6 @@ def _deploy_remote(url: str, config: Path, env: dict[str, str]) -> subprocess.Co
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.deploy
 class TestRemoteDeploy:
     def test_a_remote_deploy_ships_its_config_and_serves_the_model(self, client, model_deployer, tmp_path):
         config = tmp_path / "remote.yaml"
@@ -391,7 +382,6 @@ class TestRemoteDeploy:
 
 
 @pytest.mark.integration
-@pytest.mark.deploy
 class TestRemoteRefusals:
     @pytest.fixture
     def empty_config(self, tmp_path) -> Path:

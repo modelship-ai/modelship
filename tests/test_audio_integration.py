@@ -18,6 +18,8 @@ def _post_transcription(model: str, audio: bytes, **fields) -> httpx.Response:
 
 
 @pytest.mark.integration
+@pytest.mark.vllm
+@pytest.mark.cuda
 class TestAudio:
     """tts-model and stt-model are both small enough to share a class;
     test_audio_transcription re-uses the TTS output as its input."""

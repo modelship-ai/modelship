@@ -127,6 +127,7 @@ _WEATHER_TOOL_RESPONSES = {
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestResponsesEndpoint:
     """End-to-end /v1/responses over the vLLM chat pipeline. Verifies the official
     OpenAI SDK parses our payload and unsupported features are rejected, not dropped."""
@@ -276,6 +277,7 @@ class TestResponsesEndpoint:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestResponsesState:
     """Server-side conversation state on /v1/responses, end-to-end against the real
     store (``memory://`` — a detached Ray actor on the live cluster)."""
@@ -529,6 +531,7 @@ class TestResponsesState:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestResponsesBackground:
     """`background: true`: queue, poll, and cancel a detached response, end-to-end
     against the real store and DisconnectRegistry actor — the pieces the unit
@@ -686,6 +689,7 @@ class TestResponsesBackground:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestResponsesReasoning:
     """Reasoning surfaces as a first-class ``reasoning`` output item on
     /v1/responses, distinct from the off-spec ``message.reasoning`` field on chat completions."""

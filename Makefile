@@ -5,19 +5,23 @@ PATCH   := $(shell echo $(VERSION) | cut -d. -f3)
 
 BOOTSTRAP_DIR ?= $(HOME)/.cache/mship-bootstrap
 
+# A variant runs the integration tests with no variant mark, plus those marked with it.
+VARIANT_TESTS = $(if $(filter-out cpu,$(VARIANT)),$(VARIANT) or )not (cuda or vulkan or metal)
+
 .PHONY: unit-test integration wheel bootstrap lint lint-fix pins release-patch release-minor release-major _release llama-cpp-bump
 
 unit-test:
 	uv run pytest tests/ -v -m "not integration"
 
 integration:
+	@case "$(VARIANT)" in ""|cuda|cpu|vulkan|metal) ;; *) echo "Error: usage: make integration [VARIANT=cuda|cpu|vulkan|metal]" >&2; exit 1;; esac
 	@test -x $(BOOTSTRAP_DIR)/venv/bin/mship && test -f $(BOOTSTRAP_DIR)/home/env || \
 		{ echo "Error: no mship installed in $(BOOTSTRAP_DIR): run make bootstrap VARIANT=cuda|cpu|vulkan|metal" >&2; exit 1; }
 	@if [ -n "$$MSHIP_LLAMA_SERVER_BIN" ]; then echo "Ignoring MSHIP_LLAMA_SERVER_BIN=$$MSHIP_LLAMA_SERVER_BIN: mship bootstrap provides llama-server"; fi
 	@bin=$$(uv run python -c "import os, sys; print(os.path.dirname(sys.executable))") && \
 	env -u MSHIP_LLAMA_SERVER_BIN PATH="$$bin:$$PATH" MSHIP_HOME=$(BOOTSTRAP_DIR)/home \
 		MSHIP_TEST_BIN=$(BOOTSTRAP_DIR)/venv/bin/mship \
-		"$$bin/python" -m pytest -v -m "integration$(if $(MARK), and ($(MARK)))" $(ARGS)
+		"$$bin/python" -m pytest -v -m "integration$(if $(VARIANT), and ($(VARIANT_TESTS)))$(if $(MARK), and ($(MARK)))" $(ARGS)
 
 wheel:
 	rm -rf dist

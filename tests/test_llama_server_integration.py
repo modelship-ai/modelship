@@ -474,6 +474,9 @@ class TestChatLlamaServerResponseFormat:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
+@pytest.mark.cuda
+@pytest.mark.vulkan
+@pytest.mark.metal
 class TestChatLlamaServerGpu:
     """End-to-end GPU offload through the llama_server loader: same shape as
     `TestChatLlamaServerResponseFormat` but deployed with `num_gpus=1`, so the

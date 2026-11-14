@@ -26,7 +26,7 @@ _IDENTITY_HEADER = "X-Mship-Test-Identity"
 
 _MODEL = MODEL_CONFIGS["chat-llama-server-plain"]
 
-pytestmark = [pytest.mark.integration, pytest.mark.llama_server, pytest.mark.state_store, pytest.mark.own_head]
+pytestmark = [pytest.mark.integration, pytest.mark.llama_server, pytest.mark.own_head]
 
 
 def _free_port() -> int:

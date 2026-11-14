@@ -43,6 +43,7 @@ def _poll(predicate, deadline_s: float) -> bool:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestVllmCrashRecovery:
     """Kills the vLLM engine-core subprocess directly and verifies the replica recovers."""
 

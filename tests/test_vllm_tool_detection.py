@@ -4,6 +4,8 @@ import pytest
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase
 
+pytest.importorskip("vllm")
+
 _PICKS = [
     ("Qwen/Qwen3-0.6B", "qwen3_json"),
     ("Qwen/Qwen2.5-0.5B-Instruct", "qwen3_json"),

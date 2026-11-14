@@ -337,6 +337,7 @@ _LIST_DEVICES_ROW = re.compile(r"^\s*(Vulkan\d+): (.+) \((\d+) MiB, (\d+) MiB fr
 
 @pytest.mark.integration
 @pytest.mark.llama_server
+@pytest.mark.vulkan
 def test_the_probe_agrees_with_llama_cpp():
     from tests.conftest import MSHIP_BIN
 

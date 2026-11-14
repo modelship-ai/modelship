@@ -52,7 +52,6 @@ def _running() -> dict[str, set[str]]:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.rescale
 class TestInPlaceRescale:
     def test_a_replica_count_change_keeps_the_running_replicas_and_fails_no_request(self, client, model_deployer):
         model_deployer.deploy_raw([_config()])
@@ -131,7 +130,6 @@ class TestInPlaceRescale:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.rescale
 class TestScaleDownFirst:
     def test_a_scale_down_frees_the_room_a_new_model_needs(self, client, model_deployer):
         share = _cpu_share()

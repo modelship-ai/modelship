@@ -22,7 +22,7 @@ make lint-fix    # ruff check --fix + ruff format
 make unit-test   # uv run pytest tests/ -v -m "not integration"
 make wheel       # engine + bootstrapper wheels and sdists into dist/
 make bootstrap VARIANT=cuda   # make wheel, then `mship bootstrap --cuda` from dist/ into ~/.cache/mship-bootstrap (cuda|cpu|vulkan|metal)
-make integration MARK=vllm ARGS=tests/test_vllm_integration.py   # integration suite against that mship; MARK, ARGS optional
+make integration VARIANT=cuda MARK=vllm ARGS=tests/test_vllm_integration.py   # integration suite against that mship; VARIANT, MARK, ARGS optional
 
 # Run a single test
 uv run pytest tests/test_config.py::TestLlamaServerConfig::test_defaults -v
@@ -86,7 +86,7 @@ Right after connecting to Ray, the driver logs the cluster's observed totals (`C
 
 - Under `tests/`. Use `pytest-asyncio` for async tests.
 - The default suite mocks out Ray Serve; it does **not** spin up a real cluster. Pattern: access the wrapped class via `ModelshipAPI.func_or_class` to bypass the `@serve.deployment` wrapper (see `tests/test_api.py`).
-- `tests/test_*_integration.py` are real end-to-end tests against a live cluster and real (small) models — opt-in via pytest markers (`integration` plus a per-loader/feature marker, e.g. `vllm`, `blue_green`, `cluster_join`; see `pyproject.toml`'s `markers`). Excluded by default (`-m "not integration"`); don't assume `make unit-test`/CI coverage without them. `make integration` runs them against the `mship` that `make bootstrap` installed, each `mship` process started outside the repo so it imports the wheel; tests marked `own_head` start their own head and run first.
+- `tests/test_*_integration.py` are real end-to-end tests against a live cluster and real (small) models — opt-in via pytest markers (`integration` plus a marker per loader a test deploys, e.g. `vllm`; see `pyproject.toml`'s `markers`). A test that runs only on some variants is marked with each of them (`cuda`, `vulkan`, `metal`); one with no variant mark runs on every variant. `make integration VARIANT=<variant>` runs the unmarked tests plus that variant's, so pass the variant `make bootstrap` installed; without `VARIANT` it runs them all. Excluded by default (`-m "not integration"`); don't assume `make unit-test`/CI coverage without them. `make integration` runs them against the `mship` that `make bootstrap` installed, each `mship` process started outside the repo so it imports the wheel; tests marked `own_head` start their own head and run first.
 
 ## Releases
 

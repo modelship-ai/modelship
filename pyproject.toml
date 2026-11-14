@@ -239,24 +239,16 @@ known-first-party = ["modelship"]
 testpaths = ["tests"]
 markers = [
     "integration: tests that require a running Ray cluster and external models",
-    "llama_server: integration tests that exercise the llama_server loader",
-    "vllm: integration tests that exercise the vllm loader",
-    "diffusers: integration tests that exercise the diffusers loader",
-    "stable_diffusion_cpp: integration tests that exercise the stable_diffusion_cpp loader",
-    "whispercpp: integration tests that exercise the whispercpp loader",
-    "sherpa_onnx: integration tests that exercise the sherpa_onnx loader",
-    "autoscaling: integration test that exercises Ray Serve autoscaling (scale out/in under load)",
-    "gateway_ha: integration test that exercises multi-replica gateway routing consistency",
-    "gateway_autoscaling: integration test that exercises the gateway scaling out under load",
-    "blue_green: integration test that exercises the blue_green replace-strategy cutover",
-    "rescale: integration test that exercises a replica-count change applied to a live deployment",
-    "deploy: integration tests that exercise mship deploy end to end (additive, still coming up, two gateways, remote)",
-    "cluster_join: integration test that exercises the --gcs-address multi-node cluster join with and without a token",
-    "fractional_gpu_sharing: integration test that exercises two loaders sharing one physical GPU via fractional num_gpus",
-    "node_logging: integration test that exercises per-node logging on a replica scheduled on a joined node",
-    "state_store: integration tests that run the same /v1/responses requests on memory:// and on a real redis-server",
-    "mship_stop: integration tests that run mship stop against their own head and joined node",
     "own_head: integration tests that start their own mship head; they run before the session cluster starts",
+    "cuda: integration tests that run on a cuda node; a test with no variant mark runs on every variant",
+    "vulkan: integration tests that run on a vulkan node; a test with no variant mark runs on every variant",
+    "metal: integration tests that run on a metal node; a test with no variant mark runs on every variant",
+    "llama_server: integration tests that deploy a llama_server model",
+    "vllm: integration tests that deploy a vllm model",
+    "diffusers: integration tests that deploy a diffusers model",
+    "stable_diffusion_cpp: integration tests that deploy a stable_diffusion_cpp model",
+    "whispercpp: integration tests that deploy a whispercpp model",
+    "sherpa_onnx: integration tests that deploy a sherpa_onnx model",
 ]
 
 [tool.pyright]

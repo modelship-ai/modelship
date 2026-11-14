@@ -59,7 +59,6 @@ def _hammer(
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.autoscaling
 class TestAutoscaling:
     """Replicas scale out under sustained concurrent load (bounded by max_replicas) and
     scale back to min_replicas once the load stops."""
@@ -133,7 +132,6 @@ def _poll(predicate, deadline_s: float) -> bool:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.autoscaling
 class TestScaleToZero:
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):

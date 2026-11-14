@@ -36,7 +36,6 @@ def _poll(predicate, deadline_s: float) -> bool:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.gateway_ha
 class TestGatewayReplicaConsistency:
     """With 2 gateway replicas, a deployed model must become routable on both,
     and a removed one must stop routing on both."""
@@ -100,7 +99,6 @@ def _hammer(client: OpenAI, model: str, stop: threading.Event, errors: list) -> 
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.gateway_ha
 class TestGatewayCoordinatorRestart:
     MODEL = "chat-llama-server-plain"
 

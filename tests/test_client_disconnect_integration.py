@@ -85,20 +85,32 @@ def _background(model: str):
         httpx.post(f"{OPENAI_API_BASE}/responses/{resp.json()['id']}/cancel", timeout=30).raise_for_status()
 
 
-@pytest.mark.integration
-@pytest.mark.vllm
-@pytest.mark.llama_server
-class TestTheEngineStops:
+class _TheEngineStops:
+    MODEL: dict
+
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):
-        model_deployer.deploy_raw([VLLM, LLAMA])
+        model_deployer.deploy_raw([self.MODEL])
 
-    @pytest.mark.parametrize("model", [VLLM["name"], LLAMA["name"]])
     @pytest.mark.parametrize(
         "drop", [_plain, _stream, _websocket, _background], ids=["plain", "stream", "websocket", "background"]
     )
-    def test_when_the_request_is_dropped(self, model, drop):
+    def test_when_the_request_is_dropped(self, drop):
+        model = self.MODEL["name"]
         engine, idle_within_s = ENGINES[model]
         with drop(model):
             assert _poll(lambda: engine() >= 1, deadline_s=30), "the request never reached the engine"
         assert _poll(lambda: engine() == 0, deadline_s=idle_within_s), "the engine kept generating"
+
+
+@pytest.mark.integration
+@pytest.mark.vllm
+@pytest.mark.cuda
+class TestTheVllmEngineStops(_TheEngineStops):
+    MODEL = VLLM
+
+
+@pytest.mark.integration
+@pytest.mark.llama_server
+class TestTheLlamaServerEngineStops(_TheEngineStops):
+    MODEL = LLAMA
