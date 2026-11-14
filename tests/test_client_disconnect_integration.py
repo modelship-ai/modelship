@@ -14,7 +14,14 @@ from tests.test_dropped_request_integration import _replica
 from tests.test_llama_server_integration import _llama_server
 
 VLLM = {**MODEL_CONFIGS["chat-capable"], "vllm_engine_kwargs": {"max_model_len": 32768}}
-LLAMA = MODEL_CONFIGS["chat-llama-server-plain"]
+# Repeats PROMPT up to max_tokens; the 0.5B test model stops after a few tokens.
+LLAMA = {
+    "name": "chat-llama-server-1b",
+    "model": "bartowski/Llama-3.2-1B-Instruct-GGUF:*Q4_K_M.gguf",
+    "usecase": "generate",
+    "loader": "llama_server",
+    "num_cpus": 1,
+}
 PROMPT = "Repeat the word 'hello' forever, separated by spaces. Never stop."
 MAX_TOKENS = {VLLM["name"]: 30000, LLAMA["name"]: 4000}
 
