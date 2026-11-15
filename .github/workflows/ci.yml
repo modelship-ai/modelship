@@ -136,7 +136,8 @@ jobs:
             "--set redis.password=pw" \
             "--set podMonitor.enabled=true" \
             "--set rayAuth.existingSecret=ray-token" \
-            "--set workerGroups[0].name=cuda --set workerGroups[0].replicas=1 --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1"; do
+            "--set workerGroups[0].name=cuda --set workerGroups[0].replicas=1 --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1" \
+            "--set image.variant=vulkan --set workerGroups[0].name=vulkan --set workerGroups[0].replicas=1 --set workerGroups[0].minReplicas=1 --set workerGroups[0].maxReplicas=1 --set workerGroups[0].podSecurityContext.supplementalGroups={992}"; do
             echo "== helm template $args =="
             helm template modelship helm/modelship --set redis.address=cache:6379 $args \
               | kubeconform -strict -ignore-missing-schemas -summary
@@ -154,9 +155,13 @@ jobs:
         run: |
           # The head and the chart's Jobs never schedule models, so they must stay on the
           # bare (thin) tag regardless of the cluster-wide image.variant.
-          rendered=$(helm template modelship helm/modelship --set redis.address=cache:6379 --set image.variant=cpu)
-          echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:[0-9]+\.[0-9]+\.[0-9]+$'
-          ! echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:[^ ]*-(cpu|cuda)$'
+          for variant in cpu vulkan; do
+            rendered=$(helm template modelship helm/modelship --set redis.address=cache:6379 --set image.variant=$variant)
+            echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:[0-9]+\.[0-9]+\.[0-9]+$'
+            if echo "$rendered" | grep -qE 'image: ghcr\.io/modelship-ai/modelship:[^ ]*-(cpu|cuda|vulkan)$'; then
+              echo "image.variant=$variant reached the head or a Job"; exit 1
+            fi
+          done
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6

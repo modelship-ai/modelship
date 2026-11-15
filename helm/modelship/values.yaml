@@ -10,13 +10,14 @@
 image:
   repository: ghcr.io/modelship-ai/modelship
   # Bare release tag (no variant suffix) is the thin control/coordinator image
-  # (no torch/vllm) — the chart appends "-cuda" or "-cpu" per the `variant` below.
+  # (no torch/vllm) — the chart appends "-cuda", "-cpu" or "-vulkan" per the `variant` below.
   # Stamped to the app version on release.
   tag: "0.10.0"
-  # cuda (default) | cpu | thin. CUDA runs everywhere with a GPU (CPU nodes just
-  # waste storage); a CPU image on a GPU node fails for lack of CUDA, so cuda is
-  # the safe default for worker nodes. CPU-only clusters set `variant: cpu`; a
-  # mixed cluster sets `variant: cpu` here and `image.variant: cuda` on the GPU
+  # cuda (default) | cpu | vulkan | thin; anything else fails rendering. CUDA runs
+  # everywhere with an NVIDIA GPU (CPU nodes just waste storage); a CPU image on a
+  # GPU node fails for lack of CUDA, so cuda is the safe default for worker nodes.
+  # CPU-only clusters set `variant: cpu`; a mixed cluster sets `variant: cpu` here and
+  # `image.variant: cuda` (NVIDIA) or `image.variant: vulkan` (AMD, Intel) on the GPU
   # worker group.
   variant: cuda
   pullPolicy: IfNotPresent
@@ -112,11 +113,17 @@ shm:
   sizeLimit: 8Gi
 
 # -- Pod security. The image runs unprivileged as UID/GID 1000; fsGroup lets the
-# mounted cache PVC be group-writable by that user.
+# mounted cache PVC be group-writable by that user. AMD and Intel GPUs (the vulkan
+# variant) open /dev/dri/renderD*, which the host's udev makes root:render 0660, so
+# that user also needs the host's render group: set it here when every GPU node
+# shares the id (`stat -c %g /dev/dri/renderD128` on a node), or per worker group
+# (workerGroups[].podSecurityContext) when node pools differ. NVIDIA's devices are
+# world-accessible, so cuda groups need neither.
 podSecurityContext:
   runAsUser: 1000
   runAsGroup: 1000
   fsGroup: 1000
+  # supplementalGroups: [992]
 
 # -- Ray head: coordination node. The thin image advertises no CPUs or GPUs, so no
 # model is scheduled here.
@@ -188,6 +195,33 @@ workerGroups: []
   #     limits:
   #       cpu: "6"
   #       memory: 16Gi
+  #   nodeSelector: {}
+  #   tolerations: []
+  #   affinity: {}
+  #   annotations: {}
+  # - name: vulkan
+  #   # AMD or Intel GPU node: llama_server models run on the GPU through Vulkan,
+  #   # every other loader on CPU. Needs the GPU's device plugin: AMD's advertises
+  #   # amd.com/gpu, Intel's gpu.intel.com/i915 or gpu.intel.com/xe. A pod that can't
+  #   # open the GPU fails at start ("no usable GPU").
+  #   image:
+  #     variant: vulkan
+  #   # The host's render group, unless podSecurityContext.supplementalGroups above
+  #   # already has it. Merged over the cluster-wide podSecurityContext.
+  #   podSecurityContext:
+  #     supplementalGroups: [992]
+  #   replicas: 1
+  #   minReplicas: 1
+  #   maxReplicas: 1
+  #   resources:
+  #     requests:
+  #       cpu: "4"
+  #       memory: 16Gi
+  #       amd.com/gpu: "1"
+  #     limits:
+  #       cpu: "4"
+  #       memory: 32Gi
+  #       amd.com/gpu: "1"
   #   nodeSelector: {}
   #   tolerations: []
   #   affinity: {}

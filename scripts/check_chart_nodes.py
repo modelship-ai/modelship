@@ -55,6 +55,55 @@ def _ports(container: dict) -> dict[str, int]:
     return {p["name"]: p["containerPort"] for p in container["ports"]}
 
 
+def _pod_specs(cluster: dict) -> tuple[dict, list[dict]]:
+    spec = cluster["spec"]
+    return spec["headGroupSpec"]["template"]["spec"], [g["template"]["spec"] for g in spec["workerGroupSpecs"]]
+
+
+def _check_variants() -> None:
+    cluster = _cluster(
+        {
+            "image": {"variant": "cpu"},
+            "workerGroups": [
+                _group("default"),
+                _group("vulkan", image={"variant": "vulkan"}),
+                _group("cuda", image={"variant": "cuda"}),
+                _group("thin", image={"variant": "thin"}),
+            ],
+        }
+    )
+    tag = yaml.safe_load((_CHART_DIR / "values.yaml").read_text())["image"]["tag"]
+    head, workers = _containers(cluster)
+    assert head["image"] == f"ghcr.io/modelship-ai/modelship:{tag}", head["image"]
+    tags = [w["image"].rsplit(":", 1)[1] for w in workers]
+    assert tags == [f"{tag}-cpu", f"{tag}-vulkan", f"{tag}-cuda", tag], tags
+    for values in (
+        {"image": {"variant": "vulkun"}, "workerGroups": [_group("w")]},
+        {"workerGroups": [_group("w", image={"variant": "rocm"})]},
+        {"head": {"image": {"variant": "gpu"}}},
+    ):
+        out = _render(values)
+        assert out.returncode != 0 and "is not one of cuda, cpu, vulkan, thin" in out.stderr, out.stderr
+
+
+def _check_security_contexts() -> None:
+    base = {"runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000}
+    head, (plain, gpu) = _pod_specs(
+        _cluster({"workerGroups": [_group("plain"), _group("gpu", podSecurityContext={"supplementalGroups": [992]})]})
+    )
+    assert head["securityContext"] == plain["securityContext"] == base, (head, plain)
+    assert gpu["securityContext"] == base | {"supplementalGroups": [992]}, gpu["securityContext"]
+
+    shared = {"podSecurityContext": base | {"supplementalGroups": [992]}}
+    head, (plain, own) = _pod_specs(
+        _cluster(
+            shared | {"workerGroups": [_group("plain"), _group("own", podSecurityContext={"supplementalGroups": [44]})]}
+        )
+    )
+    assert head["securityContext"] == plain["securityContext"] == base | {"supplementalGroups": [992]}
+    assert own["securityContext"] == base | {"supplementalGroups": [44]}, own["securityContext"]
+
+
 def main() -> int:
     cluster = _cluster(
         {
@@ -148,9 +197,13 @@ def main() -> int:
     for values in ({}, {"workerGroups": None}):
         assert "workerGroupSpecs" not in _cluster(values)["spec"]
 
+    _check_variants()
+    _check_security_contexts()
+
     print(
         "OK: head runs mship start and waits for its gateway, workers run mship join and are Ready only while "
-        "their Serve proxy answers, sizing env follows pod resources"
+        "their Serve proxy answers, sizing env follows pod resources, variants map to image tags, worker groups "
+        "extend the pod security context"
     )
     return 0
 
