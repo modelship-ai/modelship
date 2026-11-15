@@ -23,7 +23,6 @@ RUN apt-get update -y && \
         gcc \
         g++ \
         gnupg \
-        gosu \
         libc6-dev \
         libgomp1 \
         libnuma1 \
@@ -48,6 +47,15 @@ RUN if [ "$MSHIP_VARIANT" = "cuda" ]; then \
         libcurand-dev-${CUDA_VERSION_DASH} && \
     apt-get purge -y --auto-remove gnupg && \
     rm -f /etc/apt/sources.list.d/cuda.list /usr/share/keyrings/cuda-keyring.gpg && \
+    rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# llama.cpp's Vulkan backend loads libvulkan.so.1; Mesa provides the AMD and Intel drivers.
+RUN if [ "$MSHIP_VARIANT" = "vulkan" ]; then \
+    apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+        libvulkan1 \
+        mesa-vulkan-drivers && \
     rm -rf /var/lib/apt/lists/*; \
     fi
 
@@ -179,11 +187,10 @@ ADD --chown=$UID:$GID ./uv.lock uv.lock
 ADD --chown=$UID:$GID ./Makefile Makefile
 
 RUN --mount=type=cache,target=/opt/uv/cache,uid=$UID,gid=$GID \
-    if [ "$MSHIP_VARIANT" = "cpu" ]; then \
-        uv sync --locked --no-install-project --extra dev --extra $MSHIP_VARIANT --extra vllm-cpu; \
-    else \
-        uv sync --locked --no-install-project --extra dev --extra $MSHIP_VARIANT; \
-    fi
+    case "$MSHIP_VARIANT" in \
+        cpu|vulkan) uv sync --locked --no-install-project --extra dev --extra cpu --extra vllm-cpu ;; \
+        *) uv sync --locked --no-install-project --extra dev --extra $MSHIP_VARIANT ;; \
+    esac
 
 USER root
 

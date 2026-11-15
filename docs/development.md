@@ -134,7 +134,7 @@ export MSHIP_LLAMA_SERVER_BIN=/path/to/llama-server.sh
 
 ## Production Builds
 
-Three images are published — a thin control/coordinator image (no torch/vllm) plus two accelerator
+Four images are published — a thin control/coordinator image (no torch/vllm) plus three accelerator
 node images:
 
 | Variant | Tag suffix | Platforms |
@@ -142,12 +142,13 @@ node images:
 | Thin (control/coordinator) | *(none)* — default | amd64, arm64 |
 | CUDA (GPU node) | `-cuda` | amd64 |
 | CPU (CPU node) | `-cpu` | amd64, arm64 |
+| Vulkan (AMD/Intel GPU node) | `-vulkan` | amd64, arm64 |
 
-All three share the `prod` target; `MSHIP_VARIANT` is what differs.
+All four share the `prod` target; `MSHIP_VARIANT` is what differs.
 
-Floating tags (`:latest`, `:latest-cuda`, `:latest-cpu`) are single-node only — Ray refuses to form
-a cluster across mismatched versions, so any multi-node deployment must pin every node to the same
-`:X.Y.Z` (or `-cuda`/`-cpu`) tag.
+Floating tags (`:latest`, `:latest-cuda`, `:latest-cpu`, `:latest-vulkan`) are single-node only — Ray
+refuses to form a cluster across mismatched versions, so any multi-node deployment must pin every node
+to the same `:X.Y.Z` (or `-cuda`/`-cpu`/`-vulkan`) tag.
 
 The production images install the release wheels rather than the source tree, so build those first —
 `release.yml` does the same, from a `wheels` job the image builds depend on:
