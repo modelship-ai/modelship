@@ -71,7 +71,7 @@ def test_build_workflow_matrix_names():
 
 def test_makefile_triggers_the_build_workflow():
     makefile = (_REPO_ROOT / "Makefile").read_text()
-    assert f"gh workflow run {_BUILD_WORKFLOW.name}" in makefile
+    assert f'gh workflow run {_BUILD_WORKFLOW.name} --ref "$$BRANCH"' in makefile
 
 
 def test_pin_job_rewrites_the_pinned_file():
@@ -82,9 +82,12 @@ def test_pin_job_rewrites_the_pinned_file():
     assert "s|^_LLAMA_CPP_RELEASE = .*|" in steps
 
 
-def test_pin_job_branches_from_the_current_default_branch():
-    checkout = next(s for s in _build_workflow()["jobs"]["pin"]["steps"] if s.get("name") == "Checkout modelship")
-    assert checkout["with"]["ref"] == "${{ github.event.repository.default_branch }}"
+def test_pin_job_branches_from_the_tip_of_the_runs_branch():
+    steps = _build_workflow()["jobs"]["pin"]["steps"]
+    checkout = next(s for s in steps if s.get("name") == "Checkout modelship")
+    assert checkout["with"]["ref"] == "${{ github.ref_name }}"
+    pr = next(s for s in steps if s.get("name") == "Open pin-bump PR")
+    assert '--base "${{ github.ref_name }}"' in pr["run"]
 
 
 def test_cuda_backend_shares_the_linux_x64_runner():
