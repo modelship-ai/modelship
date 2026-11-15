@@ -12,7 +12,7 @@ Four images are published from a single `Dockerfile`, all under
 | Variant | Tag suffix | Platforms | Purpose |
 |---|---|---|---|
 | Thin | *(none)* — bare tag | amd64, arm64 | Control/coordinator image, no torch/vllm. Runs the driver/head role only — cannot serve models by itself |
-| CUDA | `-cuda` | amd64 | GPU node image (vLLM, Diffusers, llama.cpp GPU offload) |
+| CUDA | `-cuda` | amd64, arm64 | GPU node image (vLLM, Diffusers, llama.cpp GPU offload) |
 | CPU | `-cpu` | amd64, arm64 | CPU node image (vLLM CPU backend, llama.cpp, stable_diffusion_cpp) |
 | Vulkan | `-vulkan` | amd64, arm64 | AMD or Intel GPU node image: everything `-cpu` runs, plus llama.cpp GPU offload through Mesa's Vulkan drivers. NVIDIA GPUs use `-cuda` |
 

@@ -123,7 +123,7 @@ Commit messages matter: use Conventional Commits prefixes so the changelog gener
   | Variant | Tag | Platforms | Contains |
   |---|---|---|---|
   | thin (control/coordinator) | `:X.Y.Z`, `:latest` | amd64, arm64 | base only — no torch/vllm |
-  | cuda (GPU node) | `:X.Y.Z-cuda`, `:latest-cuda` | amd64 | torch cu130 + vllm + CUDA runtime |
+  | cuda (GPU node) | `:X.Y.Z-cuda`, `:latest-cuda` | amd64, arm64 | torch cu130 + vllm + CUDA runtime |
   | cpu (CPU node) | `:X.Y.Z-cpu`, `:latest-cpu` | amd64, arm64 | torch CPU + vllm CPU wheel |
   | vulkan (AMD/Intel GPU node) | `:X.Y.Z-vulkan`, `:latest-vulkan` | amd64, arm64 | cpu's environment + llama.cpp's Vulkan backend + Vulkan loader and Mesa drivers |
 
