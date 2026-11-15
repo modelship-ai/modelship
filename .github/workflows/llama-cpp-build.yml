@@ -141,8 +141,18 @@ jobs:
 
   cuda-backend:
     needs: preflight
-    # Runner must match the linux-x64 job's: same glibc floor or lower.
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Runner must match the server job's: same glibc floor or lower.
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+            cuda-repo: x86_64
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            cuda-repo: sbsa
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout llama.cpp
         uses: actions/checkout@v4
@@ -152,9 +162,10 @@ jobs:
 
       - name: Install CUDA toolkit
         run: |
-          curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
+          REPO=https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${{ matrix.cuda-repo }}
+          curl -fsSL "${REPO}/3bf863cc.pub" \
             | sudo gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
+          echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] ${REPO}/ /" \
             | sudo tee /etc/apt/sources.list.d/cuda.list > /dev/null
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
@@ -167,7 +178,7 @@ jobs:
       - name: ccache
         uses: ggml-org/ccache-action@v1.2.21
         with:
-          key: llama-cpp-cuda
+          key: llama-cpp-cuda-${{ matrix.name }}
           # ggml-cuda compiles every .cu once per arch, overrunning the 500MB default.
           max-size: 2G
 
@@ -206,7 +217,7 @@ jobs:
       - name: Package
         id: package
         run: |
-          NAME="libggml-cuda-${{ inputs.tag }}-linux-x64-cuda13"
+          NAME="libggml-cuda-${{ inputs.tag }}-${{ matrix.name }}-cuda13"
           mkdir "$NAME"
           cp build/bin/libggml-cuda.so "$NAME"/
           cp LICENSE "$NAME"/
@@ -382,8 +393,8 @@ jobs:
             sha256sum "$f" | awk '{print $1}' > "${f}.sha256"
           done
           ls -lh
-          test "$(ls -1 *.tar.gz | wc -l)" -eq 6 \
-            || { echo "::error::expected 6 tarballs, got $(ls -1 *.tar.gz | wc -l)"; exit 1; }
+          test "$(ls -1 *.tar.gz | wc -l)" -eq 7 \
+            || { echo "::error::expected 7 tarballs, got $(ls -1 *.tar.gz | wc -l)"; exit 1; }
 
       - name: Publish release
         env:
@@ -400,6 +411,7 @@ jobs:
             echo "| \`llama-server-${TAG}-linux-arm64.tar.gz\` | native Linux aarch64, Docker \`thin\`/\`cpu\` arm64 |"
             echo "| \`llama-server-${TAG}-macos-arm64-metal.tar.gz\` | native macOS arm64 (Metal) |"
             echo "| \`libggml-cuda-${TAG}-linux-x64-cuda13.tar.gz\` | extracted over the linux-x64 tarball for CUDA offload |"
+            echo "| \`libggml-cuda-${TAG}-linux-arm64-cuda13.tar.gz\` | extracted over the linux-arm64 tarball for CUDA offload |"
             echo "| \`libggml-vulkan-${TAG}-linux-x64.tar.gz\` | extracted over the linux-x64 tarball for Vulkan offload |"
             echo "| \`libggml-vulkan-${TAG}-linux-arm64.tar.gz\` | extracted over the linux-arm64 tarball for Vulkan offload |"
             echo
@@ -453,6 +465,7 @@ jobs:
           ARM64=$(read_sha llama-server linux-arm64)
           METAL=$(read_sha llama-server macos-arm64-metal)
           CUDA=$(read_sha libggml-cuda linux-x64-cuda13)
+          CUDA_ARM64=$(read_sha libggml-cuda linux-arm64-cuda13)
           VK_X64=$(read_sha libggml-vulkan linux-x64)
           VK_ARM64=$(read_sha libggml-vulkan linux-arm64)
 
@@ -463,12 +476,13 @@ jobs:
             -e "s|^_SHA256_LINUX_ARM64 = .*|_SHA256_LINUX_ARM64 = \"${ARM64}\"|" \
             -e "s|^_SHA256_MACOS_ARM64_METAL = .*|_SHA256_MACOS_ARM64_METAL = \"${METAL}\"|" \
             -e "s|^_SHA256_CUDA_X64 = .*|_SHA256_CUDA_X64 = \"${CUDA}\"|" \
+            -e "s|^_SHA256_CUDA_ARM64 = .*|_SHA256_CUDA_ARM64 = \"${CUDA_ARM64}\"|" \
             -e "s|^_SHA256_VULKAN_X64 = .*|_SHA256_VULKAN_X64 = \"${VK_X64}\"|" \
             -e "s|^_SHA256_VULKAN_ARM64 = .*|_SHA256_VULKAN_ARM64 = \"${VK_ARM64}\"|" \
             bootstrap/mship_bootstrap/llama_cpp.py
 
           # sed exits 0 when a pattern matches nothing.
-          for value in "$TAG" "_LLAMA_CPP_RELEASE = \"${RELEASE}\"" "$X64" "$ARM64" "$METAL" "$CUDA" "$VK_X64" "$VK_ARM64"; do
+          for value in "$TAG" "_LLAMA_CPP_RELEASE = \"${RELEASE}\"" "$X64" "$ARM64" "$METAL" "$CUDA" "$CUDA_ARM64" "$VK_X64" "$VK_ARM64"; do
             grep -q "$value" bootstrap/mship_bootstrap/llama_cpp.py \
               || { echo "::error::llama_cpp.py kept its old pin for ${value}"; exit 1; }
           done

@@ -151,7 +151,9 @@ def test_cpu_fetches_no_backend(release_dir, monkeypatch):
     assert fetched == [f"llama-server-{llama_cpp._LLAMA_CPP_TAG}-linux-x64.tar.gz"]
 
 
-def test_cuda_puts_torchs_cuda_libraries_on_the_loader_path(release_dir, monkeypatch):
+@pytest.mark.parametrize(("machine", "platform_name"), [("x86_64", "linux-x64"), ("aarch64", "linux-arm64")])
+def test_cuda_puts_torchs_cuda_libraries_on_the_loader_path(release_dir, monkeypatch, machine, platform_name):
+    monkeypatch.setattr(llama_cpp.platform, "machine", lambda: machine)
     torch_cuda_libs = os.path.join(paths.venv_dir("cuda"), llama_cpp._TORCH_CUDA_LIBS)
     os.makedirs(torch_cuda_libs)
     fetched: list[str] = []
@@ -159,7 +161,11 @@ def test_cuda_puts_torchs_cuda_libraries_on_the_loader_path(release_dir, monkeyp
 
     wrapper = llama_cpp.provision(VARIANTS["cuda"])
 
-    assert fetched[1] == f"libggml-cuda-{llama_cpp._LLAMA_CPP_TAG}-linux-x64-cuda13.tar.gz"
+    tag = llama_cpp._LLAMA_CPP_TAG
+    assert fetched == [
+        f"llama-server-{tag}-{platform_name}.tar.gz",
+        f"libggml-cuda-{tag}-{platform_name}-cuda13.tar.gz",
+    ]
     with open(wrapper) as f:
         assert f":{torch_cuda_libs}${{LD_LIBRARY_PATH" in f.read()
 

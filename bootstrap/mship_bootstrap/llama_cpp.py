@@ -28,6 +28,7 @@ _SHA256_LINUX_X64 = "a5f36a720f2408065cf8efd05a7be991ffce2f8273ddb89e96e1eb56bb0
 _SHA256_LINUX_ARM64 = "01493ada9f64aec240a81f5d5cbf1e26233d69aed8d5f3d1b88a398932728d5a"
 _SHA256_MACOS_ARM64_METAL = "2228672fbe71732affbacfe32b4e74141e69f46c2b4d1e2619a9ce1c4df941b7"
 _SHA256_CUDA_X64 = "798760ec372c278342b9a2744ee4a8244765d83005d819cf9445fa40dc7a7711"
+_SHA256_CUDA_ARM64 = ""
 _SHA256_VULKAN_X64 = "71816c34e197b7eb17dda6a87d85748b8e2450f19f50c4306358a2e64aa02aad"
 _SHA256_VULKAN_ARM64 = "259551bcb59ea592f2f918028a7b507f690953bdd7996fdf1e6096854f8cc3a5"
 
@@ -74,6 +75,11 @@ _GGML_BACKENDS: dict[tuple[str, str, str], _GgmlBackend] = {
     ("cuda", "Linux", "x86_64"): _GgmlBackend(
         url=f"{_LLAMA_CPP_RELEASE_URL}/libggml-cuda-{_LLAMA_CPP_TAG}-linux-x64-cuda13.tar.gz",
         sha256=_SHA256_CUDA_X64,
+        so_name="libggml-cuda.so",
+    ),
+    ("cuda", "Linux", "aarch64"): _GgmlBackend(
+        url=f"{_LLAMA_CPP_RELEASE_URL}/libggml-cuda-{_LLAMA_CPP_TAG}-linux-arm64-cuda13.tar.gz",
+        sha256=_SHA256_CUDA_ARM64,
         so_name="libggml-cuda.so",
     ),
     ("vulkan", "Linux", "x86_64"): _GgmlBackend(
