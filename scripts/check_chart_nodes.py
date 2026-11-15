@@ -79,6 +79,8 @@ def _check_variants() -> None:
     assert tags == [f"{tag}-cpu", f"{tag}-vulkan", f"{tag}-cuda", tag], tags
     for values in (
         {"image": {"variant": "vulkun"}, "workerGroups": [_group("w")]},
+        {"image": {"variant": "vulkun"}},
+        {"image": {"variant": "vulkun"}, "workerGroups": [_group("w", image={"variant": "cpu"})]},
         {"workerGroups": [_group("w", image={"variant": "rocm"})]},
         {"head": {"image": {"variant": "gpu"}}},
     ):
