@@ -11,7 +11,8 @@ is the full values reference; this page covers getting one installed.
 ## Prerequisites
 
 - A Kubernetes cluster. A local [kind](https://kind.sigs.k8s.io/) cluster works for
-  the CPU image; GPU models need real GPU nodes with the NVIDIA device plugin.
+  the CPU image; GPU models need real GPU nodes with the GPU's device plugin
+  (NVIDIA's for the cuda image, AMD's or Intel's for the vulkan image).
 - **The KubeRay operator + CRDs, 1.6 or newer** (tested on 1.7.1) — cluster-scoped
   and install-once. Either install it yourself:
 
@@ -25,7 +26,8 @@ is the full values reference; this page covers getting one installed.
   new CRDs applied first; see the chart README.
 - A **Redis** instance. The chart backs the head's GCS with it for fault tolerance
   and uses it as the state store, so the gateway self-heals after a head restart.
-- For GPU models: a node pool advertising `nvidia.com/gpu`.
+- For GPU models: a node pool advertising `nvidia.com/gpu` (cuda), or `amd.com/gpu`,
+  `gpu.intel.com/i915` or `gpu.intel.com/xe` (vulkan).
 
 ## Install
 
@@ -85,9 +87,16 @@ travels with a deploy.
 
 ## Image variant
 
-The chart selects the image variant for you from the worker group's resources; see
-`image.variant` in the chart README to pin it. The same three images the
-[Docker install](install-docker.md) describes are used here.
+Each worker group runs the image variant set by its `image.variant`, falling back to
+the cluster-wide `image.variant` (default `cuda`); the head and the chart's Jobs
+always run `thin`. The variants are the [Docker install](install-docker.md)'s images:
+`cuda` for NVIDIA GPUs, `vulkan` for AMD and Intel GPUs, `cpu` for CPU-only nodes.
+
+An AMD or Intel GPU group also needs the host's render group in its pods'
+`supplementalGroups`, since the pods run as UID 1000 and the GPU's device files are
+`root:render 0660`. See
+[AMD and Intel GPUs](https://github.com/modelship-ai/modelship/tree/main/helm/modelship#amd-and-intel-gpus)
+in the chart README.
 
 ## Multi-node
 

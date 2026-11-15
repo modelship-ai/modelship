@@ -33,8 +33,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{/*
-Effective image tag, resolving the gpu/cpu/thin variant onto the base tag. `variant:
-cpu` appends "-cpu"; an explicit `tag`/`variant` (e.g. a per-worker-group override)
+Effective image tag, resolving the cuda/cpu/vulkan/thin variant onto the base tag. `variant:
+cpu` appends "-cpu", `thin` nothing, and a variant outside those four fails rendering, as
+does a cluster-wide `image.variant` outside them on every call, used or not; an
+explicit `tag`/`variant` (e.g. a per-worker-group override)
 wins over the cluster-wide image values. `isHead: true` defaults to `thin` (via
 head.image.variant, itself defaulting to "thin") instead of the cluster-wide
 `image.variant` — the head never runs models, so it doesn't need torch/vllm. Call
@@ -51,7 +53,13 @@ with a dict: (dict "root" $ "isHead" true) or
 {{- $variant = .root.Values.image.variant | default "cuda" -}}
 {{- end -}}
 {{- end -}}
-{{- if eq $variant "cpu" -}}{{ printf "%s-cpu" $tag }}{{- else if eq $variant "cuda" -}}{{ printf "%s-cuda" $tag }}{{- else -}}{{ $tag }}{{- end -}}
+{{- $suffixes := dict "cuda" "-cuda" "cpu" "-cpu" "vulkan" "-vulkan" "thin" "" -}}
+{{- range list $variant (.root.Values.image.variant | default "cuda") -}}
+{{- if not (hasKey $suffixes .) -}}
+{{- fail (printf "image variant %q is not one of cuda, cpu, vulkan, thin" .) -}}
+{{- end -}}
+{{- end -}}
+{{- printf "%s%s" $tag (get $suffixes $variant) -}}
 {{- end -}}
 
 {{/*

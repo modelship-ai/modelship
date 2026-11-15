@@ -148,8 +148,9 @@ spec:
           # where the GPU runtime is already the default.
           runtimeClassName: {{ . }}
           {{- end }}
+          # The group's podSecurityContext keys win over the cluster-wide ones.
           securityContext:
-            {{- toYaml $.Values.podSecurityContext | nindent 12 }}
+            {{- toYaml (mergeOverwrite (deepCopy $.Values.podSecurityContext) (.podSecurityContext | default dict)) | nindent 12 }}
           {{- with $.Values.imagePullSecrets }}
           imagePullSecrets:
             {{- toYaml . | nindent 12 }}

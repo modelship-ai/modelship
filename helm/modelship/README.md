@@ -29,7 +29,8 @@ itself after a head restart.
 ## Prerequisites
 
 - A Kubernetes cluster (a local [kind](https://kind.sigs.k8s.io/) cluster works
-  for the CPU image; GPU models need real GPU nodes with the NVIDIA device plugin).
+  for the CPU image; GPU models need real GPU nodes with the GPU's device plugin:
+  NVIDIA's for the cuda image, AMD's or Intel's for the vulkan image).
 - **The KubeRay operator + CRDs, 1.6 or newer** (tested on 1.7.1). This is a
   cluster-scoped, install-once dependency. Either install it yourself:
 
@@ -49,7 +50,8 @@ itself after a head restart.
   kubectl apply --server-side --force-conflicts -f kuberay-operator/crds/
   helm upgrade kuberay-operator kuberay/kuberay-operator --version 1.7.1
   ```
-- For GPU models: a node pool with `nvidia.com/gpu` resources.
+- For GPU models: a node pool with `nvidia.com/gpu` resources (cuda), or `amd.com/gpu`,
+  `gpu.intel.com/i915` or `gpu.intel.com/xe` (vulkan; see [AMD and Intel GPUs](#amd-and-intel-gpus)).
 - Helm 3 or 4.
 
 ## Install
@@ -116,8 +118,8 @@ secrets:
   the gateway coordinator.
 - **Worker groups** — where models actually run. **Empty by default**, so a
   no-values install brings up only the head and schedules nothing; declare the
-  groups that match your hardware under `workerGroups` (a commented cuda+cpu
-  example ships in `values.yaml`). This is a **list — Helm replaces it wholesale**
+  groups that match your hardware under `workerGroups` (commented cuda, cpu and
+  vulkan examples ship in `values.yaml`). This is a **list — Helm replaces it wholesale**
   (no per-item merge), so always declare the full set you want; omitting the key
   keeps the empty default. Each worker runs `mship join`, which detects the
   loaders its image can run. Its CPU count and memory budget come from the group's
@@ -134,6 +136,41 @@ secrets:
   and FlashInfer compile caches, kept off the shared PVC. A rescheduled pod
   compiles them again; cap the size with `nodeCache.sizeLimit`.
 - **/dev/shm** — an in-memory emptyDir (default 8Gi); vLLM/NCCL need it.
+
+## AMD and Intel GPUs
+
+A worker group with `image.variant: vulkan` runs `llama_server` models on an AMD or
+Intel GPU through Vulkan, and every other loader on CPU. NVIDIA GPUs use `cuda`.
+
+1. Install the GPU's device plugin: AMD's
+   ([ROCm/k8s-device-plugin](https://github.com/ROCm/k8s-device-plugin), resource
+   `amd.com/gpu`) or Intel's
+   ([intel-device-plugins-for-kubernetes](https://github.com/intel/intel-device-plugins-for-kubernetes),
+   `gpu.intel.com/i915` or `gpu.intel.com/xe`). Request the resource in the group's
+   `resources`, as the commented `vulkan` example in `values.yaml` does. The worker
+   counts the GPUs the plugin mounts; no `MSHIP_NODE_NUM_GPUS` is needed.
+2. Give the pod the host's render group. The plugin mounts `/dev/dri/renderD*` as the
+   host's udev made it, `root:render 0660`, and the pods run as UID/GID 1000, so they
+   can't open it otherwise. Read the id on a GPU node (`stat -c %g /dev/dri/renderD128`)
+   and set it once for the cluster:
+
+   ```yaml
+   podSecurityContext:
+     runAsUser: 1000
+     runAsGroup: 1000
+     fsGroup: 1000
+     supplementalGroups: [992]
+   ```
+
+   When GPU node pools run different OS images, the ids can differ: set
+   `workerGroups[].podSecurityContext.supplementalGroups` per group instead. A group's
+   `podSecurityContext` keys win over the cluster-wide ones. Alternatively, enable
+   `device_ownership_from_security_context` in the nodes' containerd or CRI-O
+   config (on k3s, the `--nonroot-devices` flag); the runtime then hands the device
+   to the pod's user, and no group id is needed.
+
+A worker that can't open the GPU exits at start with `this vulkan node has no usable
+GPU` and lists what Vulkan found.
 
 ## Reaching the gateway
 
@@ -258,7 +295,8 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | Key | Default | Purpose |
 |-----|---------|---------|
 | `image.repository` / `image.tag` | `ghcr.io/modelship-ai/modelship` / `<app version>` | Stamped to the release version |
-| `image.variant` | `cuda` | `cuda`\|`cpu`\|`thin`. Worker default — appends `-cuda`/`-cpu` to the tag (`thin` is bare). Set `cpu` on CPU-only clusters, or per worker group for a mixed cluster. Does **not** affect the head (see below) |
+| `image.variant` | `cuda` | `cuda`\|`cpu`\|`vulkan`\|`thin`; anything else fails rendering. Worker default — appends `-cuda`/`-cpu`/`-vulkan` to the tag (`thin` is bare). Set `cpu` on CPU-only clusters, or per worker group for a mixed cluster. Does **not** affect the head (see below) |
+| `podSecurityContext` / `workerGroups[].podSecurityContext` | UID/GID/fsGroup `1000` | The security context of every pod the chart runs; a worker group's keys win over the cluster-wide ones. AMD and Intel GPUs need the host's render group in `supplementalGroups` (see [AMD and Intel GPUs](#amd-and-intel-gpus)) |
 | `head.image.variant` | `thin` | The head and the chart's Jobs always default to `thin` regardless of `image.variant` above — override only if you genuinely want model capacity on the head |
 | `rayVersion` | `2.60.0` | Must match the Ray in the image |
 | `models.config` | `models: []` | Your model set |
