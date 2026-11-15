@@ -328,19 +328,20 @@ class TestResponsesState:
             max_output_tokens=30,
             stream=True,
         )
-        completed = None
+        final = None
         for event in stream:
-            if event.type == "response.completed":
-                completed = event.response
-        assert completed is not None
-        assert completed.store is True
+            # A reply that reaches max_output_tokens ends with response.incomplete.
+            if event.type in ("response.completed", "response.incomplete"):
+                final = event.response
+        assert final is not None
+        assert final.store is True
 
         # A streamed response is persisted by re-reading its terminal event, storing
         # the same shape as the non-streaming path.
         second = client.responses.create(
             model="chat-capable",
             input="What is my name? Reply with just the name.",
-            previous_response_id=completed.id,
+            previous_response_id=final.id,
             max_output_tokens=20,
         )
         assert "alex" in second.output_text.lower()
