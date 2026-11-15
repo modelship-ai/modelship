@@ -21,7 +21,7 @@ _GATEWAY = f"http://127.0.0.1:{_API_PORT}/modelship"
 
 _MODEL = MODEL_CONFIGS["chat-llama-server-plain"]
 
-pytestmark = [pytest.mark.integration, pytest.mark.llama_server, pytest.mark.mship_stop, pytest.mark.own_head]
+pytestmark = [pytest.mark.integration, pytest.mark.llama_server, pytest.mark.own_head]
 
 
 class _Cluster:

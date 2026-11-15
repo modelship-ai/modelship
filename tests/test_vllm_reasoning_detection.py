@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("vllm")
+
 from tests.test_vllm_tool_detection import detected_parsers
 
 _PICKS = [

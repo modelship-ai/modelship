@@ -15,7 +15,9 @@ import pytest
 
 
 @pytest.mark.integration
-@pytest.mark.fractional_gpu_sharing
+@pytest.mark.vllm
+@pytest.mark.llama_server
+@pytest.mark.cuda
 class TestFractionalGpuSharing:
     @pytest.fixture(autouse=True, scope="class")
     def _deploy(self, model_deployer):

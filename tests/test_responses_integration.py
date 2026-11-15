@@ -127,6 +127,7 @@ _WEATHER_TOOL_RESPONSES = {
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestResponsesEndpoint:
     """End-to-end /v1/responses over the vLLM chat pipeline. Verifies the official
     OpenAI SDK parses our payload and unsupported features are rejected, not dropped."""
@@ -276,6 +277,7 @@ class TestResponsesEndpoint:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestResponsesState:
     """Server-side conversation state on /v1/responses, end-to-end against the real
     store (``memory://`` — a detached Ray actor on the live cluster)."""
@@ -326,19 +328,20 @@ class TestResponsesState:
             max_output_tokens=30,
             stream=True,
         )
-        completed = None
+        final = None
         for event in stream:
-            if event.type == "response.completed":
-                completed = event.response
-        assert completed is not None
-        assert completed.store is True
+            # A reply that reaches max_output_tokens ends with response.incomplete.
+            if event.type in ("response.completed", "response.incomplete"):
+                final = event.response
+        assert final is not None
+        assert final.store is True
 
         # A streamed response is persisted by re-reading its terminal event, storing
         # the same shape as the non-streaming path.
         second = client.responses.create(
             model="chat-capable",
             input="What is my name? Reply with just the name.",
-            previous_response_id=completed.id,
+            previous_response_id=final.id,
             max_output_tokens=20,
         )
         assert "alex" in second.output_text.lower()
@@ -529,6 +532,7 @@ class TestResponsesState:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestResponsesBackground:
     """`background: true`: queue, poll, and cancel a detached response, end-to-end
     against the real store and DisconnectRegistry actor — the pieces the unit
@@ -686,6 +690,7 @@ class TestResponsesBackground:
 
 @pytest.mark.integration
 @pytest.mark.vllm
+@pytest.mark.cuda
 class TestResponsesReasoning:
     """Reasoning surfaces as a first-class ``reasoning`` output item on
     /v1/responses, distinct from the off-spec ``message.reasoning`` field on chat completions."""

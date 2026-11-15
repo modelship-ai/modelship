@@ -337,13 +337,14 @@ _LIST_DEVICES_ROW = re.compile(r"^\s*(Vulkan\d+): (.+) \((\d+) MiB, (\d+) MiB fr
 
 @pytest.mark.integration
 @pytest.mark.llama_server
+@pytest.mark.vulkan
 def test_the_probe_agrees_with_llama_cpp():
     from tests.conftest import MSHIP_BIN
 
-    info = subprocess.run([MSHIP_BIN, "info"], capture_output=True, text=True, check=True).stdout
-    if "variant: vulkan" not in info:
-        pytest.skip("not a vulkan bootstrap")
-    binary = re.search(r"^llama-server: (.+)$", info, re.MULTILINE)
+    info = subprocess.run([MSHIP_BIN, "info", "--vulkan"], capture_output=True, text=True)
+    if info.returncode:
+        pytest.skip(f"no vulkan bootstrap: {info.stderr.strip()}")
+    binary = re.search(r"^llama-server: (.+)$", info.stdout, re.MULTILINE)
     assert binary is not None
     env = {k: v for k, v in os.environ.items() if k != "GGML_VK_VISIBLE_DEVICES"}
     listed = subprocess.run(

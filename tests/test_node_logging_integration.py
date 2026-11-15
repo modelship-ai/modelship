@@ -191,7 +191,7 @@ def two_node_cluster(tmp_path):
 
 
 @pytest.mark.integration
-@pytest.mark.node_logging
+@pytest.mark.llama_server
 @pytest.mark.own_head
 def test_a_replica_on_the_joiner_uses_its_nodes_logging_and_the_heads_format_and_metrics(two_node_cluster):
     listener, head_log, join_log = two_node_cluster

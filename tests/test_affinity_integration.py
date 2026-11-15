@@ -22,7 +22,7 @@ _IDENTITY_HEADER = "X-Mship-Test-Identity"
 
 _MODEL = {**MODEL_CONFIGS["chat-capable"], "num_gpus": 0.4, "num_replicas": 2}
 
-pytestmark = [pytest.mark.integration, pytest.mark.vllm, pytest.mark.state_store, pytest.mark.own_head]
+pytestmark = [pytest.mark.integration, pytest.mark.vllm, pytest.mark.cuda, pytest.mark.own_head]
 
 
 def _model_listed() -> bool:

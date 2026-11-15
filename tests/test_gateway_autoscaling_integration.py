@@ -128,7 +128,6 @@ def autoscaling_cluster(tmp_path):
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.gateway_autoscaling
 @pytest.mark.own_head
 def test_load_past_the_target_scales_the_gateway_out_and_the_new_replica_serves_the_model(autoscaling_cluster):
     config = _gateway()["deployment_config"]

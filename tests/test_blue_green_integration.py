@@ -71,7 +71,6 @@ def _app_names_for(model_name: str) -> set[str]:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
-@pytest.mark.blue_green
 class TestBlueGreenReplace:
     """--replace-strategy blue_green (the default) cuts a model's config change over
     atomically, with the old deployment fully torn down rather than left running."""

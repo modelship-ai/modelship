@@ -377,10 +377,16 @@ class TestChatLlamaServerResponseFormat:
     def test_response_format_json_object_without_schema_returns_an_object(self, client):
         completion = client.chat.completions.create(
             model="chat-llama-server-plain",
-            messages=[{"role": "user", "content": "What is the capital of France?"}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": 'What is the capital of France? Answer as a JSON object with one key, "capital".',
+                }
+            ],
             response_format={"type": "json_object"},
-            max_tokens=128,
+            max_tokens=256,
         )
+        assert completion.choices[0].finish_reason == "stop"
         assert isinstance(json.loads(completion.choices[0].message.content), dict)
 
     def test_response_format_json_schema_constrains_unprompted_output(self, client):
@@ -468,6 +474,9 @@ class TestChatLlamaServerResponseFormat:
 
 @pytest.mark.integration
 @pytest.mark.llama_server
+@pytest.mark.cuda
+@pytest.mark.vulkan
+@pytest.mark.metal
 class TestChatLlamaServerGpu:
     """End-to-end GPU offload through the llama_server loader: same shape as
     `TestChatLlamaServerResponseFormat` but deployed with `num_gpus=1`, so the

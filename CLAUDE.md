@@ -25,7 +25,7 @@ make lint-fix    # auto-fix ruff issues
 make unit-test   # uv run pytest tests/ -v -m "not integration"
 make wheel       # engine + bootstrapper wheels and sdists into dist/
 make bootstrap VARIANT=cuda   # make wheel, then `mship bootstrap --cuda` from dist/ into ~/.cache/mship-bootstrap (cuda|cpu|vulkan|metal)
-make integration MARK=vllm ARGS=tests/test_vllm_integration.py   # integration suite against that mship; MARK, ARGS optional
+make integration VARIANT=cuda MARK=vllm ARGS=tests/test_vllm_integration.py   # integration suite against that mship; VARIANT, MARK, ARGS optional
 
 # Single test
 uv run pytest tests/test_config.py::TestLlamaServerConfig::test_defaults -v
@@ -33,7 +33,7 @@ uv run pytest tests/test_config.py::TestLlamaServerConfig::test_defaults -v
 
 CI mirrors `make lint` + `make unit-test`. Match it locally before pushing.
 
-`make lint` requires the `cuda` extra — pyright fails with `reportMissingImports` for `gguf`, `diffusers`, and `psutil` under the cpu sync. (`vllm` is now importable under both extras — Stage E0 wired a CPU wheel index — but that alone doesn't unblock a cpu-only lint.) Tests pass on either extra.
+`make lint` and the tests pass on the cuda sync and on the CPU-only dev sync above: `dev` also carries the cuda extra's `nvidia-ml-py` and `diffusers`, the cuda-only packages modelship imports. A bare `--extra cpu` has no vllm or torch, so lint and tests fail there.
 
 When running tests on your own initiative, skip the slow integration suite: `make unit-test`. Only run `make integration` when explicitly requested; a plain `pytest -m integration` refuses to run.
 
@@ -71,6 +71,8 @@ A model name maps to exactly one deployment at a time. Deploys are requests to t
 ## Tests
 
 Under `tests/`, `pytest-asyncio` for async. Tests **mock out Ray Serve** — they don't spin up a real cluster. Pattern: access the wrapped class via `ModelshipAPI.func_or_class` to bypass the `@serve.deployment` wrapper (see `tests/test_api.py`). There are no GPU/real-model integration tests; keep it that way unless added behind an opt-in marker.
+
+An integration test that runs only on some variants is marked with each of them (`cuda`, `vulkan`, `metal`); one with no variant mark runs on every variant. `make integration VARIANT=<variant>` runs the unmarked tests plus that variant's; pass the variant `make bootstrap` installed.
 
 ## Releases
 

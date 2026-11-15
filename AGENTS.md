@@ -22,7 +22,7 @@ make lint-fix    # ruff check --fix + ruff format
 make unit-test   # uv run pytest tests/ -v -m "not integration"
 make wheel       # engine + bootstrapper wheels and sdists into dist/
 make bootstrap VARIANT=cuda   # make wheel, then `mship bootstrap --cuda` from dist/ into ~/.cache/mship-bootstrap (cuda|cpu|vulkan|metal)
-make integration MARK=vllm ARGS=tests/test_vllm_integration.py   # integration suite against that mship; MARK, ARGS optional
+make integration VARIANT=cuda MARK=vllm ARGS=tests/test_vllm_integration.py   # integration suite against that mship; VARIANT, MARK, ARGS optional
 
 # Run a single test
 uv run pytest tests/test_config.py::TestLlamaServerConfig::test_defaults -v
@@ -30,7 +30,7 @@ uv run pytest tests/test_config.py::TestLlamaServerConfig::test_defaults -v
 
 CI (`.github/workflows/ci.yml`) runs `uv sync --extra dev --extra cuda` on Linux, then `ruff check`, `ruff format --check`, `pyright`, and `pytest tests/ -v -m "not integration"` — same filter as the "skip integration" guidance below. Separate CI jobs cover the `bootstrap/` package (multi-Python-version matrix), lockfile/pins parity, and the Helm chart. Match the lint+test job locally before pushing.
 
-`make lint` requires `--extra cuda` to be installed. Pyright resolves imports against the active venv, and `gguf`, `diffusers`, and `psutil` only ship under the cuda extra, so lint on a cpu-only sync fails with `reportMissingImports`. (`vllm` is importable under both extras as of the Stage E0 CPU wheel wiring — it's no longer cuda-only, just not enough on its own to make lint pass cpu-only.) Tests run fine on either extra (the cuda extra is a superset).
+`make lint` and the tests pass on the cuda sync and on the CPU-only dev sync (`--extra dev --extra cpu --extra vllm-cpu`). Pyright resolves imports against the active venv, so `dev` also carries the cuda extra's `nvidia-ml-py` and `diffusers`, the cuda-only packages modelship imports; without them the CPU-only sync fails with `reportMissingImports`. A bare `--extra cpu` has no vllm or torch, so lint and tests fail there.
 
 Agents: when running tests on your own initiative (sanity-checking a change, verifying a bump), skip the slow `integration`-marked suite by default — `make unit-test`. Only run `make integration` when explicitly requested; a plain `pytest -m integration` refuses to run.
 
@@ -86,7 +86,7 @@ Right after connecting to Ray, the driver logs the cluster's observed totals (`C
 
 - Under `tests/`. Use `pytest-asyncio` for async tests.
 - The default suite mocks out Ray Serve; it does **not** spin up a real cluster. Pattern: access the wrapped class via `ModelshipAPI.func_or_class` to bypass the `@serve.deployment` wrapper (see `tests/test_api.py`).
-- `tests/test_*_integration.py` are real end-to-end tests against a live cluster and real (small) models — opt-in via pytest markers (`integration` plus a per-loader/feature marker, e.g. `vllm`, `blue_green`, `cluster_join`; see `pyproject.toml`'s `markers`). Excluded by default (`-m "not integration"`); don't assume `make unit-test`/CI coverage without them. `make integration` runs them against the `mship` that `make bootstrap` installed, each `mship` process started outside the repo so it imports the wheel; tests marked `own_head` start their own head and run first.
+- `tests/test_*_integration.py` are real end-to-end tests against a live cluster and real (small) models — opt-in via pytest markers (`integration` plus a marker per loader a test deploys, e.g. `vllm`; see `pyproject.toml`'s `markers`). A test that runs only on some variants is marked with each of them (`cuda`, `vulkan`, `metal`); one with no variant mark runs on every variant. `make integration VARIANT=<variant>` runs the unmarked tests plus that variant's, so pass the variant `make bootstrap` installed; without `VARIANT` it runs them all. Excluded by default (`-m "not integration"`); don't assume `make unit-test`/CI coverage without them. `make integration` runs them against the `mship` that `make bootstrap` installed, each `mship` process started outside the repo so it imports the wheel; tests marked `own_head` start their own head and run first.
 
 ## Releases
 

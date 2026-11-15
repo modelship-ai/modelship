@@ -9,6 +9,7 @@ import pytest
 
 @pytest.mark.integration
 @pytest.mark.diffusers
+@pytest.mark.cuda
 class TestImage:
     """One sd-turbo deployment backs all three endpoints (weight-shared via
     from_pipe); the generated image is reused as input for edit/variation calls."""

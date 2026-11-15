@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 pytest.importorskip("diffusers")
+pytest.importorskip("torch")
 
 from PIL import Image
 

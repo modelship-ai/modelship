@@ -191,7 +191,6 @@ def _join_node_procs_alive(join_ray_tmp: str) -> bool:
 
 
 @pytest.mark.integration
-@pytest.mark.cluster_join
 class TestClusterJoin:
     def _joiner_env(self, tmp_path, suffix: str) -> tuple[dict, str, str]:
         """Returns (env, join_ray_tmp, config_path) for an mship subprocess."""
