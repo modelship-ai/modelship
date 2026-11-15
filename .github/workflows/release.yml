@@ -58,6 +58,8 @@ jobs:
           - { variant: cpu, arch: amd64, runner: ubuntu-latest }
           - { variant: cpu, arch: arm64, runner: ubuntu-24.04-arm }
           - { variant: cuda, arch: amd64, runner: ubuntu-latest }
+          - { variant: vulkan, arch: amd64, runner: ubuntu-latest }
+          - { variant: vulkan, arch: arm64, runner: ubuntu-24.04-arm }
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -119,6 +121,7 @@ jobs:
           - { variant: thin, tag_suffix: "" }
           - { variant: cpu, tag_suffix: "-cpu" }
           - { variant: cuda, tag_suffix: "-cuda" }
+          - { variant: vulkan, tag_suffix: "-vulkan" }
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
@@ -258,7 +261,12 @@ jobs:
             docker pull ghcr.io/${{ github.repository }}:${{ needs.version.outputs.version }}-cpu
             ```
 
-            Floating tags (`:latest`, `:latest-cuda`, `:latest-cpu`) are single-node only — for any
+            ### Vulkan (AMD or Intel GPU node)
+            ```bash
+            docker pull ghcr.io/${{ github.repository }}:${{ needs.version.outputs.version }}-vulkan
+            ```
+
+            Floating tags (`:latest`, `:latest-cuda`, `:latest-cpu`, `:latest-vulkan`) are single-node only — for any
             multi-node cluster, pin every node to the same `X.Y.Z` tag to avoid a Ray version
             mismatch between head and workers.
 

@@ -40,6 +40,15 @@ docker run --rm --shm-size=8g --gpus all -p 8000:8000 -v modelship-cache:/.cache
   --usecase generate --num-gpus 1
 ```
 
+**AMD or Intel GPU** — Linux, through Vulkan:
+
+```bash
+docker run --rm --shm-size=8g --device /dev/dri -p 8000:8000 -v modelship-cache:/.cache \
+  ghcr.io/modelship-ai/modelship:latest-vulkan start \
+  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+  --usecase generate --num-gpus 1
+```
+
 **Apple Silicon** — native, with Metal offload:
 
 ```bash

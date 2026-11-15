@@ -26,10 +26,11 @@ scheduling, or you already run k8s for everything else.
   wide dynamic port range; bridge networking is a well-documented source of pain
   with it. Host networking on an already-private network sidesteps that entirely.
 - **Pin every node to the identical release version.** Floating tags (`:latest`,
-  `:latest-cuda`, `:latest-cpu`) are single-node only — Ray refuses to form a
-  cluster across mismatched versions. Multi-node means every `docker run`, on
-  every VM, uses the same `:X.Y.Z` release — the thin/`-cuda`/`-cpu` suffix can
-  differ per node's role, but the version number can't.
+  `:latest-cuda`, `:latest-cpu`, `:latest-vulkan`) are single-node only — Ray
+  refuses to form a cluster across mismatched versions. Multi-node means every
+  `docker run`, on every VM, uses the same `:X.Y.Z` release — the
+  thin/`-cuda`/`-cpu`/`-vulkan` suffix can differ per node's role, but the
+  version number can't.
 
 ## Quick start: a two-VM cluster
 

@@ -118,16 +118,17 @@ Commit messages matter: use Conventional Commits prefixes so the changelog gener
 - Metrics are on by default on port **8079** (not 8000). Disable with `--no-metrics` or `MSHIP_METRICS=false`.
 - Preflight hardware auto-sizing is on by default. Disable with `--no-preflight` or `MSHIP_PREFLIGHT=false` to run models on loader/library defaults plus explicit `models.yaml` config only — useful for benchmarking across hardware.
 - Log level `TRACE` (below `DEBUG`) is a custom level and logs full request/response payloads.
-- Three images are published from the unified `Dockerfile` (`--build-arg MSHIP_VARIANT=thin|cpu|cuda`), all under `ghcr.io/modelship-ai/modelship`:
+- Four images are published from the unified `Dockerfile` (`--build-arg MSHIP_VARIANT=thin|cpu|cuda|vulkan`), all under `ghcr.io/modelship-ai/modelship`:
 
   | Variant | Tag | Platforms | Contains |
   |---|---|---|---|
   | thin (control/coordinator) | `:X.Y.Z`, `:latest` | amd64, arm64 | base only — no torch/vllm |
   | cuda (GPU node) | `:X.Y.Z-cuda`, `:latest-cuda` | amd64 | torch cu130 + vllm + CUDA runtime |
   | cpu (CPU node) | `:X.Y.Z-cpu`, `:latest-cpu` | amd64, arm64 | torch CPU + vllm CPU wheel |
+  | vulkan (AMD/Intel GPU node) | `:X.Y.Z-vulkan`, `:latest-vulkan` | amd64, arm64 | cpu's environment + llama.cpp's Vulkan backend + Vulkan loader and Mesa drivers |
 
   Floating tags (`:latest*`) are single-node only — Ray refuses to form a cluster across mismatched
-  versions, so any multi-node deployment pins every node to the same `X.Y.Z` (or `-cuda`/`-cpu`) tag.
+  versions, so any multi-node deployment pins every node to the same `X.Y.Z` (or `-cuda`/`-cpu`/`-vulkan`) tag.
   For the thin variant the bootstrapper sets `MSHIP_NODE_NUM_CPUS=0`/`MSHIP_NODE_NUM_GPUS=0` when it
   launches the engine (they are not image `ENV`), so a thin container never advertises
   capacity it can't serve — it's a driver/coordinator role, not a compute node.

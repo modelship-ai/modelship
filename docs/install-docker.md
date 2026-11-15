@@ -6,7 +6,7 @@ a container starts straight into `mship start` and installs nothing at runtime.
 
 ## Image variants
 
-Three images are published from a single `Dockerfile`, all under
+Four images are published from a single `Dockerfile`, all under
 `ghcr.io/modelship-ai/modelship`:
 
 | Variant | Tag suffix | Platforms | Purpose |
@@ -14,11 +14,12 @@ Three images are published from a single `Dockerfile`, all under
 | Thin | *(none)* — bare tag | amd64, arm64 | Control/coordinator image, no torch/vllm. Runs the driver/head role only — cannot serve models by itself |
 | CUDA | `-cuda` | amd64 | GPU node image (vLLM, Diffusers, llama.cpp GPU offload) |
 | CPU | `-cpu` | amd64, arm64 | CPU node image (vLLM CPU backend, llama.cpp, stable_diffusion_cpp) |
+| Vulkan | `-vulkan` | amd64, arm64 | AMD or Intel GPU node image: everything `-cpu` runs, plus llama.cpp GPU offload through Mesa's Vulkan drivers. NVIDIA GPUs use `-cuda` |
 
-Floating tags (`:latest`, `:latest-cuda`, `:latest-cpu`) are single-node
-only — multi-node deployments must pin every node to the same `X.Y.Z`
-(`-cuda`/`-cpu`) tag, or Ray refuses to form the cluster across mismatched
-versions.
+Floating tags (`:latest`, `:latest-cuda`, `:latest-cpu`, `:latest-vulkan`) are
+single-node only — multi-node deployments must pin every node to the same
+`X.Y.Z` (`-cuda`/`-cpu`/`-vulkan`) tag, or Ray refuses to form the cluster
+across mismatched versions.
 
 ## Running a single node
 
@@ -45,6 +46,19 @@ docker run --rm --shm-size=8g --gpus all \
   -p 8000:8000 \
   ghcr.io/modelship-ai/modelship:latest-cuda start --config /models.yaml
 ```
+
+AMD or Intel GPU, on a Linux host with the GPU's kernel driver loaded:
+
+```bash
+docker run --rm --shm-size=8g --device /dev/dri \
+  -v ./models.yaml:/models.yaml \
+  -v modelship-cache:/.cache \
+  -p 8000:8000 \
+  ghcr.io/modelship-ai/modelship:latest-vulkan start --config /models.yaml
+```
+
+`--device /dev/dri` passes the host's GPUs in; the container runs as a user in
+the group that owns them, so no `--group-add` is needed.
 
 Any other [CLI flag](model-configuration.md) goes after `start` too. A single
 model needs no config file at all — see [Quick start](index.md#quick-start).

@@ -23,7 +23,13 @@ if [ "$(id -u)" = "0" ]; then
         fi
     done
     chown "$TARGET_UID:$TARGET_GID" /modelship
-    exec gosu "$TARGET_UID:$TARGET_GID" "$@"
+
+    # The groups that own the GPU render nodes (--device /dev/dri), the user's only supplementary groups.
+    groups=$(stat -c '%g' /dev/dri/renderD* 2>/dev/null | sort -un | grep -vx -e 0 -e "$TARGET_GID" | paste -sd, -)
+    if [ -n "$groups" ]; then
+        exec setpriv --reuid="$TARGET_UID" --regid="$TARGET_GID" --groups="$groups" -- "$@"
+    fi
+    exec setpriv --reuid="$TARGET_UID" --regid="$TARGET_GID" --clear-groups -- "$@"
 fi
 
 exec "$@"
