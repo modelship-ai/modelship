@@ -50,6 +50,15 @@ flashinfer JIT-compiles its kernels when vLLM loads a model, so `mship bootstrap
 
 vLLM reserves VRAM based on `num_gpus` — a whole number of GPUs, or a fraction of one when sharing a card — and fits the context to what's left. If a single model uses more than its budget, lower `num_gpus` for other deployments, or set `vllm_engine_kwargs.max_model_len` to cap KV cache size; an explicit value replaces the auto-fit.
 
+## Workers killed for low memory on a DGX Spark
+
+Ray kills workers once the node's memory use passes `RAY_memory_usage_threshold` (95% by default), and on a DGX Spark the GPU's memory is the node's memory. Preflight keeps Ray's headroom free when it sizes a deploy, but explicit settings bypass it: fractional `num_gpus` that sum past about 0.85, or a large `n_ctx` or `max_model_len`. Lower them until the models fit.
+
+Two things on a Spark do not limit model memory:
+
+- `docker run --memory` caps the container's memory, but CUDA allocations are charged to no container, so a model can use more than the limit. llama.cpp's managed memory (`GGML_CUDA_ENABLE_UNIFIED_MEMORY=1`) is the exception: it counts against the limit.
+- In an LXC container whose `/proc/meminfo` comes from LXCFS, `MemAvailable` leaves out GPU allocations, so llama.cpp, vLLM and preflight all count memory a loaded model already holds as free. vLLM then fails with `Error in memory profiling`. Run on the host or in Docker instead.
+
 ## `could not be sized for this node`
 
 A `llama_server` model on `num_gpus: 0` is sized against the RAM its node has free. When preflight cannot fit it into that RAM, at its smallest context or at the `n_ctx` you set, the model is not loaded and its deploy fails. The message gives the RAM that was available and `fit-params`' own reason; `failed to fit CLI arguments to free memory` means the model needs more than that. Free memory on the node, use a smaller model or quantization, or set a smaller `llama_server_config.n_ctx` on the models already loaded there: a model without one takes its full context when it loads first. `--no-preflight` loads the model without the check. A replica that fails this on a restart or a scale-up is retried until it fits, and the model answers 503 while none of its replicas is up.

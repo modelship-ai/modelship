@@ -292,6 +292,35 @@ class TestLlamaServerPreflightArgs:
         args = run.call_args[0][0]
         assert args[args.index("-fitt") + 1] == str((56 - 35) * 1024 + 1024)
 
+    def test_a_whole_shared_memory_gpu_keeps_the_reserve_free(self, tmp_path, monkeypatch):
+        """On GB10, llama.cpp sees MemAvailable as free, so its margin is the reserve plus 1 GiB."""
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        reserve_mib = int(128 * 1024 * 0.10) + 1024
+        gpu = GPUInfo(
+            0,
+            (100 * 1024 - reserve_mib) * 1024**2,
+            "GB10",
+            total_bytes=128 * 1024**3,
+            engine_free_bytes=100 * 1024**3,
+            shared_memory=True,
+        )
+        with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")) as run:
+            LlamaServerPreflight().recommend(cfg, HardwareProfile(gpus=[gpu]))
+        args = run.call_args[0][0]
+        assert args[args.index("-fitt") + 1] == str(reserve_mib + 1024)
+
+    def test_a_fractional_shared_memory_gpu_is_capped_at_its_share(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=0.5)
+        gpu = GPUInfo(
+            0, 90 * 1024**3, "GB10", total_bytes=128 * 1024**3, engine_free_bytes=100 * 1024**3, shared_memory=True
+        )
+        with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")) as run:
+            LlamaServerPreflight().recommend(cfg, HardwareProfile(gpus=[gpu]))
+        args = run.call_args[0][0]
+        assert args[args.index("-fitt") + 1] == str((100 - 64) * 1024 + 1024)
+
     def test_a_fractional_igpu_margin_is_against_llama_cpps_own_figure(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=0.5)
@@ -312,8 +341,8 @@ class TestLlamaServerPreflightArgs:
 
 
 _CPU_HW = HardwareProfile(ram_bytes=16 * 1024**3, available_ram_bytes=12 * 1024**3)
-# 12 GiB free, less 5% of 16 GiB and 1024 MiB.
-_CPU_BUDGET_MIB = 10444
+# 12 GiB free, less 5% of 16 GiB, Ray's 5% kill headroom and 1024 MiB.
+_CPU_BUDGET_MIB = 9625
 _PHYSICAL_MIB = 32768
 _FIT_STDOUT = "-c 4096 -ngl -1\n"
 _ALL_PINNED = {"n_ctx": 4096, "n_gpu_layers": 20, "tensor_split": [1.0, 1.0]}
@@ -331,6 +360,8 @@ class TestLlamaServerPreflightCpuBudget:
     @pytest.fixture(autouse=True)
     def _fake_host(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        monkeypatch.delenv("RAY_memory_usage_threshold", raising=False)
+        monkeypatch.delenv("RAY_memory_monitor_refresh_ms", raising=False)
         monkeypatch.setattr("modelship.preflight.llama_cpp._physical_ram_mib", lambda: _PHYSICAL_MIB)
 
     def test_margin_is_the_ram_outside_the_budget(self, tmp_path):

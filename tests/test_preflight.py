@@ -74,6 +74,15 @@ _NODE = [_gpu(0, "GPU-aaa"), _gpu(1, "GPU-bbb")]
 
 
 class TestNvmlGpus:
+    @pytest.fixture(autouse=True)
+    def _no_integrated_gpu(self, monkeypatch):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.delenv("RAY_memory_usage_threshold", raising=False)
+        monkeypatch.delenv("RAY_memory_monitor_refresh_ms", raising=False)
+        with patch.object(preflight_base, "_cuda_integrated_ordinals", return_value=set()) as probe:
+            yield probe
+
     def _pynvml(self, **overrides):
         pynvml = MagicMock(**overrides)
         pynvml.nvmlDeviceGetCount.return_value = 2
@@ -84,6 +93,68 @@ class TestNvmlGpus:
         pynvml.nvmlDeviceGetName.side_effect = lambda i: f"GPU {i}"
         pynvml.nvmlDeviceGetUUID.side_effect = lambda i: f"GPU-{i}"
         return pynvml
+
+    def _gb10(self):
+        """A GB10: NVML can't read its memory."""
+        pynvml = self._pynvml()
+        pynvml.nvmlDeviceGetCount.return_value = 1
+        pynvml.nvmlDeviceGetMemoryInfo.side_effect = RuntimeError("Not Supported")
+        return pynvml
+
+    def test_an_integrated_gpu_reads_its_memory_from_meminfo(self, _no_integrated_gpu):
+        from modelship.preflight import base as preflight_base
+
+        _no_integrated_gpu.return_value = {0}
+        gib = 1024**3
+        meminfo = SimpleNamespace(total=128 * gib, available=100 * gib)
+        pynvml = self._gb10()
+        with patch.dict(sys.modules, {"pynvml": pynvml}), patch("psutil.virtual_memory", return_value=meminfo):
+            gpus = preflight_base._nvml_gpus()
+        reserve = int(128 * gib * 0.10) + gib
+        assert gpus == [
+            GPUInfo(
+                index=0,
+                available_bytes=100 * gib - reserve,
+                name="GPU 0",
+                uuid="GPU-0",
+                total_bytes=128 * gib,
+                engine_free_bytes=100 * gib,
+                shared_memory=True,
+            )
+        ]
+        pynvml.nvmlDeviceGetMemoryInfo.assert_not_called()
+        _no_integrated_gpu.assert_called_once_with(1)
+
+    def test_a_container_memory_cap_does_not_bound_an_integrated_gpu(self, _no_integrated_gpu):
+        """GPU allocations don't count against a container's memory limit, so the limit mustn't cap the GPU."""
+        from modelship.preflight import base as preflight_base
+
+        _no_integrated_gpu.return_value = {0}
+        gib = 1024**3
+        meminfo = SimpleNamespace(total=128 * gib, available=100 * gib)
+        with (
+            patch.dict(sys.modules, {"pynvml": self._gb10()}),
+            patch("psutil.virtual_memory", return_value=meminfo),
+            patch.object(preflight_base, "_cgroup_memory_limit_bytes", return_value=4 * gib),
+            patch.object(preflight_base, "_cgroup_memory_available_bytes", return_value=2 * gib),
+        ):
+            (gpu,) = preflight_base._nvml_gpus()
+        assert gpu.total_bytes == 128 * gib
+        assert gpu.engine_free_bytes == 100 * gib
+
+    def test_unreadable_memory_on_a_discrete_gpu_reads_no_gpus(self):
+        from modelship.preflight import base as preflight_base
+
+        with patch.dict(sys.modules, {"pynvml": self._gb10()}):
+            assert preflight_base._nvml_gpus() == []
+
+    def test_no_visible_gpu_runs_no_probe(self, _no_integrated_gpu, monkeypatch):
+        from modelship.preflight import base as preflight_base
+
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "9")
+        with patch.dict(sys.modules, {"pynvml": self._pynvml()}):
+            assert preflight_base._nvml_gpus() == []
+        _no_integrated_gpu.assert_not_called()
 
     def test_total_leaves_out_the_driver_reservation(self):
         from modelship.preflight import base as preflight_base
@@ -159,6 +230,75 @@ class TestNvmlGpus:
             result = preflight_base.nvml_probe()
         assert result.gpus == []
         assert result.error == "NVML unavailable: Driver Not Loaded"
+
+
+class TestRamReserve:
+    _GIB = 1024**3
+
+    @pytest.fixture(autouse=True)
+    def _ray_defaults(self, monkeypatch):
+        monkeypatch.delenv("RAY_memory_usage_threshold", raising=False)
+        monkeypatch.delenv("RAY_memory_monitor_refresh_ms", raising=False)
+
+    def test_covers_the_os_and_rays_kill_headroom(self):
+        from modelship.preflight.base import ram_reserve_bytes
+
+        assert ram_reserve_bytes(100 * self._GIB) == int(100 * self._GIB * 0.10) + self._GIB
+
+    def test_follows_rays_threshold(self, monkeypatch):
+        from modelship.preflight.base import ram_reserve_bytes
+
+        monkeypatch.setenv("RAY_memory_usage_threshold", "0.8")
+        assert ram_reserve_bytes(100 * self._GIB) == pytest.approx(100 * self._GIB * 0.25 + self._GIB, abs=1)
+
+    def test_a_disabled_monitor_keeps_no_headroom(self, monkeypatch):
+        from modelship.preflight.base import ray_kill_headroom
+
+        monkeypatch.setenv("RAY_memory_monitor_refresh_ms", "0")
+        assert ray_kill_headroom() == 0.0
+
+    @pytest.mark.parametrize("value", ["high", "nan", "inf", "-inf", "0", "-0.5", "1.5"])
+    def test_an_invalid_threshold_takes_rays_default(self, monkeypatch, value):
+        from modelship.preflight.base import ram_reserve_bytes, ray_kill_headroom
+
+        monkeypatch.setenv("RAY_memory_usage_threshold", value)
+        assert ray_kill_headroom() == pytest.approx(0.05)
+        assert ram_reserve_bytes(100 * self._GIB) == pytest.approx(100 * self._GIB * 0.10 + self._GIB, abs=1)
+
+    def test_a_threshold_of_one_keeps_no_headroom(self, monkeypatch):
+        from modelship.preflight.base import ray_kill_headroom
+
+        monkeypatch.setenv("RAY_memory_usage_threshold", "1")
+        assert ray_kill_headroom() == 0.0
+
+
+class TestCudaIntegratedOrdinals:
+    def _run(self, **result):
+        from modelship.preflight import base as preflight_base
+
+        completed = SimpleNamespace(**{"returncode": 0, "stdout": "", "stderr": "", **result})
+        with patch.object(preflight_base.subprocess, "run", return_value=completed) as run:
+            return preflight_base._cuda_integrated_ordinals(2), run
+
+    def test_reads_the_ordinals_the_child_prints(self):
+        ordinals, run = self._run(stdout="1\n")
+        assert ordinals == {1}
+        assert run.call_args[0][0][-1] == "2"
+
+    def test_a_failed_child_reads_none(self):
+        assert self._run(returncode=1, stderr="OSError: libcuda.so.1")[0] == set()
+
+    def test_a_child_that_cannot_start_reads_none(self):
+        from modelship.preflight import base as preflight_base
+
+        with patch.object(preflight_base.subprocess, "run", side_effect=OSError("no python")):
+            assert preflight_base._cuda_integrated_ordinals(1) == set()
+
+    def test_the_child_asks_cuda_for_its_integrated_flag(self):
+        from modelship.preflight import base as preflight_base
+
+        assert "cuDeviceGetAttribute(ctypes.byref(value), 18, dev)" in preflight_base._CUDA_INTEGRATED_SCRIPT
+        compile(preflight_base._CUDA_INTEGRATED_SCRIPT, "<cuda-integrated>", "exec")
 
 
 class TestVisibleGpus:
@@ -661,6 +801,46 @@ class TestVllmPreflightMlaHaircutBasis:
 
         assert rec_roomy == rec_tight
         assert 0 < rec_roomy["gpu_memory_utilization"] < ceiling
+
+
+class TestVllmPreflightSharedMemory:
+    """On a GPU that uses system RAM (GB10), vLLM's default of 0.9 of the total is more than is free,
+    so vLLM never starts."""
+
+    _GIB = 1024**3
+
+    def _shared(self, available_gib: float, total_gib: float = 100) -> HardwareProfile:
+        gpu = GPUInfo(
+            0,
+            int(available_gib * self._GIB),
+            "GB10",
+            total_bytes=int(total_gib * self._GIB),
+            engine_free_bytes=int(total_gib * self._GIB),
+            shared_memory=True,
+        )
+        return HardwareProfile(gpus=[gpu])
+
+    def test_a_whole_gpu_gets_the_free_share(self):
+        rec = VllmPreflight().recommend(_make_config(), self._shared(available_gib=85.7))
+        assert rec == {"gpu_memory_utilization": 0.85}
+
+    def test_the_free_share_is_capped_at_the_default(self):
+        rec = VllmPreflight().recommend(_make_config(), self._shared(available_gib=97))
+        assert rec == {"gpu_memory_utilization": default_gpu_memory_utilization(_make_config())}
+
+    def test_a_fractional_num_gpus_keeps_its_fraction(self):
+        cfg = _make_config(num_gpus=0.3)
+        rec = VllmPreflight().recommend(cfg, self._shared(available_gib=85))
+        assert resolve_gpu_memory_utilization(cfg, rec.get("gpu_memory_utilization")) == 0.3
+
+    def test_a_dedicated_gpu_gets_no_recommendation(self):
+        hw = HardwareProfile(gpus=[GPUInfo(0, 40 * self._GIB, "test", total_bytes=80 * self._GIB)])
+        assert VllmPreflight().recommend(_make_config(), hw) == {}
+
+    def test_the_mla_haircut_starts_from_the_free_share(self, tmp_path):
+        snapshot = _write_model_snapshot(tmp_path, config_json=_MLA_CFG, weight_bytes=4 * self._GIB)
+        rec = VllmPreflight().recommend(_make_config(resolved_path=str(snapshot)), self._shared(available_gib=60))
+        assert 0 < rec["gpu_memory_utilization"] < 0.6
 
 
 class TestVllmPreflightCpu:

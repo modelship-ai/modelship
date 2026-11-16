@@ -7,7 +7,11 @@ import math
 import os
 from typing import Any, NamedTuple, cast
 
-from modelship.infer.infer_config import ModelshipModelConfig, resolve_gpu_memory_utilization
+from modelship.infer.infer_config import (
+    ModelshipModelConfig,
+    default_gpu_memory_utilization,
+    resolve_gpu_memory_utilization,
+)
 from modelship.logging import get_logger
 from modelship.preflight._mla import MLAInfo
 from modelship.preflight._mla import kv_bytes_per_token as mla_kv_bytes_per_token
@@ -77,6 +81,9 @@ class VllmPreflight:
 
     def _recommend_gpu(self, config: ModelshipModelConfig, hw: HardwareProfile) -> dict[str, Any]:
         rec: dict[str, Any] = {}
+        shared_util = self._shared_memory_gpu_memory_utilization(config, hw)
+        if shared_util is not None:
+            rec["gpu_memory_utilization"] = shared_util
         model_path = config._resolved_path
         if not model_path:
             logger.info("preflight '%s': no resolved model path; auto-fit only", config.name)
@@ -113,14 +120,36 @@ class VllmPreflight:
                 mm_tokens_per_item if mm_tokens_per_item is not None else "unknown",
             )
 
-        gpu_util = self._mla_gpu_memory_utilization(config, hw, text_cfg, model_cfg)
+        gpu_util = self._mla_gpu_memory_utilization(config, hw, text_cfg, model_cfg, shared_util)
         if gpu_util is not None:
             rec["gpu_memory_utilization"] = gpu_util
 
         return rec
 
+    def _shared_memory_gpu_memory_utilization(self, config: ModelshipModelConfig, hw: HardwareProfile) -> float | None:
+        """For a whole GPU that uses system RAM: the fraction of its memory that is free, at most the
+        default. vLLM's default of 0.9 of the total is more than is ever free there. None for other
+        GPUs and for a fractional num_gpus."""
+        shared = [g for g in hw.gpus if g.shared_memory and g.total_bytes]
+        if not shared or 0 < config.num_gpus < 1:
+            return None
+        free_share = min(g.available_bytes / g.total_bytes for g in shared)
+        gpu_util = max(math.floor(min(default_gpu_memory_utilization(config), free_share) * 100) / 100, 0.01)
+        logger.info(
+            "preflight vllm '%s': the GPU uses system RAM and %.0f%% of it is free → gpu_memory_utilization=%.2f",
+            config.name,
+            free_share * 100,
+            gpu_util,
+        )
+        return gpu_util
+
     def _mla_gpu_memory_utilization(
-        self, config: ModelshipModelConfig, hw: HardwareProfile, text_cfg: dict, model_cfg: dict
+        self,
+        config: ModelshipModelConfig,
+        hw: HardwareProfile,
+        text_cfg: dict,
+        model_cfg: dict,
+        shared_util: float | None = None,
     ) -> float | None:
         """MLA's chunked-prefill workspace sits outside the KV pool, and gpu_util
         is the only lever that leaves room for it. None for every other model."""
@@ -135,8 +164,8 @@ class VllmPreflight:
         dtype_bytes = _resolve_compute_dtype_bytes(text_cfg, model_cfg)
         workspace_bytes = _mla_chunked_prefill_workspace_bytes(text_cfg, config, dtype_bytes, mla, tp_size)
 
-        # A fractional num_gpus is the fraction; anything else takes the default.
-        gpu_util = resolve_gpu_memory_utilization(config)
+        # Start from a fractional num_gpus, else the free fraction of a system-RAM GPU, else the default.
+        gpu_util = resolve_gpu_memory_utilization(config, shared_util)
         gpu_util = max(gpu_util - _MLA_WORKSPACE_SAFETY_MARGIN * workspace_bytes / gpu_basis, 0.01)
         logger.info(
             "preflight vllm '%s': MLA workspace %.2f GiB on a %.2f GiB GPU → gpu_memory_utilization=%.4f",

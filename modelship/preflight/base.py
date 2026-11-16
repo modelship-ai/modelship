@@ -4,6 +4,7 @@ import contextlib
 import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -12,6 +13,31 @@ from modelship.logging import get_logger
 from modelship.utils.variant import current_variant
 
 logger = get_logger("preflight")
+
+# A memory budget leaves 5% of RAM plus 1 GiB unused, and also the RAM Ray's OOM killer keeps free.
+RAM_RESERVE_FRACTION = 0.05
+RAM_RESERVE_FIXED_BYTES = 1024**3
+# Ray reads each setting from an env var named RAY_<setting>.
+_RAY_THRESHOLD_ENV = "RAY_memory_usage_threshold"
+_RAY_MONITOR_REFRESH_ENV = "RAY_memory_monitor_refresh_ms"
+_RAY_MEMORY_USAGE_THRESHOLD = 0.95  # Ray's default
+
+
+def ram_reserve_bytes(total_bytes: int) -> int:
+    return int(total_bytes * (RAM_RESERVE_FRACTION + ray_kill_headroom())) + RAM_RESERVE_FIXED_BYTES
+
+
+def ray_kill_headroom() -> float:
+    """Fraction of RAM that Ray kills workers to keep free, or 0 if its memory monitor is off."""
+    if os.environ.get(_RAY_MONITOR_REFRESH_ENV, "").strip() == "0":
+        return 0.0
+    try:
+        threshold = float(os.environ.get(_RAY_THRESHOLD_ENV, _RAY_MEMORY_USAGE_THRESHOLD))
+    except ValueError:
+        threshold = _RAY_MEMORY_USAGE_THRESHOLD
+    if not 0.0 < threshold <= 1.0:
+        threshold = _RAY_MEMORY_USAGE_THRESHOLD
+    return 1.0 - threshold
 
 
 class ModelNotSizedError(Exception):
@@ -26,6 +52,7 @@ class GPUInfo:
     uuid: str | None = None  # "GPU-<uuid>"; None when the probe can't read it
     total_bytes: int = 0  # device capacity; 0 when the probe couldn't read it
     engine_free_bytes: int | None = None
+    shared_memory: bool = False  # the GPU uses system RAM, e.g. GB10
 
     @property
     def sizing_total_bytes(self) -> int:
@@ -328,10 +355,14 @@ def _nvml_gpus() -> list[GPUInfo]:
 def _nvml_memory(gpus: list[NvmlGpu]) -> list[GPUInfo]:
     import pynvml
 
+    integrated = _cuda_integrated_ordinals(len(gpus)) if gpus else set()
     pynvml.nvmlInit()
     try:
         infos: list[GPUInfo] = []
         for slot, gpu in enumerate(gpus):
+            if slot in integrated:
+                infos.append(_shared_memory_gpu(slot, gpu))
+                continue
             handle = pynvml.nvmlDeviceGetHandleByIndex(gpu.index)
             mem = pynvml.nvmlDeviceGetMemoryInfo(handle, version=pynvml.nvmlMemory_v2)
             infos.append(
@@ -347,6 +378,67 @@ def _nvml_memory(gpus: list[NvmlGpu]) -> list[GPUInfo]:
     finally:
         with contextlib.suppress(Exception):
             pynvml.nvmlShutdown()
+
+
+# Prints the index of each GPU that CUDA reports as integrated (using system RAM), the same check
+# llama.cpp and vLLM make. Runs in a child process: initializing CUDA here breaks vLLM's later fork.
+_CUDA_INTEGRATED_SCRIPT = """
+import ctypes, sys
+cuda = ctypes.CDLL("libcuda.so.1")
+dev, value = ctypes.c_int(), ctypes.c_int()
+if cuda.cuInit(0) == 0:
+    for ordinal in range(int(sys.argv[1])):
+        if (
+            cuda.cuDeviceGet(ctypes.byref(dev), ordinal) == 0
+            and cuda.cuDeviceGetAttribute(ctypes.byref(value), 18, dev) == 0
+            and value.value
+        ):
+            print(ordinal)
+"""
+
+
+def _cuda_integrated_ordinals(count: int) -> set[int]:
+    """Indexes of the first `count` GPUs that CUDA reports as integrated; empty if CUDA can't be queried."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", _CUDA_INTEGRATED_SCRIPT, str(count)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            logger.debug("preflight: CUDA integrated probe exited %d: %s", result.returncode, result.stderr.strip())
+            return set()
+        return {int(line) for line in result.stdout.split()}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        logger.debug("preflight: CUDA integrated probe failed", exc_info=True)
+        return set()
+
+
+def _shared_memory_gpu(slot: int, gpu: NvmlGpu) -> GPUInfo:
+    """Memory figures for a GPU that uses system RAM, read from /proc/meminfo. Not from the
+    cgroup: GPU allocations don't count against a container's memory limit."""
+    import psutil
+
+    mem = psutil.virtual_memory()
+    total, engine_free = int(mem.total), int(mem.available)
+    available = max(0, engine_free - ram_reserve_bytes(total))
+    logger.info(
+        "preflight: %s uses system RAM; %.1f of %.1f GiB usable after the reserve",
+        gpu.name,
+        available / 1024**3,
+        total / 1024**3,
+    )
+    return GPUInfo(
+        index=slot,
+        available_bytes=available,
+        name=gpu.name,
+        uuid=gpu.uuid,
+        total_bytes=total,
+        engine_free_bytes=engine_free,
+        shared_memory=True,
+    )
 
 
 def _visible_gpus(node: list[NvmlGpu], devices: str | None) -> list[NvmlGpu]:
