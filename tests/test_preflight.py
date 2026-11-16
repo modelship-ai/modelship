@@ -257,11 +257,19 @@ class TestRamReserve:
         monkeypatch.setenv("RAY_memory_monitor_refresh_ms", "0")
         assert ray_kill_headroom() == 0.0
 
-    def test_an_unparseable_threshold_takes_rays_default(self, monkeypatch):
+    @pytest.mark.parametrize("value", ["high", "nan", "inf", "-inf", "0", "-0.5", "1.5"])
+    def test_an_invalid_threshold_takes_rays_default(self, monkeypatch, value):
+        from modelship.preflight.base import ram_reserve_bytes, ray_kill_headroom
+
+        monkeypatch.setenv("RAY_memory_usage_threshold", value)
+        assert ray_kill_headroom() == pytest.approx(0.05)
+        assert ram_reserve_bytes(100 * self._GIB) == pytest.approx(100 * self._GIB * 0.10 + self._GIB, abs=1)
+
+    def test_a_threshold_of_one_keeps_no_headroom(self, monkeypatch):
         from modelship.preflight.base import ray_kill_headroom
 
-        monkeypatch.setenv("RAY_memory_usage_threshold", "high")
-        assert ray_kill_headroom() == pytest.approx(0.05)
+        monkeypatch.setenv("RAY_memory_usage_threshold", "1")
+        assert ray_kill_headroom() == 0.0
 
 
 class TestCudaIntegratedOrdinals:

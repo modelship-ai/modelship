@@ -35,7 +35,10 @@ def ray_kill_headroom() -> float:
         threshold = float(os.environ.get(_RAY_THRESHOLD_ENV, _RAY_MEMORY_USAGE_THRESHOLD))
     except ValueError:
         threshold = _RAY_MEMORY_USAGE_THRESHOLD
-    return min(max(1.0 - threshold, 0.0), 1.0)
+    # Comparisons with NaN are false, so a NaN threshold also falls back to the default.
+    if not 0.0 < threshold <= 1.0:
+        threshold = _RAY_MEMORY_USAGE_THRESHOLD
+    return 1.0 - threshold
 
 
 class ModelNotSizedError(Exception):
