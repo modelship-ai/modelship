@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import shlex
 import subprocess
 from typing import Any
 
@@ -27,8 +28,8 @@ _FIT_TIMEOUT_S = 30
 # deploy; a fractional deploy and a CPU deploy each compute their own margin.
 _FIT_MARGIN_MIB = 1024
 
-# `llama fit-params`' one stdout line: `-c N -ngl M [-ts a,b,...]`.
-_FIT_ARGS_RE = re.compile(r"^-c\s+(-?\d+)\s+-ngl\s+(-?\d+)(?:\s+-ts\s+([\d.,]+))?\s*$")
+# The flags of `llama fit-params`' one stdout line, e.g. `-c N -ngl M -ts a,b -ot "pattern=CPU,..."`.
+_FIT_FLAGS = {"-c", "-ngl", "-ts", "-ot"}
 
 # `-fitp on` prints one `<device> <model> <context> <compute>` row in MiB per device.
 _FIT_HOST_ROW_RE = re.compile(r"^Host\s+(\d+)\s+\d+\s+\d+\s*$", re.MULTILINE)
@@ -103,6 +104,8 @@ class LlamaServerPreflight:
             args += ["-ngl", str(server_config.n_gpu_layers)]
         if pinned_ts and server_config.tensor_split:
             args += ["-ts", ",".join(str(v) for v in server_config.tensor_split)]
+        if server_config.override_tensor and config.num_gpus > 0:
+            args += ["-ot", ",".join(server_config.override_tensor)]
 
         try:
             if budget_mib is None:
@@ -212,13 +215,16 @@ def _invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
 def _run_fit(config: ModelshipModelConfig, args: list[str], parallel: int) -> dict[str, Any]:
     stdout = _invoke(args).stdout.strip()
     line = stdout.splitlines()[-1] if stdout else ""
-    match = _FIT_ARGS_RE.match(line)
-    if match is None:
-        raise _FitError(f"could not parse fit-params output: {line!r}")
-
-    ctx_total_raw, ngl_raw, ts_raw = match.groups()
-    ctx_total = int(ctx_total_raw)
-    ngl = int(ngl_raw)
+    try:
+        tokens = shlex.split(line)
+        flags = dict(zip(tokens[::2], tokens[1::2], strict=True))
+        if not {"-c", "-ngl"} <= flags.keys() <= _FIT_FLAGS:
+            raise ValueError
+        ctx_total = int(flags["-c"])
+        ngl = int(flags["-ngl"])
+        tensor_split = [float(v) for v in flags["-ts"].split(",")] if "-ts" in flags else None
+    except ValueError:
+        raise _FitError(f"could not parse fit-params output: {line!r}") from None
 
     per_slot = (ctx_total // parallel // _NCTX_ALIGNMENT) * _NCTX_ALIGNMENT
     if per_slot < _MIN_NCTX:
@@ -228,15 +234,18 @@ def _run_fit(config: ModelshipModelConfig, args: list[str], parallel: int) -> di
     rec: dict[str, Any] = {"n_ctx": per_slot}
     if ngl >= 0:
         rec["n_gpu_layers"] = ngl
-    if ts_raw:
-        rec["tensor_split"] = [float(v) for v in ts_raw.split(",")]
+    if tensor_split:
+        rec["tensor_split"] = tensor_split
+    if "-ot" in flags:
+        rec["override_tensor"] = flags["-ot"].split(",")
 
     logger.info(
-        "preflight llama_server '%s': fit-params -> n_ctx=%s n_gpu_layers=%s tensor_split=%s",
+        "preflight llama_server '%s': fit-params -> n_ctx=%s n_gpu_layers=%s tensor_split=%s override_tensor=%s",
         config.name,
         rec.get("n_ctx"),
         rec.get("n_gpu_layers"),
         rec.get("tensor_split"),
+        rec.get("override_tensor"),
     )
     return rec
 

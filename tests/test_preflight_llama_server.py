@@ -125,6 +125,44 @@ class TestLlamaServerPreflightParsing:
         assert rec["n_gpu_layers"] == 65
         assert rec["tensor_split"] == [31.0, 34.0]
 
+    def test_a_moe_partial_offload_maps_its_tensor_overrides(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        # Qwen3-30B-A3B's answer from b11769 on a Radeon 8060S.
+        line = (
+            '-c 512 -ngl 49 -ot "blk\\.47\\.ffn_(gate|gate_up|down).*=CPU,'
+            'blk\\.48\\.ffn_(up|down|gate_up|gate)_(ch|)exps=CPU"\n'
+        )
+        with patch("subprocess.run", return_value=_fit_result(line)):
+            rec = LlamaServerPreflight().recommend(cfg, HardwareProfile())
+        assert rec == {
+            "n_ctx": 512,
+            "n_gpu_layers": 49,
+            "override_tensor": [
+                "blk\\.47\\.ffn_(gate|gate_up|down).*=CPU",
+                "blk\\.48\\.ffn_(up|down|gate_up|gate)_(ch|)exps=CPU",
+            ],
+        }
+
+    def test_flags_parse_in_any_order(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=2)
+        with patch("subprocess.run", return_value=_fit_result('-c 4096 -ngl 49 -ot "exps=CPU" -ts 3,1\n')):
+            rec = LlamaServerPreflight().recommend(cfg, HardwareProfile())
+        assert rec["tensor_split"] == [3.0, 1.0]
+        assert rec["override_tensor"] == ["exps=CPU"]
+
+    @pytest.mark.parametrize(
+        "line",
+        ['-c 4096 -ngl 49 -ot "exps=CPU\n', "-c 4096 -ngl 49 -sm row\n", "-c 4096 -ngl\n", "-c 4096\n"],
+        ids=["unbalanced quote", "unknown flag", "missing value", "no -ngl"],
+    )
+    def test_a_malformed_line_is_unparseable(self, tmp_path, monkeypatch, line):
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        with patch("subprocess.run", return_value=_fit_result(line)):
+            assert LlamaServerPreflight().recommend(cfg, HardwareProfile()) == {}
+
     def test_a_negative_ngl_is_not_recorded(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
@@ -247,6 +285,22 @@ class TestLlamaServerPreflightArgs:
             LlamaServerPreflight().recommend(cfg, HardwareProfile())
         args = run.call_args[0][0]
         assert args[args.index("-ts") + 1] == "3.0,1.0"
+
+    @pytest.mark.parametrize(("num_gpus", "forwarded"), [(1, True), (0, False)])
+    def test_set_override_tensor_forwarded_only_with_a_gpu(self, tmp_path, monkeypatch, num_gpus, forwarded):
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        cfg = _make_config(
+            resolved_path=str(_write_dummy_gguf(tmp_path)),
+            num_gpus=num_gpus,
+            llama_server_kwargs={"override_tensor": ["blk\\.0\\.ffn_.*_exps=CPU", "blk\\.1\\.ffn_.*_exps=CPU"]},
+        )
+        with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 18\n")) as run:
+            LlamaServerPreflight().recommend(cfg, HardwareProfile())
+        args = run.call_args[0][0]
+        if forwarded:
+            assert args[args.index("-ot") + 1] == "blk\\.0\\.ffn_.*_exps=CPU,blk\\.1\\.ffn_.*_exps=CPU"
+        else:
+            assert "-ot" not in args
 
     def test_engine_tunables_forwarded(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))

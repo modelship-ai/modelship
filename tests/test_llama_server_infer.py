@@ -213,6 +213,26 @@ class TestSubprocessLifecycle:
             infer.shutdown()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("num_gpus", "expected"), [(1, "blk\\.30\\.ffn_.*_exps=CPU,blk\\.31\\.ffn_.*_exps=CPU"), (0, None)]
+    )
+    async def test_override_tensor_is_sent_only_with_a_gpu(self, tmp_path, monkeypatch, num_gpus, expected):
+        binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
+
+        overrides = ["blk\\.30\\.ffn_.*_exps=CPU", "blk\\.31\\.ffn_.*_exps=CPU"]
+        infer = LlamaServerInfer(_make_config(num_gpus=num_gpus, override_tensor=overrides))
+        await infer.start()
+        try:
+            args = list(infer._proc.args)
+            if expected is None:
+                assert "-ot" not in args
+            else:
+                assert args[args.index("-ot") + 1] == expected
+        finally:
+            infer.shutdown()
+
+    @pytest.mark.asyncio
     async def test_threads_flag_only_appears_when_set(self, tmp_path, monkeypatch):
         binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
