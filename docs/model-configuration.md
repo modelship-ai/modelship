@@ -251,6 +251,8 @@ Each GPU-capable loader sizes and enforces its share differently:
 
 Preflight sizes a fractional deploy from its **declared share of the GPU's total capacity**, not free VRAM at that moment; if free VRAM falls short, it logs a warning naming both numbers.
 
+On a `cuda` node whose GPU is integrated (an NVIDIA DGX Spark's GB10), the GPU's memory is also system RAM, and NVIDIA's monitoring library can't report it. Preflight asks CUDA whether the GPU is integrated, the same check llama.cpp and vLLM make, and sizes deploys from `/proc/meminfo`: the GPU's total is the node's RAM, and what's free is `MemAvailable` less a reserve of 5% of RAM, Ray's out-of-memory headroom (5% at Ray's default `RAY_memory_usage_threshold` of 0.95) and 1 GiB. A whole-GPU `vllm` deploy gets `gpu_memory_utilization` set to that free share, at most 0.9, since 0.9 of the total would be more than is free. Fractions are of the node's RAM: keep them summing to **at most 0.85** there, so the OS and Ray stay under Ray's threshold.
+
 On a `vulkan` node whose GPU is integrated (an AMD APU such as Strix Halo), the GPU's memory is system RAM. Preflight sizes a `llama_server` deploy, whole or fractional, against what is really free: on AMD, the free part of the BIOS carve-out plus the free GTT, capped by the RAM free right now. llama.cpp's own free figure ignores RAM that other processes hold, so without this a model loaded next to a `vllm` CPU deploy would be sized as if that RAM were still free.
 
 Sharp edges:

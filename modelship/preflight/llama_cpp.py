@@ -8,7 +8,7 @@ from typing import Any
 
 from modelship.infer.infer_config import LlamaServerConfig, ModelshipModelConfig
 from modelship.logging import get_logger
-from modelship.preflight.base import HardwareProfile, ModelNotSizedError, gpu_share_bytes
+from modelship.preflight.base import HardwareProfile, ModelNotSizedError, gpu_share_bytes, ram_reserve_bytes
 from modelship.utils.variant import current_variant
 
 logger = get_logger("preflight.llama_cpp")
@@ -26,9 +26,6 @@ _FIT_TIMEOUT_S = 30
 # Per-device MiB left free by `-fitt`. Broadcasts to every device on a whole-GPU
 # deploy; a fractional deploy and a CPU deploy each compute their own margin.
 _FIT_MARGIN_MIB = 1024
-
-# Share of the node's RAM a CPU deploy's budget leaves free, on top of `_FIT_MARGIN_MIB`.
-_RAM_RESERVE_FRACTION = 0.05
 
 # `llama fit-params`' one stdout line: `-c N -ngl M [-ts a,b,...]`.
 _FIT_ARGS_RE = re.compile(r"^-c\s+(-?\d+)\s+-ngl\s+(-?\d+)(?:\s+-ts\s+([\d.,]+))?\s*$")
@@ -153,7 +150,7 @@ def _cpu_ram_budget_mib(hw: HardwareProfile) -> int | None:
     free_bytes = hw.sizing_ram_bytes
     if not free_bytes:
         return None
-    reserve_bytes = hw.ram_bytes * _RAM_RESERVE_FRACTION + _FIT_MARGIN_MIB * 1024**2
+    reserve_bytes = ram_reserve_bytes(hw.ram_bytes)
     return max(0, int((free_bytes - reserve_bytes) / 1024**2))
 
 
