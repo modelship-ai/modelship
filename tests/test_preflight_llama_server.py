@@ -293,7 +293,7 @@ class TestLlamaServerPreflightArgs:
         assert args[args.index("-fitt") + 1] == str((56 - 35) * 1024 + 1024)
 
     def test_a_whole_shared_memory_gpu_keeps_the_reserve_free(self, tmp_path, monkeypatch):
-        """GB10: llama.cpp's free is MemAvailable, the budget that less the reserve."""
+        """On GB10, llama.cpp sees MemAvailable as free, so its margin is the reserve plus 1 GiB."""
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
         reserve_mib = int(128 * 1024 * 0.10) + 1024

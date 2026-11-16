@@ -14,14 +14,13 @@ from modelship.utils.variant import current_variant
 
 logger = get_logger("preflight")
 
-# RAM a budget leaves free for the OS and other processes: this share of total plus a fixed amount,
-# on top of the headroom Ray's memory monitor keeps by killing workers.
+# A memory budget leaves 5% of RAM plus 1 GiB unused, and also the RAM Ray's OOM killer keeps free.
 RAM_RESERVE_FRACTION = 0.05
 RAM_RESERVE_FIXED_BYTES = 1024**3
-# Ray reads its config from RAY_<name>, lowercase after the prefix.
+# Ray reads each setting from an env var named RAY_<setting>.
 _RAY_THRESHOLD_ENV = "RAY_memory_usage_threshold"
 _RAY_MONITOR_REFRESH_ENV = "RAY_memory_monitor_refresh_ms"
-_RAY_MEMORY_USAGE_THRESHOLD = 0.95  # Ray's default memory_usage_threshold
+_RAY_MEMORY_USAGE_THRESHOLD = 0.95  # Ray's default
 
 
 def ram_reserve_bytes(total_bytes: int) -> int:
@@ -29,7 +28,7 @@ def ram_reserve_bytes(total_bytes: int) -> int:
 
 
 def ray_kill_headroom() -> float:
-    """The share of RAM above which Ray's memory monitor kills workers; 0 with the monitor off."""
+    """Fraction of RAM that Ray kills workers to keep free, or 0 if its memory monitor is off."""
     if os.environ.get(_RAY_MONITOR_REFRESH_ENV, "").strip() == "0":
         return 0.0
     try:
@@ -51,7 +50,7 @@ class GPUInfo:
     uuid: str | None = None  # "GPU-<uuid>"; None when the probe can't read it
     total_bytes: int = 0  # device capacity; 0 when the probe couldn't read it
     engine_free_bytes: int | None = None
-    shared_memory: bool = False  # its memory is the node's RAM, as on GB10
+    shared_memory: bool = False  # the GPU uses system RAM, e.g. GB10
 
     @property
     def sizing_total_bytes(self) -> int:
@@ -379,9 +378,8 @@ def _nvml_memory(gpus: list[NvmlGpu]) -> list[GPUInfo]:
             pynvml.nvmlShutdown()
 
 
-# Prints the CUDA ordinals below argv[1] whose CU_DEVICE_ATTRIBUTE_INTEGRATED (18) is set: the
-# flag llama.cpp and vLLM read to take free memory from MemAvailable. A child, since cuInit here
-# would break a later fork that uses CUDA.
+# Prints the index of each GPU that CUDA reports as integrated (using system RAM), the same check
+# llama.cpp and vLLM make. Runs in a child process: initializing CUDA here breaks vLLM's later fork.
 _CUDA_INTEGRATED_SCRIPT = """
 import ctypes, sys
 cuda = ctypes.CDLL("libcuda.so.1")
@@ -398,7 +396,7 @@ if cuda.cuInit(0) == 0:
 
 
 def _cuda_integrated_ordinals(count: int) -> set[int]:
-    """The CUDA ordinals below `count` of GPUs whose memory is the node's RAM; empty when unreadable."""
+    """Indexes of the first `count` GPUs that CUDA reports as integrated; empty if CUDA can't be queried."""
     try:
         result = subprocess.run(
             [sys.executable, "-I", "-c", _CUDA_INTEGRATED_SCRIPT, str(count)],
@@ -417,15 +415,15 @@ def _cuda_integrated_ordinals(count: int) -> set[int]:
 
 
 def _shared_memory_gpu(slot: int, gpu: NvmlGpu) -> GPUInfo:
-    """A GPU whose memory is the node's RAM. Read from /proc/meminfo, not the cgroup:
-    the driver's allocations are charged to neither a memory cap nor its usage."""
+    """Memory figures for a GPU that uses system RAM, read from /proc/meminfo. Not from the
+    cgroup: GPU allocations don't count against a container's memory limit."""
     import psutil
 
     mem = psutil.virtual_memory()
     total, engine_free = int(mem.total), int(mem.available)
     available = max(0, engine_free - ram_reserve_bytes(total))
     logger.info(
-        "preflight: %s shares the node's memory; %.1f of %.1f GiB available after the reserve",
+        "preflight: %s uses system RAM; %.1f of %.1f GiB usable after the reserve",
         gpu.name,
         available / 1024**3,
         total / 1024**3,

@@ -127,16 +127,16 @@ class VllmPreflight:
         return rec
 
     def _shared_memory_gpu_memory_utilization(self, config: ModelshipModelConfig, hw: HardwareProfile) -> float | None:
-        """On a GPU that shares the node's RAM, the share of its total that is free after the
-        reserve, capped at the default. None on a dedicated-memory GPU and for a fractional num_gpus."""
+        """For a whole GPU that uses system RAM: the fraction of its memory that is free, at most the
+        default. vLLM's default of 0.9 of the total is more than is ever free there. None for other
+        GPUs and for a fractional num_gpus."""
         shared = [g for g in hw.gpus if g.shared_memory and g.total_bytes]
         if not shared or 0 < config.num_gpus < 1:
             return None
         free_share = min(g.available_bytes / g.total_bytes for g in shared)
         gpu_util = max(math.floor(min(default_gpu_memory_utilization(config), free_share) * 100) / 100, 0.01)
         logger.info(
-            "preflight vllm '%s': the GPU shares the node's memory, %.0f%% of it free after the reserve "
-            "→ gpu_memory_utilization=%.2f",
+            "preflight vllm '%s': the GPU uses system RAM and %.0f%% of it is free → gpu_memory_utilization=%.2f",
             config.name,
             free_share * 100,
             gpu_util,
@@ -164,7 +164,7 @@ class VllmPreflight:
         dtype_bytes = _resolve_compute_dtype_bytes(text_cfg, model_cfg)
         workspace_bytes = _mla_chunked_prefill_workspace_bytes(text_cfg, config, dtype_bytes, mla, tp_size)
 
-        # A fractional num_gpus is the fraction, then a shared-memory GPU's free share, else the default.
+        # Start from a fractional num_gpus, else the free fraction of a system-RAM GPU, else the default.
         gpu_util = resolve_gpu_memory_utilization(config, shared_util)
         gpu_util = max(gpu_util - _MLA_WORKSPACE_SAFETY_MARGIN * workspace_bytes / gpu_basis, 0.01)
         logger.info(

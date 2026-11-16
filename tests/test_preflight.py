@@ -95,7 +95,7 @@ class TestNvmlGpus:
         return pynvml
 
     def _gb10(self):
-        """One GB10: NVML can't read its memory."""
+        """A GB10: NVML can't read its memory."""
         pynvml = self._pynvml()
         pynvml.nvmlDeviceGetCount.return_value = 1
         pynvml.nvmlDeviceGetMemoryInfo.side_effect = RuntimeError("Not Supported")
@@ -126,7 +126,7 @@ class TestNvmlGpus:
         _no_integrated_gpu.assert_called_once_with(1)
 
     def test_a_container_memory_cap_does_not_bound_an_integrated_gpu(self, _no_integrated_gpu):
-        """The driver's allocations are charged to no cgroup, so its cap is not the GPU's."""
+        """GPU allocations don't count against a container's memory limit, so the limit mustn't cap the GPU."""
         from modelship.preflight import base as preflight_base
 
         _no_integrated_gpu.return_value = {0}
@@ -796,8 +796,8 @@ class TestVllmPreflightMlaHaircutBasis:
 
 
 class TestVllmPreflightSharedMemory:
-    """On a GPU that shares the node's RAM (GB10), the default 0.9 of the total
-    can exceed what is free, and vLLM refuses to start."""
+    """On a GPU that uses system RAM (GB10), vLLM's default of 0.9 of the total is more than is free,
+    so vLLM never starts."""
 
     _GIB = 1024**3
 
