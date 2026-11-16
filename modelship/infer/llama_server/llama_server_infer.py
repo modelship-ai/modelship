@@ -231,6 +231,8 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             args += ["-ngl", str(self.config.n_gpu_layers)]
             if self.config.tensor_split:
                 args += ["-ts", ",".join(str(v) for v in self.config.tensor_split)]
+            if self.config.override_tensor:
+                args += ["-ot", ",".join(self.config.override_tensor)]
         else:
             args += ["-ngl", "0"]
         if self.config.threads is not None:

@@ -36,6 +36,7 @@ _SERVE_FLAGS = [
     "--no-webui",
     "-ngl",
     "-ts",
+    "-ot",
     "--device",
     "--threads",
     "--chat-template",
@@ -68,6 +69,7 @@ _FIT_PARAMS_FLAGS = [
     "-c",
     "-ngl",
     "-ts",
+    "-ot",
 ]
 
 

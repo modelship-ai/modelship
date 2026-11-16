@@ -475,6 +475,7 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 | `flash_attn` | `on`/`off`/`auto` | `auto` | Flash Attention use (`-fa`) |
 | `cache_type_k` / `cache_type_v` | string | `f16` | KV cache quantization (`-ctk`/`-ctv`); also `f32`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1` |
 | `tensor_split` | list[float] | `None` | Proportional offload split across GPUs (`-ts`). Preflight recommends an uneven split on heterogeneous cards |
+| `override_tensor` | list[string] | `None` | Where to keep matching weights (`-ot`), as `pattern=buffer` entries such as `exps=CPU`; used only with a GPU. When a MoE model doesn't fit on its GPU, preflight moves some layers' experts to the CPU with it. It shrinks the context to 512 before it moves any, so set `n_ctx` to keep more context at the cost of more experts on the CPU |
 | `reasoning` | `on`/`off`/`auto` | `None` (llama-server default: `auto`, from the chat template) | Whether the model thinks (`--reasoning`) |
 | `reasoning_budget` | int | `None` (llama-server default: unlimited) | Most tokens a model may spend thinking (`--reasoning-budget`); `0` skips thinking. The default and the ceiling for a request's own `thinking_budget_tokens` or `reasoning_budget_tokens` |
 | `reasoning_budget_message` | string | — | Text written before the end-of-thinking marker when the budget runs out (`--reasoning-budget-message`). A sentence there gives cleaner answers, as on [vLLM](#limiting-thinking) |
