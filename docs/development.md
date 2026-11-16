@@ -140,7 +140,7 @@ node images:
 | Variant | Tag suffix | Platforms |
 |---|---|---|
 | Thin (control/coordinator) | *(none)* — default | amd64, arm64 |
-| CUDA (GPU node) | `-cuda` | amd64 |
+| CUDA (GPU node) | `-cuda` | amd64, arm64 |
 | CPU (CPU node) | `-cpu` | amd64, arm64 |
 | Vulkan (AMD/Intel GPU node) | `-vulkan` | amd64, arm64 |
 

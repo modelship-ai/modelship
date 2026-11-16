@@ -35,9 +35,10 @@ RUN apt-get update -y && \
 # bundled copy: vLLM's C extensions hard-reference it by RPATH.
 RUN if [ "$MSHIP_VARIANT" = "cuda" ]; then \
     CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
-    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
+    CUDA_REPO=https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/$([ "$(uname -m)" = aarch64 ] && echo sbsa || echo x86_64) && \
+    curl -fsSL "${CUDA_REPO}/3bf863cc.pub" \
         | gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
+    echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] ${CUDA_REPO}/ /" \
         > /etc/apt/sources.list.d/cuda.list && \
     apt-get update -y && \
     apt-get install -y --no-install-recommends \
@@ -112,9 +113,10 @@ RUN [ -n "${MSHIP_VERSION}" ] || { \
 RUN if [ "$MSHIP_VARIANT" = "cuda" ]; then \
     apt-get update -y && \
     apt-get install -y --no-install-recommends gnupg && \
-    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
+    CUDA_REPO=https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/$([ "$(uname -m)" = aarch64 ] && echo sbsa || echo x86_64) && \
+    curl -fsSL "${CUDA_REPO}/3bf863cc.pub" \
         | gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
+    echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] ${CUDA_REPO}/ /" \
         > /etc/apt/sources.list.d/cuda.list && \
     rm -rf /var/lib/apt/lists/*; \
     fi

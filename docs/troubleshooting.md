@@ -26,9 +26,9 @@ Ray's object store (up to 256 MiB per node) and vLLM/NCCL need shared memory. Pa
 
 ## arm64 vs amd64 image selection
 
-`ghcr.io/modelship-ai/modelship:latest` (thin), `:latest-cpu` and `:latest-vulkan` are multi-arch (amd64 + arm64). Docker picks the right one automatically for your host. If you need to force an arch (e.g. cross-building), use `--platform linux/arm64` or `linux/amd64`.
+`ghcr.io/modelship-ai/modelship:latest` (thin), `:latest-cpu`, `:latest-cuda` and `:latest-vulkan` are multi-arch (amd64 + arm64). Docker picks the right one automatically for your host. If you need to force an arch (e.g. cross-building), use `--platform linux/arm64` or `linux/amd64`.
 
-`:latest-cuda` is **amd64-only** — the Dockerfile hard-wires the x86_64 CUDA apt repo and torch's CUDA wheels aren't guaranteed for arm64 at this pin. arm64+CUDA hosts (Jetson, GH200) aren't supported by this image; use `:latest-cpu` there, or build a custom image. Apple Silicon should always use `:latest-cpu` (no CUDA path applies).
+`:latest-cuda`'s arm64 image uses NVIDIA's `sbsa` CUDA packages: it is for arm64 servers with a CUDA 13 driver, such as DGX Spark and GH200. Jetson Orin's JetPack 6 ships CUDA 12, below the `cuda` variant's floor. Apple Silicon should always use `:latest-cpu` (no CUDA path applies).
 
 ## Port 8000 already in use
 

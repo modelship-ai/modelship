@@ -55,8 +55,13 @@ lint-fix:
 
 llama-cpp-bump:
 	@if [ -z "$(TAG)" ]; then echo "Error: usage: make llama-cpp-bump TAG=b10375 [REBUILD=2]" >&2; exit 1; fi
-	@gh workflow run llama-cpp-build.yml -f tag=$(TAG) $(if $(REBUILD),-f rebuild=$(REBUILD))
-	@echo "Triggered llama.cpp build for $(TAG) (~1h, gated on the CUDA job)."
+	@BRANCH=$$(git branch --show-current); \
+	if [ -z "$$BRANCH" ]; then echo "Error: HEAD is detached; check out a branch" >&2; exit 1; fi; \
+	git fetch -q origin "$$BRANCH" 2>/dev/null || { echo "Error: $$BRANCH is not on origin; push it first" >&2; exit 1; }; \
+	if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse FETCH_HEAD)" ]; then \
+		echo "Error: $$BRANCH differs from origin/$$BRANCH; push it first (the workflow runs the pushed branch)" >&2; exit 1; fi; \
+	gh workflow run llama-cpp-build.yml --ref "$$BRANCH" -f tag=$(TAG) $(if $(REBUILD),-f rebuild=$(REBUILD)) && \
+	echo "Triggered llama.cpp build for $(TAG) on $$BRANCH (~1h, gated on the CUDA job); its pin PR targets $$BRANCH."
 	@echo "Publishes https://github.com/modelship-ai/llama-cpp-builds/releases/tag/llamacpp-$(TAG)$(if $(REBUILD),-r$(REBUILD))"
 
 release-patch:

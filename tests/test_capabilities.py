@@ -36,11 +36,10 @@ def _pins(variant: str) -> dict[str, str]:
     return pinned
 
 
-def _node(variant: str, system: str = "Linux", machine: str = "x86_64") -> dict[str, float]:
+def _node(variant: str, system: str = "Linux") -> dict[str, float]:
     with (
         patch.dict(os.environ, {"MSHIP_VARIANT": variant}, clear=True),
         patch("platform.system", return_value=system),
-        patch("platform.machine", return_value=machine),
     ):
         return node_capability_resources()
 
@@ -62,12 +61,8 @@ class TestVariantLoaders:
     def test_a_linux_only_pin_is_left_out_on_macos(self, variant, loader):
         if "sys_platform == 'linux'" not in _pins(variant).get(_LOADER_PACKAGES[loader], ""):
             return
-        assert loader in variant_loaders(variant, "Linux", "x86_64")
-        assert loader not in variant_loaders(variant, "Darwin", "arm64")
-
-    def test_llama_server_is_cpu_only_on_arm64_cuda(self):
-        assert variant_loaders("cuda", "Linux", "x86_64")["llama_server"] == {"gpu", "cpu"}
-        assert variant_loaders("cuda", "Linux", "aarch64")["llama_server"] == {"cpu"}
+        assert loader in variant_loaders(variant, "Linux")
+        assert loader not in variant_loaders(variant, "Darwin")
 
 
 class TestNodeCapabilityResources:

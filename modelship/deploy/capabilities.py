@@ -49,12 +49,10 @@ VARIANT_LOADERS: dict[str, dict[str, frozenset[str]]] = {
 }
 
 
-def variant_loaders(variant: str, system: str, machine: str) -> dict[str, frozenset[str]]:
+def variant_loaders(variant: str, system: str) -> dict[str, frozenset[str]]:
     loaders = dict(VARIANT_LOADERS[variant])
     if variant in ("cpu", "vulkan") and system != "Linux":
         del loaders["vllm"]
-    if variant == "cuda" and machine != "x86_64":
-        loaders["llama_server"] = frozenset({CPU})
     return loaders
 
 
@@ -66,7 +64,7 @@ def node_capability_resources() -> dict[str, float]:
     override = os.environ.get("MSHIP_NODE_CAPABILITIES")
     if override:
         return {str(name): float(qty) for name, qty in json.loads(override).items()}
-    loaders = variant_loaders(current_variant(), platform.system(), platform.machine())
+    loaders = variant_loaders(current_variant(), platform.system())
     return {f"{RESOURCE_PREFIX}{loader}_{device}": 1 for loader, devices in loaders.items() for device in devices}
 
 
