@@ -428,19 +428,18 @@ class MemoryUnreadableError(Exception):
     pass
 
 
-def device_memory(device: VulkanDevice, available_ram_bytes: int, sys_root: str = "/sys") -> DeviceMemory:
+def device_memory(device: VulkanDevice, available_ram_bytes: int | None, sys_root: str = "/sys") -> DeviceMemory:
     engine_free = engine_free_bytes(device)
     heaps = _counted_heaps(device)
     if device.type != "integrated":
         return DeviceMemory(sum(h.size for h in heaps), engine_free, engine_free)
+    if available_ram_bytes is None:
+        raise MemoryUnreadableError(f"{device.name} uses system RAM and the free RAM can't be read")
     if device.vendor_id == 0x1002:
         vram_total, vram_used, gtt_total, gtt_used = _amdgpu_mem_info(device, sys_root)
-        gtt_free = max(0, gtt_total - gtt_used)
-        if available_ram_bytes:
-            gtt_free = min(gtt_free, available_ram_bytes)
+        gtt_free = min(max(0, gtt_total - gtt_used), available_ram_bytes)
         return DeviceMemory(vram_total + gtt_total, max(0, vram_total - vram_used) + gtt_free, engine_free)
-    free = min(engine_free, available_ram_bytes) if available_ram_bytes else engine_free
-    return DeviceMemory(sum(h.size for h in heaps), free, engine_free)
+    return DeviceMemory(sum(h.size for h in heaps), min(engine_free, available_ram_bytes), engine_free)
 
 
 def _amdgpu_mem_info(device: VulkanDevice, sys_root: str) -> tuple[int, int, int, int]:

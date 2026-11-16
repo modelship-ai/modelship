@@ -169,10 +169,19 @@ class TestDeviceMemory:
         memory = vp.device_memory(_device(heaps=_STRIX_HEAPS), available_ram_bytes=28 * GiB, sys_root=str(tmp_path))
         assert memory.free_bytes == 96 * GiB + 16 * GiB
 
-    def test_unknown_free_ram_caps_nothing(self, tmp_path):
-        _write_mem_info(tmp_path, vram_total=0, vram_used=0, gtt_total=56 * GiB, gtt_used=0)
+    def test_no_free_ram_leaves_only_the_carve_out(self, tmp_path):
+        _write_mem_info(tmp_path, vram_total=512 * 2**20, vram_used=148 * 2**20, gtt_total=56 * GiB, gtt_used=0)
         memory = vp.device_memory(_device(heaps=_STRIX_HEAPS), available_ram_bytes=0, sys_root=str(tmp_path))
-        assert memory.free_bytes == 56 * GiB
+        assert memory.free_bytes == (512 - 148) * 2**20
+
+    def test_unreadable_free_ram_leaves_a_dgpu_alone(self):
+        memory = vp.device_memory(_device("discrete", heaps=[_heap(8 * GiB, local=True)]), available_ram_bytes=None)
+        assert memory.free_bytes == 8 * GiB
+
+    def test_an_igpu_has_no_memory_figures_without_the_free_ram(self, tmp_path):
+        _write_mem_info(tmp_path, vram_total=0, vram_used=0, gtt_total=56 * GiB, gtt_used=0)
+        with pytest.raises(vp.MemoryUnreadableError, match="free RAM can't be read"):
+            vp.device_memory(_device(heaps=_STRIX_HEAPS), available_ram_bytes=None, sys_root=str(tmp_path))
 
     def test_an_amd_igpu_without_a_render_node_has_no_memory_figures(self, tmp_path):
         with pytest.raises(vp.MemoryUnreadableError, match="VK_EXT_physical_device_drm"):
