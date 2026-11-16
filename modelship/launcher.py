@@ -123,10 +123,10 @@ def _print_gpu_memory(variant: str) -> None:
 
 
 def _print_vulkan_devices() -> None:
-    from modelship.preflight.base import detect_available_ram_bytes
+    from modelship.preflight.base import shared_gpu_free_bytes
     from modelship.utils import vulkan_probe
 
-    available_ram = detect_available_ram_bytes()
+    available_ram = shared_gpu_free_bytes()
     for slot, device in enumerate(vulkan_probe.probe().devices):
         try:
             memory = vulkan_probe.device_memory(device, available_ram)

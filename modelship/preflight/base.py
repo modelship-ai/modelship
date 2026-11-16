@@ -416,9 +416,17 @@ def _cuda_integrated_ordinals(count: int) -> set[int]:
         return set()
 
 
+def shared_gpu_free_bytes() -> int:
+    """The RAM a GPU that uses system RAM can still take: MemAvailable less the reserve. It's read from
+    /proc/meminfo, not the cgroup, because GPU allocations don't count against a container's memory limit."""
+    import psutil
+
+    mem = psutil.virtual_memory()
+    return max(0, int(mem.available) - ram_reserve_bytes(int(mem.total)))
+
+
 def _shared_memory_gpu(slot: int, gpu: NvmlGpu) -> GPUInfo:
-    """Memory figures for a GPU that uses system RAM, read from /proc/meminfo. Not from the
-    cgroup: GPU allocations don't count against a container's memory limit."""
+    """Memory figures for a GPU that uses system RAM, read from /proc/meminfo like `shared_gpu_free_bytes`."""
     import psutil
 
     mem = psutil.virtual_memory()
@@ -464,7 +472,7 @@ def _vulkan_gpus(mask: str | None) -> list[GPUInfo]:
     if result.error is not None:
         logger.warning("preflight: %s; sizing without GPU figures", result.error.message)
         return []
-    available_ram = detect_available_ram_bytes()
+    available_ram = shared_gpu_free_bytes()
     gpus: list[GPUInfo] = []
     for position, device in enumerate(vulkan_probe.visible(result, mask)):
         try:
@@ -472,6 +480,13 @@ def _vulkan_gpus(mask: str | None) -> list[GPUInfo]:
         except vulkan_probe.MemoryUnreadableError as e:
             logger.warning("preflight: %s; sizing Vulkan%d without GPU figures", e, position)
             continue
+        if device.type == "integrated":
+            logger.info(
+                "preflight: %s uses system RAM; %.1f of %.1f GiB usable after the reserve",
+                device.name,
+                memory.free_bytes / 1024**3,
+                memory.total_bytes / 1024**3,
+            )
         gpus.append(
             GPUInfo(
                 index=position,

@@ -312,7 +312,7 @@ class TestCmdInfoVulkan:
             patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
             patch.object(vulkan_probe, "probe", return_value=result),
             patch.object(vulkan_probe, "device_memory", side_effect=memory),
-            patch("modelship.preflight.base.detect_available_ram_bytes", return_value=0),
+            patch("modelship.preflight.base.shared_gpu_free_bytes", return_value=0),
         ):
             launcher._cmd_info()
         return capsys.readouterr().out

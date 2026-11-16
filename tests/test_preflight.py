@@ -475,7 +475,7 @@ class TestVulkanGpus:
         result = self._probe(_vulkan_device(0), _vulkan_device(1), _vulkan_device(2))
         with (
             patch.object(vulkan_probe, "probe", return_value=result) as probe,
-            patch.object(preflight_base, "detect_available_ram_bytes", return_value=0),
+            patch.object(preflight_base, "shared_gpu_free_bytes", return_value=0),
         ):
             gpus = preflight_base._vulkan_gpus("2,0")
         probe.assert_called_once_with(fresh=True)
@@ -489,7 +489,7 @@ class TestVulkanGpus:
         result = self._probe(_vulkan_device(0), _vulkan_device(1), selected={1})
         with (
             patch.object(vulkan_probe, "probe", return_value=result),
-            patch.object(preflight_base, "detect_available_ram_bytes", return_value=0),
+            patch.object(preflight_base, "shared_gpu_free_bytes", return_value=0),
         ):
             assert [g.uuid for g in preflight_base._vulkan_gpus(None)] == ["u1"]
 
@@ -507,11 +507,30 @@ class TestVulkanGpus:
         with (
             patch.object(vulkan_probe, "probe", return_value=result),
             patch.object(vulkan_probe, "device_memory", side_effect=memory),
-            patch.object(preflight_base, "detect_available_ram_bytes", return_value=0),
+            patch.object(preflight_base, "shared_gpu_free_bytes", return_value=0),
         ):
             gpus = preflight_base._vulkan_gpus("0,1")
         assert [(g.index, g.total_bytes, g.available_bytes, g.engine_free_bytes) for g in gpus] == [(1, 8, 4, 6)]
         assert "sizing Vulkan0 without GPU figures" in caplog.text
+
+    def test_an_integrated_gpu_is_capped_by_meminfo_less_the_reserve_not_the_cgroup(self, monkeypatch):
+        from modelship.preflight import base as preflight_base
+        from modelship.utils import vulkan_probe
+
+        monkeypatch.delenv("RAY_memory_usage_threshold", raising=False)
+        monkeypatch.delenv("RAY_memory_monitor_refresh_ms", raising=False)
+        gib = 1024**3
+        igpu = vulkan_probe.VulkanDevice(
+            index=0, name="Radeon 8060S", type="integrated", vendor_id=0x1002, uuid="u0", render=(226, 128), heaps=()
+        )
+        with (
+            patch.object(vulkan_probe, "probe", return_value=self._probe(igpu)),
+            patch.object(vulkan_probe, "_amdgpu_mem_info", return_value=(512 * 2**20, 512 * 2**20, 56 * gib, 0)),
+            patch("psutil.virtual_memory", return_value=SimpleNamespace(total=61 * gib, available=39 * gib)),
+            patch.object(preflight_base, "detect_available_ram_bytes", return_value=14 * gib),
+        ):
+            gpus = preflight_base._vulkan_gpus(None)
+        assert gpus[0].available_bytes == 39 * gib - (int(61 * gib * 0.10) + gib)
 
     def test_a_failed_probe_reads_no_gpu(self, caplog):
         from modelship.preflight import base as preflight_base
