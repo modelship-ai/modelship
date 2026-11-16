@@ -416,17 +416,19 @@ def _cuda_integrated_ordinals(count: int) -> set[int]:
         return set()
 
 
-def shared_gpu_free_bytes() -> int:
-    """The RAM a GPU that uses system RAM can still take: MemAvailable less the reserve. It's read from
-    /proc/meminfo, not the cgroup, because GPU allocations don't count against a container's memory limit."""
-    import psutil
+def shared_gpu_free_bytes() -> int | None:
+    """Reads /proc/meminfo, not the cgroup, because GPU allocations don't count against a container's memory limit."""
+    try:
+        import psutil
 
-    mem = psutil.virtual_memory()
+        mem = psutil.virtual_memory()
+    except Exception:
+        logger.debug("preflight: psutil available-RAM probe failed", exc_info=True)
+        return None
     return max(0, int(mem.available) - ram_reserve_bytes(int(mem.total)))
 
 
 def _shared_memory_gpu(slot: int, gpu: NvmlGpu) -> GPUInfo:
-    """Memory figures for a GPU that uses system RAM, read from /proc/meminfo like `shared_gpu_free_bytes`."""
     import psutil
 
     mem = psutil.virtual_memory()

@@ -271,6 +271,12 @@ class TestRamReserve:
         monkeypatch.setenv("RAY_memory_usage_threshold", "1")
         assert ray_kill_headroom() == 0.0
 
+    def test_shared_gpu_free_is_none_when_meminfo_is_unreadable(self):
+        from modelship.preflight.base import shared_gpu_free_bytes
+
+        with patch("psutil.virtual_memory", side_effect=FileNotFoundError("/proc/meminfo")):
+            assert shared_gpu_free_bytes() is None
+
 
 class TestCudaIntegratedOrdinals:
     def _run(self, **result):
