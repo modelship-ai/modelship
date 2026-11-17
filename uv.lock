@@ -284,7 +284,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "packaging" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d8/7d/f1fe0992334b18cd8494f89aeec1dcc674635584fcd9f115784fea3a1d05/bitsandbytes-0.49.2-py3-none-macosx_14_0_arm64.whl", hash = "sha256:87be5975edeac5396d699ecbc39dfc47cf2c026daaf2d5852a94368611a6823f", size = 131940, upload-time = "2026-02-16T21:26:04.572Z" },
@@ -340,11 +340,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2025.11.12"
+version = "2026.10.23"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a2/8c/58f469717fa48465e4a50c014a0400602d3c437d7c0c468e17ada824da3a/certifi-2025.11.12.tar.gz", hash = "sha256:d8ab5478f2ecd78af242878415affce761ca6bc54a22a27e026d7c25357c3316", size = 160538, upload-time = "2025-11-12T02:54:51.517Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/11/b524cbd9bbdaca58608e4cf4053fd463417549e1959fa8d3aa18319f9555/certifi-2026.10.23.tar.gz", hash = "sha256:a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd", size = 136225, upload-time = "2026-10-23T11:36:16.478Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/70/7d/9bc192684cea499815ff478dfcdc13835ddf401365057044fb721ec6bddb/certifi-2025.11.12-py3-none-any.whl", hash = "sha256:97de8790030bbd5c2d96b7ec782fc2f7820ef8dba6db909ccf95449f2d062d4b", size = 159438, upload-time = "2025-11-12T02:54:49.735Z" },
+    { url = "https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl", hash = "sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1", size = 135082, upload-time = "2026-10-23T11:36:14.763Z" },
 ]
 
 [[package]]
@@ -450,8 +450,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "loguru", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
     { name = "pydantic", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra != 'extra-12-mship-engine-cuda') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-12-mship-engine-cuda'" },
+    { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra != 'extra-12-mship-engine-cuda') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-12-mship-engine-cuda'" },
     { name = "transformers", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2c/9e/d7f18bd9a0354088abc11a0c1f2c7698f7c49e5a709faedf6a46e388f693/compressed_tensors-0.17.0.tar.gz", hash = "sha256:15c20d06bdbcf35b51fc99fd125e7b9be1e1855567c33b7a46dfac26ad6fb126", size = 257091, upload-time = "2026-06-03T16:49:17.208Z" }
@@ -845,7 +845,7 @@ wheels = [
 
 [[package]]
 name = "flashinfer-python"
-version = "0.7.0.post1"
+version = "0.7.2.post1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apache-tvm-ffi" },
@@ -863,12 +863,12 @@ dependencies = [
     { name = "packaging" },
     { name = "requests" },
     { name = "tabulate" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/14/b0/2f27f2645056b0e671b3bcf8a934e73ed89ca5c5df9ebe651f21c0d218e2/flashinfer_python-0.7.0.post1.tar.gz", hash = "sha256:2e67b38a9af1d4eedff96f7f5d79c6a4d9f0f97cb4a30f71e4ffd717f1ad9af4", size = 26061698, upload-time = "2026-09-29T23:34:14.797Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/76/1a42eafe2a3cd26924e485fb85bc635a2a41fcb14f453a8c037214b32940/flashinfer_python-0.7.2.post1.tar.gz", hash = "sha256:af60319898dcfd552ba12a34165b9dd46c0bbd83d48ce665b1df6bd6ae77e9f1", size = 51431554, upload-time = "2026-10-23T18:49:35.84Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/7d/16237087a2af99086ef4ae9808dff9b24f0a4db4cfd673233836821a32e0/flashinfer_python-0.7.0.post1-py3-none-any.whl", hash = "sha256:c7adf826568d61fc1b7d3aadd4cae387a35a138bfc08e2deca2f34ecfa280716", size = 33659854, upload-time = "2026-09-29T23:34:11.137Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/ad/da1fc7644b28ab82db922021955a0c85c8d6b3b1d6db224a13ef65cef85e/flashinfer_python-0.7.2.post1-py3-none-any.whl", hash = "sha256:bfdc18b9e1e4d8d0730fe4343dc0e284cd0c160086de80f99888bc4867922d49", size = 62052965, upload-time = "2026-10-23T18:49:31.516Z" },
 ]
 
 [[package]]
@@ -1125,7 +1125,7 @@ wheels = [
 
 [[package]]
 name = "humming-kernels"
-version = "0.1.17"
+version = "0.1.19"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cuda-bindings" },
@@ -1133,15 +1133,18 @@ dependencies = [
     { name = "numpy" },
     { name = "safetensors" },
     { name = "tabulate" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "tqdm" },
-    { name = "triton", version = "3.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
-    { name = "triton", version = "3.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
+    { name = "triton", version = "3.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
+    { name = "triton", version = "3.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
+    { name = "triton-windows", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/60/52/b3958f17315854ca781909f39392e6b40d45965820912cd610191597bd92/humming_kernels-0.1.17.tar.gz", hash = "sha256:a2565bf03b8b2ca07086db00a949c0c92727ea675e4d3037f9337192a840225a", size = 403057, upload-time = "2026-10-14T17:07:29.566Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/c4/4ca7fd5042fed448b62874f1d2886c93c0ac78da11cd5548f926e0483f64/humming_kernels-0.1.19.tar.gz", hash = "sha256:3c6c7ef0e55ef6b97b8b0d4134f7f34cf988df22f7885bff27aa0b30fbbd8e65", size = 428158, upload-time = "2026-10-30T19:30:57.267Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/78/ee230d0165b47f08103fdb9a58a64b28c91e15ed7e2d3beb3920543a9f42/humming_kernels-0.1.17-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:83dda343f36a52efb617ab7b85747baabfa1c2d00dcf1078c45f92b8df7a01c6", size = 496273, upload-time = "2026-10-14T17:07:26.658Z" },
-    { url = "https://files.pythonhosted.org/packages/da/fa/c4e367ca51b2611faf88ac9ee1abe5e9ee6d4d174bbabdb54481c65f7e2e/humming_kernels-0.1.17-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:e418b5482dabd71f64622893bdbb8bf27eb30379c443b92d32af48825d9ad64c", size = 504747, upload-time = "2026-10-14T17:07:28.196Z" },
+    { url = "https://files.pythonhosted.org/packages/69/34/29856875ef58ca87eaa31acf3d37466e8523025c709ef52478492060dc73/humming_kernels-0.1.19-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:13038de14ed2910bcb46f0147d9935c6cac835045e07b3f38c2137d76b77bc4c", size = 547057, upload-time = "2026-10-30T19:30:51.069Z" },
+    { url = "https://files.pythonhosted.org/packages/af/a1/d6c92ed0290b8e1322d7b9ffb3fafe4f2af51ba9b564fa561c036a402266/humming_kernels-0.1.19-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:16ad0c8e9c2d5a8db739bdb97bcc510cedc9dc4c4c111098cbb2d7ac9c1dd973", size = 556040, upload-time = "2026-10-30T19:30:52.832Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/ea/f8b9343f3e04ba92f3be93d9e9cee5ff1d9a3babdf7dc385908be5a5e215/humming_kernels-0.1.19-cp311-abi3-win_amd64.whl", hash = "sha256:52a326aa33919eeaa040b4b9f28f8b5ce1ee061f5f52169a3a1be42c44a3a8e3", size = 557081, upload-time = "2026-10-30T19:30:54.373Z" },
+    { url = "https://files.pythonhosted.org/packages/19/49/716ff694dacee6eb04a55f6f1e61599d5b9e3873caeab7004fb8144ea41b/humming_kernels-0.1.19-cp311-abi3-win_arm64.whl", hash = "sha256:5f553c8fe8ff680ebee25edade11b16f6f927d5adb95e203277dd08cea7a8fcc", size = 546257, upload-time = "2026-10-30T19:30:55.677Z" },
 ]
 
 [package.optional-dependencies]
@@ -1215,7 +1218,7 @@ name = "instanttensor"
 version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ca/a1/95d0d4cee908ab0bd8e56b44cdb19e678081c54de52d280b0b3c9f7e4c43/instanttensor-0.2.2.tar.gz", hash = "sha256:aca07c1afe4fde23dcbfb53044e2bef50dad4c0af054317acc669a1c8dc2b325", size = 613106, upload-time = "2026-10-13T15:06:59.034Z" }
 wheels = [
@@ -1477,7 +1480,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "2.0.0"
+version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1495,22 +1498,22 @@ dependencies = [
     { name = "typing-inspection" },
     { name = "uvicorn", marker = "sys_platform != 'emscripten' or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/74/33/32d4dff2c95bb5d897c3ef4c83649a08996b17b58f0a326d2495d4c81179/mcp-2.0.0.tar.gz", hash = "sha256:0f440e735c13ece8bb19bc62cf0b86f4313448432fbb77d35e14034f4e050728", size = 1662284, upload-time = "2026-07-28T13:45:32.346Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/31/ac54fb0fdd5b37de704486e288bba4fbbb463f24cfcfedbede407b854513/mcp-2.2.0.tar.gz", hash = "sha256:2dc37ecb1974becdcebdbf7561e7c15a07dbbf20ba21ba16c3593b3038b3afbd", size = 4084129, upload-time = "2026-09-07T16:06:23.439Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/72/7d7897418912c1d12e87556630dfb7bf0eac71160e9bef8b447960804ee3/mcp-2.0.0-py3-none-any.whl", hash = "sha256:1cb4c75d2d2c7b8c1d756355e5d82a39f2822cc7f13e22a2051d7ca3592349d6", size = 349980, upload-time = "2026-07-28T13:45:28.853Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/ff/8e7eade68b8a28f7da0ed1085544341b51f9c935dbf6b95c76b7edfea6a0/mcp-2.2.0-py3-none-any.whl", hash = "sha256:bde982589473a060ae145e3406e9a5333fe538c97229ba841f5a7f92be004f81", size = 365656, upload-time = "2026-09-07T16:06:19.711Z" },
 ]
 
 [[package]]
 name = "mcp-types"
-version = "2.0.0"
+version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bb/56/9b8e1c152f61f6c6b07c4b5896c88c7d0ae90bac6ee6306f852fcc5c1eb0/mcp_types-2.0.0.tar.gz", hash = "sha256:d7d939b9285c9961ae8866ba75ef85da34d12bafe276efbf4eb6a131786d8379", size = 66632, upload-time = "2026-07-28T13:45:33.804Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ae/91/762d7755d971aff8a28d75f7961656148edf27875c8026e6385aaab08ae7/mcp_types-2.2.0.tar.gz", hash = "sha256:d3ed53703ddd10d9c6399f29d322bb66f3f67ab41348ac8556ba23e07fedefad", size = 65892, upload-time = "2026-09-07T16:06:25.187Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f5/4c/c78d78c3d52b0ac594ad7cc8ef5972adfe070e3597a8a4c6ce0cd39196ea/mcp_types-2.0.0-py3-none-any.whl", hash = "sha256:6b2de797ca2797f568b79529e1b25948e34de511bcc0bd82fef1039a6d1b8eb0", size = 69649, upload-time = "2026-07-28T13:45:30.713Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/d7/6ffba5d8cd5dd9b8a19478875c50e04945314ba5074e84d749283f27f62d/mcp_types-2.2.0-py3-none-any.whl", hash = "sha256:ea476b73ee86709ab5abc9452385ed36cc05907e582355622e294595c9a04f13", size = 69106, upload-time = "2026-09-07T16:06:21.461Z" },
 ]
 
 [[package]]
@@ -1818,12 +1821,12 @@ cuda = [
     { name = "sherpa-onnx-core" },
     { name = "soundfile" },
     { name = "stable-diffusion-cpp-python" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torchaudio", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
-    { name = "torchvision", version = "0.28.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torchvision", version = "0.29.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "transformers" },
     { name = "unidic-lite" },
-    { name = "vllm", version = "0.32.0", source = { registry = "https://pypi.org/simple" }, extra = ["audio"], marker = "extra == 'extra-12-mship-engine-cuda'" },
+    { name = "vllm", version = "0.33.0", source = { registry = "https://pypi.org/simple" }, extra = ["audio"], marker = "extra == 'extra-12-mship-engine-cuda'" },
 ]
 dev = [
     { name = "diffusers" },
@@ -1859,12 +1862,12 @@ otel = [
     { name = "opentelemetry-sdk" },
 ]
 vllm-cpu = [
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
+    { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
     { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
-    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
+    { name = "torchvision", version = "0.29.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
     { name = "transformers" },
     { name = "triton", version = "3.8.0+cpu", source = { url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "vllm", version = "0.32.0+cpu", source = { registry = "https://wheels.vllm.ai/0.32.0/cpu" }, extra = ["audio"], marker = "(sys_platform == 'linux' and extra == 'extra-12-mship-engine-cpu') or (sys_platform == 'linux' and extra != 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
+    { name = "vllm", version = "0.33.0+cpu", source = { registry = "https://wheels.vllm.ai/0.33.0/cpu" }, extra = ["audio"], marker = "(sys_platform == 'linux' and extra == 'extra-12-mship-engine-cpu') or (sys_platform == 'linux' and extra != 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
 ]
 
 [package.metadata]
@@ -1941,11 +1944,11 @@ requires-dist = [
     { name = "stable-diffusion-cpp-python", marker = "extra == 'cpu'", specifier = ">=0.4.7" },
     { name = "stable-diffusion-cpp-python", marker = "extra == 'cuda'", specifier = ">=0.4.7" },
     { name = "stable-diffusion-cpp-python", marker = "extra == 'metal'", specifier = ">=0.4.7" },
-    { name = "torch", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==2.13.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
+    { name = "torch", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==2.14.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
     { name = "torch", marker = "extra == 'cuda'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "mship-engine", extra = "cuda" } },
     { name = "torchaudio", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==2.11.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
     { name = "torchaudio", marker = "extra == 'cuda'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "mship-engine", extra = "cuda" } },
-    { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==0.28.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
+    { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==0.29.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
     { name = "torchvision", marker = "extra == 'cuda'", specifier = ">=0.25.0", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "mship-engine", extra = "cuda" } },
     { name = "transformers", marker = "extra == 'cuda'", specifier = ">=5.5.3" },
     { name = "transformers", marker = "extra == 'vllm-cpu'", specifier = ">=5.5.3" },
@@ -1953,38 +1956,40 @@ requires-dist = [
     { name = "unidic-lite", marker = "extra == 'cpu'", specifier = ">=1.0.8" },
     { name = "unidic-lite", marker = "extra == 'cuda'", specifier = ">=1.0.8" },
     { name = "unidic-lite", marker = "extra == 'metal'", specifier = ">=1.0.8" },
-    { name = "vllm", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==0.32.0+cpu", index = "https://wheels.vllm.ai/0.32.0/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
-    { name = "vllm", marker = "extra == 'cuda'", specifier = "==0.32.0" },
-    { name = "vllm", extras = ["audio"], marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==0.32.0+cpu", index = "https://wheels.vllm.ai/0.32.0/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
-    { name = "vllm", extras = ["audio"], marker = "extra == 'cuda'", specifier = "==0.32.0" },
+    { name = "vllm", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==0.33.0+cpu", index = "https://wheels.vllm.ai/0.33.0/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
+    { name = "vllm", marker = "extra == 'cuda'", specifier = "==0.33.0" },
+    { name = "vllm", extras = ["audio"], marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==0.33.0+cpu", index = "https://wheels.vllm.ai/0.33.0/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
+    { name = "vllm", extras = ["audio"], marker = "extra == 'cuda'", specifier = "==0.33.0" },
 ]
 provides-extras = ["thin", "metal", "cuda", "cpu", "vllm-cpu", "otel", "docs", "dev"]
 
 [[package]]
 name = "multidict"
-version = "6.7.1"
+version = "7.2.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1a/c2/c2d94cbe6ac1753f3fc980da97b3d930efe1da3af3c9f5125354436c073d/multidict-6.7.1.tar.gz", hash = "sha256:ec6652a1bee61c53a3e5776b6049172c53b6aaba34f18c9ad04f82712bac623d", size = 102010, upload-time = "2026-01-26T02:46:45.979Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/6b/29ef8e752f5854dcc267ded0652c475bec99b86f255957a0d4fcad657b18/multidict-7.2.1.tar.gz", hash = "sha256:e8af3e6f1bdbc31fd762b094133b478b89988eaebc63cbe82b1d9e3bbd15cede", size = 369994, upload-time = "2026-10-24T20:41:35.457Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/9c/f20e0e2cf80e4b2e4b1c365bf5fe104ee633c751a724246262db8f1a0b13/multidict-6.7.1-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:a90f75c956e32891a4eda3639ce6dd86e87105271f43d43442a3aedf3cddf172", size = 76893, upload-time = "2026-01-26T02:43:52.754Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/cf/18ef143a81610136d3da8193da9d80bfe1cb548a1e2d1c775f26b23d024a/multidict-6.7.1-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:3fccb473e87eaa1382689053e4a4618e7ba7b9b9b8d6adf2027ee474597128cd", size = 45456, upload-time = "2026-01-26T02:43:53.893Z" },
-    { url = "https://files.pythonhosted.org/packages/a9/65/1caac9d4cd32e8433908683446eebc953e82d22b03d10d41a5f0fefe991b/multidict-6.7.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:b0fa96985700739c4c7853a43c0b3e169360d6855780021bfc6d0f1ce7c123e7", size = 43872, upload-time = "2026-01-26T02:43:55.041Z" },
-    { url = "https://files.pythonhosted.org/packages/cf/3b/d6bd75dc4f3ff7c73766e04e705b00ed6dbbaccf670d9e05a12b006f5a21/multidict-6.7.1-cp312-cp312-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:cb2a55f408c3043e42b40cc8eecd575afa27b7e0b956dfb190de0f8499a57a53", size = 251018, upload-time = "2026-01-26T02:43:56.198Z" },
-    { url = "https://files.pythonhosted.org/packages/fd/80/c959c5933adedb9ac15152e4067c702a808ea183a8b64cf8f31af8ad3155/multidict-6.7.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:eb0ce7b2a32d09892b3dd6cc44877a0d02a33241fafca5f25c8b6b62374f8b75", size = 258883, upload-time = "2026-01-26T02:43:57.499Z" },
-    { url = "https://files.pythonhosted.org/packages/86/85/7ed40adafea3d4f1c8b916e3b5cc3a8e07dfcdcb9cd72800f4ed3ca1b387/multidict-6.7.1-cp312-cp312-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:c3a32d23520ee37bf327d1e1a656fec76a2edd5c038bf43eddfa0572ec49c60b", size = 242413, upload-time = "2026-01-26T02:43:58.755Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/57/b8565ff533e48595503c785f8361ff9a4fde4d67de25c207cd0ba3befd03/multidict-6.7.1-cp312-cp312-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:9c90fed18bffc0189ba814749fdcc102b536e83a9f738a9003e569acd540a733", size = 268404, upload-time = "2026-01-26T02:44:00.216Z" },
-    { url = "https://files.pythonhosted.org/packages/e0/50/9810c5c29350f7258180dfdcb2e52783a0632862eb334c4896ac717cebcb/multidict-6.7.1-cp312-cp312-manylinux2014_s390x.manylinux_2_17_s390x.manylinux_2_28_s390x.whl", hash = "sha256:da62917e6076f512daccfbbde27f46fed1c98fee202f0559adec8ee0de67f71a", size = 269456, upload-time = "2026-01-26T02:44:02.202Z" },
-    { url = "https://files.pythonhosted.org/packages/f3/8d/5e5be3ced1d12966fefb5c4ea3b2a5b480afcea36406559442c6e31d4a48/multidict-6.7.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:bfde23ef6ed9db7eaee6c37dcec08524cb43903c60b285b172b6c094711b3961", size = 256322, upload-time = "2026-01-26T02:44:03.56Z" },
-    { url = "https://files.pythonhosted.org/packages/31/6e/d8a26d81ac166a5592782d208dd90dfdc0a7a218adaa52b45a672b46c122/multidict-6.7.1-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:3758692429e4e32f1ba0df23219cd0b4fc0a52f476726fff9337d1a57676a582", size = 253955, upload-time = "2026-01-26T02:44:04.845Z" },
-    { url = "https://files.pythonhosted.org/packages/59/4c/7c672c8aad41534ba619bcd4ade7a0dc87ed6b8b5c06149b85d3dd03f0cd/multidict-6.7.1-cp312-cp312-musllinux_1_2_armv7l.whl", hash = "sha256:398c1478926eca669f2fd6a5856b6de9c0acf23a2cb59a14c0ba5844fa38077e", size = 251254, upload-time = "2026-01-26T02:44:06.133Z" },
-    { url = "https://files.pythonhosted.org/packages/7b/bd/84c24de512cbafbdbc39439f74e967f19570ce7924e3007174a29c348916/multidict-6.7.1-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:c102791b1c4f3ab36ce4101154549105a53dc828f016356b3e3bcae2e3a039d3", size = 252059, upload-time = "2026-01-26T02:44:07.518Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/ba/f5449385510825b73d01c2d4087bf6d2fccc20a2d42ac34df93191d3dd03/multidict-6.7.1-cp312-cp312-musllinux_1_2_ppc64le.whl", hash = "sha256:a088b62bd733e2ad12c50dad01b7d0166c30287c166e137433d3b410add807a6", size = 263588, upload-time = "2026-01-26T02:44:09.382Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/11/afc7c677f68f75c84a69fe37184f0f82fce13ce4b92f49f3db280b7e92b3/multidict-6.7.1-cp312-cp312-musllinux_1_2_s390x.whl", hash = "sha256:3d51ff4785d58d3f6c91bdbffcb5e1f7ddfda557727043aa20d20ec4f65e324a", size = 259642, upload-time = "2026-01-26T02:44:10.73Z" },
-    { url = "https://files.pythonhosted.org/packages/2b/17/ebb9644da78c4ab36403739e0e6e0e30ebb135b9caf3440825001a0bddcb/multidict-6.7.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:fc5907494fccf3e7d3f94f95c91d6336b092b5fc83811720fae5e2765890dfba", size = 251377, upload-time = "2026-01-26T02:44:12.042Z" },
-    { url = "https://files.pythonhosted.org/packages/ca/a4/840f5b97339e27846c46307f2530a2805d9d537d8b8bd416af031cad7fa0/multidict-6.7.1-cp312-cp312-win32.whl", hash = "sha256:28ca5ce2fd9716631133d0e9a9b9a745ad7f60bac2bccafb56aa380fc0b6c511", size = 41887, upload-time = "2026-01-26T02:44:14.245Z" },
-    { url = "https://files.pythonhosted.org/packages/80/31/0b2517913687895f5904325c2069d6a3b78f66cc641a86a2baf75a05dcbb/multidict-6.7.1-cp312-cp312-win_amd64.whl", hash = "sha256:fcee94dfbd638784645b066074b338bc9cc155d4b4bffa4adce1615c5a426c19", size = 46053, upload-time = "2026-01-26T02:44:15.371Z" },
-    { url = "https://files.pythonhosted.org/packages/0c/5b/aba28e4ee4006ae4c7df8d327d31025d760ffa992ea23812a601d226e682/multidict-6.7.1-cp312-cp312-win_arm64.whl", hash = "sha256:ba0a9fb644d0c1a2194cf7ffb043bd852cea63a57f66fbd33959f7dae18517bf", size = 43307, upload-time = "2026-01-26T02:44:16.852Z" },
-    { url = "https://files.pythonhosted.org/packages/81/08/7036c080d7117f28a4af526d794aab6a84463126db031b007717c1a6676e/multidict-6.7.1-py3-none-any.whl", hash = "sha256:55d97cc6dae627efa6a6e548885712d4864b81110ac76fa4e534c03819fa4a56", size = 12319, upload-time = "2026-01-26T02:46:44.004Z" },
+    { url = "https://files.pythonhosted.org/packages/27/21/53c299f1ea289f5fd438e70d4f1f053f59b4485f5a410bcc85eecb553394/multidict-7.2.1-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:cb43bb34346155d479acdc5423afccdff79ce1fc66adfcc9de995cbec8a13acf", size = 172948, upload-time = "2026-10-24T20:40:10.189Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/17/faacc27a01e364abed3c6218d8a32bc42fa0688c95f82c6b11e3ffe99a07/multidict-7.2.1-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:dbda2baafe08f8431fd3333be02c261023fd454607e3bde5e7dc00565f7bebcb", size = 98039, upload-time = "2026-10-24T20:40:13.633Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/e4/bd8838244fd1309165c79e74af9a6b9e9e42fd0f2c24c75bee665fc9ba69/multidict-7.2.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:d37773029ba034a2cc970b6eeb67dad3bff9d894393c51f6bb1c6b4f563a032c", size = 103911, upload-time = "2026-10-24T20:40:13.517Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/39/21dbe0be29cd44de626736c6f0915c0b75f153e0155340a253f375ac5747/multidict-7.2.1-cp312-cp312-manylinux1_i686.manylinux_2_28_i686.manylinux_2_5_i686.whl", hash = "sha256:c85a0a54a19429a17ef449e967baffe7b5089cb4f6ef2894c9168a69fa024d05", size = 493430, upload-time = "2026-10-24T20:40:49.104Z" },
+    { url = "https://files.pythonhosted.org/packages/72/13/c081a1af93258029471636ea1c741141ece10f1045578a5f73ba99b694a0/multidict-7.2.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:fa0ecd064b0ae18d235283abb5adbc4e07304dba8f2aa7c0d61f28bebcc70d4c", size = 506972, upload-time = "2026-10-24T20:40:11.68Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/3e/e9982c6b1e0d4bb19c4551cd56e50c1fbe90492bdf7893adf8d1ea39f373/multidict-7.2.1-cp312-cp312-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_31_armv7l.whl", hash = "sha256:f278f118f9fdb5faba5a6792be397fbda094d1568efa4dfe8c3595ce4ce89eea", size = 470406, upload-time = "2026-10-24T20:40:14.984Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/2e/ab4136028044825995b3c9de4cf8f9ef82c2076b09b5c44c65e7e3eef0a1/multidict-7.2.1-cp312-cp312-manylinux2014_ppc64le.manylinux_2_17_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:a3d28ac22fe658ad7486d1532b3a9084fbf65b428db31f47212c5b0b6da826f1", size = 524691, upload-time = "2026-10-24T20:40:15.205Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/ed/0a57de7a6b6444f301fc4cfc4b8eb0d1c36a33b8ff05717fab7700f205b1/multidict-7.2.1-cp312-cp312-manylinux2014_s390x.manylinux_2_17_s390x.manylinux_2_28_s390x.whl", hash = "sha256:2f3cf710144b1859f4128051cc27ea86eee83caac5648cf2ca0c1b835261cbbe", size = 549512, upload-time = "2026-10-24T20:40:50.756Z" },
+    { url = "https://files.pythonhosted.org/packages/43/50/6bd8600b4843f0a9d939e0cc0f4160f4c727bd6c69e4f7e294a1caa93db8/multidict-7.2.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1fb8c1a3480c130c3a6422d5f16f3cad6552bf08c2089dd288ba7134649183b5", size = 516796, upload-time = "2026-10-24T20:40:13.481Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/77/31e78862081f54a06115927c1c3d81b1a57522fa0209fe1992fac25c6e75/multidict-7.2.1-cp312-cp312-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:b81ff0f2d375988152614eaea4d5023c98ecb08f77df4bb1d96762504bb86fca", size = 451174, upload-time = "2026-10-24T20:40:16.492Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/bf/30a0c0911e4b61accb9995165acfdc5107dd335ad3ce003007afaf168dec/multidict-7.2.1-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:b4821bd30b38144d8ab75df56af0b07e9d71327c9cf94c0c7a1965f865bb9615", size = 492916, upload-time = "2026-10-24T20:40:16.619Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/80/2192317e096489e9361f732beeee2dd213b827de71b038011dd8176e262f/multidict-7.2.1-cp312-cp312-musllinux_1_2_armv7l.whl", hash = "sha256:0eb7fa012ab47b13e96bffc1369642f520adcc4e3d3e170d7f1a2b39fb953bce", size = 468924, upload-time = "2026-10-24T20:40:52.584Z" },
+    { url = "https://files.pythonhosted.org/packages/65/fe/92a104d1d9731a97053193a3f3646a2ee286929fdb7f9c2d5077de782b33/multidict-7.2.1-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:f9e78d98a29e969a001e953eb09167a48bbc71249e804dae5db987ee7e6531c9", size = 492920, upload-time = "2026-10-24T20:40:15.165Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/6b/165323c76d383afbf60da76a4e67f4b78635b09a77c2b83d7033e72d5ee8/multidict-7.2.1-cp312-cp312-musllinux_1_2_ppc64le.whl", hash = "sha256:eb5c4a5b1281985271b6c29be53f2c1a9decf11e30a0e2733439c4d9d61b9ebb", size = 510473, upload-time = "2026-10-24T20:40:17.824Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/61/e25786f40ab8a862102c198ad0e39cbca704aeeac096edd9cffc85122f8c/multidict-7.2.1-cp312-cp312-musllinux_1_2_riscv64.whl", hash = "sha256:2c4e6a97f79699f33e6dc13bddb5631781ee79a4a94c1822116d100e7d5c136c", size = 445954, upload-time = "2026-10-24T20:40:18.14Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/bb/deb193198dd1913e8feb54bc83dd13a0cf5425b1aaf7ac913e980537aca6/multidict-7.2.1-cp312-cp312-musllinux_1_2_s390x.whl", hash = "sha256:5324411117bdb67cfaeb3d1d28fb783710fcca3d88b855696af99044d7219e4b", size = 528252, upload-time = "2026-10-24T20:40:54.068Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/9f/ae4d6c442e11aea5ff631f36e4e8d5ff4d1f4c330d2c2721cb729fa5eed6/multidict-7.2.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:d615377a8e7bfc4f1983ede3f411c2ac2b0f7c3053f262d0437b7d8bcc4485e3", size = 508675, upload-time = "2026-10-24T20:40:17.249Z" },
+    { url = "https://files.pythonhosted.org/packages/06/ca/bff250b81ada0df548da2b9c0abaf12b4fd864f40ee39e983cd9bada5799/multidict-7.2.1-cp312-cp312-win32.whl", hash = "sha256:30572b61c7932e4d3c2ad1e580de7db1f35b7a35d36db38f89397ce3f2e69096", size = 84510, upload-time = "2026-10-24T20:40:19.481Z" },
+    { url = "https://files.pythonhosted.org/packages/68/d5/64108a33c21bde81454b5a400d16baa1378a7d01599de64b131c3e3e3114/multidict-7.2.1-cp312-cp312-win_amd64.whl", hash = "sha256:781ca5dfc2f1d58e47f52216a0c1c7e1ba91ce8aa235459e20de2d402af77fb3", size = 95372, upload-time = "2026-10-24T20:40:19.679Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/00/b746ff0f4f70589be9eca08d37a211c3257d602e0ba95224dd0ee0577801/multidict-7.2.1-cp312-cp312-win_arm64.whl", hash = "sha256:9306e0c5595f91874e685be0a9eb743d48ba069c888eea051bec3c67c08b5b8d", size = 92629, upload-time = "2026-10-24T20:40:55.897Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/96/1aaad0e5df33f1f5af21775c411349c0234a6edd581ea403bc81919a6eab/multidict-7.2.1-py3-none-any.whl", hash = "sha256:08ea94663d9e7c25d14d78222f7aee906c472d4837766bec62477c38f6e419dc", size = 28145, upload-time = "2026-10-24T20:40:59.159Z" },
 ]
 
 [[package]]
@@ -2176,15 +2181,15 @@ wheels = [
 
 [[package]]
 name = "nvidia-cudnn-cu13"
-version = "9.20.0.48"
+version = "9.24.0.43"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "nvidia-cublas", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/56/c5/83384d846b2fd17c44bd499b36c75a45ed4f095fbbb2252294e89cea5c5c/nvidia_cudnn_cu13-9.20.0.48-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:e31454ae00094b0c55319d9d15b6fa2fc50a9e1c0f5c8c80fb75258234e731e1", size = 444574296, upload-time = "2026-03-09T19:28:27.751Z" },
-    { url = "https://files.pythonhosted.org/packages/6e/5e/edb9c0ae051602c3ccaffe424256463636d639e27d7f302dde9975ef9e7a/nvidia_cudnn_cu13-9.20.0.48-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:0c45dd8eeb50b603f07995b1b300c62ffe6a1980482b82b3bcf94a4ca9d49304", size = 366173588, upload-time = "2026-03-09T19:29:34.474Z" },
-    { url = "https://files.pythonhosted.org/packages/78/39/21507455b1bca8b5702a9e9fc6ce73735f216f558dac2c9ede58e4d456b8/nvidia_cudnn_cu13-9.20.0.48-py3-none-win_amd64.whl", hash = "sha256:af8139732b99c0118be65ea5aac97f0d46018f8c552889e49d2fb0c6261a4a24", size = 350712614, upload-time = "2026-03-09T19:31:11.398Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/30/7c257e3d5cb4fecb147b93895c66e29c93f8e76d74b45bb418ff0587c4ec/nvidia_cudnn_cu13-9.24.0.43-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:a6812a554a1ff0413e9c52b84c26c050380649ab9615f9c16bded368ce9f421f", size = 650976863, upload-time = "2026-07-02T16:23:39.248Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/ba/791cffd048fe5b044e620df55267e3e95c0e6e07d50b41e377c03dfc910f/nvidia_cudnn_cu13-9.24.0.43-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:71f181cd810e90f9b6023b01186fe82d13d65f0ec098581ee201d39fad769e4b", size = 553099438, upload-time = "2026-07-02T16:27:42.58Z" },
+    { url = "https://files.pythonhosted.org/packages/31/23/1dd3aa15cc4ab62c8fc88f8049ef137bc44c17892f5577bc80d994941f77/nvidia_cudnn_cu13-9.24.0.43-py3-none-win_amd64.whl", hash = "sha256:67a7273b5cf062f9446fd76cf464351a1c0f66501e6cd78f6675c0d604d8ac87", size = 412314771, upload-time = "2026-07-02T16:31:07.973Z" },
 ]
 
 [[package]]
@@ -2360,11 +2365,11 @@ wheels = [
 
 [[package]]
 name = "nvidia-nccl-cu13"
-version = "2.29.7"
+version = "2.30.7"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/72/0d/daf50d44177ee0cbc7ff0a0c91eb5ff676c82be42f9a970bc7597f440c3a/nvidia_nccl_cu13-2.29.7-py3-none-manylinux_2_18_aarch64.whl", hash = "sha256:674a12383e3c38a1bcccae7d4f3633b37852230b6047883cb2f4c2d1b36d9bf5", size = 206014712, upload-time = "2026-03-03T05:34:20.843Z" },
-    { url = "https://files.pythonhosted.org/packages/67/f4/58e4e91b6919367c7aafb8e36fce9aad1a3047e536bf7e2fd560927d3a4c/nvidia_nccl_cu13-2.29.7-py3-none-manylinux_2_18_x86_64.whl", hash = "sha256:edd81538446786ec3b73972543e53bb43bcaf0bfc8ef76cb679fcc390ffe136d", size = 205976000, upload-time = "2026-03-03T05:36:24.472Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/21/a73174c6157101bdf1ffc22b517f76ff0082613989dd9bc8f43e8034caac/nvidia_nccl_cu13-2.30.7-py3-none-manylinux_2_18_aarch64.whl", hash = "sha256:ca786ffa5a647c75d4d1f5cc72a6c4f537947e2ba8823d7c8aaf768e7a7b9f77", size = 215983881, upload-time = "2026-06-09T03:23:15.633Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/34/c500f90c7ae641b8e0f98965b36b8a7ac79cc8b296e8d251fe3eb592ee54/nvidia_nccl_cu13-2.30.7-py3-none-manylinux_2_18_x86_64.whl", hash = "sha256:cefa7fdb9710efd0f39c5f1be1d61ff6fc9a996c451265bd7fbdcf9455ed4b50", size = 215965170, upload-time = "2026-06-09T03:23:39.73Z" },
 ]
 
 [[package]]
@@ -2615,6 +2620,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/24/02/10aeacc37a38a3a8fa16ff67bec1ae3bf882539f6f9efb0f70acf802ca2d/opentelemetry_semantic_conventions_ai-0.5.1.tar.gz", hash = "sha256:153906200d8c1d2f8e09bd78dbef526916023de85ac3dab35912bfafb69ff04c", size = 26533, upload-time = "2026-03-26T14:20:38.73Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/22/41fb05f1dc5fda2c468e05a41814c20859016c85117b66c8a257cae814f6/opentelemetry_semantic_conventions_ai-0.5.1-py3-none-any.whl", hash = "sha256:25aeb22bd261543b4898a73824026d96770e5351209c7d07a0b1314762b1f6e4", size = 11250, upload-time = "2026-03-26T14:20:37.108Z" },
+]
+
+[[package]]
+name = "orjson"
+version = "3.13.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/72/380b97dc45bd162d23afe5194721ef678d9eac7cfaa549fe2873f7f0a518/orjson-3.13.0.tar.gz", hash = "sha256:d1de5eb04485110c5da4c657e49168995d55e076b1ce60f1a042e254f4186c4f", size = 2732604, upload-time = "2026-10-07T14:09:25.719Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/98/17/ed65f84ed5ed6a1e06eb628611b4172e7480fc4ad92594856751a6363cac/orjson-3.13.0-cp312-cp312-macosx_10_15_x86_64.macosx_11_0_arm64.macosx_10_15_universal2.whl", hash = "sha256:fb8644dc6d705e1269ed2842bf4dbe2b4e50d670de503bf79d5cef3a5148a4c7", size = 223063, upload-time = "2026-10-07T14:08:21.979Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/4d/9332eb96d2e379384be0f211f543835eebc81f460c9403b84abe1294c431/orjson-3.13.0-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:6ff2a2c67f35202f7d823753d38ad371a9b7fc297567cdfff4420e763cb9f6f8", size = 123364, upload-time = "2026-10-07T14:08:24.026Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/06/558456b7da27e974a8c9ea09117b07119f6fa131cd62b8b9ecad9eea94e1/orjson-3.13.0-cp312-cp312-manylinux2014_armv7l.manylinux_2_17_armv7l.whl", hash = "sha256:65c4e0e106ccc7265b488385659117a6805c37d042f737558ecd68aa0c67ad8f", size = 113199, upload-time = "2026-10-07T14:08:25.476Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/f2/1187a9c09965620348262ec0f406868f6d7c234b2e9b5ee51020bdde5748/orjson-3.13.0-cp312-cp312-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:fbbad6b9b1da43f25c1f5b20cd5a268e028a2fc95d5a8d1ade6059973bc71584", size = 130329, upload-time = "2026-10-07T14:08:26.877Z" },
+    { url = "https://files.pythonhosted.org/packages/46/07/5d1a151bc11600434fe799e73abfc6a4d463d02e149a20e47c59d3a985ae/orjson-3.13.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ae1d895cf7bbfd50ef34bb63bb727b14514f259f3e3f8dd010783bd38e864c6e", size = 129072, upload-time = "2026-10-07T14:08:28.355Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/8c/bb07c368abbf4021c4cd01c12edb526e00090f7f750ff1b88da6e6b6c7a6/orjson-3.13.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bceadfd314bd238f584fc229a4bbaf0e573597e7a026dec5429fbf29fd66c641", size = 130612, upload-time = "2026-10-07T14:08:30.041Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/8d/4b66d19619ed344ac000ffea7c006477d0061d580646e736ef0e203759e8/orjson-3.13.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:b74c30e56346aad067937d766846ee74c231d1d18aad3f324e9b9261de3b2d5e", size = 134632, upload-time = "2026-10-07T14:08:31.474Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/88/f8221f6593e37eb26ec4706e185b9ac6f38ff0c8f7bad5459844031ffd2d/orjson-3.13.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:4329c19b8a25693f60a77b867c9d2a3ab637b20e36f5b7bea7f5acb492b44b15", size = 126807, upload-time = "2026-10-07T14:08:32.914Z" },
+    { url = "https://files.pythonhosted.org/packages/58/9d/a1ca7321eeafd7d72e174cdc388cc96301f41516d863e7b1f64f0a1735be/orjson-3.13.0-cp312-cp312-win_amd64.whl", hash = "sha256:b571236d8393edcd3236e07423f762bfcf571f852aad667a3bce9e7b755e0790", size = 121538, upload-time = "2026-10-07T14:08:34.325Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/a0/1f19b4779c910104370932fceb9ed436b47ac077f297db74008062525c04/orjson-3.13.0-cp312-cp312-win_arm64.whl", hash = "sha256:8594956a75223f657e1e68c568c0eeb3dd145f02cd6b78a47fd9a8095dbc4eae", size = 126259, upload-time = "2026-10-07T14:08:35.765Z" },
 ]
 
 [[package]]
@@ -3354,7 +3377,7 @@ dependencies = [
     { name = "apache-tvm-ffi" },
     { name = "einops" },
     { name = "nvidia-cutlass-dsl" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torch-c-dlpack-ext" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5f/18/6c2a20d00dff254f154fb3b951f4e5a0377a60122c17385e5f08d5f5b5e1/quack_kernels-0.6.5.tar.gz", hash = "sha256:dd9405a4a6fa35fc3a5a18fe35b46a14b0bf7e3ad9fe2451903e355047ac471d", size = 846876, upload-time = "2026-09-11T05:08:20.621Z" }
@@ -4000,7 +4023,7 @@ dependencies = [
     { name = "numpy" },
     { name = "psutil" },
     { name = "setuptools", version = "80.9.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torch-c-dlpack-ext" },
     { name = "tqdm" },
     { name = "typing-extensions" },
@@ -4043,16 +4066,16 @@ wheels = [
 
 [[package]]
 name = "tokenspeed-mla"
-version = "0.2.15"
+version = "2.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apache-tvm-ffi", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
     { name = "nvidia-cutlass-dsl", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
     { name = "tokenspeed-triton", marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/56/495ed0feea7c332e02bbf23fa565aee3a176fe463c81ff7cc85afc01817e/tokenspeed_mla-0.2.15-py3-none-any.whl", hash = "sha256:7b4d8bfe92e1ad984e94db262671ef33ce2ecfe0a44f79c5ea1c2816d8397a1f", size = 151477, upload-time = "2026-09-28T19:49:06.103Z" },
+    { url = "https://files.pythonhosted.org/packages/39/74/cce1840ddb1736baf8c3115ced5f657f98151bc42d5e84f8f9c2f0f3208d/tokenspeed_mla-2.0.3-py3-none-any.whl", hash = "sha256:576ce91e861598347f09c429fe41269863d351bf3de8410a845dae39fa172e4a", size = 238130, upload-time = "2026-10-14T15:18:03.665Z" },
 ]
 
 [[package]]
@@ -4066,7 +4089,7 @@ wheels = [
 
 [[package]]
 name = "torch"
-version = "2.13.0+cpu"
+version = "2.14.0+cpu"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
     "(platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
@@ -4084,16 +4107,16 @@ dependencies = [
     { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra != 'extra-12-mship-engine-cuda') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-linux_s390x.whl", hash = "sha256:ffadde149901c8afa138daa38d898264003cfcf1a3336ca5cd964b5af227d867", upload-time = "2026-07-08T19:28:41Z" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:6f307c2c32d764ffc6ff6893b801fad6d4752f3e67966cb8abf1843427c02604", upload-time = "2026-07-08T19:28:51Z" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:4ca4a9394b0c771238a4f73590fdbbc4debad85ed0fa63d026ae1b085da7d6e2", upload-time = "2026-07-08T19:29:03Z" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-win_amd64.whl", hash = "sha256:a8b450c1e58e5800e5b4691dac412f8d2d65a1dc3298166f91596603a3531e6f", upload-time = "2026-07-08T19:29:15Z" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp312-cp312-win_arm64.whl", hash = "sha256:fa0762705b933624d59f6823db9ce7ec2e35b3e1e9c319c9db51fbeecfc3e319", upload-time = "2026-07-08T19:29:21Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-linux_s390x.whl", hash = "sha256:07aefe1a437b6f1b41b0cba15e16583e2f43549ec9d062fcea8e7981a78e014a", upload-time = "2026-09-02T18:31:32Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:da8140c3d4a41500d29710e35bf8e66a4295ec31026487c69f54a3f583310f8d", upload-time = "2026-09-02T18:31:37Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:a09987c95ec4cffdb6df798d3d641558110a334cfccce22f2f046d83142bc260", upload-time = "2026-09-02T18:31:42Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-win_amd64.whl", hash = "sha256:738cd9237bf63443a5e5f9652e5115f7b0510b089636a43d4011e9fccede714f", upload-time = "2026-09-02T18:31:48Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-win_arm64.whl", hash = "sha256:420e7dbed969bbd045b34105fa90d1ccf3e5c09c4e9b0d0a5f9df25df9d02d2e", upload-time = "2026-09-02T18:31:52Z" },
 ]
 
 [[package]]
 name = "torch"
-version = "2.13.0+cu130"
+version = "2.14.0+cu130"
 source = { registry = "https://download.pytorch.org/whl/cu130" }
 resolution-markers = [
     "sys_platform == 'darwin'",
@@ -4114,13 +4137,13 @@ dependencies = [
     { name = "nvidia-nvshmem-cu13", marker = "(sys_platform == 'linux' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
     { name = "setuptools", version = "80.9.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-12-mship-engine-cuda'" },
     { name = "sympy", marker = "extra == 'extra-12-mship-engine-cuda'" },
-    { name = "triton", version = "3.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
+    { name = "triton", version = "3.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
     { name = "typing-extensions", marker = "extra == 'extra-12-mship-engine-cuda'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:5ebd552c887e707c8e64927aceb8377ca2e81588c4e7494bcd23cb8ac0aca14d", upload-time = "2026-07-08T20:24:19Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:8db7338e6895c3d4bd89a02ff4209507d1f0cf2ffeb3b898538b5a07d1ea8c1e", upload-time = "2026-07-08T20:24:52Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp312-cp312-win_amd64.whl", hash = "sha256:2efab1e83604ca628c6d85b9e188c153690980498d1297081a9dad704919303c", upload-time = "2026-07-08T20:26:27Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:e729d57eb3e0c859fa7a9c27f9f274121c2c09ae70a376ac227a650807b0457c", upload-time = "2026-09-02T18:51:18Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:9c5693d3ca91743202034094ad3b3df20b5eb1373d5e0bc8a5d976be12c35302", upload-time = "2026-09-02T18:51:32Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp312-cp312-win_amd64.whl", hash = "sha256:6a20371bf5af2af933a6149e5ec13f7ea7ad506276137dae9386f98d236c02ff", upload-time = "2026-09-02T18:52:06Z" },
 ]
 
 [[package]]
@@ -4128,7 +4151,7 @@ name = "torch-c-dlpack-ext"
 version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/37/de/921b6491efce5c389a5ef9bbed3d2d6660005840dae488124173180859ab/torch_c_dlpack_ext-0.1.5.tar.gz", hash = "sha256:d06f0357d575d22a168cc77acb9020fc4bae30968ceb6718a055dcbe92bacabe", size = 12913, upload-time = "2026-01-12T11:25:08.484Z" }
 wheels = [
@@ -4183,7 +4206,7 @@ wheels = [
 
 [[package]]
 name = "torchvision"
-version = "0.28.0+cpu"
+version = "0.29.0+cpu"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
     "(platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
@@ -4194,17 +4217,17 @@ resolution-markers = [
 dependencies = [
     { name = "numpy", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "pillow", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:2f768c4f6d5adf6d5535061fd69ec44827608bac0e96e12114942a6fdfce1107", upload-time = "2026-07-08T12:26:39Z" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:b545d46f4d2f9d30381281cf22874bfe1d32a8a7b0ee8396fccde89f30c6a9d9", upload-time = "2026-07-08T12:26:40Z" },
-    { url = "https://download-r2.pytorch.org/whl/cpu/torchvision-0.28.0%2Bcpu-cp312-cp312-win_amd64.whl", hash = "sha256:d88db83abbdfb97199979ec94dd427bc372c1b9ab01f0dbed20af05b0bd644b1", upload-time = "2026-07-08T12:26:40Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torchvision-0.29.0%2Bcpu-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:8ac096fe796dfacbd174be86f7ab3595a39eabc341d2ee2e48557032ec1d57c4", upload-time = "2026-09-02T00:27:43Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torchvision-0.29.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:a6bab91c40d469a656d361b8ec60ebdfd86c515ad47b2cd5037d17db30414d75", upload-time = "2026-09-02T00:27:43Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torchvision-0.29.0%2Bcpu-cp312-cp312-win_amd64.whl", hash = "sha256:7fa995dff29396950418ced2f21c9bfee8b7b71e9e324a18a4b0489be762dd07", upload-time = "2026-09-02T00:27:44Z" },
 ]
 
 [[package]]
 name = "torchvision"
-version = "0.28.0+cu130"
+version = "0.29.0+cu130"
 source = { registry = "https://download.pytorch.org/whl/cu130" }
 resolution-markers = [
     "sys_platform == 'darwin'",
@@ -4215,12 +4238,12 @@ resolution-markers = [
 dependencies = [
     { name = "numpy" },
     { name = "pillow" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu130/torchvision-0.28.0%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:ecf72161734b0cf75aabeb2a83101ee021ba8a9cfea57b40050deed7accd4615", upload-time = "2026-07-08T12:26:52Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu130/torchvision-0.28.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:8a0008d34ccc4e81066b97ff0ae5a34c676bfdf3464baf40c01b320dc9a45ce0", upload-time = "2026-07-08T12:26:52Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu130/torchvision-0.28.0%2Bcu130-cp312-cp312-win_amd64.whl", upload-time = "2026-07-08T12:26:52Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu130/torchvision-0.29.0%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:7678a0ed87d39580ab0369b4183d815ba92b84aa6a2c5bd60c67ab80274acef9", upload-time = "2026-09-02T00:28:04Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu130/torchvision-0.29.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:fb681a367becdbf40cd559f1b553be79832885a58414980e77bed192fd960673", upload-time = "2026-09-02T00:28:04Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu130/torchvision-0.29.0%2Bcu130-cp312-cp312-win_amd64.whl", hash = "sha256:b33bbcaef5227b66de396163b7a8fb4d444072ffcc4d672774c7368db8f3a52a", upload-time = "2026-09-02T00:28:05Z" },
 ]
 
 [[package]]
@@ -4261,7 +4284,6 @@ version = "3.6.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "sys_platform == 'darwin'",
-    "sys_platform == 'win32'",
     "sys_platform == 'emscripten'",
 ]
 wheels = [
@@ -4271,14 +4293,14 @@ wheels = [
 
 [[package]]
 name = "triton"
-version = "3.7.1"
+version = "3.8.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/fa/f856e24deb462d5f18bd4b5a746957862ab9b6ee5834bda60605ec348366/triton-3.7.1-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:9497f2e696ee368862a181a90b2dcc03ca978cc4f602abd67c7d81022a6988e1", size = 184692359, upload-time = "2026-06-17T20:03:48.288Z" },
-    { url = "https://files.pythonhosted.org/packages/c4/6f/fb96d15db6f36d6eae4cafb998c2e0353bf59d7c4ea1662d7497f269134a/triton-3.7.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7e40869937a68206ec70d7f25bb7ec6433cb083f9135e1f36dbd318dc449a728", size = 197719725, upload-time = "2026-06-17T19:53:20.419Z" },
+    { url = "https://files.pythonhosted.org/packages/87/07/0f8cd8e8db0472334253efdaaab3d0819fea27aa99bf0e7f1aeea4ceb5ae/triton-3.8.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a9c404c69ed4a39e8ec632eaf6b9fe058a060bf98979c177f6ef666f06bb8d50", size = 226474486, upload-time = "2026-08-28T16:08:18.29Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/09/b7012e5bfae67640f268aa584caa80fe1674f6b0da949046b679972c33e3/triton-3.8.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e91ffa46d095b252248297292dd22bcbacd53a125a0c2eefbbbf74925a320bc3", size = 247972921, upload-time = "2026-08-28T15:55:53.157Z" },
 ]
 
 [[package]]
@@ -4294,6 +4316,15 @@ wheels = [
 
 [package.metadata]
 requires-dist = [{ name = "importlib-metadata", marker = "python_full_version < '3.10'" }]
+
+[[package]]
+name = "triton-windows"
+version = "3.9.0.post30"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/6a/3a5cead030ced5cca03b550a193f90d9a082d6be9d9310d0c6cb6bcc216c/triton_windows-3.9.0.post30-cp312-abi3-win_amd64.whl", hash = "sha256:a3d0034649de95a8bb19bd805b33d230c87af5a031fa26bddbb56b490acc2436", size = 73158093, upload-time = "2026-10-28T02:38:48.539Z" },
+    { url = "https://files.pythonhosted.org/packages/45/87/f8610ecc3e492cd36de45a7bacfa2bacdc624d36d633035329724c94ed08/triton_windows-3.9.0.post30-cp312-abi3-win_arm64.whl", hash = "sha256:14efee65f0ae116996696fd3b22f8319002894d0772f8c6055f879fac814f0e1", size = 66273069, upload-time = "2026-10-28T02:38:57.057Z" },
+]
 
 [[package]]
 name = "truststore"
@@ -4420,7 +4451,7 @@ wheels = [
 
 [[package]]
 name = "vllm"
-version = "0.32.0"
+version = "0.33.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "sys_platform == 'darwin'",
@@ -4435,6 +4466,7 @@ dependencies = [
     { name = "blake3" },
     { name = "cachetools" },
     { name = "cbor2" },
+    { name = "certifi" },
     { name = "cloudpickle" },
     { name = "compressed-tensors" },
     { name = "depyf" },
@@ -4455,6 +4487,7 @@ dependencies = [
     { name = "mistral-common", extra = ["image"], marker = "extra == 'extra-12-mship-engine-cuda'" },
     { name = "model-hosting-container-standards" },
     { name = "msgspec" },
+    { name = "multidict" },
     { name = "ninja" },
     { name = "numba" },
     { name = "numpy" },
@@ -4467,6 +4500,7 @@ dependencies = [
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-sdk" },
     { name = "opentelemetry-semantic-conventions-ai" },
+    { name = "orjson" },
     { name = "oss-harmony" },
     { name = "outlines-core" },
     { name = "partial-json-parser" },
@@ -4495,20 +4529,20 @@ dependencies = [
     { name = "tilelang" },
     { name = "tokenizers" },
     { name = "tokenspeed-mla", marker = "sys_platform == 'linux'" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torchaudio", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torchcodec" },
-    { name = "torchvision", version = "0.28.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
+    { name = "torchvision", version = "0.29.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "tqdm" },
     { name = "transformers" },
     { name = "typing-extensions" },
     { name = "watchfiles" },
     { name = "xgrammar", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/df/5471312c76e335eaa2b8333e87ea39f0d37bfe24f10a582620e34ff12e33/vllm-0.32.0.tar.gz", hash = "sha256:d2c957d5eee3d0985012151315ddc62cbe0cd368fc96a5fc3510438d9dddf2ad", size = 44549956, upload-time = "2026-10-18T10:04:07.069Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f7/25/aa5684e9c59d6fc75f78926b7f15e8d9adc7de2d9e6e7575b80776ad8169/vllm-0.33.0.tar.gz", hash = "sha256:f4c33c2503d52bb411146afa9618a4f48bed68912f617e6803ac8d76e4c74112", size = 47101396, upload-time = "2026-11-02T10:12:56.222Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/7b/19ee98705e4a357fdb6158083c4aedb93bf548bf89fa827023449e22c98d/vllm-0.32.0-cp38-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d0620dbdf99528bcfebe551a8906347a229921fb1602f887bd1286a920da2d44", size = 321437289, upload-time = "2026-10-18T10:03:29.256Z" },
-    { url = "https://files.pythonhosted.org/packages/a5/0d/0b15fda9a56ac485ebb607e466f0e3386c8c115bafeced6514298bd325b5/vllm-0.32.0-cp38-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:5e2ecdc5b0baf72921c288486417ca82778456a448e4fe60b62ee43c0dfc8611", size = 326518482, upload-time = "2026-10-18T10:03:52.559Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/e0/bfb969e9a03c55402f08684c2691e1e2a4307ebc9c90aae0cebadb43d9b5/vllm-0.33.0-cp38-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:e9e404f52c8494b69bd83fe99fe7ecfa9f6b89fbd156d2a9639c24ea41d6d606", size = 333472621, upload-time = "2026-11-02T10:13:42.65Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/a8/92e278093df40fde4c4bfd6572704bb8f398d6a2280d8c82cb5efaf12047/vllm-0.33.0-cp38-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:4b6bdec4ab269990bf70d45a3c1e94c3760a27064513760193b26d6f0da883aa", size = 336361138, upload-time = "2026-11-02T10:13:18.631Z" },
 ]
 
 [package.optional-dependencies]
@@ -4522,8 +4556,8 @@ audio = [
 
 [[package]]
 name = "vllm"
-version = "0.32.0+cpu"
-source = { registry = "https://wheels.vllm.ai/0.32.0/cpu" }
+version = "0.33.0+cpu"
+source = { registry = "https://wheels.vllm.ai/0.33.0/cpu" }
 resolution-markers = [
     "(platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')",
     "platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
@@ -4536,6 +4570,7 @@ dependencies = [
     { name = "blake3", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "cachetools", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "cbor2", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "certifi", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "cloudpickle", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "compressed-tensors", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "depyf", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
@@ -4553,6 +4588,7 @@ dependencies = [
     { name = "mistral-common", extra = ["image"], marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra != 'extra-12-mship-engine-cuda') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
     { name = "model-hosting-container-standards", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "msgspec", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "multidict", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "ninja", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "numba", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "numpy", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
@@ -4562,6 +4598,7 @@ dependencies = [
     { name = "opentelemetry-exporter-otlp", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "opentelemetry-sdk", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "opentelemetry-semantic-conventions-ai", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "orjson", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "oss-harmony", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "outlines-core", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "partial-json-parser", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
@@ -4586,10 +4623,10 @@ dependencies = [
     { name = "starlette", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "tiktoken", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "tokenizers", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'ppc64le' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'riscv64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'ppc64le' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'riscv64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "torchaudio", version = "2.11.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'riscv64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'riscv64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "torchcodec", marker = "(platform_machine != 'aarch64' and platform_machine != 'ppc64le' and platform_machine != 'riscv64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'ppc64le' and platform_machine != 'riscv64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
-    { name = "torchvision", version = "0.28.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'riscv64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'riscv64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "torchvision", version = "0.29.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'riscv64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine != 'riscv64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "tqdm", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "transformers", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
     { name = "triton", version = "3.8.0+cpu", source = { url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'" },
@@ -4598,9 +4635,9 @@ dependencies = [
     { name = "xgrammar", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'ppc64le' and sys_platform == 'darwin') or (platform_machine == 'arm64' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'ppc64le' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32')" },
 ]
 wheels = [
-    { url = "https://wheels.vllm.ai/5df63a7203cdb9328d824a27b682e77c7b9928be/vllm-0.32.0%2Bcpu-cp38-abi3-macosx_11_0_arm64.whl" },
-    { url = "https://wheels.vllm.ai/5df63a7203cdb9328d824a27b682e77c7b9928be/vllm-0.32.0%2Bcpu-cp38-abi3-manylinux_2_39_aarch64.whl" },
-    { url = "https://wheels.vllm.ai/5df63a7203cdb9328d824a27b682e77c7b9928be/vllm-0.32.0%2Bcpu-cp38-abi3-manylinux_2_39_x86_64.whl" },
+    { url = "https://wheels.vllm.ai/4ba787ec9959e566d3b587a796dff07673324da5/vllm-0.33.0%2Bcpu-cp38-abi3-macosx_11_0_arm64.whl" },
+    { url = "https://wheels.vllm.ai/4ba787ec9959e566d3b587a796dff07673324da5/vllm-0.33.0%2Bcpu-cp38-abi3-manylinux_2_39_aarch64.whl" },
+    { url = "https://wheels.vllm.ai/4ba787ec9959e566d3b587a796dff07673324da5/vllm-0.33.0%2Bcpu-cp38-abi3-manylinux_2_39_x86_64.whl" },
 ]
 
 [package.optional-dependencies]
@@ -4712,10 +4749,10 @@ dependencies = [
     { name = "apache-tvm-ffi", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
     { name = "numpy", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
     { name = "pydantic", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra != 'extra-12-mship-engine-cuda') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
-    { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-12-mship-engine-cuda'" },
+    { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin' and extra != 'extra-12-mship-engine-cuda') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'aarch64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 's390x' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine == 'x86_64' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-12-mship-engine-cpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'darwin' and extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
+    { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-12-mship-engine-cuda'" },
     { name = "transformers", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
-    { name = "triton", version = "3.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
+    { name = "triton", version = "3.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
     { name = "triton", version = "3.8.0+cpu", source = { url = "https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-12-mship-engine-cpu') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
     { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and platform_machine != 's390x' and platform_machine != 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 's390x' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra == 'extra-12-mship-engine-cuda') or (sys_platform == 'win32' and extra == 'extra-12-mship-engine-cuda')" },
 ]
