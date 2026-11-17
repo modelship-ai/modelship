@@ -1,0 +1,382 @@
+name: Build stable-diffusion.cpp
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "stable-diffusion.cpp tag to build (e.g. master-1106-532d2c1)"
+        required: true
+      rebuild:
+        description: "Rebuild number for a tag that already has a release (e.g. 2 publishes sdcpp-<tag>-r2)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sd-cpp-build
+
+env:
+  ENGINE_BUILDS_REPO: modelship-ai/engine-builds
+  # Shell steps read the inputs from here, never by interpolation; preflight validates them.
+  TAG: ${{ inputs.tag }}
+  REBUILD: ${{ inputs.rebuild }}
+  RELEASE: sdcpp-${{ inputs.tag }}${{ inputs.rebuild && format('-r{0}', inputs.rebuild) || '' }}
+  CMAKE_ARGS: "-DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_SHARED_GGML_LIB=ON -DSD_SERVER_BUILD_FRONTEND=OFF"
+  CUDA_VERSION_DASH: 13-0
+  CUDA_HOME: /usr/local/cuda-13.0
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate inputs
+        run: |
+          [[ "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+            || { echo "::error::tag must match ^[A-Za-z0-9][A-Za-z0-9._-]*$"; exit 1; }
+          [[ -z "$REBUILD" || "$REBUILD" =~ ^[1-9][0-9]*$ ]] \
+            || { echo "::error::rebuild must be a positive integer"; exit 1; }
+
+      - name: Check publish token and release slot
+        env:
+          GH_TOKEN: ${{ secrets.ENGINE_BUILDS_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::ENGINE_BUILDS_TOKEN is unset"
+            exit 1
+          fi
+          PUSH=$(gh api "repos/${ENGINE_BUILDS_REPO}" --jq .permissions.push 2>/dev/null || echo denied)
+          if [ "$PUSH" != "true" ]; then
+            echo "::error::ENGINE_BUILDS_TOKEN cannot write to ${ENGINE_BUILDS_REPO} (permissions.push=${PUSH}). A fine-grained PAT needs Contents: Read and write on that repo and, for an org-owned repo, org approval."
+            exit 1
+          fi
+          if gh release view "${RELEASE}" --repo "${ENGINE_BUILDS_REPO}" >/dev/null 2>&1; then
+            echo "::error::release ${RELEASE} already exists — pass a new rebuild number to build ${TAG} again"
+            exit 1
+          fi
+
+      - name: Check tag exists upstream
+        run: |
+          curl -fsSL -o /dev/null \
+            "https://api.github.com/repos/leejet/stable-diffusion.cpp/git/ref/tags/${TAG}" \
+            || { echo "::error::leejet/stable-diffusion.cpp has no tag ${TAG}"; exit 1; }
+
+  # sd.cpp compiles its backend into libstable-diffusion.so, so each backend is a full build.
+  build:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64-cpu
+            os: ubuntu-24.04
+            backend: cpu
+          - name: linux-arm64-cpu
+            os: ubuntu-24.04-arm
+            backend: cpu
+          - name: linux-x64-vulkan
+            os: ubuntu-24.04
+            backend: vulkan
+            defines: -DSD_VULKAN=ON
+          - name: linux-arm64-vulkan
+            os: ubuntu-24.04-arm
+            backend: vulkan
+            defines: -DSD_VULKAN=ON
+          - name: linux-x64-cuda13
+            os: ubuntu-24.04
+            backend: cuda
+            cuda-repo: x86_64
+            defines: -DSD_CUDA=ON
+          - name: linux-arm64-cuda13
+            os: ubuntu-24.04-arm
+            backend: cuda
+            cuda-repo: sbsa
+            defines: -DSD_CUDA=ON
+          - name: macos-arm64-metal
+            os: macos-15
+            backend: metal
+            defines: -DSD_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3
+    runs-on: ${{ matrix.os }}
+    env:
+      SHADERC_KNOWN_GOOD: 75137cca3b41a59b8b3e5c42177da8a9490c042f
+      LINUX_DEFINES: -DGGML_BACKEND_DL=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON
+    steps:
+      - name: Checkout stable-diffusion.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: leejet/stable-diffusion.cpp
+          ref: ${{ inputs.tag }}
+
+      # Not the web UI; CUTLASS only for CUDA.
+      - name: Checkout submodules
+        run: |
+          MODULES="ggml thirdparty/libwebp thirdparty/libwebm"
+          if [ "${{ matrix.backend }}" = cuda ]; then MODULES="$MODULES thirdparty/cutlass"; fi
+          git submodule update --init --depth 1 $MODULES
+
+      # GGML_CPU_ALL_VARIANTS builds an armv9.2-a+sme variant; SME intrinsics need gcc >= 14, above noble's stock 13.
+      - name: Install build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends build-essential gcc-14 g++-14
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+
+      - name: Install CUDA toolkit
+        if: matrix.backend == 'cuda'
+        run: |
+          REPO=https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${{ matrix.cuda-repo }}
+          curl -fsSL "${REPO}/3bf863cc.pub" \
+            | sudo gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] ${REPO}/ /" \
+            | sudo tee /etc/apt/sources.list.d/cuda.list > /dev/null
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            cuda-nvcc-${CUDA_VERSION_DASH} \
+            cuda-cudart-dev-${CUDA_VERSION_DASH} \
+            libcublas-dev-${CUDA_VERSION_DASH}
+          echo "${CUDA_HOME}/bin" >> "$GITHUB_PATH"
+
+      - name: Install Vulkan deps
+        if: matrix.backend == 'vulkan'
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev spirv-headers ninja-build libvulkan1 mesa-vulkan-drivers
+
+      - name: Restore glslc
+        if: matrix.backend == 'vulkan'
+        id: glslc
+        uses: actions/cache@v4
+        with:
+          path: glslc
+          key: glslc-${{ env.SHADERC_KNOWN_GOOD }}-${{ matrix.os }}
+
+      # noble's glslc lacks shader extensions ggml-vulkan tests for.
+      - name: Build glslc
+        if: matrix.backend == 'vulkan' && steps.glslc.outputs.cache-hit != 'true'
+        run: |
+          git init -q shaderc
+          git -C shaderc fetch -q --depth 1 https://github.com/google/shaderc.git "${SHADERC_KNOWN_GOOD}"
+          git -C shaderc checkout -q FETCH_HEAD
+          cd shaderc
+          python3 update_shaderc_sources.py
+          cmake -S src -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSHADERC_SKIP_TESTS=ON \
+            -DSHADERC_SKIP_EXAMPLES=ON \
+            -DSHADERC_SKIP_COPYRIGHT_CHECK=ON
+          cmake --build build --target glslc_exe -j "$(nproc)"
+          mkdir ../glslc
+          cp build/glslc/glslc ../glslc/
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          key: sd-cpp-${{ matrix.name }}
+          # CUDA compiles every .cu once per arch, overrunning the 500MB default.
+          max-size: ${{ matrix.backend == 'cuda' && '2G' || '500M' }}
+
+      - name: Build
+        run: |
+          set -o pipefail
+          if [ "${{ runner.os }}" = Linux ]; then
+            PLATFORM_DEFINES="${LINUX_DEFINES} -DCMAKE_INSTALL_RPATH=\$ORIGIN"
+          else
+            PLATFORM_DEFINES="-DCMAKE_INSTALL_RPATH=@loader_path"
+          fi
+          if [ "${{ matrix.backend }}" = vulkan ]; then
+            PLATFORM_DEFINES="${PLATFORM_DEFINES} -DVulkan_GLSLC_EXECUTABLE=${PWD}/glslc/glslc"
+          fi
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+            ${PLATFORM_DEFINES} \
+            ${{ matrix.defines }} \
+            ${CMAKE_ARGS} | tee configure.log
+          if [ "${{ matrix.backend }}" = vulkan ] && grep -q "not supported by glslc" configure.log; then
+            echo "::error::glslc lacks a shader extension ggml-vulkan tests for"
+            exit 1
+          fi
+          cmake --build build --config Release -j "$(getconf _NPROCESSORS_ONLN)"
+          df -h .
+
+      - name: Package
+        id: package
+        run: |
+          NAME="sd-server-${TAG}-${{ matrix.name }}"
+          mkdir "$NAME"
+          cp -a build/bin/. "$NAME"/
+          rm -f "$NAME/sd-cli"
+          cp LICENSE "$NAME/stable-diffusion.cpp.txt"
+          cp ggml/LICENSE "$NAME/ggml.txt"
+          test -x "$NAME/sd-server"
+          tar czf "${NAME}.tar.gz" "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          ls -la "$NAME"
+          ls -lh "${NAME}.tar.gz"
+
+      # The binary resolves its sibling libs by rpath, not a wrapper script; the CUDA build takes CUDA 13 libs from
+      # torch's cu13 wheels and libcuda from the driver.
+      - name: Verify linkage
+        run: |
+          DIR="${{ steps.package.outputs.name }}"
+          if [ "${{ runner.os }}" = Linux ]; then
+            readelf -d "$DIR/sd-server" | grep -q '(RUNPATH).*\$ORIGIN' \
+              || { echo "::error::sd-server has no \$ORIGIN runpath"; exit 1; }
+            NEEDED=$(for f in "$DIR"/sd-server "$DIR"/*.so*; do readelf -d "$f"; done \
+              | sed -n 's/.*Shared library: \[\(.*\)\].*/\1/p' | sort -u)
+            echo "$NEEDED"
+            OWN=$(cd "$DIR" && ls)
+            ALLOWED='libstdc\+\+\.so\.6|libm\.so\.6|libgcc_s\.so\.1|libc\.so\.6|libgomp\.so\.1|ld-linux-x86-64\.so\.2|ld-linux-aarch64\.so\.1|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1'
+            case "${{ matrix.backend }}" in
+              vulkan) ALLOWED="${ALLOWED}|libvulkan\.so\.1" ;;
+              cuda) ALLOWED="${ALLOWED}|libcuda\.so\.1|libcudart\.so\.13|libcublas\.so\.13|libcublasLt\.so\.13" ;;
+            esac
+            BAD=$(echo "$NEEDED" | grep -vxF "$OWN" | grep -vxE "$ALLOWED" || true)
+            if [ -n "$BAD" ]; then
+              echo "::error::unexpected dependency: ${BAD}"
+              exit 1
+            fi
+          else
+            # Upstream sets @executable_path on executables, @loader_path on libraries.
+            otool -l "$DIR/sd-server" | grep -qE 'path @(executable|loader)_path( |$)' \
+              || { echo "::error::sd-server has no @executable_path rpath"; exit 1; }
+          fi
+
+      # From an empty cwd: ggml also looks for backends there. CUDA needs a driver the runner lacks.
+      - name: List devices
+        if: matrix.backend != 'cuda'
+        run: |
+          mkdir verify && tar xzf "${{ steps.package.outputs.name }}.tar.gz" -C verify --strip-components=1
+          BIN="${PWD}/verify/sd-server"
+          cd "$(mktemp -d)"
+          GGML_VK_VISIBLE_DEVICES=0 "$BIN" --list-devices | tee devices.txt
+          grep -qi '^cpu' devices.txt || { echo "::error::no CPU device"; exit 1; }
+          if [ "${{ matrix.backend }}" = vulkan ]; then
+            grep -qi '^vulkan0' devices.txt || { echo "::error::ggml-vulkan found no device"; exit 1; }
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.name }}.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksum
+        run: |
+          cd dist
+          for f in *.tar.gz; do
+            sha256sum "$f" | awk '{print $1}' > "${f}.sha256"
+          done
+          ls -lh
+          test "$(ls -1 *.tar.gz | wc -l)" -eq 7 \
+            || { echo "::error::expected 7 tarballs, got $(ls -1 *.tar.gz | wc -l)"; exit 1; }
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.ENGINE_BUILDS_TOKEN }}
+        run: |
+          cd dist
+          {
+            echo "Own-CI build of leejet/stable-diffusion.cpp \`${TAG}\`'s \`sd-server\` for every variant modelship ships, from modelship's \`.github/workflows/sd-cpp-build.yml\`."
+            echo
+            echo "| asset | modelship variant |"
+            echo "|---|---|"
+            echo "| \`sd-server-${TAG}-linux-x64-cpu.tar.gz\`, \`-linux-arm64-cpu\` | \`cpu\` |"
+            echo "| \`sd-server-${TAG}-linux-x64-vulkan.tar.gz\`, \`-linux-arm64-vulkan\` | \`vulkan\` |"
+            echo "| \`sd-server-${TAG}-linux-x64-cuda13.tar.gz\`, \`-linux-arm64-cuda13\` | \`cuda\` |"
+            echo "| \`sd-server-${TAG}-macos-arm64-metal.tar.gz\` | \`metal\` |"
+            echo
+            echo "Each archive is a complete build: sd.cpp compiles its backend into \`libstable-diffusion.so\`. The Linux builds load ggml's CPU backend for the host CPU at runtime. The Vulkan build needs \`libvulkan.so.1\` and the host's Vulkan driver. The CUDA build needs \`libcudart.so.13\`/\`libcublas.so.13\`/\`libcublasLt.so.13\` (torch cu130 bundles them under \`site-packages/nvidia/cu13/lib\`) and \`libcuda.so.1\` from the driver."
+            echo
+            echo '```'
+            sha256sum *.tar.gz
+            echo '```'
+          } > notes.md
+          gh release create "${RELEASE}" \
+            --repo "${ENGINE_BUILDS_REPO}" \
+            --target main \
+            --title "stable-diffusion.cpp ${RELEASE#sdcpp-}" \
+            --notes-file notes.md \
+            --prerelease \
+            *.tar.gz *.sha256
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/*.sha256
+
+  pin:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # The run's branch tip, not the run's commit: a workflow file changed on the branch since then
+      # would read as a revert, which github.token may not push.
+      - name: Checkout modelship
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Download checksums
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: dist
+
+      # One `_SHA256_<PLATFORM>_<BACKEND>` line per archive, e.g. linux-x64-cuda13 → _SHA256_LINUX_X64_CUDA13.
+      - name: Rewrite pins
+        run: |
+          set -e
+          PIN=bootstrap/mship_bootstrap/sd_cpp.py
+          sed -i \
+            -e "s|^_SD_CPP_TAG = .*|_SD_CPP_TAG = \"${TAG}\"|" \
+            -e "s|^_SD_CPP_RELEASE = .*|_SD_CPP_RELEASE = \"${RELEASE}\"|" \
+            "$PIN"
+          for f in dist/*.tar.gz.sha256; do
+            NAME=$(basename "$f" .tar.gz.sha256)
+            NAME=${NAME#sd-server-${TAG}-}
+            VAR="_SHA256_$(echo "$NAME" | tr 'a-z-' 'A-Z_')"
+            SHA=$(cat "$f")
+            sed -i "s|^${VAR} = .*|${VAR} = \"${SHA}\"|" "$PIN"
+            # sed exits 0 when a pattern matches nothing.
+            grep -qx "${VAR} = \"${SHA}\"" "$PIN" || { echo "::error::${PIN} has no ${VAR} line"; exit 1; }
+          done
+          grep -qx "_SD_CPP_TAG = \"${TAG}\"" "$PIN" || { echo "::error::${PIN} kept its old tag"; exit 1; }
+          grep -qx "_SD_CPP_RELEASE = \"${RELEASE}\"" "$PIN" || { echo "::error::${PIN} kept its old release"; exit 1; }
+
+      - name: Open pin-bump PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          BUILD="${RELEASE#sdcpp-}"
+          BRANCH="sd-cpp/${BUILD}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add bootstrap/mship_bootstrap/sd_cpp.py
+          git commit -m "build: bump stable-diffusion.cpp to ${BUILD}"
+          git push origin "$BRANCH" --force
+          gh pr create \
+            --repo "${{ github.repository }}" \
+            --base "${{ github.ref_name }}" \
+            --title "build: bump stable-diffusion.cpp to ${BUILD}" \
+            --body "Own-CI build published: https://github.com/${ENGINE_BUILDS_REPO}/releases/tag/${RELEASE}
+
+          Native installs and the Docker images fetch these same archives." \
+            || echo "PR create failed or already exists for branch $BRANCH"
