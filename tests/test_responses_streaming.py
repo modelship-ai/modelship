@@ -243,6 +243,72 @@ class TestTerminalStatus:
         assert events[-1]["response"]["incomplete_details"] == {"reason": "content_filter"}
 
 
+class TestItemStatus:
+    @pytest.mark.parametrize(
+        ("chunks", "expected"),
+        [
+            pytest.param(
+                [_chunk(DeltaMessage(reasoning="th"), finish_reason="length")],
+                [("reasoning", "incomplete")],
+                id="cut-in-reasoning",
+            ),
+            pytest.param(
+                [_chunk(DeltaMessage(reasoning="th")), _chunk(DeltaMessage(content="an"), finish_reason="length")],
+                [("reasoning", "completed"), ("message", "incomplete")],
+                id="cut-in-message",
+            ),
+            pytest.param(
+                [
+                    _chunk(DeltaMessage(reasoning="th")),
+                    _chunk(
+                        DeltaMessage(
+                            tool_calls=[DeltaToolCall(index=0, id="call_1", function=DeltaFunctionCall(name="f"))]
+                        )
+                    ),
+                    _chunk(
+                        DeltaMessage(
+                            tool_calls=[DeltaToolCall(index=0, function=DeltaFunctionCall(arguments='{"a":'))]
+                        ),
+                        finish_reason="length",
+                    ),
+                ],
+                [("reasoning", "completed"), ("function_call", "incomplete")],
+                id="cut-in-tool-call",
+            ),
+            pytest.param(
+                [
+                    _chunk(DeltaMessage(content="before ")),
+                    _chunk(
+                        DeltaMessage(
+                            tool_calls=[DeltaToolCall(index=0, id="call_1", function=DeltaFunctionCall(name="f"))]
+                        )
+                    ),
+                    _chunk(DeltaMessage(content="after"), finish_reason="length"),
+                ],
+                [("message", "incomplete"), ("function_call", "completed")],
+                id="cut-in-text-after-tool-call",
+            ),
+            pytest.param(
+                [_chunk(DeltaMessage(reasoning="th")), _chunk(DeltaMessage(content="an"), finish_reason="stop")],
+                [("reasoning", "completed"), ("message", "completed")],
+                id="not-cut",
+            ),
+        ],
+    )
+    def test_only_the_item_cut_off_by_the_token_limit_is_incomplete(self, chunks, expected):
+        events = _events(ResponsesStreamTranslator(_req()), chunks)
+        done = [(e["item"]["type"], e["item"]["status"]) for e in events if e["type"] == "response.output_item.done"]
+        final = [(o["type"], o["status"]) for o in events[-1]["response"]["output"]]
+        assert done == final == expected
+
+    def test_reasoning_item_opens_in_progress(self):
+        events = _events(
+            ResponsesStreamTranslator(_req()), [_chunk(DeltaMessage(reasoning="th"), finish_reason="stop")]
+        )
+        added = next(e for e in events if e["type"] == "response.output_item.added")
+        assert added["item"]["status"] == "in_progress"
+
+
 class TestFailedStream:
     def test_fail_before_any_output_emits_bare_failed_event(self):
         translator = ResponsesStreamTranslator(_req())

@@ -1,5 +1,7 @@
 """Tests for modelship.openai.utils.responses's parsed-output shaping."""
 
+import pytest
+
 from modelship.openai.protocol import FunctionCall, ResponsesRequest, ToolCall, UsageInfo
 from modelship.openai.utils.chat import ParsedChatOutput
 from modelship.openai.utils.responses import build_response_from_parsed, build_responses_items_from_parsed
@@ -50,3 +52,30 @@ def test_build_response_from_parsed_leaves_completed_at_none_when_incomplete():
 
     assert resp.status == "incomplete"
     assert resp.completed_at is None
+
+
+_CALL = ToolCall(id="call_1", type="function", function=FunctionCall(name="f", arguments='{"a":'))
+
+
+@pytest.mark.parametrize(
+    ("parsed", "finish_reason", "expected"),
+    [
+        (
+            ParsedChatOutput(content="hi", reasoning="th", tool_calls=[_CALL]),
+            "length",
+            ["completed", "completed", "incomplete"],
+        ),
+        (ParsedChatOutput(content=None, reasoning="th", tool_calls=[]), "length", ["incomplete"]),
+        (
+            ParsedChatOutput(content="hi", reasoning="th", tool_calls=[_CALL]),
+            "stop",
+            ["completed", "completed", "completed"],
+        ),
+    ],
+)
+def test_only_the_last_item_of_a_cut_off_response_is_incomplete(parsed, finish_reason, expected):
+    request = ResponsesRequest(model="m", input="hi")
+
+    resp = build_response_from_parsed(parsed, request, usage=_usage(), finish_reason=finish_reason, model="m")
+
+    assert [item.status for item in resp.output] == expected

@@ -378,6 +378,7 @@ class TestCancel:
         cancel_result = await api.cancel_response(response_id, _raw_request())
         body = json.loads(bytes(cancel_result.body))
         assert body["status"] == "cancelled"
+        assert body["completed_at"] is None
         _fake_disconnect_registry.is_set.remote.return_value = True
 
         # Let the "generation" end abnormally (no terminal event) — the drain task's
