@@ -336,6 +336,37 @@ class TestStreamReconcilesTrappedContent:
         assert chunks[-1].choices[0].delta.content is None
 
 
+class TestFinishReason:
+    @pytest.mark.parametrize(
+        ("has_tool_calls", "tool_choice", "engine_reason", "expected"),
+        [
+            (True, "auto", "stop", "tool_calls"),
+            (True, "auto", "length", "length"),
+            (True, {"type": "function", "function": {"name": "f"}}, "stop", "stop"),
+            (True, {"type": "function", "function": {"name": "f"}}, "length", "length"),
+            (False, "auto", "length", "length"),
+            (False, "auto", None, "stop"),
+        ],
+    )
+    def test_finish_reason_for_choice(self, has_tool_calls, tool_choice, engine_reason, expected):
+        tools = [{"type": "function", "function": {"name": "f", "parameters": {"type": "object"}}}]
+        vllm_req = _vllm_req(tools=tools, tool_choice=tool_choice)
+
+        assert engine_ops._finish_reason_for_choice(vllm_req, has_tool_calls, engine_reason) == expected
+
+    @pytest.mark.asyncio
+    async def test_a_streamed_tool_call_cut_off_by_the_token_limit_reports_length(self, monkeypatch):
+        class ToolParser(_TrapParser):
+            delta_tool_calls: ClassVar[list[VllmDeltaToolCall]] = [
+                VllmDeltaToolCall(index=0, id="c1", type="function", function=VllmDeltaFunctionCall(name="f"))
+            ]
+
+        results = [_res('{"a":', [10], None), _res("", [], "length")]
+        chunks = await _drive_stream(monkeypatch, ToolParser, results=results)
+
+        assert chunks[-1].choices[0].finish_reason == "length"
+
+
 def _word_tokenizer() -> PreTrainedTokenizerFast:
     vocab = ["<unk>", "a", "b", "c", "ok", "<think>", "</think>", "<tool_call>", "</tool_call>"]
     tokenizer = Tokenizer(WordLevel({token: i for i, token in enumerate(vocab)}, unk_token="<unk>"))

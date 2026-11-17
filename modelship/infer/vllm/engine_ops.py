@@ -293,18 +293,11 @@ def _finish_reason_for_choice(
     has_tool_calls: bool,
     engine_finish_reason: str | None,
 ) -> str:
-    """OpenAI `finish_reason` for one choice, mirroring `OpenAIServingChat`'s precedence.
-
-    A parsed tool call reports finish_reason="tool_calls" for auto/required
-    tool_choice, but the engine's own reason (usually "stop") for a named-function
-    tool_choice — the client already knows which function was called, so the turn
-    just "stopped" rather than the model "deciding" to call a tool.
-    """
-    if not has_tool_calls:
-        return engine_finish_reason or "stop"
-    if isinstance(vllm_req.tool_choice, VllmChatCompletionNamedToolChoiceParam):
-        return engine_finish_reason or "stop"
-    return "tool_calls"
+    finish_reason = engine_finish_reason or "stop"
+    named = isinstance(vllm_req.tool_choice, VllmChatCompletionNamedToolChoiceParam)
+    if has_tool_calls and finish_reason == "stop" and not named:
+        return "tool_calls"
+    return finish_reason
 
 
 def build_choices(
