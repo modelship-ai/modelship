@@ -702,7 +702,7 @@ async def cancel_background(store: StateStore, identity: str, response_id: str) 
         with contextlib.suppress(Exception):
             await registry.set.remote(req_id)
 
-    cancelled = {**response, "status": "cancelled", "completed_at": int(time.time())}
+    cancelled = {**response, "status": "cancelled", "completed_at": None}
     try:
         await responses_state.write_terminal_if_not_terminal(store, identity, response_id, response=cancelled)
     except StateStoreUnavailableError:

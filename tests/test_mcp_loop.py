@@ -844,6 +844,7 @@ class TestDiscoveryFailure:
         failed = [e for e in result if e["type"] == "response.failed"]
         assert len(failed) == 1
         assert "unreachable" in failed[0]["response"]["error"]["message"]
+        assert failed[0]["response"]["completed_at"] is None
         assert handle._calls == 0
 
     @pytest.mark.asyncio

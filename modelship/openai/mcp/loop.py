@@ -477,7 +477,6 @@ async def _events(
             incomplete=None,
             response_id=response_id,
             created_at=created_at,
-            completed_at=int(time.time()),
             error={"code": code, "message": message},
             background=bool(request.background),
         )
