@@ -24,7 +24,9 @@ def _in_progress(inner_id: str):
     return {"type": "response.in_progress", "sequence_number": 1, "response": {"id": inner_id, "output": []}}
 
 
-def _tool_call_events(*, call_id: str, fc_id: str, name: str, arguments: str, oi: int, start_seq: int):
+def _tool_call_events(
+    *, call_id: str, fc_id: str, name: str, arguments: str, oi: int, start_seq: int, status: str = "completed"
+):
     seq = start_seq
     events = []
     events.append(
@@ -69,7 +71,7 @@ def _tool_call_events(*, call_id: str, fc_id: str, name: str, arguments: str, oi
         "call_id": call_id,
         "name": name,
         "arguments": arguments,
-        "status": "completed",
+        "status": status,
     }
     events.append(
         {"type": "response.output_item.done", "sequence_number": seq, "output_index": oi, "item": completed_item}
@@ -77,7 +79,7 @@ def _tool_call_events(*, call_id: str, fc_id: str, name: str, arguments: str, oi
     return events, completed_item, seq + 1
 
 
-def _message_events(*, oi: int, text: str, start_seq: int):
+def _message_events(*, oi: int, text: str, start_seq: int, status: str = "completed"):
     seq = start_seq
     events = [
         {
@@ -103,14 +105,14 @@ def _message_events(*, oi: int, text: str, start_seq: int):
         "id": "msg_1",
         "type": "message",
         "role": "assistant",
-        "status": "completed",
+        "status": status,
         "content": [{"type": "output_text", "text": text, "annotations": []}],
     }
     events.append({"type": "response.output_item.done", "sequence_number": seq, "output_index": oi, "item": msg_item})
     return events, msg_item, seq + 1
 
 
-def _terminal(inner_id: str, output: list, *, seq: int, usage=None, status="completed"):
+def _terminal(inner_id: str, output: list, *, seq: int, usage=None, status="completed", incomplete_details=None):
     etype = "response.completed" if status == "completed" else "response.incomplete"
     return {
         "type": etype,
@@ -119,6 +121,7 @@ def _terminal(inner_id: str, output: list, *, seq: int, usage=None, status="comp
             "id": inner_id,
             "output": output,
             "usage": usage or {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            "incomplete_details": incomplete_details,
         },
     }
 
@@ -639,6 +642,103 @@ class TestCaps:
         assert terminals[0]["type"] == "response.incomplete"
         assert terminals[0]["response"]["incomplete_details"]["reason"] == "max_tool_calls"
         assert handle._calls == 1
+
+
+def _cut_off_terminal(inner_id: str, output: list, *, seq: int, reason: str = "max_output_tokens"):
+    return _terminal(inner_id, output, seq=seq, status="incomplete", incomplete_details={"reason": reason})
+
+
+class TestIncompleteTurn:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reason", ["max_output_tokens", "content_filter"])
+    async def test_an_incomplete_turn_ends_the_response_incomplete_with_its_reason(self, reason):
+        msg_events, msg_item, seq = _message_events(oi=0, text="Rolling", start_seq=2, status="incomplete")
+        turn1 = [
+            _created("i1"),
+            _in_progress("i1"),
+            *msg_events,
+            _cut_off_terminal("i1", [msg_item], seq=seq, reason=reason),
+        ]
+        handle = FakeHandle([turn1])
+
+        result = await _run(handle, _req())
+
+        terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
+        assert terminals[0]["type"] == "response.incomplete"
+        assert terminals[0]["response"]["incomplete_details"] == {"reason": reason}
+        assert terminals[0]["response"]["output"][-1]["status"] == "incomplete"
+
+    @pytest.mark.asyncio
+    async def test_a_cut_off_mcp_call_is_not_run_and_ends_the_loop(self):
+        tc_events, tc_item, seq = _tool_call_events(
+            call_id="call_1", fc_id="fc_1", name="roll", arguments='{"n":', oi=0, start_seq=2, status="incomplete"
+        )
+        turn1 = [_created("i1"), _in_progress("i1"), *tc_events, _cut_off_terminal("i1", [tc_item], seq=seq)]
+        handle = FakeHandle([turn1])
+
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool") as mock_call:
+            result = await _run(handle, _req())
+
+        mock_call.assert_not_called()
+        assert handle._calls == 1
+        terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
+        assert terminals[0]["type"] == "response.incomplete"
+        output = terminals[0]["response"]["output"]
+        assert [o["type"] for o in output] == ["mcp_list_tools", "mcp_call"]
+        assert (output[1]["status"], output[1]["arguments"]) == ("incomplete", '{"n":')
+        done = [e for e in result if e["type"] == "response.output_item.done" and e["item"]["type"] == "mcp_call"]
+        assert [e["item"]["status"] for e in done] == ["incomplete"]
+
+    @pytest.mark.asyncio
+    async def test_finished_calls_in_a_cut_off_turn_still_run(self):
+        tc_events, tc_item, seq = _tool_call_events(
+            call_id="call_1", fc_id="fc_1", name="roll", arguments="{}", oi=0, start_seq=2
+        )
+        msg_events, msg_item, seq = _message_events(oi=1, text="Rolling", start_seq=seq, status="incomplete")
+        turn1 = [
+            _created("i1"),
+            _in_progress("i1"),
+            *tc_events,
+            *msg_events,
+            _cut_off_terminal("i1", [tc_item, msg_item], seq=seq),
+        ]
+        handle = FakeHandle([turn1])
+
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
+            result = await _run(handle, _req())
+
+        assert handle._calls == 1
+        terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
+        assert terminals[0]["type"] == "response.incomplete"
+        output = terminals[0]["response"]["output"]
+        assert [o["type"] for o in output] == ["mcp_list_tools", "mcp_call", "message"]
+        assert (output[1]["status"], output[1]["output"]) == ("completed", "9")
+        assert output[2]["status"] == "incomplete"
+
+    @pytest.mark.asyncio
+    async def test_a_cut_off_call_needing_approval_gets_no_approval_request(self):
+        tc_events, tc_item, seq = _tool_call_events(
+            call_id="call_1", fc_id="fc_1", name="roll", arguments='{"n":', oi=0, start_seq=2, status="incomplete"
+        )
+        turn1 = [_created("i1"), _in_progress("i1"), *tc_events, _cut_off_terminal("i1", [tc_item], seq=seq)]
+        handle = FakeHandle([turn1])
+
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool") as mock_call:
+            result = await _run(
+                handle, _req(tools=[{"type": "mcp", "server_label": "dice", "server_url": "http://fake/mcp"}])
+            )
+
+        mock_call.assert_not_called()
+        terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
+        assert terminals[0]["type"] == "response.incomplete"
+        output = terminals[0]["response"]["output"]
+        assert [o["type"] for o in output] == ["mcp_list_tools", "mcp_call"]
+        assert output[1]["status"] == "incomplete"
+        call_events = [e for e in result if e.get("item", {}).get("type") == "mcp_call"]
+        assert [(e["type"], e["item"]["status"], e["output_index"]) for e in call_events] == [
+            ("response.output_item.added", "in_progress", 1),
+            ("response.output_item.done", "incomplete", 1),
+        ]
 
 
 class TestNonStreaming:

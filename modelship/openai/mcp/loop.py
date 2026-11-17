@@ -114,6 +114,7 @@ class _BufferedCall:
     arguments: str = ""
     spec: McpToolSpec | None = None
     tool: McpListToolsTool | None = None
+    cut_off: bool = False
 
 
 class Stitcher:
@@ -132,6 +133,7 @@ class Stitcher:
         self.turn_output: list[tuple[int, dict[str, Any]]] = []
         self.inner_error: ErrorResponse | None = None
         self.inner_failed_response: dict[str, Any] | None = None
+        self.inner_incomplete: dict[str, Any] | None = None
 
     def next_seq(self) -> int:
         n = self._seq
@@ -226,6 +228,7 @@ class Stitcher:
         self.turn_output = []
         self.inner_error = None
         self.inner_failed_response = None
+        self.inner_incomplete = None
 
         async for event in inner_gen:
             if isinstance(event, ErrorResponse):
@@ -244,6 +247,8 @@ class Stitcher:
 
             if etype in ("response.completed", "response.incomplete"):
                 response = event.get("response") or {}
+                if etype == "response.incomplete":
+                    self.inner_incomplete = response.get("incomplete_details") or {}
                 self.usage_total = _sum_usage(self.usage_total, _usage_from_dict(response.get("usage")))
                 output = response.get("output") or []
                 base = self._offset
@@ -315,6 +320,7 @@ class Stitcher:
                     for out_event in self._flush(buf):
                         yield out_event
                 buf.arguments = item.get("arguments", buf.arguments)
+                buf.cut_off = item.get("status") == "incomplete"
                 if buf.classification == "client":
                     yield self._stamp(event)
                 else:
@@ -673,7 +679,23 @@ async def _events(
 
             any_approval_this_turn = False
             for buf in stitcher.pending_mcp_calls:
-                if buf.classification == "mcp_approval":
+                if buf.cut_off:
+                    assert buf.spec is not None and buf.abs_oi is not None
+                    item = McpCallItem(
+                        id=buf.outer_id or f"mcp_{random_uuid()}",
+                        name=buf.name,
+                        arguments=buf.arguments,
+                        server_label=buf.spec.server_label,
+                        status="incomplete",
+                    )
+                    if buf.classification == "mcp_approval":
+                        added = item.model_copy(update={"status": "in_progress"})
+                        yield stitcher.stamped(
+                            "response.output_item.added", buf.abs_oi, item=added.model_dump(mode="json")
+                        )
+                    yield stitcher.stamped("response.output_item.done", buf.abs_oi, item=item.model_dump(mode="json"))
+                    accumulator[buf.abs_oi] = item.model_dump(mode="json")
+                elif buf.classification == "mcp_approval":
                     assert buf.spec is not None and buf.abs_oi is not None
                     item = McpApprovalRequestItem(
                         name=buf.name, arguments=buf.arguments, server_label=buf.spec.server_label
@@ -698,6 +720,9 @@ async def _events(
                     accumulator[buf.abs_oi] = item.model_dump(mode="json")
                     executed_call_count += 1
 
+            if stitcher.inner_incomplete is not None:
+                final_status, incomplete_reason = "incomplete", stitcher.inner_incomplete.get("reason")
+                break
             if any_approval_this_turn or stitcher.had_client_function_call:
                 final_status = "completed"
                 break
