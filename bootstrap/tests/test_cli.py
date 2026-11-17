@@ -13,6 +13,7 @@ def provisioned(tmp_path, monkeypatch):
     monkeypatch.setenv("MSHIP_HOME", str(tmp_path))
     monkeypatch.delenv("MSHIP_VARIANT", raising=False)
     monkeypatch.delenv("MSHIP_LLAMA_SERVER_BIN", raising=False)
+    monkeypatch.delenv("MSHIP_SD_SERVER_BIN", raising=False)
     with (
         patch.object(cli.gates, "check_platform"),
         patch.object(cli.gates, "check_hardware"),
@@ -22,6 +23,8 @@ def provisioned(tmp_path, monkeypatch):
         patch.object(cli.engine, "is_current", return_value=True),
         patch.object(cli.llama_cpp, "provision", return_value="/builds/llama-server.sh"),
         patch.object(cli.llama_cpp, "locate", return_value="/builds/llama-server.sh"),
+        patch.object(cli.sd_cpp, "provision", return_value="/builds/sd-server.sh"),
+        patch.object(cli.sd_cpp, "locate", return_value="/builds/sd-server.sh"),
         patch("os.execve") as execve,
     ):
         yield execve
@@ -82,6 +85,7 @@ class TestStop:
         python, args, env = provisioned.call_args[0]
         assert args == [engine_python, "-m", "modelship.launcher", "stop", "--timeout", "30"]
         assert "MSHIP_LLAMA_SERVER_BIN" not in env
+        assert "MSHIP_SD_SERVER_BIN" not in env
 
     def test_skips_the_hardware_and_version_checks(self, provisioned, engine_python):
         cli.engine.is_current.return_value = False
@@ -101,6 +105,11 @@ class TestEngineEnvironment:
         cli.main(["deploy", "--cpu"])
         env = provisioned.call_args[0][2]
         assert env["MSHIP_LLAMA_SERVER_BIN"] == "/builds/llama-server.sh"
+
+    def test_sd_server_bin_is_set_before_exec(self, provisioned):
+        cli.main(["deploy", "--cpu"])
+        env = provisioned.call_args[0][2]
+        assert env["MSHIP_SD_SERVER_BIN"] == "/builds/sd-server.sh"
 
     def test_thin_advertises_no_capacity(self, provisioned):
         cli.main(["deploy", "--thin"])
@@ -207,15 +216,19 @@ class TestThinSkipsLlamaServer:
     def test_thin_does_not_provision_a_binary_it_cannot_use(self, provisioned):
         cli.main(["bootstrap", "--thin"])
         cli.llama_cpp.provision.assert_not_called()
+        cli.sd_cpp.provision.assert_not_called()
 
     def test_serving_variants_still_provision(self, provisioned):
         cli.main(["bootstrap", "--cpu"])
         cli.llama_cpp.provision.assert_called_once()
+        cli.sd_cpp.provision.assert_called_once()
 
     def test_thin_deploys_without_looking_for_one(self, provisioned):
         cli.main(["deploy", "--thin"])
         cli.llama_cpp.locate.assert_not_called()
+        cli.sd_cpp.locate.assert_not_called()
         assert "MSHIP_LLAMA_SERVER_BIN" not in provisioned.call_args[0][2]
+        assert "MSHIP_SD_SERVER_BIN" not in provisioned.call_args[0][2]
 
 
 class TestBootstrap:
@@ -247,6 +260,12 @@ class TestBootstrap:
 
     def test_a_failed_llama_server_download_fails_the_bootstrap(self, provisioned):
         cli.llama_cpp.provision.side_effect = cli.llama_cpp.LlamaCppError("error: llama.cpp provisioning failed: 404")
+        with pytest.raises(SystemExit, match="404"):
+            cli.main(["bootstrap", "--cpu"])
+        assert not os.path.exists(paths.env_file())
+
+    def test_a_failed_sd_server_download_fails_the_bootstrap(self, provisioned):
+        cli.sd_cpp.provision.side_effect = cli.sd_cpp.SdCppError("error: stable-diffusion.cpp provisioning failed: 404")
         with pytest.raises(SystemExit, match="404"):
             cli.main(["bootstrap", "--cpu"])
         assert not os.path.exists(paths.env_file())

@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import sys
 
-from . import __version__, engine, gates, llama_cpp, paths, uv_binary, variants
+from . import __version__, engine, gates, llama_cpp, paths, sd_cpp, uv_binary, variants
 from .variants import VariantError, split_variant_flag
 from .variants import resolve as resolve_variant
 
@@ -54,7 +54,14 @@ def main(argv: list[str] | None = None) -> None:
                 gates.check_hardware(variant.requires_accelerator)
             if not engine.is_current(variant, __version__):
                 sys.exit(engine.describe_staleness(variant, __version__))
-    except (VariantError, gates.GateError, uv_binary.UvError, engine.EngineError, llama_cpp.LlamaCppError) as e:
+    except (
+        VariantError,
+        gates.GateError,
+        uv_binary.UvError,
+        engine.EngineError,
+        llama_cpp.LlamaCppError,
+        sd_cpp.SdCppError,
+    ) as e:
         sys.exit(str(e))
 
     python = paths.venv_python(variant.name)
@@ -73,6 +80,7 @@ def _bootstrap(variant, rest: list[str]) -> None:
     engine.provision(variant, uv, __version__)
     if variant.serves_models:
         llama_cpp.provision(variant)
+        sd_cpp.provision(variant)
     variants.write_recorded(paths.env_file(), variant.name)
 
     print(f"\nmship {__version__} bootstrapped for --{variant.name} in {paths.env_dir(variant.name)}")
@@ -89,6 +97,8 @@ def _engine_env(variant) -> dict[str, str]:
 
     if variant.serves_models and (wrapper := llama_cpp.locate(variant)):
         env["MSHIP_LLAMA_SERVER_BIN"] = wrapper
+    if variant.serves_models and (wrapper := sd_cpp.locate(variant)):
+        env["MSHIP_SD_SERVER_BIN"] = wrapper
 
     if variant.name == "thin":
         # Same contract as the thin image.
