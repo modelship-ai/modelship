@@ -18,19 +18,19 @@ from .fetch import fetch_and_extract_archive
 from .variants import Variant
 
 # Own-CI builds for every platform; see .github/workflows/llama-cpp-build.yml.
-_LLAMA_CPP_TAG = "b11769"
-_LLAMA_CPP_RELEASE = "llamacpp-b11769-r3"
+_LLAMA_CPP_TAG = "b12465"
+_LLAMA_CPP_RELEASE = "llamacpp-b12465"
 _LLAMA_CPP_BUILDS_REPO = "modelship-ai/llama-cpp-builds"
 _LLAMA_CPP_RELEASE_URL = f"https://github.com/{_LLAMA_CPP_BUILDS_REPO}/releases/download/{_LLAMA_CPP_RELEASE}"
 
 # Line-anchored: llama-cpp-build.yml's pin job rewrites these by sed.
-_SHA256_LINUX_X64 = "ee6b95778b7346338c9fac1425670b2149c203bbfc3093bf9454254882b00b0b"
-_SHA256_LINUX_ARM64 = "a9e9310845d50f4646c59148b5e5007c86bf045666f2aa67f8dcb0f87a5dba5a"
-_SHA256_MACOS_ARM64_METAL = "ebea3ff4e81b6120573afc01a26a413bf115899c1fc66f98a08895171ec9b0f2"
-_SHA256_CUDA_X64 = "7e6cd1a3d91f49b0d85a60c46e7d51deb2d9dd72ee8a4ac5772d5dae4bc3870e"
-_SHA256_CUDA_ARM64 = "e1d58a74753f7b4f3a87b8b26e36f2c52275e58b0a1a27635f9a1b0795c51bf1"
-_SHA256_VULKAN_X64 = "e950e0b60c87ac7f1020bd525c0a5634b0e8cd250cb87c6455424088672bd7c0"
-_SHA256_VULKAN_ARM64 = "6f98c11402c186594a8c64a556c78b1df2afa1220caf14865650596c10330957"
+_SHA256_LINUX_X64 = "488af17a0d55c40e54b82692531f0d9cd142bfe082bb8b1a86799e09671a775f"
+_SHA256_LINUX_ARM64 = "4d2f9f0c8fde2d5407ed52e6e5f1f1eb046af1a1fa6bd9757c8679a6ad59bb6c"
+_SHA256_MACOS_ARM64_METAL = "e2cbd4693501f039ff9db360276cfcb95c61dae1ad71e8f6430d6168b66a7c41"
+_SHA256_CUDA_X64 = "69c9513c5477ec462822348f0f7fc2aa8b94271eb53b6b011d5be3bb7532341f"
+_SHA256_CUDA_ARM64 = "f1dc1d2c9e0a358bdd7c9aca4b99959892f60308fa097ee6748ce233f2dfaa83"
+_SHA256_VULKAN_X64 = "4ded51e8b2e56619c2e1035c71e38a0c9c385fba2accae284e6b2a1b5192dd01"
+_SHA256_VULKAN_ARM64 = "2d7ff8d529149b85b011627d0df1c3f38c5d1ed7ce318a97642270397d503e2e"
 
 # Static because the engine environment is pinned to one CPython minor.
 _TORCH_CUDA_LIBS = os.path.join("lib", "python3.12", "site-packages", "nvidia", "cu13", "lib")
