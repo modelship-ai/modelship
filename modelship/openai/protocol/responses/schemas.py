@@ -96,6 +96,7 @@ class ResponseReasoningItem(OpenAIBaseModel):
     summary: list[ResponseReasoningSummary] = Field(default_factory=list)
     content: list[ResponseReasoningText] = Field(default_factory=list)
     encrypted_content: str | None = None
+    status: Literal["in_progress", "completed", "incomplete"] = "completed"
 
     @model_serializer(mode="wrap")
     def _omit_unset_encrypted_content(self, handler: Any) -> dict[str, Any]:

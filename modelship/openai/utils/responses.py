@@ -62,7 +62,7 @@ RESPONSE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 # --- Shaping: parsed chat output -> Responses items (loader-side) ---
 
 
-def build_responses_items_from_parsed(parsed: ParsedChatOutput) -> list[ResponseOutputItem]:
+def build_responses_items_from_parsed(parsed: ParsedChatOutput, *, cut_off: bool = False) -> list[ResponseOutputItem]:
     """Shape one parsed choice into Responses ``output[]`` items: reasoning, then
     message, then one ``function_call`` per tool call."""
     output: list[ResponseOutputItem] = []
@@ -78,6 +78,8 @@ def build_responses_items_from_parsed(parsed: ParsedChatOutput) -> list[Response
                 arguments=call.function.arguments,
             )
         )
+    if cut_off and output:
+        output[-1] = output[-1].model_copy(update={"status": "incomplete"})
     return output
 
 
@@ -95,7 +97,7 @@ def build_response_from_parsed(
     return build_response_object(
         request,
         status=status,
-        output=build_responses_items_from_parsed(parsed),
+        output=build_responses_items_from_parsed(parsed, cut_off=finish_reason == "length"),
         usage=_usage_from_chat(usage),
         incomplete=incomplete,
         model=model,

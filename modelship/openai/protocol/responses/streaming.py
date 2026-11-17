@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
-from typing import Any
+from typing import Any, Literal
 
 from modelship.openai.protocol.base import random_uuid
 from modelship.openai.protocol.chat import ChatCompletionStreamResponse, DeltaToolCall
@@ -168,6 +168,8 @@ class ResponsesStreamTranslator:
         self.model = request.model or ""
         self._seq = 0
         self._next_oi = 0
+        self._last_oi = -1
+        self._cut_oi = -1
 
         self.usage = None
         self.finish_reason: str | None = None
@@ -198,6 +200,9 @@ class ResponsesStreamTranslator:
         oi = self._next_oi
         self._next_oi += 1
         return oi
+
+    def _closed_status(self, oi: int) -> Literal["completed", "incomplete"]:
+        return "incomplete" if oi == self._cut_oi else "completed"
 
     def _envelope(
         self,
@@ -265,6 +270,8 @@ class ResponsesStreamTranslator:
                 self.finish_reason = choice.finish_reason
 
     def finish(self) -> Iterator[dict[str, Any]]:
+        if self.finish_reason == "length":
+            self._cut_oi = self._last_oi
         yield from self._close_all()
         output = self._collect_output()
 
@@ -286,7 +293,7 @@ class ResponsesStreamTranslator:
 
     def _on_reasoning(self, text: str) -> Iterator[dict[str, Any]]:
         if self._reasoning is None:
-            self._reasoning = ResponseReasoningItem(summary=[])
+            self._reasoning = ResponseReasoningItem(summary=[], status="in_progress")
             self._reasoning_oi = self._take_oi()
             yield self._event(
                 "response.output_item.added",
@@ -302,6 +309,7 @@ class ResponsesStreamTranslator:
                 },
             )
         self._reasoning_text += text
+        self._last_oi = self._reasoning_oi
         yield self._event(
             "response.reasoning_summary_text.delta",
             {
@@ -330,6 +338,7 @@ class ResponsesStreamTranslator:
             },
         )
         item.summary = [ResponseReasoningSummary(text=self._reasoning_text)]
+        item.status = self._closed_status(self._reasoning_oi)
         yield self._event(
             "response.output_item.done",
             {"output_index": self._reasoning_oi, "item": item.model_dump(mode="json")},
@@ -355,6 +364,7 @@ class ResponsesStreamTranslator:
                 },
             )
         self._message_text += text
+        self._last_oi = self._message_oi
         yield self._event(
             "response.output_text.delta",
             {
@@ -383,7 +393,7 @@ class ResponsesStreamTranslator:
             },
         )
         item.content = [ResponseOutputText(text=self._message_text)]
-        item.status = "completed"
+        item.status = self._closed_status(self._message_oi)
         yield self._event(
             "response.output_item.done",
             {"output_index": self._message_oi, "item": item.model_dump(mode="json")},
@@ -409,6 +419,7 @@ class ResponsesStreamTranslator:
             # Some loaders send the function name in a later chunk than the id.
             if tc.function and tc.function.name and not item.name:
                 item.name = tc.function.name
+        self._last_oi = self._tool_oi[idx]
 
         if tc.function and tc.function.arguments:
             self._tool_args[idx] += tc.function.arguments
@@ -423,7 +434,7 @@ class ResponsesStreamTranslator:
             args = self._tool_args[idx]
             oi = self._tool_oi[idx]
             item.arguments = args
-            item.status = "completed"
+            item.status = self._closed_status(oi)
             yield self._event(
                 "response.function_call_arguments.done",
                 {"item_id": item.id, "output_index": oi, "arguments": args},
