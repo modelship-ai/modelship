@@ -18,6 +18,9 @@ concurrency:
 
 env:
   ENGINE_BUILDS_REPO: modelship-ai/engine-builds
+  # Shell steps read the inputs from here, never by interpolation; preflight validates them.
+  TAG: ${{ inputs.tag }}
+  REBUILD: ${{ inputs.rebuild }}
   RELEASE: sdcpp-${{ inputs.tag }}${{ inputs.rebuild && format('-r{0}', inputs.rebuild) || '' }}
   CMAKE_ARGS: "-DSD_BUILD_SHARED_LIBS=ON -DSD_BUILD_SHARED_GGML_LIB=ON -DSD_SERVER_BUILD_FRONTEND=OFF"
   CUDA_VERSION_DASH: 13-0
@@ -27,6 +30,13 @@ jobs:
   preflight:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate inputs
+        run: |
+          [[ "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+            || { echo "::error::tag must match ^[A-Za-z0-9][A-Za-z0-9._-]*$"; exit 1; }
+          [[ -z "$REBUILD" || "$REBUILD" =~ ^[1-9][0-9]*$ ]] \
+            || { echo "::error::rebuild must be a positive integer"; exit 1; }
+
       - name: Check publish token and release slot
         env:
           GH_TOKEN: ${{ secrets.ENGINE_BUILDS_TOKEN }}
@@ -41,15 +51,15 @@ jobs:
             exit 1
           fi
           if gh release view "${RELEASE}" --repo "${ENGINE_BUILDS_REPO}" >/dev/null 2>&1; then
-            echo "::error::release ${RELEASE} already exists — pass a new rebuild number to build ${{ inputs.tag }} again"
+            echo "::error::release ${RELEASE} already exists — pass a new rebuild number to build ${TAG} again"
             exit 1
           fi
 
       - name: Check tag exists upstream
         run: |
           curl -fsSL -o /dev/null \
-            "https://api.github.com/repos/leejet/stable-diffusion.cpp/git/ref/tags/${{ inputs.tag }}" \
-            || { echo "::error::leejet/stable-diffusion.cpp has no tag ${{ inputs.tag }}"; exit 1; }
+            "https://api.github.com/repos/leejet/stable-diffusion.cpp/git/ref/tags/${TAG}" \
+            || { echo "::error::leejet/stable-diffusion.cpp has no tag ${TAG}"; exit 1; }
 
   # sd.cpp compiles its backend into libstable-diffusion.so, so each backend is a full build.
   build:
@@ -194,7 +204,7 @@ jobs:
       - name: Package
         id: package
         run: |
-          NAME="sd-server-${{ inputs.tag }}-${{ matrix.name }}"
+          NAME="sd-server-${TAG}-${{ matrix.name }}"
           mkdir "$NAME"
           cp -a build/bin/. "$NAME"/
           rm -f "$NAME/sd-cli"
@@ -229,8 +239,9 @@ jobs:
               exit 1
             fi
           else
-            otool -l "$DIR/sd-server" | grep -q '@loader_path' \
-              || { echo "::error::sd-server has no @loader_path rpath"; exit 1; }
+            # Upstream sets @executable_path on executables, @loader_path on libraries.
+            otool -l "$DIR/sd-server" | grep -qE 'path @(executable|loader)_path( |$)' \
+              || { echo "::error::sd-server has no @executable_path rpath"; exit 1; }
           fi
 
       # From an empty cwd: ggml also looks for backends there. CUDA needs a driver the runner lacks.
@@ -276,7 +287,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ENGINE_BUILDS_TOKEN }}
         run: |
-          TAG=${{ inputs.tag }}
           cd dist
           {
             echo "Own-CI build of leejet/stable-diffusion.cpp \`${TAG}\`'s \`sd-server\` for every variant modelship ships, from modelship's \`.github/workflows/sd-cpp-build.yml\`."
@@ -332,7 +342,6 @@ jobs:
       - name: Rewrite pins
         run: |
           set -e
-          TAG=${{ inputs.tag }}
           PIN=bootstrap/mship_bootstrap/sd_cpp.py
           sed -i \
             -e "s|^_SD_CPP_TAG = .*|_SD_CPP_TAG = \"${TAG}\"|" \
