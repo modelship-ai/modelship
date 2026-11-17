@@ -210,6 +210,7 @@ class TestSingleTurnNoToolCalls:
         output_types = [o["type"] for o in terminals[0]["response"]["output"]]
         assert output_types == ["mcp_list_tools", "message"]
         assert terminals[0]["response"]["status"] == "completed"
+        assert isinstance(terminals[0]["response"]["completed_at"], int)
 
 
 class TestMcpCallExecutesAndContinues:
@@ -641,6 +642,7 @@ class TestCaps:
         terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
         assert terminals[0]["type"] == "response.incomplete"
         assert terminals[0]["response"]["incomplete_details"]["reason"] == "max_tool_calls"
+        assert terminals[0]["response"]["completed_at"] is None
         assert handle._calls == 1
 
 
@@ -666,6 +668,7 @@ class TestIncompleteTurn:
         terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
         assert terminals[0]["type"] == "response.incomplete"
         assert terminals[0]["response"]["incomplete_details"] == {"reason": reason}
+        assert terminals[0]["response"]["completed_at"] is None
         assert terminals[0]["response"]["output"][-1]["status"] == "incomplete"
 
     @pytest.mark.asyncio
@@ -775,6 +778,7 @@ class TestOutputBudget:
         terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
         assert terminals[0]["type"] == "response.incomplete"
         assert terminals[0]["response"]["incomplete_details"] == {"reason": "max_output_tokens"}
+        assert terminals[0]["response"]["completed_at"] is None
         output = terminals[0]["response"]["output"]
         assert [o["type"] for o in output] == ["mcp_list_tools", "mcp_call"]
         assert (output[1]["status"], output[1]["output"]) == ("completed", "9")

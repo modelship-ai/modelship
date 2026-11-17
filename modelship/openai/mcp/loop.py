@@ -755,7 +755,7 @@ async def _events(
         incomplete=incomplete,
         response_id=response_id,
         created_at=created_at,
-        completed_at=int(time.time()),
+        completed_at=int(time.time()) if final_status == "completed" else None,
         background=bool(request.background),
     )
     terminal_type = "response.completed" if final_status == "completed" else "response.incomplete"
