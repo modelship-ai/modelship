@@ -637,6 +637,12 @@ async def _events(
             # A forced tool_choice is a one-shot nudge, not a standing constraint —
             # reapplying it every turn would force tool calls forever.
             tool_choice = request.tool_choice if turn_index == 0 else "auto"
+            output_budget = request.max_output_tokens
+            if output_budget is not None and stitcher.usage_total is not None:
+                output_budget -= stitcher.usage_total.output_tokens
+                if output_budget <= 0:
+                    final_status, incomplete_reason = "incomplete", "max_output_tokens"
+                    break
             inner_request = request.model_copy(
                 update={
                     "input": [*original_input_items, *accumulator],
@@ -646,6 +652,7 @@ async def _events(
                     "previous_response_id": None,
                     "background": False,
                     "max_tool_calls": None,
+                    "max_output_tokens": output_budget,
                 }
             )
             inner_gen = cast(

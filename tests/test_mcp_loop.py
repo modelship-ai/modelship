@@ -741,6 +741,45 @@ class TestIncompleteTurn:
         ]
 
 
+class TestOutputBudget:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("limit", "expected"), [(100, [100, 70]), (None, [None, None])])
+    async def test_each_turn_gets_what_is_left_of_max_output_tokens(self, limit, expected):
+        tc_events, tc_item, seq = _tool_call_events(
+            call_id="call_1", fc_id="fc_1", name="roll", arguments="{}", oi=0, start_seq=2
+        )
+        usage = {"input_tokens": 1, "output_tokens": 30, "total_tokens": 31}
+        turn1 = [_created("i1"), _in_progress("i1"), *tc_events, _terminal("i1", [tc_item], seq=seq, usage=usage)]
+        msg_events, msg_item, seq2 = _message_events(oi=0, text="You rolled a 9.", start_seq=2)
+        turn2 = [_created("i2"), _in_progress("i2"), *msg_events, _terminal("i2", [msg_item], seq=seq2)]
+        handle = FakeHandle([turn1, turn2])
+
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
+            await _run(handle, _req(max_output_tokens=limit))
+
+        assert [args[0].max_output_tokens for args, _kwargs in handle.remote_calls] == expected
+
+    @pytest.mark.asyncio
+    async def test_a_used_up_limit_ends_the_response_incomplete_before_the_next_turn(self):
+        tc_events, tc_item, seq = _tool_call_events(
+            call_id="call_1", fc_id="fc_1", name="roll", arguments="{}", oi=0, start_seq=2
+        )
+        usage = {"input_tokens": 1, "output_tokens": 100, "total_tokens": 101}
+        turn1 = [_created("i1"), _in_progress("i1"), *tc_events, _terminal("i1", [tc_item], seq=seq, usage=usage)]
+        handle = FakeHandle([turn1])
+
+        with patch("modelship.openai.mcp.loop.McpConnections.call_tool", return_value="9"):
+            result = await _run(handle, _req(max_output_tokens=100))
+
+        assert handle._calls == 1
+        terminals = [e for e in result if e["type"] in ("response.completed", "response.incomplete")]
+        assert terminals[0]["type"] == "response.incomplete"
+        assert terminals[0]["response"]["incomplete_details"] == {"reason": "max_output_tokens"}
+        output = terminals[0]["response"]["output"]
+        assert [o["type"] for o in output] == ["mcp_list_tools", "mcp_call"]
+        assert (output[1]["status"], output[1]["output"]) == ("completed", "9")
+
+
 class TestNonStreaming:
     @pytest.mark.asyncio
     async def test_non_streaming_yields_single_response_object(self):
