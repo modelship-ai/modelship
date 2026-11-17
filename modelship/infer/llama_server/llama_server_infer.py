@@ -259,6 +259,8 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             args += ["--reasoning-budget-message", self.config.reasoning_budget_message]
         if self.config.reasoning_preserve is not None:
             args += ["--reasoning-preserve" if self.config.reasoning_preserve else "--no-reasoning-preserve"]
+        if self.config.media_allow_private_urls:
+            args += ["--media-allow-private-urls"]
 
         logger.info("llama-server launch args for '%s': %s", self.model_config.name, args)
         self._proc = await loop.run_in_executor(

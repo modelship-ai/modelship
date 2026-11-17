@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -19,6 +20,8 @@ if str(_BOOTSTRAP_DIR) not in sys.path:
 
 from mship_bootstrap.fetch import FetchError, fetch_and_extract_archive  # noqa: E402
 from mship_bootstrap.llama_cpp import _SERVER_BUILDS  # noqa: E402
+
+from modelship.utils.config_schema import LlamaServerConfig  # noqa: E402
 
 # Every flag llama_server_infer.py's _launch sends to `llama serve`.
 _SERVE_FLAGS = [
@@ -51,6 +54,7 @@ _SERVE_FLAGS = [
     "--reasoning-budget-message",
     "--reasoning-preserve",
     "--no-reasoning-preserve",
+    "--media-allow-private-urls",
 ]
 
 # Every flag modelship/preflight/llama_cpp.py sends to `llama fit-params`.
@@ -109,3 +113,14 @@ def test_fit_params_flags_still_recognized(llama_binary):
     help_text = _help_text(llama_binary, "fit-params")
     missing = [f for f in _FIT_PARAMS_FLAGS if not _flag_present(help_text, f)]
     assert not missing, f"llama fit-params no longer documents: {missing}"
+
+
+def test_cache_types_still_recognized(llama_binary):
+    help_text = _help_text(llama_binary, "serve")
+    types = {
+        t
+        for name in ("cache_type_k", "cache_type_v")
+        for t in get_args(LlamaServerConfig.model_fields[name].annotation)
+    }
+    missing = sorted(t for t in types if not _flag_present(help_text, t))
+    assert not missing, f"llama serve no longer lists KV cache types: {missing}"

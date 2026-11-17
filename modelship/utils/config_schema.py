@@ -155,8 +155,8 @@ class LlamaServerConfig(_StrictModel):
     cache_ram_mib: int = Field(default=0, ge=-1)
     ubatch_size: int = Field(default=512, ge=1)
     flash_attn: Literal["on", "off", "auto"] = "auto"
-    cache_type_k: Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"
-    cache_type_v: Literal["f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"
+    cache_type_k: Literal["f32", "f16", "bf16", "f8_e4m3", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"
+    cache_type_v: Literal["f32", "f16", "bf16", "f8_e4m3", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"] = "f16"
     # Proportional split across GPUs for offloading (`-ts`); None splits evenly.
     tensor_split: list[float] | None = Field(default=None, min_length=1)
     # `pattern=buffer` entries for `-ot`, e.g. `exps=CPU`.
@@ -165,6 +165,8 @@ class LlamaServerConfig(_StrictModel):
     reasoning_budget: int | None = Field(default=None, ge=0)
     reasoning_budget_message: str | None = Field(default=None, min_length=1)
     reasoning_preserve: bool | None = None
+    # llama-server fetches http(s) media URLs itself; unset, it refuses local and private addresses.
+    media_allow_private_urls: bool = False
 
     @field_validator("flash_attn", "reasoning", mode="before")
     @classmethod

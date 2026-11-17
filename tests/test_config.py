@@ -43,6 +43,7 @@ class TestLlamaServerConfig:
         assert config.reasoning_budget is None
         assert config.reasoning_budget_message is None
         assert config.reasoning_preserve is None
+        assert config.media_allow_private_urls is False
 
     def test_custom_values(self):
         config = LlamaServerConfig(
@@ -57,13 +58,14 @@ class TestLlamaServerConfig:
             cache_ram_mib=4096,
             ubatch_size=256,
             flash_attn="off",
-            cache_type_k="q8_0",
+            cache_type_k="f8_e4m3",
             cache_type_v="q8_0",
             tensor_split=[3.0, 1.0],
             reasoning="off",
             reasoning_budget=512,
             reasoning_budget_message="Time is up.",
             reasoning_preserve=False,
+            media_allow_private_urls=True,
         )
         assert config.n_ctx == 4096
         assert config.n_batch == 1024
@@ -76,13 +78,14 @@ class TestLlamaServerConfig:
         assert config.cache_ram_mib == 4096
         assert config.ubatch_size == 256
         assert config.flash_attn == "off"
-        assert config.cache_type_k == "q8_0"
+        assert config.cache_type_k == "f8_e4m3"
         assert config.cache_type_v == "q8_0"
         assert config.tensor_split == [3.0, 1.0]
         assert config.reasoning == "off"
         assert config.reasoning_budget == 512
         assert config.reasoning_budget_message == "Time is up."
         assert config.reasoning_preserve is False
+        assert config.media_allow_private_urls is True
 
     @pytest.mark.parametrize("kwargs", [{"reasoning_budget": -1}, {"reasoning_budget_message": ""}])
     def test_invalid_reasoning_budget_rejected(self, kwargs):

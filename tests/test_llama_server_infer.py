@@ -355,6 +355,20 @@ class TestSubprocessLifecycle:
             infer.shutdown()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(("allow", "expected"), [(False, []), (True, ["--media-allow-private-urls"])])
+    async def test_media_allow_private_urls_flag(self, tmp_path, monkeypatch, allow, expected):
+        binary = _write_fake_executable(tmp_path, _FAKE_HEALTHY_SERVER)
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
+
+        infer = LlamaServerInfer(_make_config(media_allow_private_urls=allow))
+        await infer.start()
+        try:
+            args = list(infer._proc.args)
+            assert [a for a in args if a == "--media-allow-private-urls"] == expected
+        finally:
+            infer.shutdown()
+
+    @pytest.mark.asyncio
     async def test_a_crash_during_startup_raises(self, tmp_path, monkeypatch):
         binary = _write_fake_executable(tmp_path, _FAKE_CRASHING_SERVER)
         monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", binary)
