@@ -23,7 +23,6 @@ from vllm.entrypoints.pooling.embed.protocol import (
 )
 from vllm.entrypoints.pooling.embed.serving import ServingEmbedding as VllmServingEmbedding
 from vllm.entrypoints.serve.engine.protocol import ErrorResponse as VllmErrorResponse
-from vllm.entrypoints.serve.utils.request_logger import RequestLogger as VllmRequestLogger
 from vllm.entrypoints.speech_to_text.transcription.protocol import (
     TranscriptionRequest as VllmTranscriptionRequest,
 )
@@ -594,7 +593,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         self.openai_serving_render = VllmOnlineRenderer(
             model_config=self.engine.model_config,
             renderer=self.engine.renderer,
-            request_logger=VllmRequestLogger(max_log_len=None),
+            request_logger=None,
             chat_template=None,
             chat_template_content_format=self.vllm_engine_kwargs.chat_template_content_format,
             enable_auto_tools=self._enable_auto_tools,
@@ -665,7 +664,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     engine_client=self.engine,
                     base_model_paths=[VllmBaseModelPath(name=self.model_config.name, model_path=self._model_path)],
                 ),
-                request_logger=VllmRequestLogger(max_log_len=None),
+                request_logger=None,
                 chat_template_config=VllmChatTemplateConfig(chat_template=None, chat_template_content_format="auto"),
             )
             if self.model_config.usecase is ModelUsecase.embed
@@ -681,7 +680,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     engine_client=self.engine,
                     base_model_paths=[VllmBaseModelPath(name=self.model_config.name, model_path=self._model_path)],
                 ),
-                request_logger=VllmRequestLogger(max_log_len=None),
+                request_logger=None,
             )
             if (self.model_config.usecase in [ModelUsecase.transcription, ModelUsecase.translation])
             and "transcription" in self.supported_tasks
@@ -696,7 +695,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     engine_client=self.engine,
                     base_model_paths=[VllmBaseModelPath(name=self.model_config.name, model_path=self._model_path)],
                 ),
-                request_logger=VllmRequestLogger(max_log_len=None),
+                request_logger=None,
             )
             if (self.model_config.usecase in [ModelUsecase.transcription, ModelUsecase.translation])
             and "transcription" in self.supported_tasks

@@ -556,7 +556,6 @@ class TestVllmParserAcceptsOurRequest:
         self, model: str, *, tokenizer_mode: str = "auto", **tool_reasoning_kwargs: Any
     ) -> tuple[VllmOnlineRenderer, VllmTokenizerLike]:
         from vllm.engine.arg_utils import AsyncEngineArgs as VllmAsyncEngineArgs
-        from vllm.entrypoints.serve.utils.request_logger import RequestLogger as VllmRequestLogger
         from vllm.renderers import renderer_from_config as vllm_renderer_from_config
         from vllm.usage.usage_lib import UsageContext as VllmUsageContext
 
@@ -572,7 +571,7 @@ class TestVllmParserAcceptsOurRequest:
         render = VllmOnlineRenderer(
             model_config=vllm_config.model_config,
             renderer=renderer,
-            request_logger=VllmRequestLogger(max_log_len=None),
+            request_logger=None,
             chat_template=None,
             chat_template_content_format="auto",
             enable_auto_tools=True,
