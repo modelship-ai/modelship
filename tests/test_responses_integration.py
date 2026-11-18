@@ -236,6 +236,29 @@ class TestResponsesEndpoint:
         assert resp.incomplete_details.reason == "max_output_tokens"
         assert resp.output_text.strip()
 
+    @pytest.mark.parametrize("stream", [False, True], ids=["plain", "stream"])
+    def test_a_cut_off_tool_call_is_incomplete(self, client, stream):
+        kwargs = dict(
+            model="chat-capable",
+            input="What is the weather in Paris?",
+            tools=[_WEATHER_TOOL_RESPONSES],
+            tool_choice="required",
+            max_output_tokens=14,
+            temperature=0,
+        )
+        if stream:
+            resp = None
+            for event in client.responses.create(stream=True, **kwargs):
+                if event.type in ("response.completed", "response.incomplete", "response.failed"):
+                    resp = event.response
+        else:
+            resp = client.responses.create(**kwargs)
+
+        assert resp is not None
+        assert resp.status == "incomplete"
+        assert resp.incomplete_details is not None and resp.incomplete_details.reason == "max_output_tokens"
+        assert resp.output and resp.output[-1].status == "incomplete"
+
     def test_truncation_auto_fits_oversized_input(self, client):
         resp = client.responses.create(
             model="chat-capable",
