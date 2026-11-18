@@ -139,7 +139,7 @@ class LlamaServerPreflight:
 
         if config.num_gpus > 0:
             launch = _launch_flags(server_config.model_copy(update=rec), config.num_gpus)
-            _check_ram_outside_the_gpu(config, hw, [*base_args, *launch], model_path)
+            _check_ram_outside_the_gpu(config, hw, [*base_args, *launch], model_path, server_config.mmproj)
         return {**threads_rec, **rec}
 
 
@@ -230,7 +230,9 @@ def _launch_flags(server_config: LlamaServerConfig, num_gpus: float) -> list[str
     return flags
 
 
-def _check_ram_outside_the_gpu(config: ModelshipModelConfig, hw: HardwareProfile, args: list[str], model_path: str):
+def _check_ram_outside_the_gpu(
+    config: ModelshipModelConfig, hw: HardwareProfile, args: list[str], model_path: str, mmproj: str | None
+):
     """fit-params fits a GPU deploy to its GPUs only; what it leaves in RAM is checked here. A GPU that uses
     system RAM takes its part from the same free memory, which a container's limit doesn't cover."""
     budget_mib = _cpu_ram_budget_mib(hw)
@@ -260,14 +262,25 @@ def _check_ram_outside_the_gpu(config: ModelshipModelConfig, hw: HardwareProfile
             "available to it. Give it more of the GPU (num_gpus), use a smaller quant or free RAM on the node, "
             "or pass --no-preflight to load it without this check."
         )
-    if any(gpu.shared_memory for gpu in hw.gpus) and (free := shared_gpu_free_bytes()) is not None:
+    shared = {gpu.index for gpu in hw.gpus if gpu.shared_memory}
+    if shared and (free := shared_gpu_free_bytes()) is not None:
         shared_mib = free // 1024**2
-        if ram_mib + gpu_mib > shared_mib:
+        on_shared_mib = sum(sum(row) for device, row in estimate.items() if _device_index(device) in shared)
+        # llama-server offloads the projector to the first GPU; fit-params doesn't load it.
+        if mmproj and 0 in shared and os.path.isfile(mmproj):
+            on_shared_mib += _weights_mib(mmproj)
+        if ram_mib + on_shared_mib > shared_mib:
             raise ModelNotSizedError(
-                f"needs {ram_mib + gpu_mib} MiB of system RAM, which its GPU shares, and {shared_mib} MiB is "
+                f"needs {ram_mib + on_shared_mib} MiB of system RAM, which its GPU shares, and {shared_mib} MiB is "
                 "available. Use a smaller quant or lower n_ctx, free RAM on the node, "
                 "or pass --no-preflight to load it without this check."
             )
+
+
+def _device_index(device: str) -> int | None:
+    """`Vulkan1` → 1; `GPUInfo.index` numbers devices as llama.cpp's `--device` names do."""
+    match = re.search(r"(\d+)$", device)
+    return int(match.group(1)) if match else None
 
 
 def _invoke(args: list[str]) -> subprocess.CompletedProcess[str]:

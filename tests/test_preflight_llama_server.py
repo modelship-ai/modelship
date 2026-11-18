@@ -718,3 +718,25 @@ class TestLlamaServerPreflightGpuRam:
         results = [_fit_result("-c 4096 -ngl 30\n"), _fit_result("Vulkan0 15000 1000 500\nHost 5000 300 24\n")]
         rec, _ = self._recommend(cfg, results, self._igpu(shared_memory=False))
         assert rec["n_gpu_layers"] == 30
+
+    def test_only_the_gpus_that_use_system_ram_count_against_it(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("modelship.preflight.llama_cpp.shared_gpu_free_bytes", lambda: 5 * 1024**3)
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=2)
+        gpus = [
+            GPUInfo(0, 16 * 1024**3, "discrete", total_bytes=16 * 1024**3),
+            GPUInfo(1, 4 * 1024**3, "igpu", total_bytes=8 * 1024**3, shared_memory=True),
+        ]
+        hw = HardwareProfile(gpus=gpus, ram_bytes=_CPU_HW.ram_bytes, available_ram_bytes=_CPU_HW.available_ram_bytes)
+        results = [_fit_result("-c 4096 -ngl 30\n"), _fit_result("CUDA0 15000 0 0\nCUDA1 3000 0 0\nHost 1000 0 0\n")]
+        rec, _ = self._recommend(cfg, results, hw)
+        assert rec["n_gpu_layers"] == 30
+
+    def test_the_projector_counts_on_a_gpu_that_uses_system_ram(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("modelship.preflight.llama_cpp.shared_gpu_free_bytes", lambda: 20 * 1024**3)
+        mmproj = _write_sized_gguf(tmp_path, "mmproj.gguf", 3000)
+        cfg = _make_config(
+            resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1, llama_server_kwargs={"mmproj": str(mmproj)}
+        )
+        results = [_fit_result("-c 4096 -ngl 30\n"), _fit_result("Vulkan0 15000 0 0\nHost 3000 0 0\n")]
+        with pytest.raises(ModelNotSizedError, match="needs 21000 MiB of system RAM"):
+            self._recommend(cfg, results, self._igpu(shared_memory=True))
