@@ -97,12 +97,13 @@ directory, Ray version, and the `llama-server` binary in use.
 ## What is in the image
 
 ```
-/opt/mship/envs/<variant>/.venv   the engine environment (CPython 3.12.10)
-/opt/mship/builds/<variant>/      llama-server and sd-server binaries
-/opt/mship/env                    the variant the image was built for
-/modelship/config/examples/       reference models.yaml files
-/opt/mship/node-cache/            compiled kernels (MSHIP_NODE_CACHE_DIR)
-/.cache                           model weights (MSHIP_CACHE_DIR)
+/opt/mship/envs/<variant>/.venv                              the engine environment (CPython 3.12.10)
+/opt/mship/builds/<variant>/llama.cpp/<release>/             llama-server
+/opt/mship/builds/<variant>/stable-diffusion.cpp/<release>/  sd-server
+/opt/mship/env                                               the variant the image was built for
+/modelship/config/examples/                                  reference models.yaml files
+/opt/mship/node-cache/                                       compiled kernels (MSHIP_NODE_CACHE_DIR)
+/.cache                                                      model weights (MSHIP_CACHE_DIR)
 ```
 
 Mount your config anywhere and pass it with `--config`, and mount a volume at
