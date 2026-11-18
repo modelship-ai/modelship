@@ -482,6 +482,8 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 | `reasoning_preserve` | bool | `None` (the chat template's own default) | `true` keeps the reasoning of past turns in the prompt (`--reasoning-preserve`), `false` drops it (`--no-reasoning-preserve`), on templates that support it |
 | `media_allow_private_urls` | bool | `false` | Let llama-server fetch `image_url`/`audio_url` media from localhost and private (LAN) addresses (`--media-allow-private-urls`). Off, such a URL is refused; `data:` URIs and public URLs work either way |
 
+On a GPU deploy, whatever doesn't fit on the GPU (layers, or a MoE model's experts) stays in RAM. `llama fit-params` sizes only the GPU, so preflight then asks it what the fitted launch keeps in RAM and refuses the deploy when that is more than the node has free, after the same reserve a CPU deploy keeps. Weights count even though llama.cpp maps them from the file: a model that pages its weights from disk is too slow to use. On a GPU that uses system RAM (a DGX Spark's GB10, an AMD iGPU), the GPU's part and the RAM part come out of the same free memory and are checked together.
+
 Each slot keeps the prompt it last processed (`--cache-prompt`, always on), so a follow-up turn, or another chat with the same system prompt, only processes the new tokens. llama-server can also save a conversation to host RAM when an unrelated one takes its slot and restore it when it returns; `cache_ram_mib` caps that cache and defaults to `0` (off), because it grows after load, outside the memory `n_ctx` was sized against. Saved conversations take about as much RAM per token as the context itself. There is no persistent **on-disk** prompt cache; caching is in-memory only and doesn't survive a process restart, unlike modelship's disk cache for other loaders.
 
 #### MLA models (DeepSeek, MiniCPM3)
@@ -537,7 +539,7 @@ Runs [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)'s `s
 
 `num_gpus` is `0` (CPU), a fraction below `1` (shares one GPU), or `1`. sd-server queues requests and generates one at a time. A client that disconnects cancels its request, queued or running; a running one stops at the end of its current sampling step.
 
-On a fractional `num_gpus`, preflight passes sd.cpp a GPU budget (`max_vram`): the share of the GPU's total, less what sd.cpp doesn't count (1 GiB on `cuda`, 0.25 GiB on `vulkan` and `metal`). When the model's files plus 0.5 GiB fit that budget, it sets `auto_fit: false` and the weights stay on the GPU, with sd.cpp splitting a large image's compute to stay inside the budget. When they don't, it leaves sd.cpp's auto-fit on, which puts what doesn't fit in RAM, and logs a warning; that RAM isn't checked. A whole GPU keeps sd.cpp's own fitting.
+On a fractional `num_gpus`, preflight passes sd.cpp a GPU budget (`max_vram`): the share of the GPU's total, less what sd.cpp doesn't count (1 GiB on `cuda`, 0.25 GiB on `vulkan` and `metal`). When the model's files plus 0.5 GiB fit that budget, it sets `auto_fit: false` and the weights stay on the GPU, with sd.cpp splitting a large image's compute to stay inside the budget. When they don't, it leaves sd.cpp's auto-fit on and logs a warning. Auto-fit puts what doesn't fit on the GPU in RAM, up to the free RAM less 2 GiB or 10%, and reads the rest from disk as it runs. It reads the node's free RAM, not a container's memory limit. A whole GPU keeps sd.cpp's own fitting.
 
 Configured via `stable_diffusion_cpp_config`:
 
