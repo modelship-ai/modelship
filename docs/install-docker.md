@@ -98,7 +98,7 @@ directory, Ray version, and the `llama-server` binary in use.
 
 ```
 /opt/mship/envs/<variant>/.venv   the engine environment (CPython 3.12.10)
-/opt/mship/builds/<variant>/      llama-server binaries
+/opt/mship/builds/<variant>/      llama-server and sd-server binaries
 /opt/mship/env                    the variant the image was built for
 /modelship/config/examples/       reference models.yaml files
 /opt/mship/node-cache/            compiled kernels (MSHIP_NODE_CACHE_DIR)
