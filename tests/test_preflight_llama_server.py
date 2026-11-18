@@ -452,6 +452,7 @@ class TestLlamaServerPreflightCpuBudget:
             LlamaServerPreflight().recommend(cfg, _CPU_HW)
         estimate_args = run.call_args_list[0][0][0]
         assert estimate_args[estimate_args.index("-fitp") + 1] == "on"
+        assert estimate_args[estimate_args.index("-fit") + 1] == "off"
         assert estimate_args[estimate_args.index("--device") + 1] == "none"
         assert estimate_args[estimate_args.index("-c") + 1] == "8192"
         assert "-fitt" not in estimate_args
@@ -482,13 +483,13 @@ class TestLlamaServerPreflightCpuBudget:
         assert run.call_count == 1
         assert args[args.index("-fitt") + 1] == "1024"
 
-    def test_gpu_deploy_ignores_the_ram_budget(self, tmp_path):
+    def test_a_gpu_deploy_fits_its_gpu_not_the_ram_budget(self, tmp_path):
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
-        with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")) as run:
+        results = [_fit_result("-c 4096 -ngl 10\n"), _fit_result("CUDA0 900 100 100\nHost 100 10 10\n")]
+        with patch("subprocess.run", side_effect=results) as run:
             LlamaServerPreflight().recommend(cfg, _CPU_HW)
-        args = run.call_args[0][0]
-        assert run.call_count == 1
-        assert args[args.index("-fitt") + 1] == "1024"
+        fit_args = run.call_args_list[0][0][0]
+        assert fit_args[fit_args.index("-fitt") + 1] == "1024"
 
     def test_a_fit_that_exits_non_zero_fails_the_load(self, tmp_path):
         cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)))
@@ -604,3 +605,138 @@ class TestRunPreflightDispatch:
         with patch("subprocess.run", return_value=_fit_result("-c 4096 -ngl 10\n")):
             rec = run_preflight(cfg, HardwareProfile())
         assert rec["n_ctx"] == 4096
+
+
+class TestLlamaServerPreflightGpuRam:
+    """fit-params fits a GPU deploy to its GPUs only; what it leaves in RAM is checked against free RAM."""
+
+    @pytest.fixture(autouse=True)
+    def _fake_host(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MSHIP_LLAMA_SERVER_BIN", _write_fake_binary(tmp_path))
+        monkeypatch.delenv("RAY_memory_usage_threshold", raising=False)
+        monkeypatch.delenv("RAY_memory_monitor_refresh_ms", raising=False)
+
+    @staticmethod
+    def _recommend(cfg, results, hw=_CPU_HW):
+        with patch("subprocess.run", side_effect=results) as run:
+            rec = LlamaServerPreflight().recommend(cfg, hw)
+        return rec, run
+
+    def test_the_estimate_is_for_the_fitted_launch(self, tmp_path):
+        cfg = _make_config(
+            resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1, llama_server_kwargs={"parallel": 2}
+        )
+        fit = _fit_result('-c 16384 -ngl 49 -ot "blk\\.47\\.ffn_.*=CPU"\n')
+        rec, run = self._recommend(cfg, [fit, _fit_result("CUDA0 7000 300 300\nHost 3000 400 24\n")])
+        assert rec["n_ctx"] == 8192
+        estimate_args = run.call_args_list[1][0][0]
+        assert estimate_args[estimate_args.index("-c") + 1] == "16384"
+        assert estimate_args[estimate_args.index("-ngl") + 1] == "49"
+        assert estimate_args[estimate_args.index("-ot") + 1] == "blk\\.47\\.ffn_.*=CPU"
+        assert estimate_args[estimate_args.index("--device") + 1] == "CUDA0"
+        assert estimate_args[estimate_args.index("-fit") + 1] == "off"
+        assert estimate_args[estimate_args.index("-fitp") + 1] == "on"
+        assert "-fitt" not in estimate_args
+        assert "-fitc" not in estimate_args
+
+    def test_a_full_offload_is_estimated_as_one(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        _, run = self._recommend(
+            cfg, [_fit_result("-c 4096 -ngl -1\n"), _fit_result("CUDA0 9000 300 300\nHost 166 0 24\n")]
+        )
+        estimate_args = run.call_args_list[1][0][0]
+        assert estimate_args[estimate_args.index("-ngl") + 1] == "-1"
+
+    def test_a_part_in_ram_that_fits_passes(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=0.5)
+        hw = HardwareProfile(
+            gpus=[GPUInfo(0, 16 * 1024**3, "test", total_bytes=16 * 1024**3)],
+            ram_bytes=_CPU_HW.ram_bytes,
+            available_ram_bytes=_CPU_HW.available_ram_bytes,
+        )
+        rec, _ = self._recommend(
+            cfg, [_fit_result("-c 4096 -ngl 20\n"), _fit_result("CUDA0 7000 300 300\nHost 9000 400 24\n")], hw
+        )
+        assert rec["n_gpu_layers"] == 20
+
+    def test_a_part_in_ram_that_doesnt_fit_fails_the_load(self, tmp_path):
+        # Qwen3-30B-A3B Q4_K_M with 20 layers on a Radeon 8060S, b12465.
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        results = [_fit_result("-c 8192 -ngl 20\n"), _fit_result("Vulkan0 7186 304 312\nHost 10576 464 24\n")]
+        with pytest.raises(ModelNotSizedError) as failure:
+            self._recommend(cfg, results)
+        assert str(failure.value) == (
+            f"needs 11064 MiB of RAM for the part that doesn't fit on its GPU, and {_CPU_BUDGET_MIB} MiB is "
+            "available to it. Give it more of the GPU (num_gpus), use a smaller quant or free RAM on the node, "
+            "or pass --no-preflight to load it without this check."
+        )
+
+    def test_weights_outside_the_estimate_count(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_sized_gguf(tmp_path, "model.gguf", 9000)), num_gpus=1)
+        results = [_fit_result("-c 4096 -ngl 20\n"), _fit_result("CUDA0 500 300 300\nHost 500 100 24\n")]
+        with pytest.raises(ModelNotSizedError, match="needs 8624 MiB of RAM"):
+            self._recommend(cfg, results, HardwareProfile(ram_bytes=16 * 1024**3, available_ram_bytes=8 * 1024**3))
+
+    def test_a_deploy_with_all_three_fields_set_is_still_checked(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=2, llama_server_kwargs=_ALL_PINNED)
+        with pytest.raises(ModelNotSizedError):
+            self._recommend(cfg, [_fit_result("CUDA0 1 1 1\nCUDA1 1 1 1\nHost 20000 0 0\n")])
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=2, llama_server_kwargs=_ALL_PINNED)
+        rec, run = self._recommend(cfg, [_fit_result("CUDA0 1 1 1\nCUDA1 1 1 1\nHost 100 0 0\n")])
+        assert rec == {}
+        estimate_args = run.call_args[0][0]
+        assert estimate_args[estimate_args.index("-ngl") + 1] == "20"
+        assert estimate_args[estimate_args.index("-ts") + 1] == "1.0,1.0"
+
+    @pytest.mark.parametrize("estimate", [_fit_result(returncode=1), _fit_result("not a memory table\n")])
+    def test_an_unreadable_estimate_keeps_the_fit(self, tmp_path, estimate, caplog):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        rec, _ = self._recommend(cfg, [_fit_result("-c 4096 -ngl 20\n"), estimate])
+        assert rec == {"n_ctx": 4096, "n_gpu_layers": 20}
+        assert "the part left in RAM is not checked" in caplog.text
+
+    def test_unreadable_ram_runs_no_estimate(self, tmp_path):
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        rec, run = self._recommend(cfg, [_fit_result("-c 4096 -ngl 20\n")], HardwareProfile())
+        assert run.call_count == 1
+        assert rec == {"n_ctx": 4096, "n_gpu_layers": 20}
+
+    def _igpu(self, *, shared_memory: bool) -> HardwareProfile:
+        gpu = GPUInfo(0, 30 * 1024**3, "igpu", total_bytes=56 * 1024**3, shared_memory=shared_memory)
+        return HardwareProfile(gpus=[gpu], ram_bytes=_CPU_HW.ram_bytes, available_ram_bytes=_CPU_HW.available_ram_bytes)
+
+    def test_a_gpu_that_uses_system_ram_counts_both_parts_against_it(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("modelship.preflight.llama_cpp.shared_gpu_free_bytes", lambda: 20 * 1024**3)
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        results = [_fit_result("-c 4096 -ngl 30\n"), _fit_result("Vulkan0 15000 1000 500\nHost 5000 300 24\n")]
+        with pytest.raises(ModelNotSizedError, match="needs 21824 MiB of system RAM, which its GPU shares, and 20480"):
+            self._recommend(cfg, results, self._igpu(shared_memory=True))
+
+    def test_a_gpu_with_its_own_memory_counts_only_the_part_in_ram(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("modelship.preflight.llama_cpp.shared_gpu_free_bytes", lambda: 20 * 1024**3)
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1)
+        results = [_fit_result("-c 4096 -ngl 30\n"), _fit_result("Vulkan0 15000 1000 500\nHost 5000 300 24\n")]
+        rec, _ = self._recommend(cfg, results, self._igpu(shared_memory=False))
+        assert rec["n_gpu_layers"] == 30
+
+    def test_only_the_gpus_that_use_system_ram_count_against_it(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("modelship.preflight.llama_cpp.shared_gpu_free_bytes", lambda: 5 * 1024**3)
+        cfg = _make_config(resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=2)
+        gpus = [
+            GPUInfo(0, 16 * 1024**3, "discrete", total_bytes=16 * 1024**3),
+            GPUInfo(1, 4 * 1024**3, "igpu", total_bytes=8 * 1024**3, shared_memory=True),
+        ]
+        hw = HardwareProfile(gpus=gpus, ram_bytes=_CPU_HW.ram_bytes, available_ram_bytes=_CPU_HW.available_ram_bytes)
+        results = [_fit_result("-c 4096 -ngl 30\n"), _fit_result("CUDA0 15000 0 0\nCUDA1 3000 0 0\nHost 1000 0 0\n")]
+        rec, _ = self._recommend(cfg, results, hw)
+        assert rec["n_gpu_layers"] == 30
+
+    def test_the_projector_counts_on_a_gpu_that_uses_system_ram(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("modelship.preflight.llama_cpp.shared_gpu_free_bytes", lambda: 20 * 1024**3)
+        mmproj = _write_sized_gguf(tmp_path, "mmproj.gguf", 3000)
+        cfg = _make_config(
+            resolved_path=str(_write_dummy_gguf(tmp_path)), num_gpus=1, llama_server_kwargs={"mmproj": str(mmproj)}
+        )
+        results = [_fit_result("-c 4096 -ngl 30\n"), _fit_result("Vulkan0 15000 0 0\nHost 3000 0 0\n")]
+        with pytest.raises(ModelNotSizedError, match="needs 21000 MiB of system RAM"):
+            self._recommend(cfg, results, self._igpu(shared_memory=True))

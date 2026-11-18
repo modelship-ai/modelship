@@ -487,6 +487,7 @@ class TestVulkanGpus:
         probe.assert_called_once_with(fresh=True)
         assert [(g.index, g.uuid) for g in gpus] == [(0, "u2"), (1, "u0")]
         assert gpus[0].total_bytes == gpus[0].available_bytes == gpus[0].engine_free_bytes == 16 * 1024**3
+        assert not gpus[0].shared_memory
 
     def test_unset_is_the_node_selection(self):
         from modelship.preflight import base as preflight_base
@@ -537,6 +538,7 @@ class TestVulkanGpus:
         ):
             gpus = preflight_base._vulkan_gpus(None)
         assert gpus[0].available_bytes == 39 * gib - (int(61 * gib * 0.10) + gib)
+        assert gpus[0].shared_memory
 
     def test_a_failed_probe_reads_no_gpu(self, caplog):
         from modelship.preflight import base as preflight_base
