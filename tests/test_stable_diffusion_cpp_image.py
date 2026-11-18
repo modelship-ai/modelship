@@ -35,16 +35,28 @@ def _png_b64(w: int = 8, h: int = 8, color=(10, 20, 30)) -> str:
 class _FakeSdServer:
     """sd-server's job API: a job is `generating` for `polls` polls, then ends with `outcome`."""
 
-    def __init__(self, *, polls: int = 2, outcome: str = "completed", submit_status: int = 202):
+    def __init__(
+        self,
+        *,
+        polls: int = 2,
+        outcome: str = "completed",
+        submit_status: int = 202,
+        submit_gate: asyncio.Event | None = None,
+    ):
         self.polls = polls
+        self.submit_gate = submit_gate
+        self.submit_started = asyncio.Event()
         self.outcome = outcome
         self.submit_status = submit_status
         self.submitted: list[dict] = []
         self.cancelled: list[str] = []
         self._seen: dict[str, int] = {}
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
+    async def handler(self, request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == "/sdcpp/v1/img_gen":
+            self.submit_started.set()
+            if self.submit_gate is not None:
+                await self.submit_gate.wait()
             if self.submit_status != 202:
                 return httpx.Response(self.submit_status, json={"error": "invalid generation parameters"})
             body = json.loads(request.content)
@@ -204,6 +216,19 @@ class TestCancel:
 
         assert isinstance(result, ErrorResponse)
         assert "disconnect" in result.error.message.lower()
+        assert server.cancelled == ["job_1"]
+
+    async def test_a_cancel_during_submission_cancels_the_accepted_job(self):
+        gate = asyncio.Event()
+        server = _FakeSdServer(polls=10_000, submit_gate=gate)
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
+        task = asyncio.ensure_future(_serving(server).create_image_generation(request, _proxy()))
+        await server.submit_started.wait()
+        task.cancel()
+        await asyncio.sleep(0.01)
+        gate.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
         assert server.cancelled == ["job_1"]
 
     async def test_a_cancelled_request_cancels_the_job(self):

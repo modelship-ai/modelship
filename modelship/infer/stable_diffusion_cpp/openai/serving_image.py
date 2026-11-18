@@ -196,8 +196,16 @@ class OpenAIServingImage:
 
     async def _run_job(self, body: dict[str, Any], request_id: str) -> list[str] | ErrorResponse:
         """Submits a job and polls it to the end; cancelled, it cancels the job too. Returns base64 PNGs."""
+        submit = asyncio.ensure_future(self._client.post("/sdcpp/v1/img_gen", json=body, timeout=_REQUEST_TIMEOUT_S))
         try:
-            resp = await self._client.post("/sdcpp/v1/img_gen", json=body, timeout=_REQUEST_TIMEOUT_S)
+            resp = await asyncio.shield(submit)
+        except asyncio.CancelledError:
+            # sd-server may accept the job before its id arrives.
+            with contextlib.suppress(Exception):
+                accepted = await asyncio.shield(submit)
+                if accepted.status_code == 202:
+                    await self._cancel(accepted.json()["id"], request_id)
+            raise
         except httpx.HTTPError as e:
             logger.warning("image request %s failed: %s", request_id, e)
             return create_error_response(f"sd-server request failed: {e}", status_code=502)
@@ -227,10 +235,13 @@ class OpenAIServingImage:
                     return create_error_response(f"image generation {status}: {message}", status_code=500)
                 await asyncio.sleep(_POLL_INTERVAL_S)
         except asyncio.CancelledError:
-            logger.info("image request %s cancelled; cancelling sd-server job %s", request_id, job_id)
-            with contextlib.suppress(httpx.HTTPError):
-                await asyncio.shield(self._client.post(f"/sdcpp/v1/jobs/{job_id}/cancel", timeout=_REQUEST_TIMEOUT_S))
+            await self._cancel(job_id, request_id)
             raise
+
+    async def _cancel(self, job_id: str, request_id: str) -> None:
+        logger.info("image request %s cancelled; cancelling sd-server job %s", request_id, job_id)
+        with contextlib.suppress(httpx.HTTPError):
+            await asyncio.shield(self._client.post(f"/sdcpp/v1/jobs/{job_id}/cancel", timeout=_REQUEST_TIMEOUT_S))
 
 
 def _png_b64(image: Image.Image) -> str:
