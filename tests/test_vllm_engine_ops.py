@@ -368,10 +368,30 @@ class TestFinishReason:
 
 
 def _word_tokenizer() -> PreTrainedTokenizerFast:
-    vocab = ["<unk>", "a", "b", "c", "ok", "<think>", "</think>", "<tool_call>", "</tool_call>"]
+    vocab = ["<unk>", "a", "b", "c", "ok", "<think>", "</think>", "<tool_call>", "</tool_call>", "<|im_start|>"]
     tokenizer = Tokenizer(WordLevel({token: i for i, token in enumerate(vocab)}, unk_token="<unk>"))
     tokenizer.pre_tokenizer = WhitespaceSplit()
     return PreTrainedTokenizerFast(tokenizer_object=tokenizer, unk_token="<unk>")
+
+
+def _final(tokenizer: PreTrainedTokenizerFast, *texts: str, prompt: str = "") -> SimpleNamespace:
+    outputs = [
+        SimpleNamespace(index=i, text=text, token_ids=tokenizer.encode(text), finish_reason="stop", logprobs=None)
+        for i, text in enumerate(texts)
+    ]
+    return SimpleNamespace(prompt_token_ids=tokenizer.encode(prompt), outputs=outputs)
+
+
+def _build_choices(final_res: SimpleNamespace, vllm_req: VllmChatCompletionRequest, parsers: list[Any]) -> Any:
+    return engine_ops.build_choices(
+        final_res,
+        vllm_req,
+        parsers,
+        _word_tokenizer(),
+        enable_auto_tools=True,
+        want_logprobs=False,
+        num_output_top_logprobs=None,
+    )
 
 
 class TestReasoningTokens:
@@ -384,35 +404,14 @@ class TestReasoningTokens:
         parser_cls = VllmParserManager.get_parser(
             tool_parser_name=tool_parser, reasoning_parser_name=reasoning_parser, enable_auto_tools=True
         )
-        outputs = [
-            SimpleNamespace(text=text, token_ids=tokenizer.encode(text), finish_reason="stop", logprobs=None)
-            for text in ("<think> a b c </think> ok", "<think> a </think> ok")
-        ]
+        final_res = _final(tokenizer, "<think> a b c </think> ok", "<think> a </think> ok")
 
-        *_, reasoning_tokens = engine_ops.build_choices(
-            SimpleNamespace(outputs=outputs),
-            _vllm_req(),
-            parser_cls(tokenizer),
-            tokenizer,
-            enable_auto_tools=True,
-            want_logprobs=False,
-            num_output_top_logprobs=None,
-        )
+        *_, reasoning_tokens = _build_choices(final_res, _vllm_req(), [parser_cls(tokenizer), parser_cls(tokenizer)])
 
         assert reasoning_tokens == expected
 
     def test_build_choices_without_a_parser_counts_nothing(self):
-        outputs = [SimpleNamespace(text="ok", token_ids=[4], finish_reason="stop", logprobs=None)]
-
-        *_, reasoning_tokens = engine_ops.build_choices(
-            SimpleNamespace(outputs=outputs),
-            _vllm_req(),
-            None,
-            Mock(),
-            enable_auto_tools=False,
-            want_logprobs=False,
-            num_output_top_logprobs=None,
-        )
+        *_, reasoning_tokens = _build_choices(_final(_word_tokenizer(), "ok"), _vllm_req(), [None])
 
         assert reasoning_tokens is None
 
@@ -436,6 +435,74 @@ class TestReasoningTokens:
         )
 
         assert chunks[-1].usage.completion_tokens_details.reasoning_tokens == 2
+
+
+class TestBuildChoices:
+    @pytest.mark.parametrize("tool_parser", ["qwen3_xml", "hermes"])
+    @pytest.mark.parametrize(
+        ("prompt", "expected"),
+        [("<|im_start|> a <think> b </think>", (None, "ok")), ("<|im_start|> a <think>", ("ok", None))],
+    )
+    def test_the_prompt_decides_whether_the_answer_starts_in_reasoning(self, tool_parser, prompt, expected):
+        tokenizer = _word_tokenizer()
+        parser_cls = VllmParserManager.get_parser(
+            tool_parser_name=tool_parser, reasoning_parser_name="qwen3", enable_auto_tools=True
+        )
+
+        choices, *_ = _build_choices(_final(tokenizer, "ok", prompt=prompt), _vllm_req(), [parser_cls(tokenizer)])
+
+        assert (choices[0].reasoning, choices[0].content) == expected
+
+    def test_each_answer_is_parsed_by_its_own_parser(self):
+        parsers = [Mock(spec=VllmParser, reasoning_parser_cls=None) for _ in range(2)]
+        for parser, text in zip(parsers, ("a", "b"), strict=True):
+            parser.parse.return_value = (None, text, None)
+
+        choices, *_ = _build_choices(_final(_word_tokenizer(), "a", "b"), _vllm_req(), parsers)
+
+        assert [choice.content for choice in choices] == ["a", "b"]
+        assert [parser.parse.call_args.args[0] for parser in parsers] == ["a", "b"]
+
+
+class TestParallelToolCalls:
+    _TOOLS: ClassVar[list[dict[str, Any]]] = [
+        {"type": "function", "function": {"name": name, "parameters": {"type": "object"}}} for name in ("a", "b")
+    ]
+
+    @pytest.mark.parametrize(("parallel", "expected"), [(False, ["a"]), (True, ["a", "b"])])
+    def test_build_choices_keeps_only_the_first_call_unless_parallel(self, parallel, expected):
+        tokenizer = _word_tokenizer()
+        vllm_req = _vllm_req(tools=self._TOOLS, parallel_tool_calls=parallel)
+        parser_cls = VllmParserManager.get_parser(
+            tool_parser_name="hermes", reasoning_parser_name=None, enable_auto_tools=True
+        )
+        text = "".join(f'<tool_call>\n{{"name": "{name}", "arguments": {{}}}}\n</tool_call>\n' for name in ("a", "b"))
+
+        choices, finish_reasons, *_ = _build_choices(
+            _final(tokenizer, text), vllm_req, [parser_cls(tokenizer, vllm_req.tools)]
+        )
+
+        assert [call.function.name for call in choices[0].tool_calls] == expected
+        assert finish_reasons == ["tool_calls"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("parallel", "expected"), [(False, {0}), (True, {0, 1})])
+    async def test_a_stream_sends_only_the_first_call_unless_parallel(self, monkeypatch, parallel, expected):
+        class TwoCallsParser(_TrapParser):
+            delta_tool_calls: ClassVar[list[VllmDeltaToolCall]] = [
+                VllmDeltaToolCall(index=i, id=f"c{i}", type="function", function=VllmDeltaFunctionCall(name=name))
+                for i, name in enumerate(("a", "b"))
+            ]
+
+        chunks = await _drive_stream(
+            monkeypatch, TwoCallsParser, vllm_req=_vllm_req(tools=self._TOOLS, parallel_tool_calls=parallel)
+        )
+
+        streamed = {
+            call.index for chunk in chunks for choice in chunk.choices for call in choice.delta.tool_calls or []
+        }
+        assert streamed == expected
+        assert chunks[-1].choices[0].finish_reason == "tool_calls"
 
 
 class TestSignaturesGuardVllmBump:
@@ -489,7 +556,6 @@ class TestVllmParserAcceptsOurRequest:
         self, model: str, *, tokenizer_mode: str = "auto", **tool_reasoning_kwargs: Any
     ) -> tuple[VllmOnlineRenderer, VllmTokenizerLike]:
         from vllm.engine.arg_utils import AsyncEngineArgs as VllmAsyncEngineArgs
-        from vllm.entrypoints.serve.utils.request_logger import RequestLogger as VllmRequestLogger
         from vllm.renderers import renderer_from_config as vllm_renderer_from_config
         from vllm.usage.usage_lib import UsageContext as VllmUsageContext
 
@@ -505,7 +571,7 @@ class TestVllmParserAcceptsOurRequest:
         render = VllmOnlineRenderer(
             model_config=vllm_config.model_config,
             renderer=renderer,
-            request_logger=VllmRequestLogger(max_log_len=None),
+            request_logger=None,
             chat_template=None,
             chat_template_content_format="auto",
             enable_auto_tools=True,

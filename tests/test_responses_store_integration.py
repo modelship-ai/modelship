@@ -64,9 +64,9 @@ def _redis_server():
             server.wait(timeout=10)
 
 
-def _api_answers() -> bool:
+def _api_answers(api: str) -> bool:
     try:
-        httpx.get(f"{_API}/models", timeout=2)
+        httpx.get(f"{api}/models", timeout=2)
     except httpx.HTTPError:
         return False
     return True
@@ -135,7 +135,7 @@ class _Head:
         if self._proc is not None:
             _terminate_process_group(self._proc)
             self._proc = None
-            assert _poll(lambda: not local_ray_clusters() and not _api_answers(), deadline_s=120), (
+            assert _poll(lambda: not local_ray_clusters() and not _api_answers(_API), deadline_s=120), (
                 f"the head did not stop.\n{self._log_tail()}"
             )
         if self._ray_tmp is not None:

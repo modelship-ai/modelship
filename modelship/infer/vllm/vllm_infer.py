@@ -23,7 +23,6 @@ from vllm.entrypoints.pooling.embed.protocol import (
 )
 from vllm.entrypoints.pooling.embed.serving import ServingEmbedding as VllmServingEmbedding
 from vllm.entrypoints.serve.engine.protocol import ErrorResponse as VllmErrorResponse
-from vllm.entrypoints.serve.utils.request_logger import RequestLogger as VllmRequestLogger
 from vllm.entrypoints.speech_to_text.transcription.protocol import (
     TranscriptionRequest as VllmTranscriptionRequest,
 )
@@ -594,7 +593,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         self.openai_serving_render = VllmOnlineRenderer(
             model_config=self.engine.model_config,
             renderer=self.engine.renderer,
-            request_logger=VllmRequestLogger(max_log_len=None),
+            request_logger=None,
             chat_template=None,
             chat_template_content_format=self.vllm_engine_kwargs.chat_template_content_format,
             enable_auto_tools=self._enable_auto_tools,
@@ -606,14 +605,8 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         assert tokenizer is not None, "vllm renderer has no tokenizer (skip_tokenizer_init=True is unsupported here)"
         self._tokenizer: VllmTokenizerLike = tokenizer
 
-    def _make_parsers(self, vllm_request: VllmChatCompletionRequest, n: int) -> list[VllmParser | None]:
-        """One stateful parser instance per choice — the streaming path (see `engine_ops.make_parsers`)."""
-        return engine_ops.make_parsers(self.openai_serving_render, self._tokenizer, vllm_request, n)
-
-    def _make_parser(self, vllm_request: VllmChatCompletionRequest) -> VllmParser | None:
-        """Single parser instance for the non-streaming path, which reuses it
-        (stateless `.parse()` call) across every choice — see `engine_ops.build_choices`."""
-        return self._make_parsers(vllm_request, n=1)[0]
+    def _make_parsers(self, vllm_request: VllmChatCompletionRequest) -> list[VllmParser | None]:
+        return engine_ops.make_parsers(self.openai_serving_render, self._tokenizer, vllm_request, vllm_request.n or 1)
 
     def _enable_thinking_budget(self, vllm_config: Any, reasoning_parser: str | None) -> int | None:
         cap = self.vllm_engine_kwargs.thinking_token_budget
@@ -671,7 +664,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     engine_client=self.engine,
                     base_model_paths=[VllmBaseModelPath(name=self.model_config.name, model_path=self._model_path)],
                 ),
-                request_logger=VllmRequestLogger(max_log_len=None),
+                request_logger=None,
                 chat_template_config=VllmChatTemplateConfig(chat_template=None, chat_template_content_format="auto"),
             )
             if self.model_config.usecase is ModelUsecase.embed
@@ -687,7 +680,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     engine_client=self.engine,
                     base_model_paths=[VllmBaseModelPath(name=self.model_config.name, model_path=self._model_path)],
                 ),
-                request_logger=VllmRequestLogger(max_log_len=None),
+                request_logger=None,
             )
             if (self.model_config.usecase in [ModelUsecase.transcription, ModelUsecase.translation])
             and "transcription" in self.supported_tasks
@@ -702,7 +695,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     engine_client=self.engine,
                     base_model_paths=[VllmBaseModelPath(name=self.model_config.name, model_path=self._model_path)],
                 ),
-                request_logger=VllmRequestLogger(max_log_len=None),
+                request_logger=None,
             )
             if (self.model_config.usecase in [ModelUsecase.transcription, ModelUsecase.translation])
             and "transcription" in self.supported_tasks
@@ -792,9 +785,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         vllm_request = prepared.vllm_request
         engine_input, sampling_params = prepared.engine_input, prepared.sampling_params
 
-        parser = self._make_parser(vllm_request)
+        parsers = self._make_parsers(vllm_request)
         prompt_token_ids = engine_ops.extract_prompt_token_ids(self.openai_serving_render, engine_input)
-        reasoning_ended = vllm_request.resolve_reasoning_ended(parser, prompt_token_ids)
+        reasoning_ended = vllm_request.resolve_reasoning_ended(parsers[0], prompt_token_ids)
 
         request_id = f"chatcmpl-{base_request_id(raw_request)}"
         _trace_request(request_id, self.openai_serving_render, vllm_request, sampling_params)
@@ -806,7 +799,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     sampling_params,
                     request_id,
                     reasoning_ended=reasoning_ended,
-                    parser=parser,
+                    parser=parsers[0],
                     chat_template_kwargs=self.openai_serving_render.effective_chat_template_kwargs(vllm_request),
                 ),
                 raw_request,
@@ -819,7 +812,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         choices, finish_reasons, logprobs_list, reasoning_tokens = engine_ops.build_choices(
             final_res,
             vllm_request,
-            parser,
+            parsers,
             self._tokenizer,
             enable_auto_tools=self._enable_auto_tools,
             want_logprobs=bool(request.logprobs),
@@ -918,9 +911,9 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         vllm_request = prepared.vllm_request
         engine_input, sampling_params = prepared.engine_input, prepared.sampling_params
 
-        parser = self._make_parser(vllm_request)
+        parsers = self._make_parsers(vllm_request)
         prompt_token_ids = engine_ops.extract_prompt_token_ids(self.openai_serving_render, engine_input)
-        reasoning_ended = vllm_request.resolve_reasoning_ended(parser, prompt_token_ids)
+        reasoning_ended = vllm_request.resolve_reasoning_ended(parsers[0], prompt_token_ids)
 
         request_id = f"resp-{base_request_id(raw_request)}"
         _trace_request(request_id, self.openai_serving_render, vllm_request, sampling_params)
@@ -932,7 +925,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
                     sampling_params,
                     request_id,
                     reasoning_ended=reasoning_ended,
-                    parser=parser,
+                    parser=parsers[0],
                     chat_template_kwargs=self.openai_serving_render.effective_chat_template_kwargs(vllm_request),
                 ),
                 raw_request,
@@ -945,7 +938,7 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         choices, finish_reasons, _logprobs_list, reasoning_tokens = engine_ops.build_choices(
             final_res,
             vllm_request,
-            parser,
+            parsers,
             self._tokenizer,
             enable_auto_tools=self._enable_auto_tools,
             want_logprobs=False,

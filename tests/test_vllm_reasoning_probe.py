@@ -47,6 +47,7 @@ _READERS = [
     "nemotron_v3",
     "qwen3",
     "step3p5",
+    "step5",
 ]
 
 

@@ -187,7 +187,7 @@ async def test_a_non_streaming_request_counts_its_tokens(create, request_):
         patch("modelship.infer.vllm.vllm_infer.build_response_from_parsed"),
         patch("modelship.infer.vllm.vllm_infer.build_from_parsed"),
         patch("modelship.infer.vllm.vllm_infer.record_engine_tokens") as record,
-        patch.object(VllmInfer, "_make_parser"),
+        patch.object(VllmInfer, "_make_parsers"),
     ):
         mock_ops.consume_final_output = AsyncMock(return_value=final)
         mock_ops.build_choices.return_value = ([MagicMock()], ["stop"], [None], None)

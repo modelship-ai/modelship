@@ -20,6 +20,9 @@ from vllm.entrypoints.openai.chat_completion.protocol import (
 )
 from vllm.entrypoints.serve.engine.protocol import ErrorResponse as VllmErrorResponse
 from vllm.entrypoints.serve.utils.api_utils import get_max_tokens as vllm_get_max_tokens
+from vllm.entrypoints.serve.utils.tool_calls_utils import (
+    maybe_filter_parallel_tool_calls as vllm_maybe_filter_parallel_tool_calls,
+)
 from vllm.inputs import EngineInput as VllmEngineInput
 from vllm.logprobs import Logprob as VllmLogprob
 from vllm.outputs import RequestOutput as VllmRequestOutput
@@ -303,32 +306,31 @@ def _finish_reason_for_choice(
 def build_choices(
     final_res: VllmRequestOutput,
     vllm_req: VllmChatCompletionRequest,
-    parser: VllmParser | None,
+    parsers: list[VllmParser | None],
     tokenizer: VllmTokenizerLike,
     *,
     enable_auto_tools: bool,
     want_logprobs: bool,
     num_output_top_logprobs: int | None,
 ) -> tuple[list[ParsedChatOutput], list[str | None], list[ChatCompletionLogProbs | None], int | None]:
-    """Parse every choice in a finished `VllmRequestOutput` into modelship's response DTOs.
-
-    Non-streaming reuses one shared `parser` instance across every choice —
-    `.parse()` is stateless per full-text call, unlike the streaming path's
-    per-choice `VllmParser._stream_state` (see `make_parsers`).
-    """
+    """Parse every choice in a finished `VllmRequestOutput` into modelship's response DTOs."""
     choices: list[ParsedChatOutput] = []
     finish_reasons: list[str | None] = []
     logprobs_list: list[ChatCompletionLogProbs | None] = []
-    reasoning_tokens = 0 if parser is not None and parser.reasoning_parser_cls is not None else None
+    reasoning_tokens = 0 if parsers[0] is not None and parsers[0].reasoning_parser_cls is not None else None
 
     for output in final_res.outputs:
+        parser = parsers[output.index]
         if parser is not None:
+            if final_res.prompt_token_ids is not None:
+                parser.set_prompt_token_ids(final_res.prompt_token_ids)
             reasoning, content, raw_tool_calls = parser.parse(
                 output.text,
                 vllm_req,
                 enable_auto_tools=enable_auto_tools,
                 model_output_token_ids=output.token_ids,
             )
+            raw_tool_calls = vllm_maybe_filter_parallel_tool_calls(raw_tool_calls or [], vllm_req)
             if reasoning_tokens is not None:
                 reasoning_tokens += parser.count_reasoning_tokens(output.token_ids)
         else:
@@ -486,8 +488,10 @@ async def stream_chat_completion(
                     prompt_token_ids=res.prompt_token_ids,
                     finished=output.finish_reason is not None,
                 )
-                if vllm_delta is not None and vllm_delta.tool_calls:
-                    tools_streamed[i] = True
+                if vllm_delta is not None:
+                    vllm_delta = vllm_maybe_filter_parallel_tool_calls(vllm_delta, vllm_req)
+                    if vllm_delta.tool_calls:
+                        tools_streamed[i] = True
             else:
                 vllm_delta = VllmDeltaMessage(content=delta_text)
 

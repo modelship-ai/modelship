@@ -251,6 +251,50 @@ class TestChatCapable:
         assert not message.tool_calls
         assert message.content and "<tool_call>" not in message.content
 
+    @pytest.mark.parametrize("stream", [False, True], ids=["plain", "stream"])
+    def test_parallel_tool_calls_false_keeps_one_call(self, client, stream):
+        def calls(**extra) -> list[str]:
+            kwargs = dict(
+                model="chat-capable",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": "What is the weather in Paris and in Tokyo? Call get_weather once for each city.",
+                    }
+                ],
+                tools=[_WEATHER_TOOL],
+                temperature=0,
+                max_tokens=200,
+                **extra,
+            )
+            if stream:
+                streamed = _collect_streaming_tool_call(client.chat.completions.create(stream=True, **kwargs))
+                return [call["arguments"] for call in streamed["tool_calls"].values()]
+            message = client.chat.completions.create(**kwargs).choices[0].message
+            return [call.function.arguments for call in message.tool_calls or []]
+
+        assert len(calls()) == 2
+        assert len(calls(parallel_tool_calls=False)) == 1
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["plain", "stream"])
+    def test_a_cut_off_tool_call_finishes_with_length(self, client, stream):
+        kwargs = dict(
+            model="chat-capable",
+            messages=[{"role": "user", "content": "What is the weather in Paris?"}],
+            tools=[_WEATHER_TOOL],
+            tool_choice="required",
+            max_tokens=14,
+            temperature=0,
+        )
+        if stream:
+            finish_reason = _collect_streaming_tool_call(client.chat.completions.create(stream=True, **kwargs))[
+                "finish_reason"
+            ]
+        else:
+            finish_reason = client.chat.completions.create(**kwargs).choices[0].finish_reason
+
+        assert finish_reason == "length"
+
     def test_n_greater_than_one_returns_independent_choices(self, client):
         """n>1 needs its own parser instance per choice (engine_ops.make_parsers);
         a shared instance would corrupt state across choices."""
@@ -498,6 +542,38 @@ class TestChatReasoning:
         )
 
         assert choice["message"]["tool_calls"][0]["function"]["name"] == "get_weather"
+
+    @pytest.mark.parametrize("stream", [False, True], ids=["plain", "stream"])
+    def test_a_prompt_that_closes_thinking_answers_in_content(self, stream):
+        body = {
+            "model": "chat-reasoning",
+            "messages": [
+                {"role": "user", "content": "What is 2+2?"},
+                {"role": "assistant", "content": "<think>\nSimple sum.\n</think>\n\nThe answer is"},
+            ],
+            "continue_final_message": True,
+            "add_generation_prompt": False,
+            "max_tokens": 30,
+            "temperature": 0,
+        }
+        if stream:
+            content, reasoning = "", ""
+            with httpx.stream(
+                "POST", f"{OPENAI_API_BASE}/chat/completions", json={**body, "stream": True}, timeout=120
+            ) as r:
+                assert r.status_code == 200
+                for line in r.iter_lines():
+                    if not line.startswith("data: ") or line == "data: [DONE]":
+                        continue
+                    delta = json.loads(line[len("data: ") :])["choices"][0].get("delta") or {}
+                    content += delta.get("content") or ""
+                    reasoning += delta.get("reasoning") or ""
+        else:
+            message = self._chat(**body)["message"]
+            content, reasoning = message.get("content") or "", message.get("reasoning")
+
+        assert "4" in content
+        assert not reasoning
 
     def test_thinking_off_answer_lands_in_content(self):
         message = self._chat(chat_template_kwargs={"enable_thinking": False})["message"]
