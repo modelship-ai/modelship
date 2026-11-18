@@ -121,6 +121,16 @@ class TestImageGeneration:
             {"prompt": "a red bicycle", "width": 64, "height": 32, "batch_count": 2, "seed": -1}
         ]
 
+    async def test_more_than_eight_images_take_two_jobs(self):
+        server = _FakeSdServer()
+        request = ImageGenerationRequest(model="m", prompt="x", n=10, size="16x16")
+
+        result = await _serving(server).create_image_generation(request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        assert len(result.data) == 10
+        assert [body["batch_count"] for body in server.submitted] == [8, 2]
+
     async def test_generation_invalid_size_errors_without_a_job(self):
         server = _FakeSdServer()
         request = ImageGenerationRequest(model="m", prompt="x", n=1, size="not-a-size")

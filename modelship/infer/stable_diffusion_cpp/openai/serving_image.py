@@ -47,6 +47,8 @@ _DEFAULT_VARIATION_STRENGTH = 0.8
 _RANDOM_SEED = -1
 
 _POLL_INTERVAL_S = 0.1
+# sd-server's `max_batch_count`; the OpenAI API allows n up to 10.
+_MAX_BATCH_COUNT = 8
 _REQUEST_TIMEOUT_S = 10.0
 
 RunCancellable = Callable[[Coroutine[Any, Any, Any], RawRequestProxy], Coroutine[Any, Any, Any]]
@@ -158,7 +160,9 @@ class OpenAIServingImage:
         output_format: str,
     ) -> ImageGenerationResponse | ErrorResponse:
         try:
-            images = await self._run_cancellable(self._run_job({**body, "seed": _RANDOM_SEED}, request_id), raw_request)
+            images = await self._run_cancellable(
+                self._run_jobs({**body, "seed": _RANDOM_SEED}, request_id), raw_request
+            )
         except ClientDisconnectedError:
             logger.info("image request %s aborted: client disconnected", request_id)
             return create_error_response("Client disconnected")
@@ -176,6 +180,19 @@ class OpenAIServingImage:
             )
         logger.log(TRACE, "image response %s: num_images=%d", request_id, len(response.data))
         return response
+
+    async def _run_jobs(self, body: dict[str, Any], request_id: str) -> list[str] | ErrorResponse:
+        """One job per `_MAX_BATCH_COUNT` images, one after another."""
+        images: list[str] = []
+        remaining = body["batch_count"]
+        while remaining > 0:
+            count = min(remaining, _MAX_BATCH_COUNT)
+            batch = await self._run_job({**body, "batch_count": count}, request_id)
+            if isinstance(batch, ErrorResponse):
+                return batch
+            images += batch
+            remaining -= count
+        return images
 
     async def _run_job(self, body: dict[str, Any], request_id: str) -> list[str] | ErrorResponse:
         """Submits a job and polls it to the end; cancelled, it cancels the job too. Returns base64 PNGs."""
