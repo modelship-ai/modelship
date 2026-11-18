@@ -1,12 +1,8 @@
-import asyncio
 import contextlib
 import json
 import os
 import secrets
-import subprocess
-import threading
 import time
-from collections import deque
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -15,6 +11,7 @@ from pydantic import ValidationError
 
 from modelship.infer.base_infer import BaseInfer, ClientDisconnectedError
 from modelship.infer.infer_config import LlamaServerConfig, ModelshipModelConfig, ModelUsecase, RawRequestProxy
+from modelship.infer.server_process import ServerProcess, close_client
 from modelship.logging import TRACE, get_logger
 from modelship.metrics import record_engine_tokens
 from modelship.openai.protocol import (
@@ -60,15 +57,7 @@ from modelship.utils.variant import current_variant
 
 logger = get_logger("infer.llama_server")
 
-_HEALTH_POLL_INTERVAL_S = 0.5
 _STARTUP_TIMEOUT_S = float(os.environ.get("MSHIP_LLAMA_SERVER_STARTUP_TIMEOUT", "900"))
-_RECENT_LOG_LINES = 50
-
-
-# asyncio only holds a weak reference to a task's coroutine, so a fire-and-forget
-# task with no other referent can be GC'd before it runs. Keep a strong reference
-# here for the lifetime of each client-close task, started from the (sync) shutdown().
-_pending_client_closes: set[asyncio.Task] = set()
 
 
 class LlamaServerInfer(BaseInfer[dict[str, Any]]):
@@ -92,61 +81,21 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         merged = merge_with_user_overrides(recommendation, user_overrides, model_name=model_config.name)
         self.config = user_config.model_copy(update=merged)
 
-        self._proc: subprocess.Popen | None = None
+        self._server: ServerProcess | None = None
         self._socket: str | None = None
         self._client: httpx.AsyncClient | None = None
-        self._log_lock = threading.Lock()
-        self._recent_log_lines: deque[str] = deque(maxlen=_RECENT_LOG_LINES)
-        self._log_threads: list[threading.Thread] = []
-        self._shutting_down = False
 
     def shutdown(self) -> None:
-        self._shutting_down = True
-        if self._proc is not None:
-            if self._proc.poll() is None:
-                logger.info("Shutting down llama-server for %s", self.model_config.name)
-                self._proc.terminate()
-
-                proc = self._proc
-
-                def _wait_and_kill():
-                    try:
-                        proc.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        with contextlib.suppress(Exception):
-                            proc.kill()
-                    except Exception:
-                        pass
-
-                thread = threading.Thread(target=_wait_and_kill, daemon=True)
-                thread.start()
-
-            # Close pipes to immediately unblock and terminate log-draining threads
-            if self._proc.stdout is not None:
-                with contextlib.suppress(Exception):
-                    self._proc.stdout.close()
-            if self._proc.stderr is not None:
-                with contextlib.suppress(Exception):
-                    self._proc.stderr.close()
-
-        self._proc = None
-        self._log_threads = []
+        if self._server is not None:
+            self._server.stop()
+            self._server = None
         if self._socket is not None:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(self._socket)
             self._socket = None
         if self._client is not None:
             client, self._client = self._client, None
-            try:
-                loop = asyncio.get_running_loop()
-                task = loop.create_task(client.aclose())
-                if _pending_client_closes is not None:
-                    _pending_client_closes.add(task)
-                    task.add_done_callback(
-                        lambda t: _pending_client_closes.discard(t) if _pending_client_closes is not None else None
-                    )
-            except (RuntimeError, AttributeError, TypeError):
-                pass  # no running loop or closed loop (e.g. interpreter teardown) — let GC reclaim the socket
+            close_client(client)
 
     def __del__(self):
         with contextlib.suppress(BaseException):
@@ -178,24 +127,15 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
             raise
 
         assert self._socket is not None
-        assert self._proc is not None
-        threading.Thread(target=self._watch_process, args=(self._proc,), daemon=True).start()
+        assert self._server is not None
+        self._server.watch()
         self._client = httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(uds=self._socket),
             base_url="http://llama-server",
             timeout=httpx.Timeout(timeout=None, connect=10.0),
         )
 
-    def _watch_process(self, proc: subprocess.Popen) -> None:
-        """Crash the actor if the subprocess exits outside of our own shutdown()."""
-        rc = proc.wait()
-        if self._shutting_down:
-            return
-        logger.error("llama-server for '%s' exited unexpectedly (rc=%s)", self.model_config.name, rc)
-        self.backend_died(f"llama-server exited (rc={rc})")
-
     async def _launch(self, binary: str, model_path: str) -> None:
-        loop = asyncio.get_running_loop()
         self._socket = os.path.join(session_socket_dir(), f"llama-{secrets.token_hex(4)}.sock")
 
         args = [
@@ -262,88 +202,19 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
         if self.config.media_allow_private_urls:
             args += ["--media-allow-private-urls"]
 
-        logger.info("llama-server launch args for '%s': %s", self.model_config.name, args)
-        self._proc = await loop.run_in_executor(
-            None,
-            lambda: subprocess.Popen(
-                args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                errors="replace",
-            ),
-        )
-        with self._log_lock:
-            self._recent_log_lines.clear()
-        assert self._proc is not None
-        assert self._proc.stdout is not None
-        assert self._proc.stderr is not None
-
-        thread_stdout = threading.Thread(
-            target=self._drain_stream,
-            args=(self._proc.stdout, "stdout"),
-            daemon=True,
-        )
-        thread_stderr = threading.Thread(
-            target=self._drain_stream,
-            args=(self._proc.stderr, "stderr"),
-            daemon=True,
-        )
-        thread_stdout.start()
-        thread_stderr.start()
-        self._log_threads = [thread_stdout, thread_stderr]
-
-    def _drain_stream(self, stream: Any, tag: str) -> None:
-        """Consume a pipe to TRACE-level logs so the child never blocks on a
-        full pipe buffer during chatty load-time output. Runs in a worker
-        thread; `stream.readline()` returns '' at EOF (including when the
-        child dies and we close the pipe from the main thread)."""
-        try:
-            for raw_line in iter(stream.readline, ""):
-                line = raw_line.rstrip("\n")
-                logger.log(TRACE, "[%s:%s] %s", self.model_config.name, tag, line)
-                with self._log_lock:
-                    self._recent_log_lines.append(line)
-        except (ValueError, OSError):
-            pass  # stream closed from the main thread while we were reading
-        finally:
-            with contextlib.suppress(Exception):
-                stream.close()
+        self._server = ServerProcess("llama-server", self.model_config.name, self.backend_died)
+        await self._server.launch(args)
 
     async def _wait_healthy(self) -> None:
-        assert self._proc is not None
+        assert self._server is not None
         assert self._socket is not None
-        deadline = time.monotonic() + _STARTUP_TIMEOUT_S
-
         async with httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(uds=self._socket),
             base_url="http://llama-server",
         ) as probe:
-            while True:
-                rc = self._proc.poll()
-                if rc is not None:
-                    with self._log_lock:
-                        tail = "\n".join(self._recent_log_lines)
-                    raise RuntimeError(
-                        f"llama-server for '{self.model_config.name}' exited (rc={rc}) during startup: {tail}"
-                    )
-
-                if time.monotonic() > deadline:
-                    raise RuntimeError(
-                        f"llama-server for '{self.model_config.name}' did not become healthy within "
-                        f"{_STARTUP_TIMEOUT_S}s"
-                    )
-
-                try:
-                    resp = await probe.get("/health", timeout=2.0)
-                    if resp.status_code == 200:
-                        logger.info("llama-server healthy for '%s' on %s", self.model_config.name, self._socket)
-                        await self._log_deployed_context(probe)
-                        return
-                except httpx.HTTPError:
-                    pass
-                await asyncio.sleep(_HEALTH_POLL_INTERVAL_S)
+            await self._server.wait_healthy(probe, "/health", _STARTUP_TIMEOUT_S)
+            logger.info("llama-server healthy for '%s' on %s", self.model_config.name, self._socket)
+            await self._log_deployed_context(probe)
 
     async def _log_deployed_context(self, probe: httpx.AsyncClient) -> None:
         try:
