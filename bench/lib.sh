@@ -538,7 +538,7 @@ pin_baseline_engine_args() {
         [[ -n "$mml" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_MAX_MODEL_LEN=$mml")
         echo "  baseline pinned to phase A: gpu_memory_utilization=${gmu:-unset} max_model_len=${mml:-unset}"
     else
-        local args_line ctx ngl ts
+        local args_line ctx ngl ts ot
         args_line=$(grep -o "llama-server launch args for .*" "$log" | tail -1)
         [[ -n "$args_line" ]] || { echo "  warn: no llama-server launch args in the modelship log" >&2; return 0; }
         ctx=$(grep -o "'-c', '[0-9-]*'" <<< "$args_line" | grep -oE -- '-?[0-9]+' | tail -1)
@@ -547,10 +547,12 @@ pin_baseline_engine_args() {
         ts=$(grep -o "'-ts', '[0-9.,]*'" <<< "$args_line" | grep -oE -- '[0-9.,]+' | tail -1) || true
         [[ -n "$ctx" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_N_CTX_TOTAL=$ctx")
         [[ -n "$ngl" ]] && BASELINE_ENV_ARGS+=(-e "BENCH_PIN_N_GPU_LAYERS=$ngl")
+        # Emitted only for a MoE model whose experts don't all fit on the GPU.
+        ot=$(python3 -c 'import ast, sys; a = ast.literal_eval(sys.argv[1].split(": ", 1)[1]); print(a[a.index("-ot") + 1] if "-ot" in a else "")' "$args_line")
         # Pinned even when empty: phase A launching without a split is itself
         # the value to replay, and fit-params re-derives one from free VRAM.
-        BASELINE_ENV_ARGS+=(-e "BENCH_PIN_TENSOR_SPLIT=$ts")
-        echo "  baseline pinned to phase A: -c ${ctx:-unset} -ngl ${ngl:-unset} -ts ${ts:-none}"
+        BASELINE_ENV_ARGS+=(-e "BENCH_PIN_TENSOR_SPLIT=$ts" -e "BENCH_PIN_OVERRIDE_TENSOR=$ot")
+        echo "  baseline pinned to phase A: -c ${ctx:-unset} -ngl ${ngl:-unset} -ts ${ts:-none} -ot ${ot:-none}"
     fi
 }
 
