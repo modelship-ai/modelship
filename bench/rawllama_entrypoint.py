@@ -1,6 +1,6 @@
 """Runs `llama-server` directly against the same models.yaml modelship reads,
 bypassing Ray, to A/B against the llama_server loader with an identical
-launch command. Mirrors `LlamaServerInfer._launch` — keep both in sync."""
+launch command: the flags come from the loader's own `serve_args`."""
 
 from __future__ import annotations
 
@@ -22,12 +22,8 @@ from pathlib import Path  # noqa: E402
 
 import yaml  # noqa: E402
 
-from modelship.infer.infer_config import (  # noqa: E402
-    LlamaServerConfig,
-    ModelLoader,
-    ModelshipConfig,
-    ModelUsecase,
-)
+from modelship.infer.infer_config import LlamaServerConfig, ModelLoader, ModelshipConfig  # noqa: E402
+from modelship.infer.llama_server.llama_server_infer import serve_args  # noqa: E402
 from modelship.preflight import discover_hardware, merge_with_user_overrides, run_preflight  # noqa: E402
 from modelship.utils.sources import resolve_model_source  # noqa: E402
 
@@ -78,6 +74,17 @@ def main() -> int:
     # harness pins what the modelship arm launched with.
     n_ctx_total = int(_pinned("N_CTX_TOTAL", k.n_ctx * k.parallel))
     n_gpu_layers = int(_pinned("N_GPU_LAYERS", k.n_gpu_layers))
+    tensor_split = _pinned("TENSOR_SPLIT", ",".join(str(v) for v in k.tensor_split) if k.tensor_split else "")
+    override_tensor = _pinned("OVERRIDE_TENSOR", ",".join(k.override_tensor) if k.override_tensor else "")
+    k = k.model_copy(
+        update={
+            "n_ctx": n_ctx_total // k.parallel,
+            "n_gpu_layers": n_gpu_layers,
+            "tensor_split": [float(v) for v in tensor_split.split(",")] if tensor_split else None,
+            "override_tensor": override_tensor.split(",") if override_tensor else None,
+            "mmproj": resolve_model_source(k.mmproj) if k.mmproj else None,
+        }
+    )
 
     args = [
         binary,
@@ -86,59 +93,15 @@ def main() -> int:
         "0.0.0.0",
         "--port",
         "8000",
-        "-m",
-        model_path,
-        "-c",
-        str(n_ctx_total),
-        "-b",
-        str(k.n_batch),
-        "-ub",
-        str(k.ubatch_size),
-        "-fa",
-        k.flash_attn,
-        "-ctk",
-        k.cache_type_k,
-        "-ctv",
-        k.cache_type_v,
-        "--parallel",
-        str(k.parallel),
-        "--jinja",
-        "--reasoning-format",
-        "auto",
-        "--no-webui",
+        *serve_args(model_path, m, k),
         # /v1/models reports this as "id"; no --api-key, matching vanilla llama-server.
         "--alias",
         m.name,
     ]
-    # Ray only sets CUDA_VISIBLE_DEVICES for GPU-reserving actors, so a
-    # num_gpus=0 deploy may still see every GPU — force no offload.
     if m.num_gpus > 0:
-        args += ["-ngl", str(n_gpu_layers)]
-        # fit-params sizes the split from free VRAM, so it is replayed too.
-        tensor_split = _pinned("TENSOR_SPLIT", ",".join(str(v) for v in k.tensor_split) if k.tensor_split else "")
-        if tensor_split:
-            args += ["-ts", tensor_split]
         # Bypasses Ray's own CUDA_VISIBLE_DEVICES restriction — set it explicitly.
         # A fractional num_gpus rounds up to one device.
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(max(1, math.ceil(m.num_gpus))))
-    else:
-        args += ["-ngl", "0"]
-    if k.threads is not None:
-        args += ["--threads", str(k.threads)]
-    if k.chat_template:
-        flag = "--chat-template-file" if os.path.isfile(k.chat_template) else "--chat-template"
-        args += [flag, k.chat_template]
-    if k.mmproj:
-        mmproj_path = resolve_model_source(k.mmproj)
-        args += ["--mmproj", mmproj_path]
-    if m.usecase == ModelUsecase.embed:
-        args += ["--embedding"]
-    if k.cache_reuse > 0:
-        args += ["--cache-reuse", str(k.cache_reuse)]
-    if k.context_shift:
-        args += ["--context-shift"]
-    if k.cache_ram_mib is not None:
-        args += ["--cache-ram", str(k.cache_ram_mib)]
 
     # shlex.join, not " ".join: an inline --chat-template has to survive the
     # parity checker's shlex.split.

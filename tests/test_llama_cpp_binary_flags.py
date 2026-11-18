@@ -23,7 +23,7 @@ from mship_bootstrap.llama_cpp import _SERVER_BUILDS  # noqa: E402
 
 from modelship.utils.config_schema import LlamaServerConfig  # noqa: E402
 
-# Every flag llama_server_infer.py's _launch sends to `llama serve`.
+# Every flag llama_server_infer.py's _launch and serve_args send to `llama serve`.
 _SERVE_FLAGS = [
     "--host",
     "-m",

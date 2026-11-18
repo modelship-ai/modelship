@@ -455,7 +455,7 @@ models:
 
 ## llama_server Loader
 
-Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/llama.cpp) subprocess and proxying its native OpenAI-compatible HTTP API. Chat templating, tool-call parsing, and reasoning parsing are all llama-server's own (`--jinja --reasoning-format auto`), not modelship's. `--parallel` request slots let concurrent requests actually overlap instead of serializing behind a single lock. Requires the unified `llama` binary discoverable via `MSHIP_LLAMA_SERVER_BIN` (see [development.md](development.md#llama-server-binary-llama_server-loader)); Docker images ship a pinned build at `/opt/llama.cpp`.
+Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/llama.cpp) subprocess and proxying its native OpenAI-compatible HTTP API. Chat templating, tool-call parsing, and reasoning parsing are all llama-server's own (`--jinja --reasoning-format auto`), not modelship's. `--parallel` request slots let concurrent requests actually overlap instead of serializing behind a single lock. Requires the unified `llama` binary discoverable via `MSHIP_LLAMA_SERVER_BIN` (see [development.md](development.md#llama-server-binary-llama_server-loader)); Docker images ship a pinned build under `/opt/mship/builds/<variant>/llama.cpp/`, and `mship` points `MSHIP_LLAMA_SERVER_BIN` at it.
 
 `num_gpus` accepts `0` (CPU-only), a fraction `< 1` (shares one physical GPU), or a whole integer — see [Sharing one GPU](#sharing-one-gpu). Configured via `llama_server_config`:
 
