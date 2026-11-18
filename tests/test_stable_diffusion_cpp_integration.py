@@ -100,3 +100,25 @@ class TestImageStableDiffusionCpp:
             )
         assert variation.data[0].b64_json
         self._assert_png(self._decode(variation.data[0].b64_json), expect_size=(256, 256))
+
+
+@pytest.mark.integration
+@pytest.mark.stable_diffusion_cpp
+@pytest.mark.cuda
+@pytest.mark.vulkan
+@pytest.mark.metal
+class TestImageStableDiffusionCppGpu:
+    """A quarter of one GPU: preflight's `--max-vram` budget and the pinned GPU backend."""
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy("image-gpu-sdcpp-model")
+
+    def test_image_generation(self, client):
+        from PIL import Image
+
+        response = client.images.generate(
+            model="image-gpu-sdcpp-model", prompt="a red apple on a table", size="512x512", response_format="b64_json"
+        )
+        img = Image.open(io.BytesIO(base64.b64decode(response.data[0].b64_json)))
+        assert (img.format, img.size) == ("PNG", (512, 512))

@@ -7,7 +7,7 @@ Modelship is a **FastAPI gateway** exposing an OpenAI-compatible API, built on [
 - **[vLLM](https://github.com/vllm-project/vllm)** — continuous batching + PagedAttention, GPU or CPU
 - **llama-server** — proxied `llama-server` subprocess for quantized GGUF chat/embeddings/vision, CPU or GPU
 - **[HuggingFace Diffusers](https://github.com/huggingface/diffusers)** — image generation via `AutoPipelineForText2Image`
-- **stable-diffusion.cpp** — image generation for GGUF SD models, CPU everywhere plus Metal on Apple Silicon
+- **stable-diffusion.cpp** — `sd-server` subprocess for GGUF SD/Flux image generation, CPU or GPU (CUDA, Vulkan, Metal)
 - **sherpa-onnx** — TTS (Kokoro), CPU/CoreML
 - **whisper.cpp** — STT via `pywhispercpp`, CPU everywhere plus Metal on Apple Silicon
 
@@ -41,7 +41,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 | `vllm` | vLLM engine | Chat/generation, embeddings, transcription, translation | No — GPU or CPU |
 | `llama_server` | llama-server subprocess | Chat/generation, embeddings, vision (GGUF) | No — CPU or GPU (`n_gpu_layers` offload, fractional or whole) |
 | `diffusers` | HuggingFace Diffusers | Image generation | Yes |
-| `stable_diffusion_cpp` | stable-diffusion.cpp | Image generation (GGUF SD1.5/SDXL/SD-Turbo, Flux) | No — CPU everywhere, Metal on Apple Silicon |
+| `stable_diffusion_cpp` | sd-server subprocess (stable-diffusion.cpp) | Image generation (GGUF SD1.5/SDXL/SD-Turbo, Flux) | No — CPU or GPU (CUDA, Vulkan, Metal; fractional or one whole GPU) |
 | `whispercpp` | `pywhispercpp` | STT | No — CPU everywhere, Metal on Apple Silicon |
 | `sherpa_onnx` | sherpa-onnx | TTS (Kokoro) | No — never touches CUDA |
 
@@ -115,9 +115,9 @@ Ray schedules deployments across available GPUs based on the `num_gpus` fraction
 
 | Variant | GPU | CPU |
 |---------|-----|-----|
-| `cuda` | `vllm`, `diffusers`, `llama_server` | `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
+| `cuda` | `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp` | `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
 | `cpu` | — | `vllm` (Linux only), `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
-| `vulkan` | `llama_server` | `vllm` (Linux only), `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
+| `vulkan` | `llama_server`, `stable_diffusion_cpp` | `vllm` (Linux only), `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
 | `metal` | `llama_server`, `stable_diffusion_cpp`, `whispercpp` | `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
 | `thin` | — | — |
 
@@ -146,7 +146,7 @@ This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu
 | `modelship/infer/vllm/vllm_infer.py` | vLLM engine wrapper |
 | `modelship/infer/llama_server/llama_server_infer.py` | llama-server subprocess proxy (GGUF chat/embed/vision) |
 | `modelship/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |
-| `modelship/infer/stable_diffusion_cpp/stable_diffusion_cpp_infer.py` | stable-diffusion.cpp wrapper (CPU/Metal image gen) |
+| `modelship/infer/stable_diffusion_cpp/stable_diffusion_cpp_infer.py` | sd-server subprocess driver (image gen over its job API) |
 | `modelship/infer/whispercpp/` | whisper.cpp STT wrapper |
 | `modelship/infer/sherpa_onnx/` | sherpa-onnx TTS wrapper |
 | `config/examples/` | Example model configurations, for `--config` |

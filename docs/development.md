@@ -63,6 +63,7 @@ The following environment variables are set in the dev image with sensible defau
 | `MSHIP_GATEWAY_TARGET_ONGOING_REQUESTS` | `64` | Ongoing requests per gateway replica that autoscaling aims for (`--gateway-target-ongoing-requests`). A streamed response counts until it ends. |
 | `MSHIP_GATEWAY_MAX_ONGOING_REQUESTS` | `1024` | Per-replica Ray Serve concurrency cap for the gateway (`--gateway-max-ongoing-requests`). The gateway holds a slot for the whole lifetime of each streamed response, so a low cap throttles before the engine does. |
 | `MSHIP_LLAMA_SERVER_BIN` | `/opt/mship/bin/llama-server.sh` in the Dev Container (unset otherwise) | Unified `llama` executable used by the `llama_server` loader and its preflight; see [llama-server binary](#llama-server-binary-llama_server-loader). |
+| `MSHIP_SD_SERVER_BIN` | `/opt/mship/bin/sd-server.sh` in the Dev Container (unset otherwise) | `sd-server` executable used by the `stable_diffusion_cpp` loader; see [sd-server binary](#sd-server-binary-stable_diffusion_cpp-loader). |
 
 ## Manual setup (without Dev Containers)
 
@@ -117,7 +118,7 @@ uv run python -m modelship.launcher start
 
 The `llama_server` loader and its preflight both invoke the unified `llama` binary (`llama serve` / `llama fit-params`) found via `MSHIP_LLAMA_SERVER_BIN` — the env var name predates the binary's unification and stuck. `mship bootstrap` provisions it (downloaded, sha256-verified, cached under `$MSHIP_HOME/builds/<variant>/llama.cpp/`) and `mship deploy` points the env var at its wrapper script — see `bootstrap/mship_bootstrap/llama_cpp.py` and its `_SERVER_BUILDS` table. These are modelship's own builds of one llama.cpp tag for every platform it ships ([`modelship-ai/llama-cpp-builds`](https://github.com/modelship-ai/llama-cpp-builds)), so every node in a cluster runs the identical binary. The `cuda` and `vulkan` variants add their ggml backend (`libggml-cuda.so`, `libggml-vulkan.so`) beside it, from its `_GGML_BACKENDS` table. The `thin` variant ships no binary at all — it never loads a model.
 
-The published images run that same bootstrap at build time, so they arrive preconfigured. The `dev` target does **not** run it, but the Dev Container fetches it for you: `.devcontainer/provision-llama-server.sh` runs from `postCreateCommand`, importing `bootstrap/mship_bootstrap/llama_cpp.py` straight from source (it's stdlib-only) to reuse its fetch/verify logic against the `cuda` variant, and `MSHIP_LLAMA_SERVER_BIN` is preset (via `remoteEnv`) to the stable symlink it leaves at `$MSHIP_HOME/bin/llama-server.sh`. Building and running the dev image manually still skips this — set `MSHIP_LLAMA_SERVER_BIN` yourself, run that script, or run `mship bootstrap` inside it, to exercise the `llama_server` loader there.
+The published images run that same bootstrap at build time, so they arrive preconfigured. The `dev` target does **not** run it, but the Dev Container fetches it for you: `.devcontainer/provision-servers.sh` runs from `postCreateCommand`, importing `bootstrap/mship_bootstrap/llama_cpp.py` and `sd_cpp.py` straight from source (they're stdlib-only) to reuse their fetch/verify logic against the `cuda` variant, and `MSHIP_LLAMA_SERVER_BIN` and `MSHIP_SD_SERVER_BIN` are preset (via `remoteEnv`) to the stable symlinks it leaves at `$MSHIP_HOME/bin/llama-server.sh` and `$MSHIP_HOME/bin/sd-server.sh`. Building and running the dev image manually still skips this — set `MSHIP_LLAMA_SERVER_BIN` yourself, run that script, or run `mship bootstrap` inside it, to exercise the `llama_server` loader there.
 
 For a platform outside that table, or to use a different llama.cpp build than the pinned one, download a build from [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) and extract it. The raw `llama` binary does **not** run standalone — it dynamically links the `libggml*`/`libllama*` libraries that ship as sibling files in the same archive, so point `MSHIP_LLAMA_SERVER_BIN` at a small wrapper that puts the extracted directory on the loader path:
 
@@ -131,6 +132,14 @@ exec /path/to/extracted/llama "$@"
 ```bash
 export MSHIP_LLAMA_SERVER_BIN=/path/to/llama-server.sh
 ```
+
+## sd-server binary (`stable_diffusion_cpp` loader)
+
+The `stable_diffusion_cpp` loader runs stable-diffusion.cpp's `sd-server`, found via `MSHIP_SD_SERVER_BIN`. `mship bootstrap` provisions it the same way as llama.cpp (downloaded, sha256-verified, cached under `$MSHIP_HOME/builds/<variant>/stable-diffusion.cpp/`) and `mship deploy` points the env var at its wrapper script — see `bootstrap/mship_bootstrap/sd_cpp.py` and its `_BUILDS` table. The builds come from `.github/workflows/sd-cpp-build.yml`, published to [`modelship-ai/engine-builds`](https://github.com/modelship-ai/engine-builds): one full build per platform and backend (Linux x64/arm64 CPU, Vulkan and CUDA 13, macOS Metal), since stable-diffusion.cpp compiles its GPU kernels into its own library. The CUDA build loads torch's CUDA libraries, so its wrapper puts the engine environment's `nvidia/cu13/lib` on the loader path. `make sd-cpp-bump TAG=<upstream tag>` builds a new tag from the current branch and opens a PR that pins it.
+
+sd-server listens on `127.0.0.1` on a free port, since it can't listen on a Unix socket yet. Any process on the node can reach that port while the model is deployed.
+
+To use another build, extract it and point `MSHIP_SD_SERVER_BIN` at its `sd-server`; the Linux builds find their libraries beside the executable.
 
 ## Production Builds
 

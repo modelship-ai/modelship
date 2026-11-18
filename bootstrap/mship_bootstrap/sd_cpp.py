@@ -51,6 +51,8 @@ _BUILDS: dict[tuple[str, str, str], _Build] = {
     ("cuda", "Linux", "x86_64"): _Build("linux-x64-cuda13", _SHA256_LINUX_X64_CUDA13, "LD_LIBRARY_PATH"),
     ("cuda", "Linux", "aarch64"): _Build("linux-arm64-cuda13", _SHA256_LINUX_ARM64_CUDA13, "LD_LIBRARY_PATH"),
     ("metal", "Darwin", "arm64"): _Build("macos-arm64-metal", _SHA256_MACOS_ARM64_METAL, "DYLD_LIBRARY_PATH"),
+    # The Metal build runs `--backend cpu` without touching the GPU.
+    ("cpu", "Darwin", "arm64"): _Build("macos-arm64-metal", _SHA256_MACOS_ARM64_METAL, "DYLD_LIBRARY_PATH"),
 }
 
 

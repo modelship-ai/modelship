@@ -357,6 +357,14 @@ MODEL_CONFIGS: dict[str, dict] = {
         "num_cpus": 4,
         "stable_diffusion_cpp_config": {"sample_steps": 4, "cfg_scale": 1.0},
     },
+    "image-gpu-sdcpp-model": {
+        "name": "image-gpu-sdcpp-model",
+        "model": "gpustack/stable-diffusion-v2-1-turbo-GGUF:*Q4_1.gguf",
+        "usecase": "image",
+        "loader": "stable_diffusion_cpp",
+        "num_gpus": 0.25,
+        "stable_diffusion_cpp_config": {"sample_steps": 4, "cfg_scale": 1.0},
+    },
 }
 
 

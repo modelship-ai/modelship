@@ -16,3 +16,13 @@ models:
     stable_diffusion_cpp_config:
       sample_steps: 4
       cfg_scale: 1.0
+
+  # On a cuda, vulkan or metal node: a quarter of one GPU.
+  - name: "sd21-turbo-gpu"
+    model: "gpustack/stable-diffusion-v2-1-turbo-GGUF:*Q4_1.gguf"
+    usecase: "image"
+    loader: "stable_diffusion_cpp"
+    num_gpus: 0.25
+    stable_diffusion_cpp_config:
+      sample_steps: 4
+      cfg_scale: 1.0

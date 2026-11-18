@@ -221,7 +221,7 @@ If it's unset (the default), or a request doesn't carry the header, the caller l
 | `model` | string | HuggingFace repo ID, local path, or `repo:filename` (see [Model source](#model-source)) |
 | `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image`. Defaults to `image` and is otherwise rejected for `diffusers`/`stable_diffusion_cpp`; must be `tts` for `sherpa_onnx` |
 | `loader` | string | `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
-| `num_gpus` | float \| int | Default `0`: the model gets no GPU, and the node's GPUs are hidden from it. Fractional `< 1` shares one GPU — supported by `vllm`, `diffusers`, `llama_server`, and (Metal-only) `whispercpp`; forced to `0` for `sherpa_onnx`. `stable_diffusion_cpp`/`whispercpp` with `num_gpus > 0` schedule only onto a `metal` node. Integer `≥ 1` requests that many whole GPUs (for `vllm`, auto-sets `tensor_parallel_size = num_gpus` unless tp/pp is already specified; left unset with tp × pp above 1, it defaults to tp × pp). `llama_server`/`whispercpp` reject a non-integer `≥ 1`. See [Sharing one GPU](#sharing-one-gpu) |
+| `num_gpus` | float \| int | Default `0`: the model gets no GPU, and the node's GPUs are hidden from it. Fractional `< 1` shares one GPU — supported by `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, and (Metal-only) `whispercpp`; forced to `0` for `sherpa_onnx`. `whispercpp` with `num_gpus > 0` schedules only onto a `metal` node. Integer `≥ 1` requests that many whole GPUs (for `vllm`, auto-sets `tensor_parallel_size = num_gpus` unless tp/pp is already specified; left unset with tp × pp above 1, it defaults to tp × pp). `llama_server`/`whispercpp` reject a non-integer `≥ 1`; `stable_diffusion_cpp` takes at most `1`. See [Sharing one GPU](#sharing-one-gpu) |
 | `num_cpus` | float | CPU units to allocate. Default `0.1` |
 | `num_replicas` | int | Fixed Ray Serve replica count. Default `1`. Mutually exclusive with `autoscaling_config`. Above `1`, a `vllm` or `llama_server` model must [set its context length](#scaling-a-deployment) |
 | `autoscaling_config` | object | Autoscale replicas with load instead of a fixed `num_replicas` (see [Autoscaling](#autoscaling)). A `vllm` or `llama_server` model with it must [set its context length](#scaling-a-deployment) |
@@ -246,7 +246,7 @@ Each GPU-capable loader sizes and enforces its share differently:
 | `diffusers` | Hard — `torch.cuda.set_per_process_memory_fraction` caps the process; allocating past it OOMs |
 | `llama_server` | Static — preflight sizes `n_ctx`/`n_gpu_layers` to fit the declared share; llama.cpp allocates upfront and never grows |
 | `whispercpp` | None (Metal only) — `num_gpus > 0` is a plain on/off switch, no VRAM knob to size |
-| `stable_diffusion_cpp` | None (Metal only) — `num_gpus > 0` schedules only onto a `metal` node |
+| `stable_diffusion_cpp` | Soft — preflight sets sd.cpp's `--max-vram` budget inside the share; the CUDA context and driver allocations sit outside it, so preflight leaves room for them |
 | `sherpa_onnx` | N/A — never touches a GPU; `num_gpus` is ignored (forced to `0`) |
 
 Preflight sizes a fractional deploy from its **declared share of the GPU's total capacity**, not free VRAM at that moment; if free VRAM falls short, it logs a warning naming both numbers.
@@ -533,23 +533,32 @@ models:
 
 ## stable-diffusion.cpp Loader
 
-Runs [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) (via [stable-diffusion-cpp-python](https://github.com/william-murray1204/stable-diffusion-cpp-python)) for GGUF-quantized single-file diffusion checkpoints (SD1.5, SDXL, SD-Turbo, all-in-one Flux) in a few GB of RAM. CPU-only everywhere except Apple Silicon, where ggml's runtime backend registry picks up Metal automatically — no config needed. A `num_gpus > 0` deploy schedules only onto a `metal` node, where it's honored. `usecase` defaults to `image`; serves `/v1/images/generations`, `/v1/images/edits`, `/v1/images/variations`.
+Runs [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)'s `sd-server` as a subprocess, found through `MSHIP_SD_SERVER_BIN` (which `mship bootstrap` provisions, see [development.md](development.md#sd-server-binary-stable_diffusion_cpp-loader)), for GGUF-quantized diffusion checkpoints (SD1.5, SDXL, SD-Turbo, Flux). It runs on the GPU on `cuda`, `vulkan` and `metal` nodes, and on the CPU everywhere. `usecase` defaults to `image`; serves `/v1/images/generations`, `/v1/images/edits`, `/v1/images/variations`.
+
+`num_gpus` is `0` (CPU), a fraction below `1` (shares one GPU), or `1`. sd-server queues requests and generates one at a time. A client that disconnects cancels its request, queued or running; a running one stops at the end of its current sampling step.
+
+On a fractional `num_gpus`, preflight passes sd.cpp a GPU budget (`max_vram`): the share of the GPU's total, less what sd.cpp doesn't count (1 GiB on `cuda`, 0.25 GiB on `vulkan` and `metal`). When the model's files plus 0.5 GiB fit that budget, it sets `auto_fit: false` and the weights stay on the GPU, with sd.cpp splitting a large image's compute to stay inside the budget. When they don't, it leaves sd.cpp's auto-fit on, which puts what doesn't fit in RAM, and logs a warning; that RAM isn't checked. A whole GPU keeps sd.cpp's own fitting.
 
 Configured via `stable_diffusion_cpp_config`:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `sample_steps` | int | `20` | Denoising steps |
-| `cfg_scale` | float | `7.0` | Classifier-free guidance scale |
-| `sample_method` | string | `default` | Sampler; `default` lets sd.cpp pick per architecture |
-| `scheduler` | string | `default` | Denoiser sigma scheduler |
-| `wtype` | string | `default` | On-the-fly weight quantization (e.g. `q4_0`, `q8_0`, `f16`); `default` auto-detects |
-| `n_threads` | int | `-1` | CPU threads; `-1` uses half the cores |
-| `vae_tiling` | bool | `false` | Tile the VAE decode to cut peak RAM (auto-recommended by preflight on low-RAM hosts) |
-| `diffusion_model_path` / `clip_l_path` / `clip_g_path` / `t5xxl_path` / `vae_path` | string | — | Standalone component paths for split checkpoints (pre-placed local paths; single-file models are the v1 focus) |
-| `model_kwargs` | object | `{}` | Extra keyword arguments passed to the `StableDiffusion` constructor |
+| `sample_steps` | int | `20` | Denoising steps (`--steps`) |
+| `cfg_scale` | float | `7.0` | Classifier-free guidance scale (`--cfg-scale`) |
+| `guidance` | float | sd.cpp's (`3.5`) | Distilled guidance, for models with a guidance input such as Flux (`--guidance`) |
+| `sample_method` | string | `default` | Sampler (`--sampling-method`); `default` lets sd.cpp pick per architecture |
+| `scheduler` | string | `default` | Denoiser sigma scheduler (`--scheduler`) |
+| `wtype` | string | `default` | On-the-fly weight quantization (`--type`, e.g. `q4_0`, `q8_0`, `f16`); `default` keeps the file's |
+| `n_threads` | int | `-1` | CPU threads (`--threads`); `-1` lets sd.cpp pick |
+| `vae_tiling` | bool | `false` | Tile the VAE decode to cut peak memory (`--vae-tiling`; recommended by preflight on a CPU deploy with little free RAM) |
+| `flash_attn` | string | sd.cpp's (`auto`) | `on`, `off`, `auto`, or module assignments such as `auto,vae=off` (`--flash-attn`) |
+| `clip_on_cpu` / `vae_on_cpu` | bool | `false` | Run the text encoder / VAE on the CPU on a GPU deploy (`--backend te=cpu,vae=cpu,<gpu>`) |
+| `offload_to_cpu` | bool | `false` | Keep weights in RAM and move them to the GPU when needed (`--offload-to-cpu`) |
+| `max_vram` | float | set by preflight | GPU budget in GiB (`--max-vram`) |
+| `auto_fit` | bool | set by preflight | sd.cpp's placement of weights by free memory (`--auto-fit`) |
+| `diffusion_model_path` / `clip_l_path` / `clip_g_path` / `t5xxl_path` / `vae_path` | string | — | Standalone component paths for split checkpoints (pre-placed local paths) |
 
-`MSHIP_LOG_LEVEL=TRACE` enables `verbose` mode in the underlying engine. GGUF variants in an HF repo use the same `:filename` syntax as the llama_server loader (see [Model source](#model-source)).
+`MSHIP_LOG_LEVEL=TRACE` makes sd-server verbose. GGUF variants in an HF repo use the same `:filename` syntax as the llama_server loader (see [Model source](#model-source)). The first launch of a `metal` deploy on a machine compiles Metal's shaders, about 20 s.
 
 ```yaml
 models:
@@ -557,7 +566,7 @@ models:
     model: "gpustack/stable-diffusion-v2-1-turbo-GGUF:*Q4_1.gguf"
     usecase: image
     loader: stable_diffusion_cpp
-    num_cpus: 4
+    num_gpus: 0.25
     stable_diffusion_cpp_config:
       sample_steps: 4
       cfg_scale: 1.0

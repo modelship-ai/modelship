@@ -564,7 +564,7 @@ pillow==13.0.0 \
     --hash=sha256:e65dd6e75de67b2362a4fa3e16aa627595f65054dc4ec73d64680c84d592fa61 \
     --hash=sha256:fc481f742ccda20e9ed760b8f978dff50f2a4e9bc253ac167fb0a05b0783ef52 \
     --hash=sha256:ff3fe9eb621fbb9db4c4be33ab946f6bac5f98ab50ca8d3260503653656c961b
-    # via stable-diffusion-cpp-python
+    # via mship-engine
 piper-phonemize @ https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-macosx_11_0_arm64.whl ; platform_machine == 'arm64' and sys_platform == 'darwin' \
     --hash=sha256:16d3fb23cdd8712956b75e639fdaf9314177a690fb1049e082e092c30afb4b07
     # via mship-engine
@@ -933,9 +933,6 @@ sse-starlette==3.3.4 \
     --hash=sha256:84bb06e58939a8b38d8341f1bc9792f06c2b53f48c608dd207582b664fc8f3c1 \
     --hash=sha256:aaf92fc067af8a5427192895ac028e947b484ac01edbc3caf00e7e7137c7bef1
     # via mcp
-stable-diffusion-cpp-python==0.4.7 \
-    --hash=sha256:998d1957260dd5ae4e18a8acc0c14b0a8757aaa9f96515197b6d5bbf46df9282
-    # via mship-engine
 starlette==1.3.1 \
     --hash=sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0 \
     --hash=sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6
@@ -982,7 +979,6 @@ typing-extensions==4.15.0 \
     #   pydantic-yaml
     #   pyopenssl
     #   referencing
-    #   stable-diffusion-cpp-python
     #   starlette
     #   typing-inspection
 typing-inspection==0.4.2 \

@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from modelship.deploy.capabilities import (
+    GPU,
     VARIANT_LOADERS,
     deployment_capability_resources,
     node_capability_resources,
@@ -18,11 +19,18 @@ from modelship.deploy.capabilities import (
 from modelship.utils.config_schema import ModelLoader
 from modelship.utils.variant import VARIANTS, VariantError
 
-_PINS = Path(__file__).resolve().parents[1] / "bootstrap" / "mship_bootstrap" / "pins"
+_BOOTSTRAP_DIR = Path(__file__).resolve().parents[1] / "bootstrap"
+if str(_BOOTSTRAP_DIR) not in sys.path:
+    sys.path.insert(0, str(_BOOTSTRAP_DIR))
+
+from mship_bootstrap import sd_cpp  # noqa: E402
+
+from modelship.infer.stable_diffusion_cpp.stable_diffusion_cpp_infer import _GPU_DEVICES  # noqa: E402
+
+_PINS = _BOOTSTRAP_DIR / "mship_bootstrap" / "pins"
 _LOADER_PACKAGES = {
     "vllm": "vllm",
     "diffusers": "diffusers",
-    "stable_diffusion_cpp": "stable-diffusion-cpp-python",
     "whispercpp": "pywhispercpp",
     "sherpa_onnx": "sherpa-onnx",
 }
@@ -65,6 +73,17 @@ class TestVariantLoaders:
         assert loader not in variant_loaders(variant, "Darwin")
 
 
+class TestSdServerLoader:
+    @pytest.mark.parametrize("variant", VARIANTS)
+    def test_listed_where_sd_server_is_built(self, variant):
+        built = {name for name, _, _ in sd_cpp._BUILDS}
+        assert ("stable_diffusion_cpp" in VARIANT_LOADERS[variant]) == (variant in built)
+
+    def test_on_a_gpu_where_the_loader_names_one(self):
+        gpu_variants = {v for v, loaders in VARIANT_LOADERS.items() if GPU in loaders.get("stable_diffusion_cpp", ())}
+        assert gpu_variants == set(_GPU_DEVICES)
+
+
 class TestNodeCapabilityResources:
     def test_cuda_node(self):
         assert _node("cuda") == {
@@ -74,16 +93,18 @@ class TestNodeCapabilityResources:
             "mship_llama_server_gpu": 1,
             "mship_llama_server_cpu": 1,
             "mship_stable_diffusion_cpp_cpu": 1,
+            "mship_stable_diffusion_cpp_gpu": 1,
             "mship_whispercpp_cpu": 1,
             "mship_sherpa_onnx_cpu": 1,
         }
 
-    def test_vulkan_node_runs_cpus_loaders_and_llama_server_on_its_gpu(self):
+    def test_vulkan_node_runs_cpus_loaders_and_llama_server_and_sd_on_its_gpu(self):
         assert _node("vulkan") == {
             "mship_vllm_cpu": 1,
             "mship_llama_server_gpu": 1,
             "mship_llama_server_cpu": 1,
             "mship_stable_diffusion_cpp_cpu": 1,
+            "mship_stable_diffusion_cpp_gpu": 1,
             "mship_whispercpp_cpu": 1,
             "mship_sherpa_onnx_cpu": 1,
         }

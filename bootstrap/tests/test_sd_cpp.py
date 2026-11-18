@@ -78,12 +78,13 @@ def test_provision_fetches_the_variants_build(release_dir, monkeypatch, variant,
     assert fetched == [f"sd-server-{sd_cpp._SD_CPP_TAG}-{build}.tar.gz"]
 
 
-def test_metal_exports_the_dyld_path(release_dir, monkeypatch):
+@pytest.mark.parametrize("variant", ["metal", "cpu"])
+def test_macos_gets_the_metal_build_and_the_dyld_path(release_dir, monkeypatch, variant):
     monkeypatch.setattr(sd_cpp.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(sd_cpp.platform, "machine", lambda: "arm64")
     fetched: list[str] = []
     monkeypatch.setattr(sd_cpp, "fetch_and_extract_archive", _fake_fetch(fetched))
-    wrapper = sd_cpp.provision(VARIANTS["metal"])
+    wrapper = sd_cpp.provision(VARIANTS[variant])
     assert fetched == [f"sd-server-{sd_cpp._SD_CPP_TAG}-macos-arm64-metal.tar.gz"]
     with open(wrapper) as f:
         assert "export DYLD_LIBRARY_PATH=" in f.read()
