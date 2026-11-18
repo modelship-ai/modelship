@@ -12,7 +12,7 @@ from modelship.deploy.serve_utils import local_ray_clusters
 from openai import OpenAI
 from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD
 from tests.test_cluster_join import _poll, _terminate_process_group
-from tests.test_responses_store_integration import _redis_server
+from tests.test_responses_store_integration import _api_answers, _redis_server
 
 _GCS_PORT = 6586
 _DASHBOARD_PORT = 6587
@@ -35,7 +35,7 @@ def _model_listed() -> bool:
 
 def _stop(head: subprocess.Popen) -> None:
     _terminate_process_group(head)
-    assert _poll(lambda: not local_ray_clusters(), deadline_s=120), "the head did not stop"
+    assert _poll(lambda: not local_ray_clusters() and not _api_answers(_API), deadline_s=120), "the head did not stop"
 
 
 @pytest.fixture(scope="module", params=["memory", "redis"])
