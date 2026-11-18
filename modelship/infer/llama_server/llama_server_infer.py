@@ -60,6 +60,68 @@ logger = get_logger("infer.llama_server")
 _STARTUP_TIMEOUT_S = float(os.environ.get("MSHIP_LLAMA_SERVER_STARTUP_TIMEOUT", "900"))
 
 
+def serve_args(model_path: str, model_config: ModelshipModelConfig, config: LlamaServerConfig) -> list[str]:
+    """`llama serve`'s flags after `--host`. bench/rawllama_entrypoint.py launches with them too."""
+    args = [
+        "-m",
+        model_path,
+        "-c",
+        str(config.n_ctx * config.parallel),
+        "-b",
+        str(config.n_batch),
+        "-ub",
+        str(config.ubatch_size),
+        "-fa",
+        config.flash_attn,
+        "-ctk",
+        config.cache_type_k,
+        "-ctv",
+        config.cache_type_v,
+        "--parallel",
+        str(config.parallel),
+        "--jinja",
+        "--reasoning-format",
+        "auto",
+        "--no-webui",
+        "--cache-ram",
+        str(config.cache_ram_mib),
+    ]
+    args += device_args(model_config.num_gpus)
+    if model_config.num_gpus > 0:
+        args += ["-ngl", str(config.n_gpu_layers)]
+        if config.tensor_split:
+            args += ["-ts", ",".join(str(v) for v in config.tensor_split)]
+        if config.override_tensor:
+            args += ["-ot", ",".join(config.override_tensor)]
+    else:
+        args += ["-ngl", "0"]
+    if config.threads is not None:
+        args += ["--threads", str(config.threads)]
+    if config.chat_template:
+        flag = "--chat-template-file" if os.path.isfile(config.chat_template) else "--chat-template"
+        args += [flag, config.chat_template]
+    if config.mmproj:
+        # A local path: BaseInfer.ensure_downloaded resolved it before the loader was built.
+        args += ["--mmproj", config.mmproj]
+    if model_config.usecase == ModelUsecase.embed:
+        args += ["--embedding"]
+    if config.cache_reuse > 0:
+        args += ["--cache-reuse", str(config.cache_reuse)]
+    if config.context_shift:
+        args += ["--context-shift"]
+    if config.reasoning is not None:
+        args += ["--reasoning", config.reasoning]
+    if config.reasoning_budget is not None:
+        args += ["--reasoning-budget", str(config.reasoning_budget)]
+    if config.reasoning_budget_message:
+        args += ["--reasoning-budget-message", config.reasoning_budget_message]
+    if config.reasoning_preserve is not None:
+        args += ["--reasoning-preserve" if config.reasoning_preserve else "--no-reasoning-preserve"]
+    if config.media_allow_private_urls:
+        args += ["--media-allow-private-urls"]
+    return args
+
+
 class LlamaServerInfer(BaseInfer[dict[str, Any]]):
     """Drives a `llama-server` subprocess over its native OpenAI-compatible
     HTTP API. llama-server does its own chat templating, tool-call, and
@@ -138,69 +200,7 @@ class LlamaServerInfer(BaseInfer[dict[str, Any]]):
     async def _launch(self, binary: str, model_path: str) -> None:
         self._socket = os.path.join(session_socket_dir(), f"llama-{secrets.token_hex(4)}.sock")
 
-        args = [
-            binary,
-            "serve",
-            "--host",
-            self._socket,
-            "-m",
-            model_path,
-            "-c",
-            str(self.config.n_ctx * self.config.parallel),
-            "-b",
-            str(self.config.n_batch),
-            "-ub",
-            str(self.config.ubatch_size),
-            "-fa",
-            self.config.flash_attn,
-            "-ctk",
-            self.config.cache_type_k,
-            "-ctv",
-            self.config.cache_type_v,
-            "--parallel",
-            str(self.config.parallel),
-            "--jinja",
-            "--reasoning-format",
-            "auto",
-            "--no-webui",
-            "--cache-ram",
-            str(self.config.cache_ram_mib),
-        ]
-        args += device_args(self.model_config.num_gpus)
-        if self.model_config.num_gpus > 0:
-            args += ["-ngl", str(self.config.n_gpu_layers)]
-            if self.config.tensor_split:
-                args += ["-ts", ",".join(str(v) for v in self.config.tensor_split)]
-            if self.config.override_tensor:
-                args += ["-ot", ",".join(self.config.override_tensor)]
-        else:
-            args += ["-ngl", "0"]
-        if self.config.threads is not None:
-            args += ["--threads", str(self.config.threads)]
-        if self.config.chat_template:
-            flag = "--chat-template-file" if os.path.isfile(self.config.chat_template) else "--chat-template"
-            args += [flag, self.config.chat_template]
-        if self.config.mmproj:
-            # Downloaded by BaseInfer.ensure_downloaded (same as the
-            # primary model path, self.model_config._resolved_path) before
-            # this actor's loader was even constructed — no re-resolution here.
-            args += ["--mmproj", self.config.mmproj]
-        if self.model_config.usecase == ModelUsecase.embed:
-            args += ["--embedding"]
-        if self.config.cache_reuse > 0:
-            args += ["--cache-reuse", str(self.config.cache_reuse)]
-        if self.config.context_shift:
-            args += ["--context-shift"]
-        if self.config.reasoning is not None:
-            args += ["--reasoning", self.config.reasoning]
-        if self.config.reasoning_budget is not None:
-            args += ["--reasoning-budget", str(self.config.reasoning_budget)]
-        if self.config.reasoning_budget_message:
-            args += ["--reasoning-budget-message", self.config.reasoning_budget_message]
-        if self.config.reasoning_preserve is not None:
-            args += ["--reasoning-preserve" if self.config.reasoning_preserve else "--no-reasoning-preserve"]
-        if self.config.media_allow_private_urls:
-            args += ["--media-allow-private-urls"]
+        args = [binary, "serve", "--host", self._socket, *serve_args(model_path, self.model_config, self.config)]
 
         self._server = ServerProcess("llama-server", self.model_config.name, self.backend_died)
         await self._server.launch(args)
