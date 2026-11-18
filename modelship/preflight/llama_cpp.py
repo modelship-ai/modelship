@@ -9,7 +9,13 @@ from typing import Any
 
 from modelship.infer.infer_config import LlamaServerConfig, ModelshipModelConfig
 from modelship.logging import get_logger
-from modelship.preflight.base import HardwareProfile, ModelNotSizedError, gpu_share_bytes, ram_reserve_bytes
+from modelship.preflight.base import (
+    HardwareProfile,
+    ModelNotSizedError,
+    gpu_share_bytes,
+    ram_reserve_bytes,
+    shared_gpu_free_bytes,
+)
 from modelship.utils.variant import current_variant
 
 logger = get_logger("preflight.llama_cpp")
@@ -31,8 +37,8 @@ _FIT_MARGIN_MIB = 1024
 # The flags of `llama fit-params`' one stdout line, e.g. `-c N -ngl M -ts a,b -ot "pattern=CPU,..."`.
 _FIT_FLAGS = {"-c", "-ngl", "-ts", "-ot"}
 
-# `-fitp on` prints one `<device> <model> <context> <compute>` row in MiB per device.
-_FIT_HOST_ROW_RE = re.compile(r"^Host\s+(\d+)\s+\d+\s+\d+\s*$", re.MULTILINE)
+# `-fitp on` prints one `<device> <model> <context> <compute>` row in MiB per device, `Host` for RAM.
+_FIT_ROW_RE = re.compile(r"^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$", re.MULTILINE)
 
 # llama.cpp's split-file naming: `<prefix>-00001-of-00003.gguf`.
 _SPLIT_GGUF_RE = re.compile(r"^(.*)-\d{5}-of-(\d{5})\.gguf$")
@@ -75,11 +81,12 @@ class LlamaServerPreflight:
 
         budget_mib = _cpu_ram_budget_mib(hw) if config.num_gpus == 0 else None
         # With a RAM budget the fit still runs: it is the check that the set n_ctx fits.
-        if pinned_ctx and pinned_ngl and pinned_ts and budget_mib is None:
+        all_pinned = pinned_ctx and pinned_ngl and pinned_ts
+        if all_pinned and budget_mib is None and config.num_gpus == 0:
             logger.info("preflight '%s': n_ctx, n_gpu_layers and tensor_split all pinned — nothing to fit", config.name)
             return threads_rec
 
-        args = [
+        base_args = [
             binary,
             "fit-params",
             "-m",
@@ -97,7 +104,8 @@ class LlamaServerPreflight:
             "-ctv",
             server_config.cache_type_v,
         ]
-        args += device_args(config.num_gpus)
+        base_args += device_args(config.num_gpus)
+        args = list(base_args)
         if pinned_ctx:
             args += ["-c", str(server_config.n_ctx * server_config.parallel)]
         if pinned_ngl:
@@ -107,22 +115,31 @@ class LlamaServerPreflight:
         if server_config.override_tensor and config.num_gpus > 0:
             args += ["-ot", ",".join(server_config.override_tensor)]
 
-        try:
-            if budget_mib is None:
-                margin_mib = _fit_margin_mib(config, hw)
-            else:
-                margin_mib = _cpu_fit_margin_mib(config, args, model_path, budget_mib)
-            args += ["-fitc", str(_MIN_NCTX), "-fitt", str(margin_mib)]
-            rec = _run_fit(config, args, server_config.parallel)
-        except _FitError as e:
-            if budget_mib is None:
-                logger.warning("preflight '%s': %s", config.name, e)
-                return threads_rec
-            raise ModelNotSizedError(
-                f"could not be sized for this node, where {budget_mib} MiB of RAM is available to it: {e}. "
-                "Give the node more free memory or lower n_ctx on its models, "
-                "or pass --no-preflight to load it without this check."
-            ) from None
+        rec: dict[str, Any] = {}
+        if all_pinned and config.num_gpus > 0:
+            logger.info("preflight '%s': n_ctx, n_gpu_layers and tensor_split all pinned — nothing to fit", config.name)
+        else:
+            try:
+                if budget_mib is None:
+                    margin_mib = _fit_margin_mib(config, hw)
+                else:
+                    margin_mib = _cpu_fit_margin_mib(config, args, model_path, budget_mib)
+                rec = _run_fit(
+                    config, [*args, "-fitc", str(_MIN_NCTX), "-fitt", str(margin_mib)], server_config.parallel
+                )
+            except _FitError as e:
+                if budget_mib is None:
+                    logger.warning("preflight '%s': %s", config.name, e)
+                    return threads_rec
+                raise ModelNotSizedError(
+                    f"could not be sized for this node, where {budget_mib} MiB of RAM is available to it: {e}. "
+                    "Give the node more free memory or lower n_ctx on its models, "
+                    "or pass --no-preflight to load it without this check."
+                ) from None
+
+        if config.num_gpus > 0:
+            launch = _launch_flags(server_config.model_copy(update=rec), config.num_gpus)
+            _check_ram_outside_the_gpu(config, hw, [*base_args, *launch], model_path, server_config.mmproj)
         return {**threads_rec, **rec}
 
 
@@ -191,10 +208,79 @@ def _weights_mib(model_path: str) -> int:
 
 def _estimated_host_weights_mib(args: list[str]) -> int:
     """Host weights in fit-params' own memory estimate, in MiB."""
-    match = _FIT_HOST_ROW_RE.search(_invoke([*args, "-fitp", "on"]).stdout)
-    if match is None:
+    return _estimate_mib(args)["Host"][0]
+
+
+def _estimate_mib(args: list[str]) -> dict[str, tuple[int, int, int]]:
+    """fit-params' memory estimate for exactly `args`: device → (model, context, compute) MiB, `Host` for RAM."""
+    rows = _FIT_ROW_RE.findall(_invoke([*args, "-fit", "off", "-fitp", "on"]).stdout)
+    estimate = {device: (int(model), int(context), int(compute)) for device, model, context, compute in rows}
+    if "Host" not in estimate:
         raise _FitError("could not read fit-params memory estimate")
-    return int(match[1])
+    return estimate
+
+
+def _launch_flags(server_config: LlamaServerConfig, num_gpus: float) -> list[str]:
+    """The sizing flags llama_server_infer launches a GPU deploy with."""
+    flags = ["-c", str(server_config.n_ctx * server_config.parallel), "-ngl", str(server_config.n_gpu_layers)]
+    if server_config.tensor_split:
+        flags += ["-ts", ",".join(str(v) for v in server_config.tensor_split)]
+    if server_config.override_tensor and num_gpus > 0:
+        flags += ["-ot", ",".join(server_config.override_tensor)]
+    return flags
+
+
+def _check_ram_outside_the_gpu(
+    config: ModelshipModelConfig, hw: HardwareProfile, args: list[str], model_path: str, mmproj: str | None
+):
+    """fit-params fits a GPU deploy to its GPUs only; what it leaves in RAM is checked here. A GPU that uses
+    system RAM takes its part from the same free memory, which a container's limit doesn't cover."""
+    budget_mib = _cpu_ram_budget_mib(hw)
+    if budget_mib is None:
+        logger.warning("preflight '%s': free RAM unreadable; the part left in RAM is not checked", config.name)
+        return
+    try:
+        estimate = _estimate_mib(args)
+    except _FitError as e:
+        logger.warning("preflight '%s': the part left in RAM is not checked: %s", config.name, e)
+        return
+    uncounted_mib = max(0, _weights_mib(model_path) - sum(model for model, _, _ in estimate.values()))
+    ram_mib = sum(estimate["Host"]) + uncounted_mib
+    gpu_mib = sum(sum(row) for device, row in estimate.items() if device != "Host")
+    logger.info(
+        "preflight llama_server '%s': %d MiB in RAM (%d MiB of weights outside the estimate), %d MiB on the GPU; "
+        "%d MiB of RAM available",
+        config.name,
+        ram_mib,
+        uncounted_mib,
+        gpu_mib,
+        budget_mib,
+    )
+    if ram_mib > budget_mib:
+        raise ModelNotSizedError(
+            f"needs {ram_mib} MiB of RAM for the part that doesn't fit on its GPU, and {budget_mib} MiB is "
+            "available to it. Give it more of the GPU (num_gpus), use a smaller quant or free RAM on the node, "
+            "or pass --no-preflight to load it without this check."
+        )
+    shared = {gpu.index for gpu in hw.gpus if gpu.shared_memory}
+    if shared and (free := shared_gpu_free_bytes()) is not None:
+        shared_mib = free // 1024**2
+        on_shared_mib = sum(sum(row) for device, row in estimate.items() if _device_index(device) in shared)
+        # llama-server offloads the projector to the first GPU; fit-params doesn't load it.
+        if mmproj and 0 in shared and os.path.isfile(mmproj):
+            on_shared_mib += _weights_mib(mmproj)
+        if ram_mib + on_shared_mib > shared_mib:
+            raise ModelNotSizedError(
+                f"needs {ram_mib + on_shared_mib} MiB of system RAM, which its GPU shares, and {shared_mib} MiB is "
+                "available. Use a smaller quant or lower n_ctx, free RAM on the node, "
+                "or pass --no-preflight to load it without this check."
+            )
+
+
+def _device_index(device: str) -> int | None:
+    """`Vulkan1` → 1; `GPUInfo.index` numbers devices as llama.cpp's `--device` names do."""
+    match = re.search(r"(\d+)$", device)
+    return int(match.group(1)) if match else None
 
 
 def _invoke(args: list[str]) -> subprocess.CompletedProcess[str]:

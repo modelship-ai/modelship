@@ -52,7 +52,7 @@ class GPUInfo:
     uuid: str | None = None  # "GPU-<uuid>"; None when the probe can't read it
     total_bytes: int = 0  # device capacity; 0 when the probe couldn't read it
     engine_free_bytes: int | None = None
-    shared_memory: bool = False  # the GPU uses system RAM, e.g. GB10
+    shared_memory: bool = False  # the GPU uses system RAM, e.g. GB10 or an AMD iGPU
 
     @property
     def sizing_total_bytes(self) -> int:
@@ -497,6 +497,7 @@ def _vulkan_gpus(mask: str | None) -> list[GPUInfo]:
                 uuid=device.uuid,
                 total_bytes=memory.total_bytes,
                 engine_free_bytes=memory.engine_free_bytes,
+                shared_memory=device.type == "integrated",
             )
         )
     return gpus
