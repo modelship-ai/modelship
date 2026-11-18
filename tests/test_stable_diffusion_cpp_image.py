@@ -1,13 +1,16 @@
 import asyncio
 import base64
 import io
-import threading
-import time
+import json
+import re
+from unittest.mock import patch
 
+import httpx
 import pytest
 from PIL import Image
 
-from modelship.infer.infer_config import RawRequestProxy, StableDiffusionCppConfig
+from modelship.infer.base_infer import BaseInfer
+from modelship.infer.infer_config import RawRequestProxy
 from modelship.infer.stable_diffusion_cpp.openai.serving_image import (
     _DEFAULT_EDIT_STRENGTH,
     _DEFAULT_VARIATION_STRENGTH,
@@ -23,42 +26,69 @@ from modelship.openai.protocol import (
 from tests.test_base_infer_run_blocking import ExclusiveInfer
 
 
-class _StubSD:
-    """Stand-in for a stable-diffusion.cpp handle. Records the kwargs each
-    `generate_image` call received and returns `batch_count` solid PIL images."""
-
-    def __init__(self):
-        self.calls: list[dict] = []
-
-    def generate_image(self, **kwargs):
-        self.calls.append(kwargs)
-        n = kwargs.get("batch_count", 1)
-        return [Image.new("RGB", (8, 8), (10, 20, 30)) for _ in range(n)]
+def _png_b64(w: int = 8, h: int = 8, color=(10, 20, 30)) -> str:
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), color).save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
 
 
-class _ConcurrencyProbeSD:
-    """Records the peak number of overlapping generate_image calls."""
+class _FakeSdServer:
+    """sd-server's job API: a job is `generating` for `polls` polls, then ends with `outcome`."""
 
-    def __init__(self):
-        self.active = 0
-        self.max_active = 0
-        self._lock = threading.Lock()
+    def __init__(
+        self,
+        *,
+        polls: int = 2,
+        outcome: str = "completed",
+        submit_status: int = 202,
+        submit_gate: asyncio.Event | None = None,
+    ):
+        self.polls = polls
+        self.submit_gate = submit_gate
+        self.submit_started = asyncio.Event()
+        self.outcome = outcome
+        self.submit_status = submit_status
+        self.submitted: list[dict] = []
+        self.cancelled: list[str] = []
+        self._seen: dict[str, int] = {}
 
-    def generate_image(self, **kwargs):
-        with self._lock:
-            self.active += 1
-            self.max_active = max(self.max_active, self.active)
-        time.sleep(0.05)  # widen the window so unserialized calls would overlap
-        with self._lock:
-            self.active -= 1
-        n = kwargs.get("batch_count", 1)
-        return [Image.new("RGB", (8, 8)) for _ in range(n)]
+    async def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/sdcpp/v1/img_gen":
+            self.submit_started.set()
+            if self.submit_gate is not None:
+                await self.submit_gate.wait()
+            if self.submit_status != 202:
+                return httpx.Response(self.submit_status, json={"error": "invalid generation parameters"})
+            body = json.loads(request.content)
+            self.submitted.append(body)
+            job_id = f"job_{len(self.submitted)}"
+            self._seen[job_id] = 0
+            return httpx.Response(202, json={"id": job_id, "kind": "img_gen", "status": "queued"})
+        if match := re.fullmatch(r"/sdcpp/v1/jobs/(\w+)/cancel", request.url.path):
+            self.cancelled.append(match.group(1))
+            return httpx.Response(200, json={"id": match.group(1), "cancel_requested": True})
+        if match := re.fullmatch(r"/sdcpp/v1/jobs/(\w+)", request.url.path):
+            job_id = match.group(1)
+            self._seen[job_id] += 1
+            if self._seen[job_id] <= self.polls:
+                return httpx.Response(200, json={"id": job_id, "status": "generating", "result": None})
+            if self.outcome == "failed":
+                error = {"code": "generation_failed", "message": "generate_image returned empty results"}
+                return httpx.Response(200, json={"id": job_id, "status": "failed", "result": None, "error": error})
+            n = self.submitted[int(job_id.split("_")[1]) - 1]["batch_count"]
+            images = [{"index": i, "b64_json": _png_b64()} for i in reversed(range(n))]
+            result = {"output_format": "png", "images": images}
+            return httpx.Response(200, json={"id": job_id, "status": "completed", "result": result})
+        return httpx.Response(404)
+
+
+def _serving(server: _FakeSdServer, infer: BaseInfer | None = None) -> OpenAIServingImage:
+    client = httpx.AsyncClient(transport=httpx.MockTransport(server.handler), base_url="http://sd-server")
+    return OpenAIServingImage(client, (infer or ExclusiveInfer()).run_cancellable)
 
 
 def _png_bytes(w: int = 16, h: int = 16) -> bytes:
-    buf = io.BytesIO()
-    Image.new("RGB", (w, h), (200, 100, 50)).save(buf, format="PNG")
-    return buf.getvalue()
+    return base64.b64decode(_png_b64(w, h, (200, 100, 50)))
 
 
 def _rgba_png(w: int = 16, h: int = 16, *, transparent: bool) -> bytes:
@@ -72,181 +102,270 @@ def _rgba_png(w: int = 16, h: int = 16, *, transparent: bool) -> bytes:
     return buf.getvalue()
 
 
-def _serving(sd=None) -> OpenAIServingImage:
-    return OpenAIServingImage(
-        sd=sd if sd is not None else _StubSD(),  # type: ignore[arg-type]
-        config=StableDiffusionCppConfig(
-            sample_steps=5, cfg_scale=3.0, sample_method="euler", scheduler="karras", vae_tiling=True
-        ),
-        run_blocking=ExclusiveInfer().run_blocking,
-    )
+def _decode(b64: str) -> Image.Image:
+    return Image.open(io.BytesIO(base64.b64decode(b64)))
 
 
 def _proxy() -> RawRequestProxy:
     return RawRequestProxy(None, {})
 
 
-def _assert_valid_b64_image(obj) -> None:
-    raw = base64.b64decode(obj.b64_json)
-    Image.open(io.BytesIO(raw)).verify()
+@pytest.fixture(autouse=True)
+def fast_polls(monkeypatch):
+    from modelship.infer.stable_diffusion_cpp.openai import serving_image
+
+    monkeypatch.setattr(serving_image, "_POLL_INTERVAL_S", 0.001)
 
 
 @pytest.mark.asyncio
 class TestImageGeneration:
-    async def test_generation_returns_n_images_and_forwards_config(self):
-        sd = _StubSD()
-        serving = _serving(sd)
+    async def test_generation_submits_a_job_and_returns_its_images_in_order(self):
+        server = _FakeSdServer()
         request = ImageGenerationRequest(model="m", prompt="a red bicycle", n=2, size="64x32")
 
-        result = await serving.create_image_generation(request, _proxy())
+        result = await _serving(server).create_image_generation(request, _proxy())
 
         assert isinstance(result, ImageGenerationResponse)
-        assert len(result.data) == 2
+        assert [obj.revised_prompt for obj in result.data] == ["a red bicycle"] * 2
         for obj in result.data:
-            assert obj.revised_prompt == "a red bicycle"
-            _assert_valid_b64_image(obj)
-        call = sd.calls[0]
-        assert call["prompt"] == "a red bicycle"
-        assert call["width"] == 64 and call["height"] == 32
-        assert call["batch_count"] == 2
-        # Per-model config defaults are applied on every call.
-        assert call["cfg_scale"] == 3.0
-        assert call["sample_steps"] == 5
-        assert call["sample_method"] == "euler"
-        assert call["scheduler"] == "karras"
-        assert call["vae_tiling"] is True
-        assert "init_image" not in call  # txt2img
+            assert _decode(obj.b64_json).format == "PNG"
+        assert server.submitted == [
+            {"prompt": "a red bicycle", "width": 64, "height": 32, "batch_count": 2, "seed": -1}
+        ]
 
-    async def test_generation_invalid_size_errors(self):
-        serving = _serving()
+    async def test_more_than_eight_images_take_two_jobs(self):
+        server = _FakeSdServer()
+        request = ImageGenerationRequest(model="m", prompt="x", n=10, size="16x16")
+
+        result = await _serving(server).create_image_generation(request, _proxy())
+
+        assert isinstance(result, ImageGenerationResponse)
+        assert len(result.data) == 10
+        assert [body["batch_count"] for body in server.submitted] == [8, 2]
+
+    async def test_generation_invalid_size_errors_without_a_job(self):
+        server = _FakeSdServer()
         request = ImageGenerationRequest(model="m", prompt="x", n=1, size="not-a-size")
+        result = await _serving(server).create_image_generation(request, _proxy())
+        assert isinstance(result, ErrorResponse)
+        assert server.submitted == []
+
+    async def test_concurrent_requests_are_all_submitted(self):
+        """sd-server queues jobs itself; nothing here holds one back for another."""
+        server = _FakeSdServer(polls=5)
+        serving = _serving(server)
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
+        results = await asyncio.gather(*(serving.create_image_generation(request, _proxy()) for _ in range(4)))
+        assert all(isinstance(r, ImageGenerationResponse) for r in results)
+        assert len(server.submitted) == 4
+
+    async def test_a_refused_job_returns_sd_servers_message(self):
+        server = _FakeSdServer(submit_status=400)
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
+        result = await _serving(server).create_image_generation(request, _proxy())
+        assert isinstance(result, ErrorResponse)
+        assert result._http_status == 400
+        assert result.error.message == "invalid generation parameters"
+
+    async def test_a_full_queue_is_a_429(self):
+        server = _FakeSdServer(submit_status=429)
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
+        result = await _serving(server).create_image_generation(request, _proxy())
+        assert isinstance(result, ErrorResponse)
+        assert result._http_status == 429
+
+    async def test_a_failed_job_is_a_500(self):
+        server = _FakeSdServer(outcome="failed")
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
+        result = await _serving(server).create_image_generation(request, _proxy())
+        assert isinstance(result, ErrorResponse)
+        assert result._http_status == 500
+        assert "generate_image returned empty results" in result.error.message
+
+    async def test_an_unreachable_server_is_a_502(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused")
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://sd-server")
+        serving = OpenAIServingImage(client, ExclusiveInfer().run_cancellable)
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
         result = await serving.create_image_generation(request, _proxy())
         assert isinstance(result, ErrorResponse)
+        assert result._http_status == 502
 
-    async def test_calls_are_serialized(self):
-        probe = _ConcurrencyProbeSD()
-        serving = _serving(probe)
+
+class _DisconnectedRawRequest:
+    """A watchable proxy whose client is gone from the first poll."""
+
+    request_id = "req-1"
+    is_watchable = True
+    received_at = 0.0
+
+
+async def _all_disconnected(request_ids: list[str]) -> list[str]:
+    return request_ids
+
+
+@pytest.mark.asyncio
+class TestCancel:
+    async def test_a_disconnect_cancels_the_job(self):
+        server = _FakeSdServer(polls=10_000)
         request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
-        await asyncio.gather(*(serving.create_image_generation(request, _proxy()) for _ in range(4)))
-        assert probe.max_active == 1
+        with patch.object(BaseInfer, "_poll_disconnected_ids", staticmethod(_all_disconnected)):
+            result = await _serving(server).create_image_generation(request, _DisconnectedRawRequest())  # type: ignore[arg-type]
+
+        assert isinstance(result, ErrorResponse)
+        assert "disconnect" in result.error.message.lower()
+        assert server.cancelled == ["job_1"]
+
+    async def test_a_cancel_during_submission_cancels_the_accepted_job(self):
+        gate = asyncio.Event()
+        server = _FakeSdServer(polls=10_000, submit_gate=gate)
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
+        task = asyncio.ensure_future(_serving(server).create_image_generation(request, _proxy()))
+        await server.submit_started.wait()
+        task.cancel()
+        await asyncio.sleep(0.01)
+        gate.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert server.cancelled == ["job_1"]
+
+    async def test_a_cancelled_request_cancels_the_job(self):
+        server = _FakeSdServer(polls=10_000)
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16")
+        task = asyncio.ensure_future(_serving(server).create_image_generation(request, _proxy()))
+        while not server.submitted:
+            await asyncio.sleep(0.001)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert server.cancelled == ["job_1"]
 
 
 @pytest.mark.asyncio
 class TestImageEdit:
-    async def test_edit_without_mask_passes_init_image_no_mask(self):
-        sd = _StubSD()
-        serving = _serving(sd)
-        request = ImageEditRequest.model_construct(model="m", prompt="add a hat", n=2, size="32x32", strength=None)
+    async def test_edit_without_mask_sends_init_image_no_mask(self):
+        server = _FakeSdServer()
+        request = ImageEditRequest.model_construct(
+            model="m", prompt="add a hat", n=2, size="32x32", strength=None, output_format="png"
+        )
 
-        result = await serving.create_image_edit(_png_bytes(), None, request, _proxy())
+        result = await _serving(server).create_image_edit(_png_bytes(), None, request, _proxy())
 
         assert isinstance(result, ImageGenerationResponse)
         assert len(result.data) == 2
-        call = sd.calls[0]
-        assert call["prompt"] == "add a hat"
-        assert call["init_image"] is not None
-        assert call["strength"] == _DEFAULT_EDIT_STRENGTH
-        assert "mask_image" not in call
+        body = server.submitted[0]
+        assert body["prompt"] == "add a hat"
+        assert _decode(body["init_image"]).size == (32, 32)
+        assert body["strength"] == _DEFAULT_EDIT_STRENGTH
+        assert "mask_image" not in body
 
-    async def test_edit_with_mask_passes_mask_image(self):
-        sd = _StubSD()
-        serving = _serving(sd)
-        request = ImageEditRequest.model_construct(model="m", prompt="erase", n=1, size="16x16", strength=0.5)
+    async def test_edit_with_mask_sends_a_one_channel_mask(self):
+        server = _FakeSdServer()
+        request = ImageEditRequest.model_construct(
+            model="m", prompt="erase", n=1, size="16x16", strength=0.5, output_format="png"
+        )
 
-        result = await serving.create_image_edit(_png_bytes(), _png_bytes(), request, _proxy())
+        result = await _serving(server).create_image_edit(_png_bytes(), _png_bytes(), request, _proxy())
 
         assert isinstance(result, ImageGenerationResponse)
-        call = sd.calls[0]
-        assert call["strength"] == 0.5
-        assert "mask_image" in call
+        body = server.submitted[0]
+        assert body["strength"] == 0.5
+        assert _decode(body["mask_image"]).mode == "L"
 
     async def test_edit_transparent_image_derives_mask_from_alpha(self):
-        sd = _StubSD()
-        serving = _serving(sd)
-        request = ImageEditRequest.model_construct(model="m", prompt="fill", n=1, size="16x16", strength=None)
+        server = _FakeSdServer()
+        request = ImageEditRequest.model_construct(
+            model="m", prompt="fill", n=1, size="16x16", strength=None, output_format="png"
+        )
 
-        result = await serving.create_image_edit(_rgba_png(transparent=True), None, request, _proxy())
+        result = await _serving(server).create_image_edit(_rgba_png(transparent=True), None, request, _proxy())
 
         assert isinstance(result, ImageGenerationResponse)
-        call = sd.calls[0]
-        assert "mask_image" in call
         # Transparent center -> repaint (white); opaque corner -> keep (black).
-        mask = call["mask_image"]
+        mask = _decode(server.submitted[0]["mask_image"])
         assert mask.getpixel((8, 8)) == 255
         assert mask.getpixel((0, 0)) == 0
 
     async def test_edit_opaque_rgba_no_mask_is_plain_img2img(self):
-        sd = _StubSD()
-        serving = _serving(sd)
-        request = ImageEditRequest.model_construct(model="m", prompt="x", n=1, size="16x16", strength=None)
+        server = _FakeSdServer()
+        request = ImageEditRequest.model_construct(
+            model="m", prompt="x", n=1, size="16x16", strength=None, output_format="png"
+        )
 
-        result = await serving.create_image_edit(_rgba_png(transparent=False), None, request, _proxy())
+        result = await _serving(server).create_image_edit(_rgba_png(transparent=False), None, request, _proxy())
 
         assert isinstance(result, ImageGenerationResponse)
-        assert "mask_image" not in sd.calls[0]
+        assert "mask_image" not in server.submitted[0]
+
+    async def test_edit_undecodable_image_errors_without_a_job(self):
+        server = _FakeSdServer()
+        request = ImageEditRequest.model_construct(
+            model="m", prompt="x", n=1, size="16x16", strength=None, output_format="png"
+        )
+        result = await _serving(server).create_image_edit(b"not an image", None, request, _proxy())
+        assert isinstance(result, ErrorResponse)
+        assert server.submitted == []
 
     async def test_edit_invalid_size_errors(self):
-        serving = _serving()
+        server = _FakeSdServer()
         request = ImageEditRequest.model_construct(model="m", prompt="x", n=1, size="bad", strength=None)
-        result = await serving.create_image_edit(_png_bytes(), None, request, _proxy())
+        result = await _serving(server).create_image_edit(_png_bytes(), None, request, _proxy())
         assert isinstance(result, ErrorResponse)
 
 
 @pytest.mark.asyncio
 class TestImageVariation:
     async def test_variation_uses_empty_prompt_and_default_strength(self):
-        sd = _StubSD()
-        serving = _serving(sd)
-        request = ImageVariationRequest.model_construct(model="m", n=3, size="16x16", strength=None)
+        server = _FakeSdServer()
+        request = ImageVariationRequest.model_construct(
+            model="m", n=3, size="16x16", strength=None, output_format="png"
+        )
 
-        result = await serving.create_image_variation(_png_bytes(), request, _proxy())
+        result = await _serving(server).create_image_variation(_png_bytes(), request, _proxy())
 
         assert isinstance(result, ImageGenerationResponse)
         assert len(result.data) == 3
-        for obj in result.data:
-            assert obj.revised_prompt is None
-            _assert_valid_b64_image(obj)
-        call = sd.calls[0]
-        assert call["prompt"] == ""
-        assert call["init_image"] is not None
-        assert call["strength"] == _DEFAULT_VARIATION_STRENGTH
+        assert all(obj.revised_prompt is None for obj in result.data)
+        body = server.submitted[0]
+        assert body["prompt"] == ""
+        assert _decode(body["init_image"]).size == (16, 16)
+        assert body["strength"] == _DEFAULT_VARIATION_STRENGTH
 
     async def test_variation_invalid_size_errors(self):
-        serving = _serving()
+        server = _FakeSdServer()
         request = ImageVariationRequest.model_construct(model="m", n=1, size="bad", strength=None)
-        result = await serving.create_image_variation(_png_bytes(), request, _proxy())
+        result = await _serving(server).create_image_variation(_png_bytes(), request, _proxy())
         assert isinstance(result, ErrorResponse)
 
 
 @pytest.mark.asyncio
-class TestOutputFormatPropagation:
-    async def test_generation_honors_output_format(self):
-        serving = _serving()
-        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16", output_format="webp")
+class TestOutputFormat:
+    @pytest.mark.parametrize(("output_format", "pil_format"), [("webp", "WEBP"), ("jpeg", "JPEG")])
+    async def test_generation_reencodes_sd_servers_png(self, output_format, pil_format):
+        server = _FakeSdServer()
+        request = ImageGenerationRequest(model="m", prompt="x", n=1, size="16x16", output_format=output_format)
 
-        result = await serving.create_image_generation(request, _proxy())
+        result = await _serving(server).create_image_generation(request, _proxy())
 
         assert isinstance(result, ImageGenerationResponse)
-        assert Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).format == "WEBP"
+        assert _decode(result.data[0].b64_json).format == pil_format
 
     async def test_edit_honors_output_format(self):
-        serving = _serving()
+        server = _FakeSdServer()
         request = ImageEditRequest.model_construct(
             model="m", prompt="x", n=1, size="16x16", strength=None, output_format="webp"
         )
-
-        result = await serving.create_image_edit(_png_bytes(), None, request, _proxy())
-
+        result = await _serving(server).create_image_edit(_png_bytes(), None, request, _proxy())
         assert isinstance(result, ImageGenerationResponse)
-        assert Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).format == "WEBP"
+        assert _decode(result.data[0].b64_json).format == "WEBP"
 
     async def test_variation_honors_output_format(self):
-        serving = _serving()
+        server = _FakeSdServer()
         request = ImageVariationRequest.model_construct(
             model="m", n=1, size="16x16", strength=None, output_format="webp"
         )
-
-        result = await serving.create_image_variation(_png_bytes(), request, _proxy())
-
+        result = await _serving(server).create_image_variation(_png_bytes(), request, _proxy())
         assert isinstance(result, ImageGenerationResponse)
-        assert Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).format == "WEBP"
+        assert _decode(result.data[0].b64_json).format == "WEBP"

@@ -185,16 +185,27 @@ class WhispercppConfig(_StrictModel):
 
 
 class StableDiffusionCppConfig(_StrictModel):
-    """Tunables for the CPU-only `stable_diffusion_cpp` image loader
-    (stable-diffusion.cpp via stable-diffusion-cpp-python)."""
+    """Tunables for the ``stable_diffusion_cpp`` image loader, which runs an
+    ``sd-server`` subprocess (stable-diffusion.cpp). Each field maps to one sd-server flag."""
 
-    sample_steps: int = 20
+    sample_steps: int = Field(default=20, ge=1)
     cfg_scale: float = 7.0
+    # Distilled guidance (`--guidance`), for models with a guidance input such as Flux; None keeps sd.cpp's.
+    guidance: float | None = None
     sample_method: str = "default"
     scheduler: str = "default"
     wtype: str = "default"
-    n_threads: int = -1
+    # -1 lets sd.cpp pick.
+    n_threads: int = Field(default=-1, ge=-1)
     vae_tiling: bool = False
+    # `--flash-attn`: on, off, auto, or module assignments such as `auto,vae=off`; None keeps sd.cpp's `auto`.
+    flash_attn: str | None = Field(default=None, min_length=1)
+    clip_on_cpu: bool = False
+    vae_on_cpu: bool = False
+    offload_to_cpu: bool = False
+    # GPU budget in GiB (`--max-vram`) and `--auto-fit`; preflight sets both for a fractional `num_gpus`.
+    max_vram: float | None = Field(default=None, gt=0)
+    auto_fit: bool | None = None
     # Split checkpoints: pre-placed local paths only, since source resolution
     # handles single-file models.
     diffusion_model_path: str | None = None
@@ -202,8 +213,13 @@ class StableDiffusionCppConfig(_StrictModel):
     clip_g_path: str | None = None
     t5xxl_path: str | None = None
     vae_path: str | None = None
-    # Forwarded verbatim to the StableDiffusion constructor.
-    model_kwargs: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("flash_attn", mode="before")
+    @classmethod
+    def words_for_yaml_booleans(cls, value):
+        if isinstance(value, bool):
+            return "on" if value else "off"
+        return value
 
 
 class AutoscalingConfig(_StrictModel):
@@ -318,6 +334,15 @@ class ModelshipModelConfig(_StrictModel):
             raise ValueError(
                 f"num_gpus={self.num_gpus!r} is not allowed for the {self.loader.value} loader: "
                 f"use a fraction < 1 to share one GPU, or a whole integer number of GPUs."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_stable_diffusion_cpp_uses_one_gpu(self):
+        if self.loader == ModelLoader.stable_diffusion_cpp and self.num_gpus > 1:
+            raise ValueError(
+                f"num_gpus={self.num_gpus!r} is not allowed for the stable_diffusion_cpp loader: "
+                f"it runs on one GPU, so use 1, or a fraction < 1 to share it."
             )
         return self
 

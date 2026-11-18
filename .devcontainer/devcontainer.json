@@ -32,7 +32,7 @@
     "source=${localEnv:HOME}/.claude,target=/home/modelship/.claude,type=bind",
     "source=${localEnv:HOME}/.gemini,target=/home/modelship/.gemini,type=bind"
   ],
-  "postCreateCommand": "npm install -g @anthropic-ai/claude-code && npm install -g @google/gemini-cli && bash .devcontainer/provision-llama-server.sh",
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code && npm install -g @google/gemini-cli && bash .devcontainer/provision-servers.sh",
   "containerEnv": {
     "CLAUDE_CONFIG_DIR": "/home/modelship/.claude"
   },
@@ -40,7 +40,8 @@
   "remoteEnv": {
     "HF_TOKEN": "${localEnv:HF_TOKEN}",
     "MSHIP_METRICS": "true",
-    "MSHIP_LLAMA_SERVER_BIN": "/opt/mship/bin/llama-server.sh"
+    "MSHIP_LLAMA_SERVER_BIN": "/opt/mship/bin/llama-server.sh",
+    "MSHIP_SD_SERVER_BIN": "/opt/mship/bin/sd-server.sh"
   },
   "customizations": {
     "vscode": {

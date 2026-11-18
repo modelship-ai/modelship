@@ -284,6 +284,7 @@ class TestCmdInfo:
         assert "variant: cpu" in out
         assert "cache: /tmp/cache" in out
         assert "llama-server: unset" in out
+        assert "sd-server: unset" in out
 
     def test_reports_an_unset_variant(self, capsys):
         with (
@@ -301,6 +302,14 @@ class TestCmdInfo:
         ):
             launcher._cmd_info()
         assert "llama-server: /builds/cuda/llama-server.sh" in capsys.readouterr().out
+
+    def test_prints_inherited_sd_server_bin(self, capsys):
+        with (
+            patch.dict(os.environ, {"MSHIP_SD_SERVER_BIN": "/builds/cuda/sd-server.sh"}, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
+        ):
+            launcher._cmd_info()
+        assert "sd-server: /builds/cuda/sd-server.sh" in capsys.readouterr().out
 
 
 class TestCmdInfoVulkan:

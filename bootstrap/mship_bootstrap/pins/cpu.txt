@@ -963,7 +963,7 @@ pillow==13.0.0 \
     --hash=sha256:ff3fe9eb621fbb9db4c4be33ab946f6bac5f98ab50ca8d3260503653656c961b
     # via
     #   mistral-common
-    #   stable-diffusion-cpp-python
+    #   mship-engine
     #   torchvision
     #   vllm
 piper-phonemize @ https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux' \
@@ -1541,9 +1541,6 @@ sse-starlette==3.3.4 \
     --hash=sha256:84bb06e58939a8b38d8341f1bc9792f06c2b53f48c608dd207582b664fc8f3c1 \
     --hash=sha256:aaf92fc067af8a5427192895ac028e947b484ac01edbc3caf00e7e7137c7bef1
     # via mcp
-stable-diffusion-cpp-python==0.4.7 \
-    --hash=sha256:998d1957260dd5ae4e18a8acc0c14b0a8757aaa9f96515197b6d5bbf46df9282
-    # via mship-engine
 starlette==1.3.1 \
     --hash=sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0 \
     --hash=sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6
@@ -1698,7 +1695,6 @@ typing-extensions==4.15.0 \
     #   pyopenssl
     #   referencing
     #   rich-toolkit
-    #   stable-diffusion-cpp-python
     #   starlette
     #   torch
     #   typing-inspection

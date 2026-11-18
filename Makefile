@@ -8,7 +8,7 @@ BOOTSTRAP_DIR ?= $(HOME)/.cache/mship-bootstrap
 # A variant runs the integration tests with no variant mark, plus those marked with it.
 VARIANT_TESTS = $(if $(filter-out cpu,$(VARIANT)),$(VARIANT) or )not (cuda or vulkan or metal)
 
-.PHONY: unit-test integration wheel bootstrap lint lint-fix pins release-patch release-minor release-major _release llama-cpp-bump
+.PHONY: unit-test integration wheel bootstrap lint lint-fix pins release-patch release-minor release-major _release llama-cpp-bump sd-cpp-bump
 
 unit-test:
 	uv run pytest tests/ -v -m "not integration"
@@ -18,8 +18,9 @@ integration:
 	@test -x $(BOOTSTRAP_DIR)/venv/bin/mship && test -f $(BOOTSTRAP_DIR)/home/env || \
 		{ echo "Error: no mship installed in $(BOOTSTRAP_DIR): run make bootstrap VARIANT=cuda|cpu|vulkan|metal" >&2; exit 1; }
 	@if [ -n "$$MSHIP_LLAMA_SERVER_BIN" ]; then echo "Ignoring MSHIP_LLAMA_SERVER_BIN=$$MSHIP_LLAMA_SERVER_BIN: mship bootstrap provides llama-server"; fi
+	@if [ -n "$$MSHIP_SD_SERVER_BIN" ]; then echo "Ignoring MSHIP_SD_SERVER_BIN=$$MSHIP_SD_SERVER_BIN: mship bootstrap provides sd-server"; fi
 	@bin=$$(uv run python -c "import os, sys; print(os.path.dirname(sys.executable))") && \
-	env -u MSHIP_LLAMA_SERVER_BIN PATH="$$bin:$$PATH" MSHIP_HOME=$(BOOTSTRAP_DIR)/home \
+	env -u MSHIP_LLAMA_SERVER_BIN -u MSHIP_SD_SERVER_BIN PATH="$$bin:$$PATH" MSHIP_HOME=$(BOOTSTRAP_DIR)/home \
 		MSHIP_TEST_BIN=$(BOOTSTRAP_DIR)/venv/bin/mship \
 		"$$bin/python" -m pytest -v -m "integration$(if $(VARIANT), and ($(VARIANT_TESTS)))$(if $(MARK), and ($(MARK)))" $(ARGS)
 
@@ -63,6 +64,17 @@ llama-cpp-bump:
 	gh workflow run llama-cpp-build.yml --ref "$$BRANCH" -f tag=$(TAG) $(if $(REBUILD),-f rebuild=$(REBUILD)) && \
 	echo "Triggered llama.cpp build for $(TAG) on $$BRANCH (~1h, gated on the CUDA job); its pin PR targets $$BRANCH."
 	@echo "Publishes https://github.com/modelship-ai/llama-cpp-builds/releases/tag/llamacpp-$(TAG)$(if $(REBUILD),-r$(REBUILD))"
+
+sd-cpp-bump:
+	@if [ -z "$(TAG)" ]; then echo "Error: usage: make sd-cpp-bump TAG=master-1106-532d2c1 [REBUILD=2]" >&2; exit 1; fi
+	@BRANCH=$$(git branch --show-current); \
+	if [ -z "$$BRANCH" ]; then echo "Error: HEAD is detached; check out a branch" >&2; exit 1; fi; \
+	git fetch -q origin "$$BRANCH" 2>/dev/null || { echo "Error: $$BRANCH is not on origin; push it first" >&2; exit 1; }; \
+	if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse FETCH_HEAD)" ]; then \
+		echo "Error: $$BRANCH differs from origin/$$BRANCH; push it first (the workflow runs the pushed branch)" >&2; exit 1; fi; \
+	gh workflow run sd-cpp-build.yml --ref "$$BRANCH" -f tag=$(TAG) $(if $(REBUILD),-f rebuild=$(REBUILD)) && \
+	echo "Triggered stable-diffusion.cpp build for $(TAG) on $$BRANCH (~80 min, gated on the CUDA jobs); its pin PR targets $$BRANCH."
+	@echo "Publishes https://github.com/modelship-ai/engine-builds/releases/tag/sdcpp-$(TAG)$(if $(REBUILD),-r$(REBUILD))"
 
 release-patch:
 	$(eval NEW_VERSION := $(MAJOR).$(MINOR).$(shell echo $$(($(PATCH)+1))))

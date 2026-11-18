@@ -91,6 +91,7 @@ def _cmd_info() -> None:
         print("ray: not installed")
 
     print(f"llama-server: {os.environ.get('MSHIP_LLAMA_SERVER_BIN') or 'unset'}")
+    print(f"sd-server: {os.environ.get('MSHIP_SD_SERVER_BIN') or 'unset'}")
     variant = os.environ.get("MSHIP_VARIANT")
     if variant in ("cuda", "vulkan", "metal"):
         _print_gpus(variant)

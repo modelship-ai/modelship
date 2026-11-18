@@ -9,7 +9,7 @@ Example `models.yaml` configs; the images also carry them under `/modelship/conf
 | [vllm.yaml](vllm.yaml) | High-throughput chat with tool calling, embeddings, Whisper | NVIDIA GPU |
 | [vllm-vision.yaml](vllm-vision.yaml) | Vision-language chat (image_url content parts) | NVIDIA GPU |
 | [diffusers.yaml](diffusers.yaml) | SD-Turbo image generation | NVIDIA GPU |
-| [stable-diffusion-cpp.yaml](stable-diffusion-cpp.yaml) | GGUF-quantized image generation (SD 2.1, Flux-schnell) | CPU |
+| [stable-diffusion-cpp.yaml](stable-diffusion-cpp.yaml) | GGUF-quantized image generation (SD 2.1, Flux-schnell) | CPU or GPU |
 | [sherpa-onnx.yaml](sherpa-onnx.yaml) | Kokoro TTS via sherpa-onnx | CPU only |
 | [whispercpp.yaml](whispercpp.yaml) | Speech-to-text via pywhispercpp | CPU (Metal on macOS) |
 | [full-stack.yaml](full-stack.yaml) | LLM + TTS + STT + embeddings on one GPU | NVIDIA GPU |
