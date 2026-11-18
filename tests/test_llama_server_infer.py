@@ -124,15 +124,15 @@ class TestSubprocessLifecycle:
         await infer.start()
         socket_path = infer._socket
         try:
-            assert infer._proc is not None
-            assert infer._proc.poll() is None
+            assert infer._server.proc is not None
+            assert infer._server.proc.poll() is None
             assert infer._client is not None
             assert os.path.dirname(socket_path) == os.path.join(socket_root, "session")
             assert stat.S_IMODE(os.stat(os.path.dirname(socket_path)).st_mode) == 0o700
         finally:
             infer.shutdown()
 
-        assert infer._proc is None
+        assert infer._server is None
         assert not os.path.exists(socket_path)
 
     @pytest.mark.asyncio
@@ -173,7 +173,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config(num_gpus=num_gpus, **config_kwargs))
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert args[args.index("-ngl") + 1] == expected_ngl
         finally:
             infer.shutdown()
@@ -204,7 +204,7 @@ class TestSubprocessLifecycle:
             infer = LlamaServerInfer(_make_config(num_gpus=num_gpus))
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             if expected is None:
                 assert "--device" not in args
             else:
@@ -224,7 +224,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config(num_gpus=num_gpus, override_tensor=overrides))
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             if expected is None:
                 assert "-ot" not in args
             else:
@@ -240,14 +240,14 @@ class TestSubprocessLifecycle:
         infer_unset = LlamaServerInfer(_make_config())
         await infer_unset.start()
         try:
-            assert "--threads" not in list(infer_unset._proc.args)
+            assert "--threads" not in list(infer_unset._server.proc.args)
         finally:
             infer_unset.shutdown()
 
         infer_set = LlamaServerInfer(_make_config(threads=8))
         await infer_set.start()
         try:
-            args = list(infer_set._proc.args)
+            args = list(infer_set._server.proc.args)
             assert args[args.index("--threads") + 1] == "8"
         finally:
             infer_set.shutdown()
@@ -260,7 +260,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config())
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert "--cache-reuse" not in args
             assert "--context-shift" not in args
             assert args[args.index("--cache-ram") + 1] == "0"
@@ -275,7 +275,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config(cache_reuse=256, context_shift=True, cache_ram_mib=4096))
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert args[args.index("--cache-reuse") + 1] == "256"
             assert "--context-shift" in args
             assert args[args.index("--cache-ram") + 1] == "4096"
@@ -290,7 +290,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config(cache_ram_mib=-1))
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert args[args.index("--cache-ram") + 1] == "-1"
         finally:
             infer.shutdown()
@@ -303,7 +303,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config())
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert "--reasoning-budget" not in args
             assert "--reasoning-budget-message" not in args
         finally:
@@ -317,7 +317,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config(reasoning_budget=0, reasoning_budget_message="Time is up."))
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert args[args.index("--reasoning-budget") + 1] == "0"
             assert args[args.index("--reasoning-budget-message") + 1] == "Time is up."
         finally:
@@ -332,7 +332,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config(reasoning=reasoning))
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert (args[args.index("--reasoning") + 1] if "--reasoning" in args else None) == expected
         finally:
             infer.shutdown()
@@ -349,7 +349,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config(reasoning_preserve=reasoning_preserve))
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert [a for a in args if a in ("--reasoning-preserve", "--no-reasoning-preserve")] == expected
         finally:
             infer.shutdown()
@@ -363,7 +363,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config(media_allow_private_urls=allow))
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert [a for a in args if a == "--media-allow-private-urls"] == expected
         finally:
             infer.shutdown()
@@ -388,7 +388,7 @@ class TestSubprocessLifecycle:
         infer = LlamaServerInfer(_make_config())
         await infer.start()
 
-        proc = infer._proc
+        proc = infer._server.proc
         assert proc is not None
 
         original_kill = proc.kill
@@ -413,7 +413,7 @@ class TestSubprocessLifecycle:
         end_time = time.monotonic()
 
         assert end_time - start_time < 0.5
-        assert infer._proc is None
+        assert infer._server is None
 
         assert wait_called.wait(timeout=2.0)
         assert kill_called.wait(timeout=2.0)
@@ -794,7 +794,7 @@ class TestStreamingProjection:
         infer = LlamaServerInfer(model_config)
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert "--embedding" in args
         finally:
             infer.shutdown()
@@ -851,7 +851,7 @@ class TestStreamingProjection:
 
         await infer.start()
         try:
-            args = list(infer._proc.args)
+            args = list(infer._server.proc.args)
             assert "--mmproj" in args
             assert "/resolved/mmproj.gguf" in args
         finally:

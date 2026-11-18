@@ -79,9 +79,6 @@ On Linux, every variant but `--thin` needs glibc 2.39 or newer: Ubuntu 24.04, De
 RHEL 10 or later. Older distros run the [Docker images](install-docker.md).
 
 ```bash
-# macOS — compiles stable-diffusion-cpp-python on first install
-xcode-select --install
-
 # Linux, all variants
 sudo apt-get install -y build-essential cmake
 
@@ -118,8 +115,9 @@ wherever you provision — unlike the GPU, which bootstrap does not look for at 
 GPU. `llama_server` gets a CUDA ggml backend beside the same binary every other
 platform runs. A GPU deploy names its devices (`--device CUDA0`…), so a backend that
 didn't load fails the deploy with `invalid device: CUDA0` instead of running on CPU;
-`"$MSHIP_LLAMA_SERVER_BIN" serve --list-devices` shows what llama.cpp loaded. `stable_diffusion_cpp`, `whispercpp`, and
-`sherpa_onnx` are CPU-only here, same as in the image.
+`"$MSHIP_LLAMA_SERVER_BIN" serve --list-devices` shows what llama.cpp loaded. `stable_diffusion_cpp`
+runs on the GPU too, pinned the same way (`--backend cuda0`). `whispercpp` and `sherpa_onnx` are CPU-only here,
+same as in the image.
 
 ## Files on disk
 

@@ -16,6 +16,7 @@ from modelship.infer.infer_config import (
     ModelshipConfig,
     ModelshipModelConfig,
     ModelUsecase,
+    StableDiffusionCppConfig,
     VllmEngineConfig,
     resolve_gpu_memory_utilization,
 )
@@ -327,6 +328,27 @@ class TestModelshipModelConfig:
                 usecase=ModelUsecase.image,
                 loader=ModelLoader.stable_diffusion_cpp,
             )
+
+    @pytest.mark.parametrize("num_gpus", [0, 0.25, 0.5, 1])
+    def test_stable_diffusion_cpp_takes_one_gpu_or_a_share(self, num_gpus):
+        config = ModelshipModelConfig(
+            name="test-image", model="org/sd-gguf:*.gguf", loader=ModelLoader.stable_diffusion_cpp, num_gpus=num_gpus
+        )
+        assert config.num_gpus == num_gpus
+
+    @pytest.mark.parametrize("num_gpus", [1.5, 2])
+    def test_stable_diffusion_cpp_rejects_more_than_one_gpu(self, num_gpus):
+        with pytest.raises(ValidationError, match="stable_diffusion_cpp loader: it runs on one GPU"):
+            ModelshipModelConfig(
+                name="test-image",
+                model="org/sd-gguf:*.gguf",
+                loader=ModelLoader.stable_diffusion_cpp,
+                num_gpus=num_gpus,
+            )
+
+    def test_stable_diffusion_cpp_has_no_model_kwargs(self):
+        with pytest.raises(ValidationError, match="model_kwargs"):
+            StableDiffusionCppConfig.model_validate({"model_kwargs": {"keep_clip_on_cpu": True}})
 
     def test_gpu_allocation_fraction(self):
         config = ModelshipModelConfig(

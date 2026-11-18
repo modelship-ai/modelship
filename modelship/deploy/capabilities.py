@@ -21,7 +21,7 @@ VARIANT_LOADERS: dict[str, dict[str, frozenset[str]]] = {
         "vllm": frozenset({GPU}),
         "diffusers": frozenset({GPU, CPU}),
         "llama_server": frozenset({GPU, CPU}),
-        "stable_diffusion_cpp": frozenset({CPU}),
+        "stable_diffusion_cpp": frozenset({GPU, CPU}),
         "whispercpp": frozenset({CPU}),
         "sherpa_onnx": frozenset({CPU}),
     },
@@ -35,7 +35,7 @@ VARIANT_LOADERS: dict[str, dict[str, frozenset[str]]] = {
     "vulkan": {
         "vllm": frozenset({CPU}),
         "llama_server": frozenset({GPU, CPU}),
-        "stable_diffusion_cpp": frozenset({CPU}),
+        "stable_diffusion_cpp": frozenset({GPU, CPU}),
         "whispercpp": frozenset({CPU}),
         "sherpa_onnx": frozenset({CPU}),
     },

@@ -1790,6 +1790,7 @@ cpu = [
     { name = "misaki" },
     { name = "mojimoji" },
     { name = "numba" },
+    { name = "pillow" },
     { name = "piper-phonemize", version = "1.5.9", source = { url = "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-12-mship-engine-cpu') or (platform_machine != 'aarch64' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine != 'aarch64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'aarch64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
     { name = "piper-phonemize", version = "1.5.9", source = { url = "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-12-mship-engine-cpu') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (platform_machine != 'x86_64' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (sys_platform != 'linux' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu') or (extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-metal') or (extra != 'extra-12-mship-engine-cpu' and extra == 'extra-12-mship-engine-cuda' and extra == 'extra-12-mship-engine-vllm-cpu')" },
     { name = "pywhispercpp" },
@@ -1797,7 +1798,6 @@ cpu = [
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core" },
     { name = "soundfile" },
-    { name = "stable-diffusion-cpp-python" },
     { name = "unidic-lite" },
 ]
 cuda = [
@@ -1811,13 +1811,13 @@ cuda = [
     { name = "mojimoji" },
     { name = "numba" },
     { name = "nvidia-ml-py" },
+    { name = "pillow" },
     { name = "piper-phonemize", version = "1.5.9", source = { url = "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "pywhispercpp" },
     { name = "scipy" },
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core" },
     { name = "soundfile" },
-    { name = "stable-diffusion-cpp-python" },
     { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torchaudio", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torchvision", version = "0.28.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
@@ -1845,13 +1845,13 @@ metal = [
     { name = "misaki" },
     { name = "mojimoji" },
     { name = "numba" },
+    { name = "pillow" },
     { name = "piper-phonemize", version = "1.5.9", source = { url = "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-macosx_11_0_arm64.whl" }, marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "pywhispercpp" },
     { name = "scipy" },
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core" },
     { name = "soundfile" },
-    { name = "stable-diffusion-cpp-python" },
     { name = "unidic-lite" },
 ]
 otel = [
@@ -1906,6 +1906,9 @@ requires-dist = [
     { name = "nvidia-ml-py", marker = "extra == 'dev'" },
     { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.20.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20.0" },
+    { name = "pillow", marker = "extra == 'cpu'", specifier = ">=13.0.0" },
+    { name = "pillow", marker = "extra == 'cuda'", specifier = ">=13.0.0" },
+    { name = "pillow", marker = "extra == 'metal'", specifier = ">=13.0.0" },
     { name = "piper-phonemize", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'metal'", url = "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-macosx_11_0_arm64.whl" },
     { name = "piper-phonemize", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'cpu'", url = "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl" },
     { name = "piper-phonemize", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'cpu'", url = "https://github.com/csukuangfj/piper-phonemize/releases/download/v1.5.9/piper_phonemize-1.5.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl" },
@@ -1938,9 +1941,6 @@ requires-dist = [
     { name = "soundfile", marker = "extra == 'cpu'", specifier = ">=0.13.0" },
     { name = "soundfile", marker = "extra == 'cuda'", specifier = ">=0.13.0" },
     { name = "soundfile", marker = "extra == 'metal'", specifier = ">=0.13.0" },
-    { name = "stable-diffusion-cpp-python", marker = "extra == 'cpu'", specifier = ">=0.4.7" },
-    { name = "stable-diffusion-cpp-python", marker = "extra == 'cuda'", specifier = ">=0.4.7" },
-    { name = "stable-diffusion-cpp-python", marker = "extra == 'metal'", specifier = ">=0.4.7" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==2.13.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
     { name = "torch", marker = "extra == 'cuda'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "mship-engine", extra = "cuda" } },
     { name = "torchaudio", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==2.11.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
@@ -3907,16 +3907,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/26/8c/f9290339ef6d79bad
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/7f/3de5402f39890ac5660b86bcf5c03f9d855dad5c4ed764866d7b592b46fd/sse_starlette-3.3.4-py3-none-any.whl", hash = "sha256:84bb06e58939a8b38d8341f1bc9792f06c2b53f48c608dd207582b664fc8f3c1", size = 14330, upload-time = "2026-03-29T09:00:21.846Z" },
 ]
-
-[[package]]
-name = "stable-diffusion-cpp-python"
-version = "0.4.7"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pillow" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b1/06/300aba9ac36e2166fbe45b4a29039a76f725ef08796f5472caf3e8c4e08d/stable_diffusion_cpp_python-0.4.7.tar.gz", hash = "sha256:998d1957260dd5ae4e18a8acc0c14b0a8757aaa9f96515197b6d5bbf46df9282", size = 20561087, upload-time = "2026-05-12T11:04:30.294Z" }
 
 [[package]]
 name = "starlette"
