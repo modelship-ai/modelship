@@ -90,7 +90,7 @@ Right after connecting to Ray, the driver logs the cluster's observed totals (`C
 
 ## Releases
 
-`make release-{patch,minor,major}` is the only supported path. It refuses to run off `main` or with a dirty tree, bumps `pyproject.toml`, runs `uv lock`, generates a CHANGELOG entry from conventional commits (`feat:`, `fix:`, `refactor:|perf:|docs:|chore:|build:|ci:|style:|test:`), commits, tags `vX.Y.Z`, and pushes. The `release.yml` workflow publishes the Docker images and PyPI package. Do not bump the version by hand.
+`make release-{patch,minor,major}` is the only supported path. It refuses to run off `main` or with a dirty tree, bumps `pyproject.toml`, runs `uv lock`, generates a CHANGELOG entry from conventional commits (`feat:`, `fix:`, `refactor:|perf:|docs:|chore:|build:|ci:|style:|test:`; any of them with `!`, e.g. `feat!:`, goes under Breaking instead), commits, tags `vX.Y.Z`, and pushes. The `release.yml` workflow publishes the Docker images and PyPI package. Do not bump the version by hand.
 
 Commit messages matter: use Conventional Commits prefixes so the changelog generator picks them up.
 
