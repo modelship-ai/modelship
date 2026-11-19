@@ -111,21 +111,11 @@ def find_nvcc() -> str | None:
     return "/usr/local/cuda/bin/nvcc" if os.path.exists("/usr/local/cuda/bin/nvcc") else None
 
 
-def cuda_toolkit_gaps() -> list[str]:
-    """What flashinfer's JIT needs beyond the driver."""
-    gaps = []
-    if find_nvcc() is None:
-        gaps.append("nvcc (CUDA toolkit)")
-    if shutil.which("ninja") is None:
-        gaps.append("ninja")
-    return gaps
-
-
 def check_toolchain(variant_name: str) -> None:
-    if variant_name != "cuda" or not (gaps := cuda_toolkit_gaps()):
+    if variant_name != "cuda" or find_nvcc() is not None:
         return
     raise GateError(
-        f"error: --cuda is missing {' and '.join(gaps)}.\n"
-        "vLLM and Diffusers JIT-compile kernels at model load and fail without them.\n"
+        "error: --cuda is missing nvcc (CUDA toolkit).\n"
+        "vLLM and Diffusers JIT-compile kernels at model load and fail without it.\n"
         f"See {CUDA_TOOLKIT_DOCS}"
     )

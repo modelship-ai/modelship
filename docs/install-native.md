@@ -33,7 +33,7 @@ The `mship` package is a small installer that runs on any Python 3.10+. Bootstra
 
 1. Refuses unsupported platforms (Windows, musl/Alpine, glibc older than 2.39 for
    every variant but `--thin`, and `--vulkan` off Linux) before downloading anything.
-2. Checks the variant's build prerequisites — `--cuda` needs `nvcc` and `ninja`.
+2. Checks the variant's build prerequisites — `--cuda` needs `nvcc`.
 3. Provisions `~/.modelship/envs/<variant>/` on **CPython 3.12.10**, installing from a
    hash-pinned dependency list shipped inside the package.
 4. Fetches the pinned `llama-server` build for the platform, plus its CUDA backend
@@ -91,7 +91,7 @@ sudo apt-get install -y libnuma1 openssl util-linux
 sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
 
 # Linux --cuda, additionally: flashinfer JIT-compiles kernels at model-load time
-sudo apt-get install -y ninja-build gnupg
+sudo apt-get install -y gnupg
 curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/3bf863cc.pub \
   | sudo gpg --dearmor -o /usr/share/keyrings/cuda-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/cuda-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/ /" \
@@ -104,10 +104,10 @@ sudo apt-get update && sudo apt-get install -y \
 symlink flashinfer looks for. The first vLLM deploy is slow while kernels compile;
 they are cached per GPU architecture under `~/.modelship/cache/flashinfer`.
 
-`mship bootstrap --cuda` refuses to run without `nvcc` and `ninja`, rather than
+`mship bootstrap --cuda` refuses to run without `nvcc`, rather than
 letting the first vLLM deploy fail with `Could not find nvcc` after several GB have
-downloaded. The `--cuda` variant ships vLLM and Diffusers, so both are required even
-though `llama_server` GGUF offload needs neither. Being software, they are checkable
+downloaded. The `--cuda` variant ships vLLM and Diffusers, so it is required even
+though `llama_server` GGUF offload doesn't need it. Being software, it is checkable
 wherever you provision — unlike the GPU, which bootstrap does not look for at all.
 `mship info` reports the same check afterwards.
 

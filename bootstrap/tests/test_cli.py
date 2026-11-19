@@ -153,6 +153,12 @@ class TestEngineEnvironment:
         cli.main(["deploy", f"--{variant}"])
         assert provisioned.call_args[0][2]["MSHIP_VARIANT"] == variant
 
+    def test_the_env_bin_dir_comes_first_on_path(self, provisioned, tmp_path, monkeypatch):
+        monkeypatch.setenv("PATH", "/usr/bin")
+        cli.main(["deploy", "--cuda"])
+        bin_dir = os.path.dirname(cli.paths.venv_python("cuda"))
+        assert provisioned.call_args[0][2]["PATH"] == os.pathsep.join([bin_dir, "/usr/bin"])
+
     def test_cuda_numbers_gpus_in_pci_bus_order(self, provisioned, monkeypatch):
         monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
         cli.main(["deploy", "--cuda"])
@@ -280,10 +286,10 @@ class TestBootstrap:
         cli.gates.check_toolchain.assert_called_once_with("cuda")
 
     def test_a_missing_toolchain_provisions_nothing(self, provisioned):
-        cli.gates.check_toolchain.side_effect = cli.gates.GateError("error: --cuda is missing ninja.")
+        cli.gates.check_toolchain.side_effect = cli.gates.GateError("error: --cuda is missing nvcc (CUDA toolkit).")
         with pytest.raises(SystemExit) as exc:
             cli.main(["bootstrap", "--cuda"])
-        assert "ninja" in str(exc.value)
+        assert "nvcc" in str(exc.value)
         cli.engine.provision.assert_not_called()
 
     def test_an_unknown_flag_is_refused(self, provisioned):
