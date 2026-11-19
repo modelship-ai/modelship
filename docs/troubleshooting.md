@@ -63,6 +63,15 @@ Two things on a Spark do not limit model memory:
 
 A `llama_server` model on `num_gpus: 0` is sized against the RAM its node has free. When preflight cannot fit it into that RAM, at its smallest context or at the `n_ctx` you set, the model is not loaded and its deploy fails. The message gives the RAM that was available and `fit-params`' own reason; `failed to fit CLI arguments to free memory` means the model needs more than that. Free memory on the node, use a smaller model or quantization, or set a smaller `llama_server_config.n_ctx` on the models already loaded there: a model without one takes its full context when it loads first. `--no-preflight` loads the model without the check. A replica that fails this on a restart or a scale-up is retried until it fits, and the model answers 503 while none of its replicas is up.
 
+## `Resource temporarily unavailable` when a model starts
+
+A model's deploy fails because `llama-server` or `sd-server` exits during startup with `std::system_error: Resource temporarily unavailable`. The node has hit its process limit, and every thread counts against it. A node runs many threads: Ray's processes, the gateway and each model's server. A head and a joined node on one 20-core machine need more than 1,200. Common limits:
+
+- A systemd unit's `TasksMax`. Unset, it is 15% of the system's limit (`DefaultTasksMax`), so 1228 in an LXC container capped at 8192. `systemctl show <unit> -p TasksMax` shows it. Set `TasksMax=infinity`, or a number, in the unit that runs `mship`.
+- A container's PID limit: Docker's `--pids-limit`, or a platform default such as Unraid's 2048.
+
+To see the limit that applies to a running node, and how close it came, read `pids.max` and `pids.peak` in its cgroup directory: `/sys/fs/cgroup$(cut -d: -f3 /proc/<pid>/cgroup)/`, where `<pid>` is the `mship` process.
+
 ## Deploy stuck pending, never schedules
 
 Every deploy requests an `mship_<loader>_<gpu|cpu>` Ray resource; nodes only advertise the loaders their variant runs, on the devices it runs them on. A deploy no node can run (e.g. `loader: vllm` with `num_gpus: 1` on `-cpu` nodes only, or with `num_gpus: 0` on `-cuda` nodes only) pends instead of failing. Check `ray status`/dashboard for the missing `mship_*` resource; `MSHIP_NODE_CAPABILITIES` (JSON) replaces a node's set. A pending deploy has no timeout and holds its gateway's deploy queue, so later deploys to that gateway wait behind it; `mship deploy --cancel ID` cancels it and rolls back what it submitted.
