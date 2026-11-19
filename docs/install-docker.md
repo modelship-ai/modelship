@@ -58,7 +58,8 @@ docker run --rm --shm-size=8g --device /dev/dri \
 ```
 
 `--device /dev/dri` passes the host's GPUs in; the container runs as a user in
-the group that owns them, so no `--group-add` is needed.
+the group that owns them, so no `--group-add` is needed. Rootless Podman is the
+exception: add `--group-add keep-groups` to keep your own access to them.
 
 Any other [CLI flag](model-configuration.md) goes after `start` too. A single
 model needs no config file at all — see [Quick start](index.md#quick-start).
@@ -82,6 +83,17 @@ model needs no config file at all — see [Quick start](index.md#quick-start).
     seconds with one small model), so stop it with `docker stop -t 60
     <container>`, or start it with `--stop-timeout 60`. A container killed
     mid-shutdown exits `137`.
+
+## Changing models without a restart
+
+`mship deploy` in the running container changes its model set:
+
+```bash
+docker exec <container> mship deploy --config /models.yaml
+```
+
+It runs as the same user as the container's `start`. See
+[Model configuration](model-configuration.md) for its flags.
 
 ## Inspecting an image
 
