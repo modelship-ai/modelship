@@ -18,6 +18,31 @@
 
 Modelship serves the whole agentic surface — reasoning, tool calling, server-side conversation state, and MCP servers the gateway calls for you — and scores **17/17** on the independent [Open Responses](https://github.com/openresponses/openresponses) conformance suite. Embeddings, speech, and image generation ride the same `/v1`. Change the base URL and your agent runs unchanged, on hardware you control.
 
+## Why Modelship
+
+- **Conversations that survive the replica that started them.** `previous_response_id`, reasoning, and tool state live in one store every gateway replica shares — a Ray actor by default, Redis when you want it to outlive the cluster. Scale the gateway out without sharding your users onto specific replicas.
+- **One endpoint for the whole app.** Chat, embeddings for RAG, speech-to-text, text-to-speech, and image generation on a single OpenAI-compatible `/v1` — instead of a service per modality.
+- **A stack that fits the hardware you have.** Allocate GPU fractions per model (70% for the LLM, 5% for TTS), or run the same model CPU-only. vLLM, llama.cpp, stable-diffusion.cpp, Diffusers, sherpa-onnx, and whisper.cpp coexist in one deployment.
+- **Changes you can ship on a Tuesday.** Edit the model set and reconcile: models are added, replaced, or dropped incrementally, with a blue-green cutover per model and no gateway restart.
+
+<details>
+<summary>Full feature list</summary>
+
+- **Multi-model, multi-GPU** — chat, embedding, STT, TTS, and image models running at once across one or more GPUs, with tunable per-model GPU memory allocation
+- **CPU-only support** — vLLM or llama.cpp (`llama_server`) without a GPU (chat, embeddings, transcription, vision), stable-diffusion.cpp for images
+- **Multiple inference backends** — vLLM, llama.cpp, Diffusers, sherpa-onnx, whisper.cpp, stable-diffusion.cpp
+- **Zero-downtime hot-reloads** — reconcile a changed model set incrementally, without interrupting the gateway or unchanged models
+- **Reasoning and tool calling** — `<think>`-style reasoning parsed into first-class output, and universal tool/function calling across the vLLM and GGUF (`llama_server`) backends
+- **Server-side MCP tool execution** — point `/v1/responses` at any self-hosted MCP server (`tools: [{"type": "mcp", ...}]`) and the gateway discovers its tools, calls them, and loops — with an approval flow (`require_approval`) client-driven tool calling doesn't have
+- **Multiple gateways per cluster** — `--gateway-name` mounts each gateway at its own route prefix on the same port, with its own model set
+- **Per-model isolated deployments** — independent lifecycle, health checks, failure isolation, and replica count per model
+- **Streaming** — SSE for chat completions, responses, and TTS audio
+- **Client disconnect detection** — cancels in-flight inference when the client goes away, freeing the GPU immediately
+- **Security** — Ray cluster token auth (`--enable-ray-auth`), caller identity from your auth layer (`MSHIP_TRUSTED_IDENTITY_HEADER`), payload and concurrency limits
+- **Built-in observability** — Prometheus metrics, custom `modelship:*` metrics, vLLM engine stats, structured JSON logging, OpenTelemetry export, plus a pre-built Grafana dashboard and alerting rules
+
+</details>
+
 ## Quick Start
 
 One command, one model. Pick your hardware:
@@ -83,6 +108,37 @@ The response carries both `output_text` and a first-class `reasoning` output ite
 
 </details>
 
+## See it run
+
+A pre-built Grafana dashboard ships with Modelship: request rates and latency per model, time to first token, replica load, GPU and system resources, Ray Serve internals and alert thresholds. Below, two nodes (an AMD Strix Halo on Vulkan and an NVIDIA box with two GPUs) serve seven models on five loaders under load:
+
+<img alt="The Modelship Grafana dashboard scrolling through its overview, latency, cluster, GPU and Ray Serve panels for a two-node cluster serving seven models under load." src="https://raw.githubusercontent.com/modelship-ai/modelship/main/docs/assets/grafana/dashboard-scroll.gif">
+
+Prometheus scrapes `:8079` on every node; see [Monitoring & Logging](docs/monitoring.md) to connect it, import the dashboard, and load the alert rules.
+
+## Architecture
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/architecture-light.svg">
+  <img alt="Modelship architecture: an agent app calls Modelship over HTTP; one Ray Serve HTTP proxy on port 8000 fronts any number of replicated gateways, each at its own route prefix with its own model set, sharing one conversation-state store and routing each request by model name to Ray Serve deployments across GPU and CPU cluster nodes." src="docs/assets/architecture-light.svg">
+</picture>
+
+Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Six inference backends are available; which ones a node runs, and on which device, depends on its variant (the image suffix or the `mship bootstrap` flag):
+
+| Backend (`loader`) | Best for | `cuda` | `cpu` | `vulkan` | `metal` |
+|---|---|---|---|---|---|
+| **vLLM** (`vllm`) | High-throughput chat, embeddings, transcription, vision | GPU | CPU¹ | CPU¹ | — |
+| **llama.cpp** (`llama_server`) | Quantized GGUF chat, embeddings, vision | GPU, CPU | CPU | GPU, CPU | GPU, CPU |
+| **stable-diffusion.cpp** (`stable_diffusion_cpp`) | GGUF image generation (SD, Flux) | GPU, CPU | CPU | GPU, CPU | GPU, CPU |
+| **Diffusers** (`diffusers`) | Image generation | GPU, CPU | — | — | — |
+| **whisper.cpp** (`whispercpp`) | Speech-to-text | CPU | CPU | CPU | GPU, CPU |
+| **sherpa-onnx** (`sherpa_onnx`) | Text-to-speech (Kokoro) | CPU | CPU | CPU | CPU |
+
+GPU means an NVIDIA GPU on `cuda`, an AMD or Intel GPU through Vulkan on `vulkan`, and Apple Silicon on `metal`. ¹ Linux only. The `thin` variant is a coordinator and runs no models.
+
+A model name maps to exactly one deployment — swapping GPU/CPU or backend replaces it with a blue-green cutover rather than adding a second one alongside it. Each deployment scales horizontally with `num_replicas`, load-balanced by Ray Serve. Multiple gateways can share one cluster and one port (`--gateway-name`), each mounted at `/<name>/v1` with its own model set.
+
 ## Open Responses conformance
 
 `/v1/responses` is tested against the independent [Open Responses](https://github.com/openresponses/openresponses) compliance suite (`bun run test:compliance`), which drives the endpoint over real HTTP against a live deployment rather than mocks.
@@ -118,39 +174,6 @@ The response carries both `output_text` and a first-class `reasoning` output ite
 
 Fourteen cluster guarantees — zero-downtime model cutover, load-driven autoscaling, engine crash recovery, fractional-GPU multi-tenancy, server-side MCP tool loops — are likewise asserted end-to-end against a live cluster with real models over real HTTP. See [Verified cluster behaviour](docs/production-readiness.md#verified-cluster-behaviour).
 
-## Why Modelship
-
-- **Conversations that survive the replica that started them.** `previous_response_id`, reasoning, and tool state live in one store every gateway replica shares — a Ray actor by default, Redis when you want it to outlive the cluster. Scale the gateway out without sharding your users onto specific replicas.
-- **One endpoint for the whole app.** Chat, embeddings for RAG, speech-to-text, text-to-speech, and image generation on a single OpenAI-compatible `/v1` — instead of a service per modality.
-- **A stack that fits the hardware you have.** Allocate GPU fractions per model (70% for the LLM, 5% for TTS), or run the same model CPU-only. vLLM, llama.cpp, stable-diffusion.cpp, Diffusers, sherpa-onnx, and whisper.cpp coexist in one deployment.
-- **Changes you can ship on a Tuesday.** Edit the model set and reconcile: models are added, replaced, or dropped incrementally, with a blue-green cutover per model and no gateway restart.
-
-<details>
-<summary>Full feature list</summary>
-
-- **Multi-model, multi-GPU** — chat, embedding, STT, TTS, and image models running at once across one or more GPUs, with tunable per-model GPU memory allocation
-- **CPU-only support** — vLLM or llama.cpp (`llama_server`) without a GPU (chat, embeddings, transcription, vision), stable-diffusion.cpp for images
-- **Multiple inference backends** — vLLM, llama.cpp, Diffusers, sherpa-onnx, whisper.cpp, stable-diffusion.cpp
-- **Zero-downtime hot-reloads** — reconcile a changed model set incrementally, without interrupting the gateway or unchanged models
-- **Reasoning and tool calling** — `<think>`-style reasoning parsed into first-class output, and universal tool/function calling across the vLLM and GGUF (`llama_server`) backends
-- **Server-side MCP tool execution** — point `/v1/responses` at any self-hosted MCP server (`tools: [{"type": "mcp", ...}]`) and the gateway discovers its tools, calls them, and loops — with an approval flow (`require_approval`) client-driven tool calling doesn't have
-- **Multiple gateways per cluster** — `--gateway-name` mounts each gateway at its own route prefix on the same port, with its own model set
-- **Per-model isolated deployments** — independent lifecycle, health checks, failure isolation, and replica count per model
-- **Streaming** — SSE for chat completions, responses, and TTS audio
-- **Client disconnect detection** — cancels in-flight inference when the client goes away, freeing the GPU immediately
-- **Security** — Ray cluster token auth (`--enable-ray-auth`), caller identity from your auth layer (`MSHIP_TRUSTED_IDENTITY_HEADER`), payload and concurrency limits
-- **Built-in observability** — Prometheus metrics, custom `modelship:*` metrics, vLLM engine stats, structured JSON logging, OpenTelemetry export, plus a pre-built Grafana dashboard and alerting rules
-
-</details>
-
-## See it run
-
-A pre-built Grafana dashboard ships with Modelship: request rates and latency per model, time to first token, replica load, GPU and system resources, Ray Serve internals and alert thresholds. Below, two nodes (an AMD Strix Halo on Vulkan and an NVIDIA box with two GPUs) serve seven models on five loaders under load:
-
-<img alt="The Modelship Grafana dashboard scrolling through its overview, latency, cluster, GPU and Ray Serve panels for a two-node cluster serving seven models under load." src="https://raw.githubusercontent.com/modelship-ai/modelship/main/docs/assets/grafana/dashboard-scroll.gif">
-
-Prometheus scrapes `:8079` on every node; see [Monitoring & Logging](docs/monitoring.md) to connect it, import the dashboard, and load the alert rules.
-
 ## Supported OpenAI endpoints
 
 | Endpoint | Usecase |
@@ -164,29 +187,6 @@ Prometheus scrapes `:8079` on every node; see [Monitoring & Logging](docs/monito
 | `POST /v1/audio/speech` | Text-to-speech (SSE streaming or single-response) |
 | `POST /v1/images/generations` | Image generation |
 | `GET /v1/models` | List available models |
-
-## Architecture
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/architecture-light.svg">
-  <img alt="Modelship architecture: an agent app calls Modelship over HTTP; one Ray Serve HTTP proxy on port 8000 fronts any number of replicated gateways, each at its own route prefix with its own model set, sharing one conversation-state store and routing each request by model name to Ray Serve deployments across GPU and CPU cluster nodes." src="docs/assets/architecture-light.svg">
-</picture>
-
-Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Six inference backends are available; which ones a node runs, and on which device, depends on its variant (the image suffix or the `mship bootstrap` flag):
-
-| Backend (`loader`) | Best for | `cuda` | `cpu` | `vulkan` | `metal` |
-|---|---|---|---|---|---|
-| **vLLM** (`vllm`) | High-throughput chat, embeddings, transcription, vision | GPU | CPU¹ | CPU¹ | — |
-| **llama.cpp** (`llama_server`) | Quantized GGUF chat, embeddings, vision | GPU, CPU | CPU | GPU, CPU | GPU, CPU |
-| **stable-diffusion.cpp** (`stable_diffusion_cpp`) | GGUF image generation (SD, Flux) | GPU, CPU | CPU | GPU, CPU | GPU, CPU |
-| **Diffusers** (`diffusers`) | Image generation | GPU, CPU | — | — | — |
-| **whisper.cpp** (`whispercpp`) | Speech-to-text | CPU | CPU | CPU | GPU, CPU |
-| **sherpa-onnx** (`sherpa_onnx`) | Text-to-speech (Kokoro) | CPU | CPU | CPU | CPU |
-
-GPU means an NVIDIA GPU on `cuda`, an AMD or Intel GPU through Vulkan on `vulkan`, and Apple Silicon on `metal`. ¹ Linux only. The `thin` variant is a coordinator and runs no models.
-
-A model name maps to exactly one deployment — swapping GPU/CPU or backend replaces it with a blue-green cutover rather than adding a second one alongside it. Each deployment scales horizontally with `num_replicas`, load-balanced by Ray Serve. Multiple gateways can share one cluster and one port (`--gateway-name`), each mounted at `/<name>/v1` with its own model set.
 
 ## More ways to run
 
