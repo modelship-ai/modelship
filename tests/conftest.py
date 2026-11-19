@@ -1,6 +1,7 @@
 """Shared test fixtures, including the integration suite's session-scoped cluster
 infrastructure shared by every `@pytest.mark.integration` file."""
 
+import importlib.util
 import json
 import os
 import re
@@ -21,6 +22,24 @@ import modelship.infer.infer_config as infer_config
 from modelship.deploy.serve_utils import local_ray_clusters
 from modelship.utils.model_flags import GENERATED_MODEL_ARGS, MODEL_ARG_KEYS
 from openai import OpenAI
+
+# These import vLLM at collection; a node without it (metal) skips them.
+if importlib.util.find_spec("vllm") is None:
+    collect_ignore = [
+        "test_vllm_capabilities.py",
+        "test_vllm_chat_parsers.py",
+        "test_vllm_chat_template_missing.py",
+        "test_vllm_deployment_summary.py",
+        "test_vllm_engine_ops.py",
+        "test_vllm_parsing.py",
+        "test_vllm_reasoning_probe.py",
+        "test_vllm_responses.py",
+        "test_vllm_tool_probe.py",
+        "test_vllm_vision.py",
+    ]
+
+# Parent of the own-head tests' RAY_TMPDIRs: macOS's $TMPDIR pushes Ray's socket paths past AF_UNIX's 104 bytes.
+RAY_TMP_PARENT = "/tmp"
 
 
 @pytest.fixture(autouse=True)

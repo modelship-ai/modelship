@@ -10,7 +10,7 @@ import yaml
 
 from modelship.deploy.serve_utils import local_ray_clusters
 from openai import OpenAI
-from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD
+from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, RAY_TMP_PARENT
 from tests.test_cluster_join import _poll, _terminate_process_group
 from tests.test_responses_store_integration import _api_answers, _redis_server
 
@@ -44,7 +44,7 @@ def client(request, tmp_path_factory):
         pytest.skip(f"a Ray node already runs on this machine (GCS at {', '.join(sorted(running))}); run this alone")
     with contextlib.ExitStack() as stack:
         store = stack.enter_context(_redis_server()) if request.param == "redis" else "memory://"
-        ray_tmp = stack.enter_context(tempfile.TemporaryDirectory(prefix="mship-af-"))
+        ray_tmp = stack.enter_context(tempfile.TemporaryDirectory(prefix="mship-af-", dir=RAY_TMP_PARENT))
         tmp_dir = tmp_path_factory.mktemp(f"affinity-{request.param}")
         config = tmp_dir / "models.yaml"
         config.write_text(yaml.dump({"models": [_MODEL]}))

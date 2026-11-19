@@ -329,30 +329,31 @@ class TestChatLlamaServer:
 
     def test_concurrent_requests_are_not_serialized(self, client):
         """llama-server's `--parallel` slots let requests run concurrently instead
-        of serializing behind a single lock; times one request, then several at once."""
+        of serializing behind a single lock: every stream has its first token before any ends."""
         prompt = {
             "model": "chat-llama-server",
             "messages": [{"role": "user", "content": "Count from 1 to 50, one number per line."}],
             "max_tokens": 200,
+            "stream": True,
         }
 
-        start = time.monotonic()
-        client.chat.completions.create(**prompt)
-        baseline = time.monotonic() - start
+        def first_token_and_end() -> tuple[float, float]:
+            first = None
+            for chunk in client.chat.completions.create(**prompt):
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if first is None and delta and (delta.content or getattr(delta, "reasoning", None)):
+                    first = time.monotonic()
+            assert first is not None, "the stream had no tokens"
+            return first, time.monotonic()
 
         concurrency = 3
-        start = time.monotonic()
         with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = [pool.submit(client.chat.completions.create, **prompt) for _ in range(concurrency)]
-            for future in concurrent.futures.as_completed(futures):
-                future.result()
-        concurrent_elapsed = time.monotonic() - start
+            spans = [future.result() for future in [pool.submit(first_token_and_end) for _ in range(concurrency)]]
 
-        # Full serialization would take roughly concurrency * baseline; llama-server's
-        # parallel slots should keep this well under that.
-        assert concurrent_elapsed < baseline * (concurrency - 0.5), (
-            f"expected concurrent requests to overlap via llama-server's parallel slots "
-            f"(baseline={baseline:.1f}s, {concurrency} concurrent took {concurrent_elapsed:.1f}s)"
+        last_first, first_end = max(first for first, _ in spans), min(end for _, end in spans)
+        assert last_first < first_end, (
+            f"a request started only after another ended: last first token at {last_first:.2f}, "
+            f"first end at {first_end:.2f}"
         )
 
     def test_llama_server_listens_on_its_socket_only(self):

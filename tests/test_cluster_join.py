@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import MSHIP, MSHIP_CWD
+from tests.conftest import MSHIP, MSHIP_CWD, RAY_TMP_PARENT
 
 # Off Ray's own 6379 (test_integration.py's shared cluster) and modelship's real
 # defaults (6380/8265/8000) — must never collide with a real cluster on this box.
@@ -44,15 +44,24 @@ signal.pause()
 def _terminate_process_group(proc: subprocess.Popen) -> None:
     """SIGTERM the whole process group a `start_new_session=True` Popen created,
     escalating to SIGKILL on timeout — never `ray stop`, which sweeps every Ray
-    process on the machine."""
+    process on the machine. Waits for every process in the group, not only its leader:
+    a SIGKILLed head's Ray processes outlive it and hold its ports."""
+    for sig, timeout_s in ((signal.SIGTERM, 30), (signal.SIGKILL, 10)):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            break
+        # proc.poll() reaps the leader, whose zombie keeps the group alive.
+        if _poll(lambda: proc.poll() is not None and not _group_alive(proc.pid), deadline_s=timeout_s):
+            break
+
+
+def _group_alive(pgid: int) -> bool:
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
-        proc.wait(timeout=30)
+        os.killpg(pgid, 0)
     except ProcessLookupError:
-        pass
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait(timeout=10)
+        return False
+    return True
 
 
 def _poll(predicate, deadline_s: float) -> bool:
@@ -91,7 +100,7 @@ def throwaway_head(tmp_path):
     dir (AF_UNIX socket path length limit), not tmp_path. Yields (port, token, env)."""
     head_home = tmp_path / "head_home"
     head_home.mkdir()
-    head_ray_tmp = tempfile.mkdtemp(prefix="mship-join-test-head-")
+    head_ray_tmp = tempfile.mkdtemp(prefix="mship-join-test-head-", dir=RAY_TMP_PARENT)
     # RAY_AUTH_MODE=token stays set (not popped) so `ray status` polling below can
     # auto-read the token from HOME/.ray/auth_token once ray.init() writes it.
     env = {
@@ -145,7 +154,7 @@ def no_auth_head(tmp_path):
     """A throwaway head with modelship's auth env unset. Yields (env, its HOME)."""
     head_home = tmp_path / "head_home"
     head_home.mkdir()
-    head_ray_tmp = tempfile.mkdtemp(prefix="mship-join-test-head-")
+    head_ray_tmp = tempfile.mkdtemp(prefix="mship-join-test-head-", dir=RAY_TMP_PARENT)
     env = {
         **os.environ,
         "HOME": str(head_home),
@@ -196,7 +205,7 @@ class TestClusterJoin:
         """Returns (env, join_ray_tmp, config_path) for an mship subprocess."""
         join_home = tmp_path / suffix
         join_home.mkdir(exist_ok=True)
-        join_ray_tmp = tempfile.mkdtemp(prefix=f"mship-join-test-{suffix}-")
+        join_ray_tmp = tempfile.mkdtemp(prefix=f"mship-join-test-{suffix}-", dir=RAY_TMP_PARENT)
         # PYTHONUNBUFFERED: stdout goes to a log file, not a TTY, so Python block-buffers by default.
         env = {**os.environ, "HOME": str(join_home), "RAY_TMPDIR": join_ray_tmp, "PYTHONUNBUFFERED": "1"}
         env.pop("RAY_AUTH_MODE", None)
