@@ -14,7 +14,7 @@ Ungated models (e.g. `lmstudio-community/Qwen2.5-7B-Instruct-GGUF`) don't need a
 
 ## Permission denied on `/.cache`
 
-The container starts as root and drops to the owner of the directory mounted at `/.cache`. A root-owned one — including a missing `-v` source Docker created for you — is chowned to UID/GID 1000 on first start instead. Set `MSHIP_UID`/`MSHIP_GID` to pick the user explicitly (`0` runs as root).
+The container starts as root and drops to the owner of the directory mounted at `/.cache`. A root-owned one — including a missing `-v` source Docker created for you — is chowned to UID/GID 1000 on first start instead. Rootless Podman or Docker (or `userns-remap`) runs as the container's root, which is your own user on the host.
 
 Under `--user` or a Kubernetes `runAsUser` the container can't change ownership, so the mount must already be writable by that UID.
 

@@ -215,6 +215,10 @@ ADD --chown=$UID:$GID ./config/examples config/examples
 
 USER root
 
+# scripts/bin/mship drops to the image's user, then runs the bootstrapper's mship:
+# `docker run` and `docker exec <container> mship …` both get that user.
+ENV PATH="/modelship/scripts/bin:$PATH"
+
 # Prepends the command, so `docker run <image> start --config …` reaches the
 # same CLI as a native install. tini is PID 1: it reaps orphaned processes, and forwards signals.
-ENTRYPOINT ["/usr/bin/tini", "--", "/modelship/scripts/entrypoint.sh", "mship"]
+ENTRYPOINT ["/usr/bin/tini", "--", "mship"]

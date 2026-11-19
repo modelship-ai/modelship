@@ -88,8 +88,9 @@ docker run -d --network=host --shm-size=8g --gpus all \
 replica reads it from its own node's environment — the driver never forwards it.
 
 A joiner only adds capacity: replicas waiting for room schedule onto it on
-their own. To change the model set, run `mship deploy` on any node of the
-cluster, or [from another machine](#deploy-from-another-machine). A failed
+their own. To change the model set, run `mship deploy` in any node's container
+(`docker exec <container> mship deploy --config /models.yaml`), or
+[from another machine](#deploy-from-another-machine). A failed
 deploy is rolled back and leaves the last committed model set in place; fix the
 config and deploy again.
 
