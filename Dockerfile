@@ -26,7 +26,6 @@ RUN apt-get update -y && \
         libc6-dev \
         libgomp1 \
         libnuma1 \
-        ninja-build \
         tini && \
     rm -rf /var/lib/apt/lists/*
 

@@ -114,12 +114,14 @@ _release:
 	else \
 		RANGE=""; \
 	fi; \
+	BREAKING=$$(git log $$RANGE --pretty=format:'%s' --no-merges | grep -iE '^[a-z]+(\(.*\))?!:' | sed 's/^[^:]*: */- /' || true); \
 	ADDED=$$(git log $$RANGE --pretty=format:'%s' --no-merges | grep -iE '^feat(\(.*\))?:' | sed 's/^[^:]*: */- /' || true); \
 	FIXED=$$(git log $$RANGE --pretty=format:'%s' --no-merges | grep -iE '^fix(\(.*\))?:' | sed 's/^[^:]*: */- /' || true); \
 	CHANGED=$$(git log $$RANGE --pretty=format:'%s' --no-merges | grep -iE '^(refactor|perf|docs|chore|build|ci|style|test)(\(.*\))?:' | sed 's/^[^:]*: */- /' || true); \
 	TMPF=$$(mktemp); \
 	echo "" >> "$$TMPF"; \
 	echo "## [$(NEW_VERSION)] - $$(date +%Y-%m-%d)" >> "$$TMPF"; \
+	if [ -n "$$BREAKING" ]; then echo "" >> "$$TMPF"; echo "### Breaking" >> "$$TMPF"; echo "$$BREAKING" >> "$$TMPF"; fi; \
 	if [ -n "$$ADDED" ]; then echo "" >> "$$TMPF"; echo "### Added" >> "$$TMPF"; echo "$$ADDED" >> "$$TMPF"; fi; \
 	if [ -n "$$FIXED" ]; then echo "" >> "$$TMPF"; echo "### Fixed" >> "$$TMPF"; echo "$$FIXED" >> "$$TMPF"; fi; \
 	if [ -n "$$CHANGED" ]; then echo "" >> "$$TMPF"; echo "### Changed" >> "$$TMPF"; echo "$$CHANGED" >> "$$TMPF"; fi; \
