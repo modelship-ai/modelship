@@ -12,7 +12,7 @@ image:
   # Bare release tag (no variant suffix) is the thin control/coordinator image
   # (no torch/vllm) — the chart appends "-cuda", "-cpu" or "-vulkan" per the `variant` below.
   # Stamped to the app version on release.
-  tag: "0.10.0"
+  tag: "0.11.0"
   # cuda (default) | cpu | vulkan | thin; anything else fails rendering. CUDA runs
   # everywhere with an NVIDIA GPU (CPU nodes just waste storage); a CPU image on a
   # GPU node fails for lack of CUDA, so cuda is the safe default for worker nodes.

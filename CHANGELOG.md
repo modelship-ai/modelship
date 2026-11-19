@@ -4,6 +4,108 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.0] - 2026-11-19
+
+### Breaking
+- run stable_diffusion_cpp as an sd-server subprocess
+
+### Added
+- add media_allow_private_urls and the f8_e4m3 KV cache type to llama_server
+- publish an arm64 cuda Docker image
+- run llama_server on the GPU on arm64 CUDA nodes
+- add the vulkan variant to the Helm chart
+- publish a vulkan Docker image
+- move cuda's GPU checks into the engine
+- add the vulkan variant to the bootstrapper
+- refuse native installs below glibc 2.39
+- add the vulkan node variant to the engine
+- honor truncation=auto by trimming oldest input items
+- honor output_format (png/jpeg/webp)
+
+### Fixed
+- list breaking commits in the generated changelog
+- put the engine env's bin dir first on the engine's PATH
+- run the image's mship as the image's user under docker exec
+- launch the llama-server baseline with the loader's own flags
+- count only shared-memory GPUs and the mmproj against shared RAM
+- refuse a llama_server GPU deploy whose part left in RAM doesn't fit
+- pass no request logger to vllm's serving classes
+- cancel an sd-server job accepted while its request was being cancelled
+- split stable_diffusion_cpp requests for more than eight images into several jobs
+- parse each non-streamed vllm choice with its own prompt-aware parser and honor parallel_tool_calls
+- leave completed_at unset on failed MCP and cancelled background responses
+- leave completed_at unset on an incomplete MCP tool loop response
+- report length for a vLLM tool call cut off by the token limit
+- make max_output_tokens a limit on the whole MCP tool loop response
+- end an MCP tool loop incomplete when a model turn ends incomplete
+- mark the Responses item cut off by the token limit incomplete
+- pass fit-params' tensor overrides to llama-server
+- keep Vulkan discovery working when /proc/meminfo can't be read
+- size integrated Vulkan GPUs from MemAvailable less the reserve
+- fall back to Ray's default for an invalid memory threshold
+- size deploys on GPUs that share the node's memory
+- reject an unknown cluster-wide image variant when no group uses it
+- report fit-params' argument error, not the usage text after it
+- point a llama_server deploy with no binary at the bootstrapper
+- log only the GPUs a node advertises
+- count no GPU on a cuda node started with an empty CUDA_VISIBLE_DEVICES
+- a vLLM model with tp x pp above 1 and no num_gpus takes whole GPUs
+- honor a CUDA_VISIBLE_DEVICES mask that hides every GPU
+- treat a malformed llama-server count response as truncation skipped
+- restrict truncation search to non-tool drop boundaries
+- make truncation counting faithful and efficient
+- composite transparent pixels onto white for jpeg
+
+### Changed
+- show where in builds/ each server binary sits
+- give the images' real llama-server path
+- cover prompt-closed thinking, parallel_tool_calls false and cut-off tool calls on vllm
+- wait for the affinity head's API port to close before the next head starts
+- keep a set MSHIP_SD_SERVER_BIN out of make integration
+- cover stable_diffusion_cpp cancel, queueing, GPU edits and a failed load end to end
+- move llama_server's subprocess lifecycle into a shared ServerProcess
+- provision sd-server in the bootstrapper and the Dev Container
+- bump stable-diffusion.cpp to master-1106-532d2c1
+- note the vllm 0.33.0 pin
+- add step5 to the vllm reasoning parsers that read the probe reply
+- bump vllm to 0.33.0
+- add sd-server provisioning with stable-diffusion.cpp master-1106-532d2c1 pin lines
+- validate sd-cpp-build inputs and accept upstream's macOS executable rpath
+- build stable-diffusion.cpp's sd-server into engine-builds releases
+- bump llama.cpp to b12465
+- accept any libggml-base soname major in the Vulkan backend's ABI check
+- drop a comment the tests already cover
+- rewrite the GB10 preflight comments in plain sentences
+- bump llama.cpp to b11769-r3
+- open llama.cpp pin PRs against the branch the build ran from
+- continue a streamed response that ends incomplete
+- drop requests to a llama model that keeps generating
+- read the vulkan probe test's llama-server from mship info --vulkan
+- put RAY_AUTH_MODE back after the router suite's ray.init
+- skip the diffusers image tests without torch
+- mark integration tests by variant, drop the per-feature marks
+- name the CPU-only dev sync that make lint passes on
+- bound the llama_server json_object test's answer
+- add the cuda extra's type-check imports to dev
+- reword the MSHIP_NODE_NUM_GPUS=0 sentence in install-native
+- count each variant's GPUs once and give Ray the count
+- name llama_cpp.py's server build and ggml backend tables
+- branch the llama.cpp pin PR from the current default branch
+- bump llama.cpp to b11769-r2
+- build release images on native arm64 runners, drop the Docker layer cache
+- allow glibc's dynamic loader in the Vulkan backend's dependencies
+- let shaderc generate its install rules when building glslc
+- build the Metal llama.cpp on macos-15
+- build llama.cpp on Ubuntu 24.04 and add a Vulkan backend
+- trim the vulkan probe
+- drop the stale sd.cpp num_gpus warning
+- let the variant decide what a node runs and how it reads GPUs
+- cap Ray's object store at 256 MiB and drop --node-memory
+- vendor the kuberay-operator chart instead of downloading it from GitHub releases
+- cache and retry the kuberay chart download
+- retry uv downloads and cap concurrency to survive GitHub asset throttling
+- assert non-png output_format on edit and variation
+
 ## [0.10.0] - 2026-11-07
 
 ### Added
