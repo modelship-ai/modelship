@@ -473,7 +473,7 @@ Runs GGUF models by launching a [`llama-server`](https://github.com/ggml-org/lla
 | `cache_ram_mib` | int | `0` | Cap in MiB on llama-server's host-RAM cache of saved conversations (`--cache-ram`). `0` disables it, `-1` removes the cap |
 | `ubatch_size` | int | `512` | Physical max batch size (`-ub`) — the largest single memory lever after context itself |
 | `flash_attn` | `on`/`off`/`auto` | `auto` | Flash Attention use (`-fa`) |
-| `cache_type_k` / `cache_type_v` | string | `f16` | KV cache quantization (`-ctk`/`-ctv`); also `f32`, `bf16`, `f8_e4m3`, `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1` |
+| `cache_type_k` / `cache_type_v` | string | `f16` | KV cache quantization (`-ctk`/`-ctv`); also `f32`, `bf16`, `f8_e4m3` (not on a `vulkan` node: llama.cpp aborts), `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1` |
 | `tensor_split` | list[float] | `None` | Proportional offload split across GPUs (`-ts`). Preflight recommends an uneven split on heterogeneous cards |
 | `override_tensor` | list[string] | `None` | Where to keep matching weights (`-ot`), as `pattern=buffer` entries such as `exps=CPU`; used only with a GPU. When a MoE model doesn't fit on its GPU, preflight moves some layers' experts to the CPU with it. It shrinks the context to 512 before it moves any, so set `n_ctx` to keep more context at the cost of more experts on the CPU |
 | `reasoning` | `on`/`off`/`auto` | `None` (llama-server default: `auto`, from the chat template) | Whether the model thinks (`--reasoning`) |
