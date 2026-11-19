@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from modelship.deploy.local_nodes import local_nodes
-from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, wait_for_no_ray_node
+from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, RAY_TMP_PARENT, wait_for_no_ray_node
 from tests.test_cluster_join import _poll, _terminate_process_group
 
 _GCS_PORT = 6580
@@ -33,7 +33,7 @@ class _Cluster:
         self._ray_tmps: list[str] = []
 
     def _spawn(self, name: str, args: list[str], **env: str) -> subprocess.Popen:
-        ray_tmp = tempfile.mkdtemp(prefix=f"mship-stop-{name}-")
+        ray_tmp = tempfile.mkdtemp(prefix=f"mship-stop-{name}-", dir=RAY_TMP_PARENT)
         self._ray_tmps.append(ray_tmp)
         env = {**os.environ, "RAY_TMPDIR": ray_tmp, "PYTHONUNBUFFERED": "1", **env}
         with open(self._tmp_path / f"{name}.log", "w") as log_file:

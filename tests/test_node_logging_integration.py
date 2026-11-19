@@ -20,7 +20,7 @@ import pytest
 import yaml
 from ray.util.state import list_actors, list_nodes
 
-from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, wait_for_no_ray_node
+from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, RAY_TMP_PARENT, wait_for_no_ray_node
 from tests.test_cluster_join import _poll, _terminate_process_group
 
 # Off Ray's 6379, modelship's defaults (6380/8265/8000) and test_cluster_join's 6480/6481.
@@ -118,8 +118,8 @@ def two_node_cluster(tmp_path):
     config.write_text(yaml.dump({"models": [_MODEL]}))
     head_log, join_log = tmp_path / "head.log", tmp_path / "joiner.log"
     # Short /tmp-rooted dirs: AF_UNIX socket paths have a length limit.
-    head_tmp = tempfile.mkdtemp(prefix="mship-nl-head-")
-    join_tmp = tempfile.mkdtemp(prefix="mship-nl-join-")
+    head_tmp = tempfile.mkdtemp(prefix="mship-nl-head-", dir=RAY_TMP_PARENT)
+    join_tmp = tempfile.mkdtemp(prefix="mship-nl-join-", dir=RAY_TMP_PARENT)
     listener = _SyslogListener()
     procs: list[subprocess.Popen] = []
     try:

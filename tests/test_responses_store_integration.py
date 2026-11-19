@@ -14,7 +14,7 @@ import yaml
 
 from modelship.deploy.serve_utils import local_ray_clusters
 from openai import NotFoundError, OpenAI
-from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, wait_for_no_ray_node
+from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, RAY_TMP_PARENT, wait_for_no_ray_node
 from tests.test_cluster_join import _poll, _terminate_process_group
 from tests.test_mcp_e2e import serve_dice
 
@@ -92,7 +92,7 @@ class _Head:
         self._ray_tmp: str | None = None
 
     def start(self) -> None:
-        self._ray_tmp = tempfile.mkdtemp(prefix="mship-rs-")
+        self._ray_tmp = tempfile.mkdtemp(prefix="mship-rs-", dir=RAY_TMP_PARENT)
         args = [
             "start",
             "--config",

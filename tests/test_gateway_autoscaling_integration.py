@@ -11,7 +11,7 @@ import httpx
 import pytest
 import yaml
 
-from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, wait_for_no_ray_node
+from tests.conftest import MODEL_CONFIGS, MSHIP, MSHIP_CWD, RAY_TMP_PARENT, wait_for_no_ray_node
 from tests.test_cluster_join import _poll, _terminate_process_group
 
 # Off Ray's 6379, modelship's defaults (6380/8265/8000), test_cluster_join's and test_node_logging's.
@@ -83,7 +83,7 @@ def autoscaling_cluster(tmp_path):
     config.write_text(yaml.dump({"models": [_MODEL]}))
     log_path = tmp_path / "head.log"
     # A short /tmp-rooted dir: AF_UNIX socket paths have a length limit.
-    ray_tmp = tempfile.mkdtemp(prefix="mship-as-")
+    ray_tmp = tempfile.mkdtemp(prefix="mship-as-", dir=RAY_TMP_PARENT)
     args = [
         "start",
         "--config",
