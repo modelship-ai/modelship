@@ -70,7 +70,7 @@ A model's deploy fails because `llama-server` or `sd-server` exits during startu
 - A systemd unit's `TasksMax`. Unset, it is 15% of the system's limit (`DefaultTasksMax`), so 1228 in an LXC container capped at 8192. `systemctl show <unit> -p TasksMax` shows it. Set `TasksMax=infinity`, or a number, in the unit that runs `mship`.
 - A container's PID limit: Docker's `--pids-limit`, or a platform default such as Unraid's 2048.
 
-To see the limit that applies to a running node, and how close it came, read `pids.max` and `pids.peak` in its cgroup directory: `/sys/fs/cgroup$(cut -d: -f3 /proc/<pid>/cgroup)/`, where `<pid>` is the `mship` process.
+To see the limit that applies to a running node, and how close it came, on cgroup v2 (the default on current distributions), read `pids.max` and `pids.peak` in its cgroup directory: `/sys/fs/cgroup$(cut -d: -f3 /proc/<pid>/cgroup)/`, where `<pid>` is the `mship` process.
 
 ## Deploy stuck pending, never schedules
 
