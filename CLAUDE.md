@@ -76,7 +76,7 @@ An integration test that runs only on some variants is marked with each of them 
 
 ## Releases
 
-`make release-{patch,minor,major}` is the only supported path — refuses off `main` or dirty tree, bumps `pyproject.toml`, runs `uv lock`, generates CHANGELOG from Conventional Commits, commits, tags `vX.Y.Z`, pushes. `release.yml` then publishes Docker + PyPI. **Don't bump versions by hand.** Commit message prefixes (`feat:`, `fix:`, `refactor:|perf:|docs:|chore:|build:|ci:|style:|test:`) are parsed into CHANGELOG sections, so use them.
+`make release-{patch,minor,major}` is the only supported path — refuses off `main` or dirty tree, bumps `pyproject.toml`, runs `uv lock`, generates CHANGELOG from Conventional Commits, commits, tags `vX.Y.Z`, pushes. `release.yml` then publishes Docker + PyPI. **Don't bump versions by hand.** Commit message prefixes (`feat:`, `fix:`, `refactor:|perf:|docs:|chore:|build:|ci:|style:|test:`) are parsed into CHANGELOG sections, so use them; a `!` (`feat!:`) puts the commit under Breaking.
 
 ## Sharp edges
 
