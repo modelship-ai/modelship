@@ -4,7 +4,7 @@ Example `models.yaml` configs; the images also carry them under `/modelship/conf
 
 | File | What it runs | Hardware |
 |---|---|---|
-| [llama-server.yaml](llama-server.yaml) | Quantized GGUF chat (concurrent), vision, sharded GGUF, embeddings via a llama-server subprocess | CPU or NVIDIA GPU |
+| [llama-server.yaml](llama-server.yaml) | Quantized GGUF chat (concurrent), vision, sharded GGUF, embeddings via a llama-server subprocess | CPU or GPU (NVIDIA, AMD/Intel via Vulkan, Apple Silicon) |
 | [vllm-cpu.yaml](vllm-cpu.yaml) | Quantized (AWQ/GPTQ) chat via vLLM's CPU backend | CPU |
 | [vllm.yaml](vllm.yaml) | High-throughput chat with tool calling, embeddings, Whisper | NVIDIA GPU |
 | [vllm-vision.yaml](vllm-vision.yaml) | Vision-language chat (image_url content parts) | NVIDIA GPU |

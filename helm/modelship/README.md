@@ -139,8 +139,9 @@ secrets:
 
 ## AMD and Intel GPUs
 
-A worker group with `image.variant: vulkan` runs `llama_server` models on an AMD or
-Intel GPU through Vulkan, and every other loader on CPU. NVIDIA GPUs use `cuda`.
+A worker group with `image.variant: vulkan` runs `llama_server` and `stable_diffusion_cpp`
+models on an AMD or Intel GPU through Vulkan, and every other loader on CPU. NVIDIA GPUs
+use `cuda`.
 
 1. Install the GPU's device plugin: AMD's
    ([ROCm/k8s-device-plugin](https://github.com/ROCm/k8s-device-plugin), resource

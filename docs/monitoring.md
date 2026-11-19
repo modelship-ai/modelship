@@ -174,6 +174,8 @@ The alert rules expect the scrape job to be named `modelship`. The examples abov
 
 A pre-built Grafana dashboard is included at [`docs/grafana-dashboard.json`](grafana-dashboard.json).
 
+![The dashboard's Overview and Latency rows: request rate per endpoint, gateway requests in progress, seven models loaded, client disconnects, P50/P95/P99 latency, per-model and per-usecase P95 latency, and time to first token.](assets/grafana/dashboard-overview.png)
+
 To import it:
 
 1. Open Grafana and go to **Dashboards > Import**
@@ -195,6 +197,10 @@ The dashboard has 9 rows:
 | **Alerts** | Error rate %, KV cache usage, requests queued for a replica, TTFT P99, client disconnects, preemptions, GPU memory | `ray_modelship_*`, `ray_vllm_*`, `ray_serve_*`, `ray_node_*` |
 | **Cluster / HA** | Model app status, gateway reconciles, Ray Serve replica requests per model, gateway replicas behind the routing generation, gateway watch errors, state-store latency/errors, models changed by deploys | `ray_modelship_*`, `ray_serve_*` |
 | **Per-Node Resources** | GPU utilization/memory, CPU, system memory broken out by node (filtered by the Node dropdown) | `ray_node_*` |
+
+![The GPU & System and Ray Serve rows: utilization and memory of two NVIDIA GPUs, CPU and system memory of two nodes, health check latency, request count and processing latency per deployment, and HTTP request latency.](assets/grafana/dashboard-gpu-and-serve.png)
+
+![The Cluster / HA row: every model app RUNNING on the modelship gateway, gateway reconciles, and in-progress requests per model replica.](assets/grafana/dashboard-cluster-models.png)
 
 > **Deploying via the Helm chart:** set `grafanaDashboard.enabled=true` to ship this dashboard as a ConfigMap the Grafana sidecar auto-imports (and `prometheusRule.enabled=true` for the alert rules below) — no manual import needed. See the chart README.
 

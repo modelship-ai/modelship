@@ -122,14 +122,14 @@ Fourteen cluster guarantees — zero-downtime model cutover, load-driven autosca
 
 - **Conversations that survive the replica that started them.** `previous_response_id`, reasoning, and tool state live in one store every gateway replica shares — a Ray actor by default, Redis when you want it to outlive the cluster. Scale the gateway out without sharding your users onto specific replicas.
 - **One endpoint for the whole app.** Chat, embeddings for RAG, speech-to-text, text-to-speech, and image generation on a single OpenAI-compatible `/v1` — instead of a service per modality.
-- **A stack that fits the hardware you have.** Allocate GPU fractions per model (70% for the LLM, 5% for TTS), or run the same model CPU-only. vLLM, llama.cpp, Diffusers, sherpa-onnx, and whisper.cpp coexist in one deployment.
+- **A stack that fits the hardware you have.** Allocate GPU fractions per model (70% for the LLM, 5% for TTS), or run the same model CPU-only. vLLM, llama.cpp, stable-diffusion.cpp, Diffusers, sherpa-onnx, and whisper.cpp coexist in one deployment.
 - **Changes you can ship on a Tuesday.** Edit the model set and reconcile: models are added, replaced, or dropped incrementally, with a blue-green cutover per model and no gateway restart.
 
 <details>
 <summary>Full feature list</summary>
 
 - **Multi-model, multi-GPU** — chat, embedding, STT, TTS, and image models running at once across one or more GPUs, with tunable per-model GPU memory allocation
-- **CPU-only support** — vLLM or llama.cpp (`llama_server`) without a GPU (chat, embeddings, transcription, vision)
+- **CPU-only support** — vLLM or llama.cpp (`llama_server`) without a GPU (chat, embeddings, transcription, vision), stable-diffusion.cpp for images
 - **Multiple inference backends** — vLLM, llama.cpp, Diffusers, sherpa-onnx, whisper.cpp, stable-diffusion.cpp
 - **Zero-downtime hot-reloads** — reconcile a changed model set incrementally, without interrupting the gateway or unchanged models
 - **Reasoning and tool calling** — `<think>`-style reasoning parsed into first-class output, and universal tool/function calling across the vLLM and GGUF (`llama_server`) backends
@@ -142,6 +142,14 @@ Fourteen cluster guarantees — zero-downtime model cutover, load-driven autosca
 - **Built-in observability** — Prometheus metrics, custom `modelship:*` metrics, vLLM engine stats, structured JSON logging, OpenTelemetry export, plus a pre-built Grafana dashboard and alerting rules
 
 </details>
+
+## See it run
+
+A pre-built Grafana dashboard ships with Modelship: request rates and latency per model, time to first token, replica load, GPU and system resources, Ray Serve internals and alert thresholds. Below, two nodes (an AMD Strix Halo on Vulkan and an NVIDIA box with two GPUs) serve seven models on five loaders under load:
+
+<img alt="The Modelship Grafana dashboard scrolling through its overview, latency, cluster, GPU and Ray Serve panels for a two-node cluster serving seven models under load." src="https://raw.githubusercontent.com/modelship-ai/modelship/main/docs/assets/grafana/dashboard-scroll.gif">
+
+Prometheus scrapes `:8079` on every node; see [Monitoring & Logging](docs/monitoring.md) to connect it, import the dashboard, and load the alert rules.
 
 ## Supported OpenAI endpoints
 
@@ -165,15 +173,18 @@ Fourteen cluster guarantees — zero-downtime model cutover, load-driven autosca
   <img alt="Modelship architecture: an agent app calls Modelship over HTTP; one Ray Serve HTTP proxy on port 8000 fronts any number of replicated gateways, each at its own route prefix with its own model set, sharing one conversation-state store and routing each request by model name to Ray Serve deployments across GPU and CPU cluster nodes." src="docs/assets/architecture-light.svg">
 </picture>
 
-Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Several inference backends are available:
+Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html) deployment with its own lifecycle, health checks, and resource budget. Six inference backends are available; which ones a node runs, and on which device, depends on its variant (the image suffix or the `mship bootstrap` flag):
 
-| Backend | Best for | GPU required |
-|---|---|---|
-| **vLLM** | High-throughput chat, embeddings, transcription | No — installs on GPU or CPU |
-| **llama.cpp** (`llama_server`) | High-efficiency quantized GGUF models (chat, embeddings, vision) | No |
-| **Diffusers** | Image generation | Yes |
-| **sherpa-onnx** | TTS (Kokoro) | No |
-| **whisper.cpp** | STT | No |
+| Backend (`loader`) | Best for | `cuda` | `cpu` | `vulkan` | `metal` |
+|---|---|---|---|---|---|
+| **vLLM** (`vllm`) | High-throughput chat, embeddings, transcription, vision | GPU | CPU¹ | CPU¹ | — |
+| **llama.cpp** (`llama_server`) | Quantized GGUF chat, embeddings, vision | GPU, CPU | CPU | GPU, CPU | GPU, CPU |
+| **stable-diffusion.cpp** (`stable_diffusion_cpp`) | GGUF image generation (SD, Flux) | GPU, CPU | CPU | GPU, CPU | GPU, CPU |
+| **Diffusers** (`diffusers`) | Image generation | GPU, CPU | — | — | — |
+| **whisper.cpp** (`whispercpp`) | Speech-to-text | CPU | CPU | CPU | GPU, CPU |
+| **sherpa-onnx** (`sherpa_onnx`) | Text-to-speech (Kokoro) | CPU | CPU | CPU | CPU |
+
+GPU means an NVIDIA GPU on `cuda`, an AMD or Intel GPU through Vulkan on `vulkan`, and Apple Silicon on `metal`. ¹ Linux only. The `thin` variant is a coordinator and runs no models.
 
 A model name maps to exactly one deployment — swapping GPU/CPU or backend replaces it with a blue-green cutover rather than adding a second one alongside it. Each deployment scales horizontally with `num_replicas`, load-balanced by Ray Serve. Multiple gateways can share one cluster and one port (`--gateway-name`), each mounted at `/<name>/v1` with its own model set.
 
@@ -187,7 +198,7 @@ docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
   ghcr.io/modelship-ai/modelship:latest-cpu start --config /models.yaml
 ```
 
-See [Model Configuration](docs/model-configuration.md) for the full reference, and [config/examples/](config/examples/) for working files per backend.
+See [Model Configuration](docs/model-configuration.md) for the full reference, and [config/examples/](config/examples/) for working files per backend. To change the models of a running container without a restart, run `docker exec <container> mship deploy --config /models.yaml`.
 
 **Native install, any node role** — one install command everywhere; pick the role once, at bootstrap:
 
@@ -196,7 +207,7 @@ uv tool install mship      # or: pipx install mship / pip install mship
 
 mship bootstrap --cuda     # NVIDIA GPU node
 mship bootstrap --cpu      # CPU node (includes vLLM CPU)
-mship bootstrap --vulkan   # Vulkan GPU node (Linux; --cpu plus llama.cpp offload)
+mship bootstrap --vulkan   # AMD/Intel GPU node (Linux; --cpu plus llama.cpp and stable-diffusion.cpp on the GPU)
 mship bootstrap --metal    # Apple Silicon
 mship bootstrap --thin     # coordinator/head only, no capacity
 
