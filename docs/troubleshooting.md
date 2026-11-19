@@ -44,7 +44,7 @@ Weights are cached to `/.cache/huggingface` inside the container. Mount a persis
 
 ## `Could not find nvcc` on a native CUDA install
 
-flashinfer JIT-compiles its kernels when vLLM loads a model, so `mship bootstrap --cuda` requires the CUDA toolkit and `ninja` beyond the driver and refuses to run without them; install them per [Native install](install-native.md#platform-prerequisites). `nvcc` need not be on `PATH` — the apt packages create the `/usr/local/cuda` symlink that torch resolves against, and the check looks there too. `mship info` reports the same check on an already-bootstrapped host.
+flashinfer JIT-compiles its kernels when vLLM loads a model, so `mship bootstrap --cuda` requires the CUDA toolkit beyond the driver and refuses to run without it; install it per [Native install](install-native.md#platform-prerequisites). `nvcc` need not be on `PATH` — the apt packages create the `/usr/local/cuda` symlink that torch resolves against, and the check looks there too. `mship info` reports the same check on an already-bootstrapped host.
 
 ## `CUDA out of memory` with vLLM
 

@@ -151,5 +151,4 @@ def print_info(version: str) -> None:
         stale = "" if is_current(VARIANTS[name], version) else "  (stale — re-run bootstrap)"
         print(f"  {name:<6} {size:>8}  {paths.env_dir(name)}{stale}")
     if any(name == "cuda" for name, _ in envs):
-        gaps = gates.cuda_toolkit_gaps()
-        print(f"cuda toolkit:         {'missing ' + ' and '.join(gaps) if gaps else 'ok'}")
+        print(f"cuda toolkit:         {'ok' if gates.find_nvcc() else 'missing nvcc'}")

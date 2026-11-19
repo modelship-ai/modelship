@@ -90,6 +90,8 @@ def _bootstrap(variant, rest: list[str]) -> None:
 def _engine_env(variant) -> dict[str, str]:
     env = dict(os.environ)
     env["MSHIP_VARIANT"] = variant.name
+    # The env's own tools (ninja, which flashinfer's JIT runs) come before the system's.
+    env["PATH"] = os.pathsep.join(p for p in (os.path.dirname(paths.venv_python(variant.name)), env.get("PATH")) if p)
     env.setdefault("MSHIP_CACHE_DIR", os.path.join(paths.home(), "cache"))
     env.setdefault("MSHIP_NODE_CACHE_DIR", os.path.join(paths.home(), "node-cache"))
     if variant.name == "cuda":

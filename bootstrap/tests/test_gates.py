@@ -148,7 +148,7 @@ class TestCheckHardware:
     def test_the_toolchain_is_a_separate_check(self):
         with (
             patch.object(gates, "_nvidia_driver", return_value=(1, 13020)),
-            patch.object(gates, "cuda_toolkit_gaps", return_value=["ninja"]),
+            patch.object(gates, "find_nvcc", return_value=None),
         ):
             gates.check_hardware("cuda")
 
@@ -156,24 +156,17 @@ class TestCheckHardware:
 class TestCheckToolchain:
     def test_cuda_without_nvcc_is_refused(self):
         with (
-            patch.object(gates, "cuda_toolkit_gaps", return_value=["nvcc (CUDA toolkit)"]),
+            patch.object(gates, "find_nvcc", return_value=None),
             pytest.raises(gates.GateError, match="nvcc"),
         ):
             gates.check_toolchain("cuda")
 
-    def test_both_missing_are_named(self):
-        with (
-            patch.object(gates, "cuda_toolkit_gaps", return_value=["nvcc (CUDA toolkit)", "ninja"]),
-            pytest.raises(gates.GateError, match="nvcc \\(CUDA toolkit\\) and ninja"),
-        ):
-            gates.check_toolchain("cuda")
-
     def test_cuda_with_the_toolkit_passes(self):
-        with patch.object(gates, "cuda_toolkit_gaps", return_value=[]):
+        with patch.object(gates, "find_nvcc", return_value="/usr/local/cuda/bin/nvcc"):
             gates.check_toolchain("cuda")
 
     def test_other_variants_are_unchecked(self):
-        with patch.object(gates, "cuda_toolkit_gaps", return_value=["ninja"]):
+        with patch.object(gates, "find_nvcc", return_value=None):
             for name in ("cpu", "metal", "thin"):
                 gates.check_toolchain(name)
 
@@ -208,26 +201,3 @@ class TestFindNvcc:
             patch("os.path.exists", return_value=False),
         ):
             assert gates.find_nvcc() is None
-
-
-class TestCudaToolkitGaps:
-    def test_no_gaps_when_both_present(self):
-        with (
-            patch.object(gates, "find_nvcc", return_value="/usr/local/cuda/bin/nvcc"),
-            patch("shutil.which", return_value="/usr/bin/ninja"),
-        ):
-            assert gates.cuda_toolkit_gaps() == []
-
-    def test_reports_each_missing_piece(self):
-        with (
-            patch.object(gates, "find_nvcc", return_value=None),
-            patch("shutil.which", return_value=None),
-        ):
-            assert gates.cuda_toolkit_gaps() == ["nvcc (CUDA toolkit)", "ninja"]
-
-    def test_ninja_alone(self):
-        with (
-            patch.object(gates, "find_nvcc", return_value="/usr/local/cuda/bin/nvcc"),
-            patch("shutil.which", return_value=None),
-        ):
-            assert gates.cuda_toolkit_gaps() == ["ninja"]
