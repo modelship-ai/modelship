@@ -65,6 +65,14 @@ docker run --rm --shm-size=8g --device /dev/dri -p 8000:8000 -v modelship-cache:
   --usecase generate --num-gpus 1
 ```
 
+**Apple Silicon** — native, with Metal offload:
+
+```bash
+uv tool install mship && mship bootstrap --metal
+mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+  --usecase generate --num-gpus 1
+```
+
 **CPU** — Linux, Windows, or macOS via Docker (images are multi-arch: amd64 + arm64):
 
 ```bash
@@ -72,14 +80,6 @@ docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
   ghcr.io/modelship-ai/modelship:latest-cpu start \
   --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
   --usecase generate --num-cpus 4
-```
-
-**Apple Silicon** — native, with Metal offload:
-
-```bash
-uv tool install mship && mship bootstrap --metal
-mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
-  --usecase generate --num-gpus 1
 ```
 
 Wait for the `Deploy … succeeded` log line, then talk to it — this hits the **Responses API** and streams the model's reasoning as it thinks:
