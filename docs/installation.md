@@ -32,9 +32,10 @@ image tag, a bootstrap flag, or a chart value.
 
 | Role | Serves models | For |
 |---|---|---|
-| `cuda` | yes | NVIDIA GPU node (vLLM, Diffusers, llama.cpp GPU offload) |
+| `cuda` | yes | NVIDIA GPU node (vLLM, Diffusers, llama.cpp and stable-diffusion.cpp on the GPU) |
 | `cpu` | yes | CPU node (vLLM CPU, llama.cpp, whisper.cpp, sherpa-onnx, stable-diffusion.cpp) |
-| `metal` | yes | Apple Silicon (Metal offload) — native only |
+| `vulkan` | yes | AMD or Intel GPU node, Linux only (everything `cpu` runs, plus llama.cpp and stable-diffusion.cpp on the GPU) |
+| `metal` | yes | Apple Silicon (llama.cpp, stable-diffusion.cpp and whisper.cpp on the GPU) — native only |
 | `thin` | no | Coordinator/head only; joins capacity from other nodes |
 
 ## Next

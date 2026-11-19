@@ -129,6 +129,9 @@ real models over real HTTP. See
   model (70% for the LLM, 5% for TTS), or run the same model CPU-only. vLLM,
   llama.cpp, stable-diffusion.cpp, Diffusers, sherpa-onnx, and whisper.cpp
   coexist in one deployment.
+- **Changes you can ship on a Tuesday** — edit the model set and reconcile:
+  models are added, replaced, or dropped incrementally, with a blue-green
+  cutover per model and no gateway restart.
 
 ## See it run
 
@@ -142,9 +145,6 @@ under load:
 
 See [Monitoring & Logging](monitoring.md) to connect Prometheus, import the
 dashboard, and load the alert rules.
-- **Changes you can ship on a Tuesday** — edit the model set and reconcile:
-  models are added, replaced, or dropped incrementally, with a blue-green
-  cutover per model and no gateway restart.
 
 ## Architecture
 
