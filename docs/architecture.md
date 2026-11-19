@@ -40,7 +40,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 |--------|---------|-----------|--------------|
 | `vllm` | vLLM engine | Chat/generation, embeddings, transcription, translation | No — GPU or CPU |
 | `llama_server` | llama-server subprocess | Chat/generation, embeddings, vision (GGUF) | No — CPU or GPU (`n_gpu_layers` offload, fractional or whole) |
-| `diffusers` | HuggingFace Diffusers | Image generation | Yes |
+| `diffusers` | HuggingFace Diffusers | Image generation | No — GPU or CPU, `cuda` variant only |
 | `stable_diffusion_cpp` | sd-server subprocess (stable-diffusion.cpp) | Image generation (GGUF SD1.5/SDXL/SD-Turbo, Flux) | No — CPU or GPU (CUDA, Vulkan, Metal; fractional or one whole GPU) |
 | `whispercpp` | `pywhispercpp` | STT | No — CPU everywhere, Metal on Apple Silicon |
 | `sherpa_onnx` | sherpa-onnx | TTS (Kokoro) | No — never touches CUDA |

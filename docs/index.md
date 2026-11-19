@@ -127,7 +127,21 @@ real models over real HTTP. See
   OpenAI-compatible `/v1`, instead of a service per modality.
 - **A stack that fits the hardware you have** — allocate GPU fractions per
   model (70% for the LLM, 5% for TTS), or run the same model CPU-only. vLLM,
-  llama.cpp, Diffusers, sherpa-onnx, and whisper.cpp coexist in one deployment.
+  llama.cpp, stable-diffusion.cpp, Diffusers, sherpa-onnx, and whisper.cpp
+  coexist in one deployment.
+
+## See it run
+
+A pre-built Grafana dashboard ships with Modelship: request rates and latency
+per model, time to first token, replica load, GPU and system resources, Ray
+Serve internals and alert thresholds. Below, two nodes (an AMD Strix Halo on
+Vulkan and an NVIDIA box with two GPUs) serve seven models on five loaders
+under load:
+
+![The Modelship Grafana dashboard scrolling through its overview, latency, cluster, GPU and Ray Serve panels for a two-node cluster serving seven models under load.](assets/grafana/dashboard-scroll.gif)
+
+See [Monitoring & Logging](monitoring.md) to connect Prometheus, import the
+dashboard, and load the alert rules.
 - **Changes you can ship on a Tuesday** — edit the model set and reconcile:
   models are added, replaced, or dropped incrementally, with a blue-green
   cutover per model and no gateway restart.
@@ -138,15 +152,22 @@ real models over real HTTP. See
 ![Modelship architecture: an agent app calls Modelship over HTTP; one Ray Serve HTTP proxy on port 8000 fronts any number of replicated gateways, each at its own route prefix with its own model set, sharing one conversation-state store and routing each request by model name to Ray Serve deployments across GPU and CPU cluster nodes.](assets/architecture-dark.svg#only-dark)
 
 Each model runs as an isolated [Ray Serve](https://docs.ray.io/en/latest/serve/index.html)
-deployment with its own lifecycle, health checks, and resource budget.
+deployment with its own lifecycle, health checks, and resource budget. Which
+backends a node runs, and on which device, depends on its variant (the image
+suffix or the `mship bootstrap` flag):
 
-| Backend | Best for | GPU required |
-|---|---|---|
-| **vLLM** | High-throughput chat, embeddings, transcription | No — installs on GPU or CPU |
-| **llama.cpp** (`llama_server`) | High-efficiency quantized GGUF models (chat, embeddings, vision) | No |
-| **Diffusers** | Image generation | Yes |
-| **sherpa-onnx** | TTS (Kokoro) | No |
-| **whisper.cpp** | STT | No |
+| Backend (`loader`) | Best for | `cuda` | `cpu` | `vulkan` | `metal` |
+|---|---|---|---|---|---|
+| **vLLM** (`vllm`) | High-throughput chat, embeddings, transcription, vision | GPU | CPU¹ | CPU¹ | — |
+| **llama.cpp** (`llama_server`) | Quantized GGUF chat, embeddings, vision | GPU, CPU | CPU | GPU, CPU | GPU, CPU |
+| **stable-diffusion.cpp** (`stable_diffusion_cpp`) | GGUF image generation (SD, Flux) | GPU, CPU | CPU | GPU, CPU | GPU, CPU |
+| **Diffusers** (`diffusers`) | Image generation | GPU, CPU | — | — | — |
+| **whisper.cpp** (`whispercpp`) | Speech-to-text | CPU | CPU | CPU | GPU, CPU |
+| **sherpa-onnx** (`sherpa_onnx`) | Text-to-speech (Kokoro) | CPU | CPU | CPU | CPU |
+
+GPU means an NVIDIA GPU on `cuda`, an AMD or Intel GPU through Vulkan on
+`vulkan`, and Apple Silicon on `metal`. ¹ Linux only. The `thin` variant is a
+coordinator and runs no models.
 
 Models can be deployed across multiple GPUs or run on CPU-only. A model name
 maps to one deployment, which scales horizontally with `num_replicas`

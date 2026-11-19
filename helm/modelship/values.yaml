@@ -200,8 +200,8 @@ workerGroups: []
   #   affinity: {}
   #   annotations: {}
   # - name: vulkan
-  #   # AMD or Intel GPU node: llama_server models run on the GPU through Vulkan,
-  #   # every other loader on CPU. Needs the GPU's device plugin: AMD's advertises
+  #   # AMD or Intel GPU node: llama_server and stable_diffusion_cpp models run on the
+  #   # GPU through Vulkan, every other loader on CPU. Needs the GPU's device plugin: AMD's advertises
   #   # amd.com/gpu, Intel's gpu.intel.com/i915 or gpu.intel.com/xe. A pod that can't
   #   # open the GPU fails at start ("no usable GPU").
   #   image:
