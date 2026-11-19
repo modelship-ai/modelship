@@ -47,15 +47,6 @@ Modelship serves the whole agentic surface — reasoning, tool calling, server-s
 
 One command, one model. Pick your hardware:
 
-**CPU** — Linux, Windows, or macOS via Docker (images are multi-arch: amd64 + arm64):
-
-```bash
-docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
-  ghcr.io/modelship-ai/modelship:latest-cpu start \
-  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
-  --usecase generate --num-cpus 4
-```
-
 **NVIDIA GPU** — needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html):
 
 ```bash
@@ -80,6 +71,15 @@ docker run --rm --shm-size=8g --device /dev/dri -p 8000:8000 -v modelship-cache:
 uv tool install mship && mship bootstrap --metal
 mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
   --usecase generate --num-gpus 1
+```
+
+**CPU** — Linux, Windows, or macOS via Docker (images are multi-arch: amd64 + arm64):
+
+```bash
+docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
+  ghcr.io/modelship-ai/modelship:latest-cpu start \
+  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
+  --usecase generate --num-cpus 4
 ```
 
 Wait for the `Deploy … succeeded` log line, then talk to it — this hits the **Responses API** and streams the model's reasoning as it thinks:
