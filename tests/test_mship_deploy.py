@@ -197,6 +197,7 @@ class TestApplyArgsToEnv:
             ("join", ["--gcs-address", "mship-head:6380"], "MSHIP_GCS_ADDRESS", "mship-head:6380"),
             ("join", ["--gcs-address", "h:1", "--node-num-cpus", "4"], "MSHIP_NODE_NUM_CPUS", "4"),
             ("start", ["--node-num-gpus", "2"], "MSHIP_NODE_NUM_GPUS", "2"),
+            ("join", ["--gcs-address", "h:1", "--node-labels", "gpu=fast"], "MSHIP_NODE_LABELS", "gpu=fast"),
             ("join", ["--gcs-address", "h:1", "--prune-ray-sessions", "false"], "MSHIP_PRUNE_RAY_SESSIONS", "false"),
             ("start", ["--no-preflight"], "MSHIP_PREFLIGHT", "false"),
             ("start", ["--no-metrics"], "MSHIP_METRICS", "false"),
@@ -1098,7 +1099,7 @@ class TestBuildDeploymentOptions:
         )
         opts = build_deployment_options(config)
         assert opts["ray_actor_options"]["num_gpus"] == 0
-        assert opts["ray_actor_options"]["resources"] == {"mship_sherpa_onnx_cpu": 0.001}
+        assert opts["ray_actor_options"]["label_selector"]["modelship/variant"] == "in(cuda,cpu,vulkan,metal)"
 
     def test_stable_diffusion_cpp_keeps_its_gpu_and_asks_for_a_gpu_node(self):
         config = ModelshipModelConfig(
@@ -1110,7 +1111,7 @@ class TestBuildDeploymentOptions:
         )
         opts = build_deployment_options(config)
         assert opts["ray_actor_options"]["num_gpus"] == 1
-        assert opts["ray_actor_options"]["resources"] == {"mship_stable_diffusion_cpp_gpu": 0.001}
+        assert opts["ray_actor_options"]["label_selector"] == {"modelship/variant": "in(cuda,vulkan,metal)"}
 
     def test_passthrough_env_vars_forwarded_to_replicas(self, monkeypatch):
         monkeypatch.setenv("MSHIP_METRICS", "false")
@@ -1276,15 +1277,19 @@ class TestBuildDeploymentOptions:
         assert len(opts["placement_group_bundles"]) == 2
 
 
-class TestBuildDeploymentOptionsCapabilityResources:
-    def test_single_slot_requests_capability(self):
+class TestBuildDeploymentOptionsLabelSelector:
+    def test_single_slot_selects_the_nodes_that_run_it(self):
         config = ModelshipModelConfig(
             name="m", model="x", usecase=ModelUsecase.generate, loader=ModelLoader.vllm, num_gpus=0
         )
         opts = build_deployment_options(config)
-        assert opts["ray_actor_options"]["resources"] == {"mship_vllm_cpu": 0.001}
+        assert opts["ray_actor_options"]["label_selector"] == {
+            "modelship/variant": "in(cpu,vulkan)",
+            "modelship/os": "linux",
+        }
+        assert "resources" not in opts["ray_actor_options"]
 
-    def test_multi_slot_requests_capability_on_every_bundle_not_actor(self):
+    def test_multi_slot_selects_on_every_bundle_not_actor(self):
         config = ModelshipModelConfig(
             name="m",
             model="x",
@@ -1292,25 +1297,49 @@ class TestBuildDeploymentOptionsCapabilityResources:
             loader=ModelLoader.vllm,
             num_gpus=2,
             vllm_engine_kwargs=VllmEngineConfig(tensor_parallel_size=2),
+            node_selector={"gpu": "fast"},
         )
         opts = build_deployment_options(config)
-        assert "resources" not in opts["ray_actor_options"]
-        assert all(b["mship_vllm_gpu"] == 0.001 for b in opts["placement_group_bundles"])
-
-    def test_stable_diffusion_cpp_requests_capability(self):
-        config = ModelshipModelConfig(
-            name="m", model="x", usecase=ModelUsecase.image, loader=ModelLoader.stable_diffusion_cpp, num_gpus=0
+        assert "label_selector" not in opts["ray_actor_options"]
+        assert opts["placement_group_bundles"] == [{"GPU": 1, "CPU": 0.1}] * 2
+        assert (
+            opts["placement_group_bundle_label_selector"]
+            == [{"modelship/variant": "in(cuda)", "modelship/os": "linux", "gpu": "fast"}] * 2
         )
-        opts = build_deployment_options(config)
-        assert opts["ray_actor_options"]["resources"] == {"mship_stable_diffusion_cpp_cpu": 0.001}
 
-    @pytest.mark.parametrize(("num_gpus", "resource"), [(0, "mship_llama_server_cpu"), (1, "mship_llama_server_gpu")])
-    def test_llama_server_requests_the_capability_for_its_device(self, num_gpus, resource):
+    @pytest.mark.parametrize(("num_gpus", "variants"), [(0, "in(cuda,cpu,vulkan,metal)"), (1, "in(cuda,vulkan,metal)")])
+    def test_llama_server_selects_the_variants_for_its_device(self, num_gpus, variants):
         config = ModelshipModelConfig(
             name="m", model="x", usecase=ModelUsecase.generate, loader=ModelLoader.llama_server, num_gpus=num_gpus
         )
         opts = build_deployment_options(config)
-        assert opts["ray_actor_options"]["resources"] == {resource: 0.001}
+        assert opts["ray_actor_options"]["label_selector"] == {"modelship/variant": variants}
+
+    def test_node_selector_picks_the_variant(self):
+        config = ModelshipModelConfig(
+            name="m",
+            model="x",
+            usecase=ModelUsecase.generate,
+            loader=ModelLoader.llama_server,
+            num_gpus=1,
+            node_selector={"modelship/variant": "vulkan"},
+        )
+        opts = build_deployment_options(config)
+        assert opts["ray_actor_options"]["label_selector"] == {"modelship/variant": "vulkan"}
+
+    def test_node_selector_is_in_the_fingerprint(self):
+        base = {"name": "m", "model": "x", "usecase": ModelUsecase.generate, "loader": ModelLoader.llama_server}
+        assert (
+            ModelshipModelConfig(**base).fingerprint()
+            != ModelshipModelConfig(**base, node_selector={"gpu": "fast"}).fingerprint()
+        )
+
+    def test_node_selector_key_order_leaves_the_fingerprint_alone(self):
+        base = {"name": "m", "model": "x", "usecase": ModelUsecase.generate, "loader": ModelLoader.llama_server}
+        one = ModelshipModelConfig(**base, node_selector={"gpu": "fast", "rack": "r1"})
+        other = ModelshipModelConfig(**base, node_selector={"rack": "r1", "gpu": "fast"})
+        assert one.fingerprint() == other.fingerprint()
+        assert list(other.node_selector) == ["gpu", "rack"]
 
 
 class TestReservationTotals:
@@ -1815,12 +1844,13 @@ class TestStartHead:
     def test_other_variants_keep_the_vendor_visible_devices(self):
         assert self._vendor_vars_ray_sees("cpu") == self._VENDOR_VARS
 
-    def test_resources_forwarded_from_capability_probe(self):
+    def test_labels_forwarded_from_the_node(self):
         from modelship.deploy import serve_utils
 
-        with patch.object(serve_utils, "node_capability_resources", return_value={"mship_vllm_gpu": 1}):
+        with patch.object(serve_utils, "node_labels", return_value={"modelship/variant": "cuda"}):
             kwargs = self._init_call({})
-        assert kwargs["resources"] == {"mship_vllm_gpu": 1}
+        assert kwargs["labels"] == {"modelship/variant": "cuda"}
+        assert "resources" not in kwargs
 
     def test_dashboard_always_on_bound_localhost(self):
         kwargs = self._init_call({}, pop=("MSHIP_RAY_DASHBOARD_HOST",))
@@ -2121,6 +2151,45 @@ class TestRayReadsOnlyTheVisibleDevicesAVulkanNodeClears:
         assert IntelGPUAcceleratorManager.get_current_process_visible_accelerator_ids() == ["0"]
 
 
+class TestRaySchedulesByLabels:
+    def test_a_node_takes_its_labels(self):
+        import inspect
+
+        import ray
+        from ray._private.label_utils import validate_node_labels
+        from ray._private.parameter import RayParams
+
+        from modelship.deploy.capabilities import node_labels
+
+        with patch.dict(os.environ, {"MSHIP_VARIANT": "cuda", "MSHIP_NODE_LABELS": "gpu=fast"}):
+            labels = node_labels()
+        validate_node_labels(labels)
+        assert "labels" in inspect.signature(ray.init).parameters
+        assert RayParams(labels=labels).labels == labels
+
+    @pytest.mark.parametrize("loader", list(ModelLoader))
+    @pytest.mark.parametrize("num_gpus", [0, 1])
+    def test_every_computed_selector_is_valid(self, loader, num_gpus):
+        from ray._private.label_utils import validate_label_selector
+
+        from modelship.deploy.capabilities import deployment_label_selector
+
+        assert validate_label_selector(deployment_label_selector(loader.value, num_gpus, {})) is None
+
+    def test_serve_keeps_the_selectors(self):
+        from modelship.infer.model_deployment import ModelDeployment
+
+        single = ModelshipModelConfig(name="m", model="x", usecase=ModelUsecase.generate, loader=ModelLoader.vllm)
+        multi = single.model_copy(
+            update={"num_gpus": 2, "vllm_engine_kwargs": VllmEngineConfig(tensor_parallel_size=2)}
+        )
+        single_opts, multi_opts = build_deployment_options(single), build_deployment_options(multi)
+        replica = ModelDeployment.options(**single_opts)._replica_config
+        assert replica.ray_actor_options["label_selector"] == single_opts["ray_actor_options"]["label_selector"]
+        replica = ModelDeployment.options(**multi_opts)._replica_config
+        assert replica.placement_group_bundle_label_selector == multi_opts["placement_group_bundle_label_selector"]
+
+
 class TestRayTakesTheDeclaredGpuCount:
     @pytest.fixture(autouse=True)
     def _no_gpu_detected(self, monkeypatch):
@@ -2310,12 +2379,13 @@ class TestJoinRayCluster:
         kw = self._join({"MSHIP_VARIANT": "cuda", "MSHIP_NODE_NUM_GPUS": "0"})["params_kwargs"]
         assert kw["num_gpus"] == 0
 
-    def test_resources_forwarded_from_capability_probe(self):
+    def test_labels_forwarded_from_the_node(self):
         from modelship.deploy import serve_utils
 
-        with patch.object(serve_utils, "node_capability_resources", return_value={"mship_vllm_gpu": 1}):
+        with patch.object(serve_utils, "node_labels", return_value={"modelship/variant": "cuda"}):
             kw = self._join({})["params_kwargs"]
-        assert kw["resources"] == {"mship_vllm_gpu": 1}
+        assert kw["labels"] == {"modelship/variant": "cuda"}
+        assert "resources" not in kw
 
     def test_metrics_port_random_when_unset(self):
         kw = self._join({}, pop=("MSHIP_METRICS_PORT",))["params_kwargs"]

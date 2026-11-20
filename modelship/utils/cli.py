@@ -44,6 +44,7 @@ _ARG_TO_ENV: dict[str, str] = {
     "metrics_port": "MSHIP_METRICS_PORT",
     "node_num_cpus": "MSHIP_NODE_NUM_CPUS",
     "node_num_gpus": "MSHIP_NODE_NUM_GPUS",
+    "node_labels": "MSHIP_NODE_LABELS",
     "prune_ray_sessions": "MSHIP_PRUNE_RAY_SESSIONS",
     "max_request_body_bytes": "MSHIP_MAX_REQUEST_BODY_BYTES",
     "gateway_min_replicas": "MSHIP_GATEWAY_MIN_REPLICAS",
@@ -237,6 +238,13 @@ def _add_node_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--node-num-gpus", type=int, help="GPUs this node reserves (env: MSHIP_NODE_NUM_GPUS, default: auto-detect)"
+    )
+    parser.add_argument(
+        "--node-labels",
+        help=(
+            "Ray labels for this node as KEY=VALUE[,KEY=VALUE...], which a model's node_selector matches "
+            "(env: MSHIP_NODE_LABELS). The modelship/ prefix is reserved."
+        ),
     )
     parser.add_argument(
         "--prune-ray-sessions",

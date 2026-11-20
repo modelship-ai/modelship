@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ray.serve.config import RequestRouterConfig
 
-from modelship.deploy.capabilities import deployment_capability_resources, runs_on_gpu
+from modelship.deploy.capabilities import deployment_label_selector, runs_on_gpu
 from modelship.deploy.request_router import AffinityRouter
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
@@ -67,7 +67,7 @@ def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] |
 
     runtime_env: dict = {"env_vars": env_vars}
 
-    capability_resources = deployment_capability_resources(config.loader.value, config.num_gpus)
+    label_selector = deployment_label_selector(config.loader.value, config.num_gpus, config.node_selector)
 
     if not runs_on_gpu(config.loader.value):
         if config.num_gpus > 0:
@@ -82,7 +82,7 @@ def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] |
                 "num_gpus": 0,
                 "num_cpus": config.num_cpus,
                 "runtime_env": runtime_env,
-                "resources": capability_resources,
+                "label_selector": label_selector,
             }
         }
     else:
@@ -94,18 +94,19 @@ def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] |
                     "num_gpus": config.num_gpus,
                     "num_cpus": config.num_cpus,
                     "runtime_env": runtime_env,
-                    "resources": capability_resources,
+                    "label_selector": label_selector,
                 }
             }
         else:
             # One whole-GPU bundle per slot, STRICT_PACK onto one node; vLLM's ray executor reuses the PG via
-            # get_current_placement_group(). The outer actor sits in bundle 0 with no GPU, so capability
-            # resources go on the bundles, which pick the node.
-            bundles = [{"GPU": 1, "CPU": config.num_cpus, **capability_resources} for _ in range(world_size)]
+            # get_current_placement_group(). The outer actor sits in bundle 0 with no GPU, so the label
+            # selector goes on the bundles, which pick the node.
+            bundles = [{"GPU": 1, "CPU": config.num_cpus} for _ in range(world_size)]
             opts = {
                 "ray_actor_options": {"num_gpus": 0, "num_cpus": config.num_cpus, "runtime_env": runtime_env},
                 "placement_group_bundles": bundles,
                 "placement_group_strategy": "STRICT_PACK",
+                "placement_group_bundle_label_selector": [label_selector] * world_size,
             }
 
     # Serve's per-replica concurrency cap; llama_server defaults it to its parallel slots.

@@ -108,7 +108,16 @@ Exits `0` once nothing of the nodes is left, or when none was running, and `1` w
 mship info [--cuda|--cpu|--vulkan|--metal|--thin]
 ```
 
-Plain `mship info` reports the bootstrapper's state: its version, `MSHIP_HOME`, the recorded role, and each provisioned environment with its size (flagging stale ones, and a missing CUDA toolkit). The recorded role does not select the engine report: that needs an explicit role flag or `MSHIP_VARIANT`, and then it runs inside that environment and reports the engine's view: variant, Python, cache directories, Ray version, the `llama-server` binary in use and, on `cuda`, `vulkan` and `metal`, how many GPUs the node sees (the count `start` and `join` advertise) and each one (on `cuda` also the CUDA version its driver supports), or why it sees none. In a container, `docker run <image> info` gives the bootstrapper report; pass the image's role (`info --cpu`) for the engine's.
+Plain `mship info` reports the bootstrapper's state: its version, `MSHIP_HOME`, the recorded role, and each provisioned environment with its size (flagging stale ones, and a missing CUDA toolkit). The recorded role does not select the engine report: that needs an explicit role flag or `MSHIP_VARIANT`, and then it runs inside that environment and reports the engine's view: variant, Python, cache directories, Ray version, the `llama-server` binary in use and, on `cuda`, `vulkan` and `metal`, how many GPUs the node sees (the count `start` and `join` advertise) and each one (on `cuda` also the CUDA version its driver supports), or why it sees none. It then prints the Ray labels `start` and `join` give this node (`modelship/variant`, `modelship/os`, `modelship/hostname` and any `--node-labels`), and, for each cluster a node on this machine belongs to, its live nodes with their CPUs, GPUs and labels:
+
+```
+node labels: modelship/variant=vulkan, modelship/os=linux, modelship/hostname=node-b
+cluster 10.0.0.1:6380: 2 node(s)
+  node-a (head): 8 CPU(s), 2 GPU(s)  gpu=fast, modelship/hostname=node-a, modelship/os=linux, modelship/variant=cuda
+  node-b: 16 CPU(s), 1 GPU(s)  modelship/hostname=node-b, modelship/os=linux, modelship/variant=vulkan
+```
+
+These are the labels a model's `node_selector` matches. A cluster started with `--enable-ray-auth` needs `MSHIP_RAY_AUTH_TOKEN` in the environment (on Kubernetes, KubeRay's `RAY_AUTH_TOKEN` in the pod is enough); without it, `info` says so. With no node running here, it prints `cluster: no node running on this machine`. In a container, `docker run <image> info` gives the bootstrapper report; pass the image's role (`info --cpu`) for the engine's.
 
 ## Flags
 

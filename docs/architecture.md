@@ -45,7 +45,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 | `whispercpp` | `pywhispercpp` | STT | No — CPU everywhere, Metal on Apple Silicon |
 | `sherpa_onnx` | sherpa-onnx | TTS (Kokoro) | No — never touches CUDA |
 
-Every deployment also requests a `mship_<loader>_<gpu|cpu>` Ray custom resource (see [Capability-aware scheduling](#capability-aware-scheduling)) alongside `num_gpus`/`GPU`.
+Every deployment also carries a Ray label selector for the nodes that can run it (see [Capability-aware scheduling](#capability-aware-scheduling)) alongside `num_gpus`/`GPU`.
 
 A chat or Responses request with `tool_choice: none` reaches every loader without its tools (`BaseInfer.create_chat_completion`, `responses_request_to_chat`), so they are never rendered into the prompt.
 
@@ -111,7 +111,7 @@ Ray schedules deployments across available GPUs based on the `num_gpus` fraction
 
 ### Capability-aware scheduling
 
-`num_gpus`/`num_cpus` describe *how much* hardware a deployment needs, not *whether the node can run the loader at all*. Every node advertises a `mship_<loader>_<device>` Ray custom resource (e.g. `mship_vllm_gpu`) for each loader its variant runs and each device it runs it on, from one table per variant (`modelship/deploy/capabilities.py`):
+`num_gpus`/`num_cpus` describe *how much* hardware a deployment needs, not *whether the node can run the loader at all*. That comes from Ray labels. Every node labels itself `modelship/variant` (`cuda`, `cpu`, `vulkan`, `metal`, `thin`), `modelship/os` (`linux`, `darwin`) and `modelship/hostname`, plus any labels its operator gives it (`--node-labels`). Which loaders each variant runs, and on which device, is one table (`modelship/deploy/capabilities.py`):
 
 | Variant | GPU | CPU |
 |---------|-----|-----|
@@ -121,9 +121,13 @@ Ray schedules deployments across available GPUs based on the `num_gpus` fraction
 | `metal` | `llama_server`, `stable_diffusion_cpp`, `whispercpp` | `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
 | `thin` | — | — |
 
-Every deployment requests its loader's resource for its device — `gpu` when `num_gpus > 0`, `cpu` otherwise — alongside `num_gpus`/`GPU`, so it only schedules onto a node that runs it there; an unsatisfiable deploy pends, and Ray Serve's own slow-start warning names the missing resource. `sherpa_onnx` has no GPU row, so its `num_gpus` is forced to `0`.
+Every deployment carries a Ray label selector built from that table: the variants that run its loader on its device (`gpu` when `num_gpus > 0`, `cpu` otherwise), e.g. `modelship/variant: in(cuda,vulkan,metal)` for a GPU `llama_server` model, plus `modelship/os: linux` for `vllm`. It schedules only onto a node that matches, alongside `num_gpus`/`GPU`. A multi-slot vLLM deploy puts the selector on its placement group's bundles, which pick the node. `sherpa_onnx` has no GPU row, so its `num_gpus` is forced to `0`.
 
-This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu` worker nodes, what stops a `diffusers` model from landing on a `cpu` node, and what sends a `num_gpus: 0` `vllm` model to a `cpu` node rather than a `cuda` one. `MSHIP_NODE_CAPABILITIES` (JSON) replaces a node's advertised set.
+This is what lets a `thin` (no-torch) coordinator deploy models onto `cuda`/`cpu` worker nodes, what stops a `diffusers` model from landing on a `cpu` node, and what sends a `num_gpus: 0` `vllm` model to a `cpu` node rather than a `cuda` one.
+
+A model's `node_selector` is merged over the computed selector, and its keys replace the computed ones. `node_selector: {modelship/variant: vulkan}` sends a GPU `llama_server` model to the vulkan node when a cuda node could run it too, and `{gpu: fast}` sends it to a node started with `--node-labels gpu=fast`. Values take Ray's syntax: `value`, `!value`, `in(a,b)`, `!in(a,b)`.
+
+An unsatisfiable deploy pends. Ray Serve's slow-start warning lists only the replica's resources, not its labels; `mship info --<variant>` lists every node of the cluster with its labels (see [`mship info`](cli.md#mship-info)).
 
 ## Key Files
 

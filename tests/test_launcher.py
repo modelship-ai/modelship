@@ -1,6 +1,7 @@
 import os
 import sys
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +9,13 @@ import pytest
 from modelship import launcher
 from modelship.utils.cli import parse_args
 from modelship.utils.config_schema import ModelLoader
+
+
+@pytest.fixture(autouse=True)
+def _no_local_ray_nodes():
+    """`info` lists the clusters of this machine's Ray nodes; tests see none unless they say so."""
+    with patch("ray._private.services.find_gcs_addresses", return_value=frozenset()) as scan:
+        yield scan
 
 
 class TestGuardPythonVersion:
@@ -215,6 +223,12 @@ class TestCmdRun:
         with pytest.raises(SystemExit, match="MSHIP_VARIANT is not set"):
             self._run(command, ["--gcs-address", "h:1"] if command == "join" else [], env={})
 
+    @pytest.mark.parametrize("command", ["start", "join"])
+    def test_a_node_refuses_a_reserved_label(self, command):
+        argv = ["--node-labels", "modelship/variant=cuda"] + (["--gcs-address", "h:1"] if command == "join" else [])
+        with pytest.raises(SystemExit, match="reserved prefix modelship/"):
+            self._run(command, argv, env={"MSHIP_VARIANT": "cuda"})
+
     def test_deploy_needs_no_variant(self):
         _, _, _, mock_run = self._run("deploy", [], env={})
         mock_run.assert_called_once_with("deploy", [])
@@ -310,6 +324,95 @@ class TestCmdInfo:
         ):
             launcher._cmd_info()
         assert "sd-server: /builds/cuda/sd-server.sh" in capsys.readouterr().out
+
+
+class TestCmdInfoCluster:
+    _HEAD: ClassVar[dict] = {
+        "Alive": True,
+        "NodeManagerHostname": "node-a",
+        "Resources": {"CPU": 8.0, "GPU": 2.0, "node:__internal_head__": 1.0},
+        "Labels": {"ray.io/node-id": "abc", "modelship/variant": "cuda", "gpu": "fast"},
+    }
+    _WORKER: ClassVar[dict] = {
+        "Alive": True,
+        "NodeManagerHostname": "node-b",
+        "Resources": {"CPU": 16.0, "GPU": 1.0},
+        "Labels": {"ray.io/node-id": "def", "modelship/variant": "vulkan"},
+    }
+
+    def _info(self, capsys, env, scan, nodes=(), init_error=None):
+        import ray
+
+        scan.return_value = frozenset({"10.0.0.1:6380"})
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
+            patch("socket.gethostname", return_value="node-a"),
+            patch.object(ray, "init", side_effect=init_error) as mock_init,
+            patch.object(ray, "nodes", return_value=list(nodes)),
+            patch.object(ray, "shutdown") as mock_shutdown,
+        ):
+            launcher._cmd_info()
+        return capsys.readouterr().out, mock_init, mock_shutdown
+
+    def test_prints_this_nodes_labels(self, capsys, _no_local_ray_nodes):
+        out, _, _ = self._info(capsys, {"MSHIP_VARIANT": "cpu", "MSHIP_NODE_LABELS": "gpu=fast"}, _no_local_ray_nodes)
+        assert "node labels: modelship/variant=cpu, modelship/os=linux, modelship/hostname=node-a, gpu=fast" in out
+
+    def test_names_a_bad_node_label(self, capsys, _no_local_ray_nodes):
+        out, _, _ = self._info(capsys, {"MSHIP_VARIANT": "cpu", "MSHIP_NODE_LABELS": "gpu"}, _no_local_ray_nodes)
+        assert "node labels: --node-labels (MSHIP_NODE_LABELS): 'gpu' is not key=value." in out
+
+    def test_no_labels_without_a_variant(self, capsys, _no_local_ray_nodes):
+        out, _, _ = self._info(capsys, {}, _no_local_ray_nodes)
+        assert "node labels" not in out
+
+    def test_lists_live_nodes_head_first(self, capsys, _no_local_ray_nodes):
+        dead = {**self._WORKER, "Alive": False, "NodeManagerHostname": "gone"}
+        out, mock_init, mock_shutdown = self._info(
+            capsys, {"MSHIP_VARIANT": "cpu"}, _no_local_ray_nodes, nodes=[self._WORKER, dead, self._HEAD]
+        )
+        assert mock_init.call_args.kwargs["address"] == "10.0.0.1:6380"
+        mock_shutdown.assert_called_once()
+        lines = out.splitlines()
+        start = lines.index("cluster 10.0.0.1:6380: 2 node(s)")
+        assert lines[start + 1 : start + 3] == [
+            "  node-a (head): 8 CPU(s), 2 GPU(s)  gpu=fast, modelship/variant=cuda",
+            "  node-b: 16 CPU(s), 1 GPU(s)  modelship/variant=vulkan",
+        ]
+        assert "gone" not in out
+
+    def test_says_when_no_node_runs_here(self, capsys, _no_local_ray_nodes):
+        with (
+            patch.dict(os.environ, {"MSHIP_VARIANT": "cpu"}, clear=True),
+            patch.object(launcher, "resolve_cache_root", return_value="/tmp/cache"),
+        ):
+            launcher._cmd_info()
+        assert "cluster: no node running on this machine" in capsys.readouterr().out
+
+    def test_names_the_token_when_the_cluster_requires_one(self, capsys, _no_local_ray_nodes):
+        try:
+            raise RuntimeError("Failed to connect to GCS. ... InvalidAuthToken: Authentication token is missing")
+        except RuntimeError as cause:
+            error = ConnectionError("Failed to connect to Ray cluster at 10.0.0.1:6380")
+            error.__cause__ = cause
+        out, _, mock_shutdown = self._info(capsys, {"MSHIP_VARIANT": "cpu"}, _no_local_ray_nodes, init_error=error)
+        assert "cluster 10.0.0.1:6380: can't connect: it requires its Ray auth token: set MSHIP_RAY_AUTH_TOKEN." in out
+        mock_shutdown.assert_called_once()
+
+    def test_reports_any_other_connect_error(self, capsys, _no_local_ray_nodes):
+        error = ConnectionError("Failed to connect to Ray cluster at 10.0.0.1:6380\nmore")
+        out, _, _ = self._info(capsys, {"MSHIP_VARIANT": "cpu"}, _no_local_ray_nodes, init_error=error)
+        assert "cluster 10.0.0.1:6380: can't connect: Failed to connect to Ray cluster at 10.0.0.1:6380\n" in out
+
+    def test_bounds_the_connect_wait_and_sets_up_auth_before_ray(self, capsys, _no_local_ray_nodes):
+        seen = {}
+
+        def init(**_):
+            seen.update({k: os.environ.get(k) for k in ("RAY_gcs_server_port_wait_time_s", "RAY_AUTH_MODE")})
+
+        self._info(capsys, {"MSHIP_VARIANT": "cpu"}, _no_local_ray_nodes, init_error=init)
+        assert seen == {"RAY_gcs_server_port_wait_time_s": "5", "RAY_AUTH_MODE": "disabled"}
 
 
 class TestCmdInfoVulkan:

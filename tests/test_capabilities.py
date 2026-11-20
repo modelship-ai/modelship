@@ -1,4 +1,3 @@
-import json
 import os
 import re
 import subprocess
@@ -10,11 +9,13 @@ import pytest
 
 from modelship.deploy.capabilities import (
     GPU,
+    LINUX_ONLY_LOADERS,
     VARIANT_LOADERS,
-    deployment_capability_resources,
-    node_capability_resources,
+    capable_variants,
+    deployment_label_selector,
+    node_labels,
+    runs_on,
     runs_on_gpu,
-    variant_loaders,
 )
 from modelship.utils.config_schema import ModelLoader
 from modelship.utils.variant import VARIANTS, VariantError
@@ -44,12 +45,13 @@ def _pins(variant: str) -> dict[str, str]:
     return pinned
 
 
-def _node(variant: str, system: str = "Linux") -> dict[str, float]:
+def _labels(env: dict[str, str], hostname: str = "box", system: str = "Linux") -> dict[str, str]:
     with (
-        patch.dict(os.environ, {"MSHIP_VARIANT": variant}, clear=True),
+        patch.dict(os.environ, env, clear=True),
         patch("platform.system", return_value=system),
+        patch("socket.gethostname", return_value=hostname),
     ):
-        return node_capability_resources()
+        return node_labels()
 
 
 class TestVariantLoaders:
@@ -66,11 +68,14 @@ class TestVariantLoaders:
 
     @pytest.mark.parametrize("variant", VARIANTS)
     @pytest.mark.parametrize("loader", _LOADER_PACKAGES)
-    def test_a_linux_only_pin_is_left_out_on_macos(self, variant, loader):
-        if "sys_platform == 'linux'" not in _pins(variant).get(_LOADER_PACKAGES[loader], ""):
-            return
-        assert loader in variant_loaders(variant, "Linux")
-        assert loader not in variant_loaders(variant, "Darwin")
+    def test_a_linux_only_pin_is_a_linux_only_loader(self, variant, loader):
+        if "sys_platform == 'linux'" in _pins(variant).get(_LOADER_PACKAGES[loader], ""):
+            assert loader in LINUX_ONLY_LOADERS
+
+    @pytest.mark.parametrize("loader", list(ModelLoader))
+    @pytest.mark.parametrize("num_gpus", [0, 1])
+    def test_every_loader_runs_somewhere_on_either_device(self, loader, num_gpus):
+        assert capable_variants(loader.value, num_gpus)
 
 
 class TestSdServerLoader:
@@ -84,73 +89,81 @@ class TestSdServerLoader:
         assert gpu_variants == set(_GPU_DEVICES)
 
 
-class TestNodeCapabilityResources:
-    def test_cuda_node(self):
-        assert _node("cuda") == {
-            "mship_vllm_gpu": 1,
-            "mship_diffusers_gpu": 1,
-            "mship_diffusers_cpu": 1,
-            "mship_llama_server_gpu": 1,
-            "mship_llama_server_cpu": 1,
-            "mship_stable_diffusion_cpp_cpu": 1,
-            "mship_stable_diffusion_cpp_gpu": 1,
-            "mship_whispercpp_cpu": 1,
-            "mship_sherpa_onnx_cpu": 1,
+class TestNodeLabels:
+    def test_variant_os_and_hostname(self):
+        assert _labels({"MSHIP_VARIANT": "cuda"}, hostname="node-a.lan") == {
+            "modelship/variant": "cuda",
+            "modelship/os": "linux",
+            "modelship/hostname": "node-a",
         }
 
-    def test_vulkan_node_runs_cpus_loaders_and_llama_server_and_sd_on_its_gpu(self):
-        assert _node("vulkan") == {
-            "mship_vllm_cpu": 1,
-            "mship_llama_server_gpu": 1,
-            "mship_llama_server_cpu": 1,
-            "mship_stable_diffusion_cpp_cpu": 1,
-            "mship_stable_diffusion_cpp_gpu": 1,
-            "mship_whispercpp_cpu": 1,
-            "mship_sherpa_onnx_cpu": 1,
-        }
+    def test_hostname_is_made_a_valid_label_value(self):
+        labels = _labels({"MSHIP_VARIANT": "cpu"}, hostname="_My Box!" + "x" * 80)
+        assert labels["modelship/hostname"] == "My-Box-" + "x" * 55
 
-    def test_a_gpu_vllm_deploy_never_lands_on_a_vulkan_node(self):
-        assert "mship_vllm_gpu" not in _node("vulkan")
+    def test_no_hostname_label_when_nothing_is_left(self):
+        assert "modelship/hostname" not in _labels({"MSHIP_VARIANT": "cpu"}, hostname="--")
 
-    def test_thin_node_runs_nothing(self):
-        assert _node("thin") == {}
+    def test_operator_labels_are_added(self):
+        env = {"MSHIP_VARIANT": "vulkan", "MSHIP_NODE_LABELS": " gpu=fast, example.com/rack = r1 ,"}
+        labels = _labels(env)
+        assert labels["gpu"] == "fast"
+        assert labels["example.com/rack"] == "r1"
+        assert labels["modelship/variant"] == "vulkan"
 
-    def test_env_override_replaces_the_table(self):
-        override = json.dumps({"mship_nemo_gpu": 1})
-        with patch.dict(os.environ, {"MSHIP_NODE_CAPABILITIES": override}, clear=True):
-            assert node_capability_resources() == {"mship_nemo_gpu": 1.0}
+    @pytest.mark.parametrize(("value", "message"), [("gpu", "is not key=value"), ("=x", "is not key=value")])
+    def test_refuses_an_operator_label_without_a_key_and_value(self, value, message):
+        with pytest.raises(ValueError, match=message):
+            _labels({"MSHIP_VARIANT": "cpu", "MSHIP_NODE_LABELS": value})
+
+    def test_refuses_the_reserved_prefix(self):
+        with pytest.raises(ValueError, match="reserved prefix modelship/"):
+            _labels({"MSHIP_VARIANT": "cpu", "MSHIP_NODE_LABELS": "modelship/variant=cuda"})
 
     def test_refuses_without_a_variant(self):
-        with patch.dict(os.environ, {}, clear=True), pytest.raises(VariantError, match="MSHIP_VARIANT is not set"):
-            node_capability_resources()
+        with pytest.raises(VariantError, match="MSHIP_VARIANT is not set"):
+            _labels({})
 
 
-class TestDeploymentCapabilityResources:
+class TestDeploymentLabelSelector:
     @pytest.mark.parametrize(
-        ("loader", "num_gpus", "resource"),
+        ("loader", "num_gpus", "variants"),
         [
-            ("vllm", 1, "mship_vllm_gpu"),
-            ("vllm", 0.5, "mship_vllm_gpu"),
-            ("vllm", 0, "mship_vllm_cpu"),
-            ("whispercpp", 1, "mship_whispercpp_gpu"),
-            ("sherpa_onnx", 1, "mship_sherpa_onnx_cpu"),
+            ("vllm", 1, "in(cuda)"),
+            ("vllm", 0.5, "in(cuda)"),
+            ("vllm", 0, "in(cpu,vulkan)"),
+            ("llama_server", 1, "in(cuda,vulkan,metal)"),
+            ("llama_server", 0, "in(cuda,cpu,vulkan,metal)"),
+            ("whispercpp", 1, "in(metal)"),
+            ("sherpa_onnx", 1, "in(cuda,cpu,vulkan,metal)"),
         ],
     )
-    def test_requests_its_loader_on_its_device(self, loader, num_gpus, resource):
-        assert deployment_capability_resources(loader, num_gpus) == {resource: 0.001}
+    def test_selects_the_variants_that_run_its_loader_on_its_device(self, loader, num_gpus, variants):
+        assert deployment_label_selector(loader, num_gpus, {})["modelship/variant"] == variants
 
-    def test_a_cpu_vllm_deploy_lands_only_on_a_cpu_node(self):
-        (resource,) = deployment_capability_resources("vllm", 0)
-        assert resource not in _node("cuda")
-        assert resource in _node("cpu")
+    def test_a_linux_only_loader_selects_linux(self):
+        assert deployment_label_selector("vllm", 0, {})["modelship/os"] == "linux"
+        assert "modelship/os" not in deployment_label_selector("llama_server", 0, {})
 
-    def test_a_gpu_whispercpp_deploy_lands_only_on_a_metal_node(self):
-        (resource,) = deployment_capability_resources("whispercpp", 1)
-        assert [v for v in VARIANTS if resource in _node(v, "Darwin" if v == "metal" else "Linux")] == ["metal"]
+    def test_node_selector_is_added_and_replaces_a_computed_key(self):
+        selector = deployment_label_selector("llama_server", 1, {"modelship/variant": "vulkan", "gpu": "fast"})
+        assert selector == {"modelship/variant": "vulkan", "gpu": "fast"}
 
     @pytest.mark.parametrize(("loader", "expected"), [("sherpa_onnx", False), ("whispercpp", True), ("vllm", True)])
     def test_runs_on_gpu(self, loader, expected):
         assert runs_on_gpu(loader) is expected
+
+
+class TestRunsOn:
+    def test_a_cpu_vllm_deploy_runs_only_on_a_linux_cpu_or_vulkan_node(self):
+        assert [v for v in VARIANTS if runs_on("vllm", 0, v, "Linux")] == ["cpu", "vulkan"]
+        assert not runs_on("vllm", 0, "cpu", "Darwin")
+
+    def test_a_gpu_whispercpp_deploy_runs_only_on_a_metal_node(self):
+        assert [v for v in VARIANTS if runs_on("whispercpp", 1, v, "Darwin")] == ["metal"]
+
+    def test_a_thin_node_runs_nothing(self):
+        assert not any(runs_on(loader.value, n, "thin", "Linux") for loader in ModelLoader for n in (0, 1))
 
 
 class TestCapabilitiesModuleIsRayFree:

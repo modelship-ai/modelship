@@ -21,7 +21,7 @@ from ray.exceptions import AuthenticationError
 from ray.serve.config import HTTPOptions, ProxyLocation
 from ray.serve.schema import ApplicationStatus, LoggingConfig
 
-from modelship.deploy.capabilities import node_capability_resources
+from modelship.deploy.capabilities import node_labels
 from modelship.deploy.local_nodes import kill_groups, worker_groups
 from modelship.logging import get_logger
 from modelship.openai.api import ModelshipAPI
@@ -140,7 +140,7 @@ def _own_cluster_init_kwargs() -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "include_dashboard": True,
         "dashboard_host": os.environ.get("MSHIP_RAY_DASHBOARD_HOST", "127.0.0.1"),
-        "resources": node_capability_resources(),
+        "labels": node_labels(),
     }
     if dashboard_port := os.environ.get("MSHIP_RAY_DASHBOARD_PORT"):
         kwargs["dashboard_port"] = int(dashboard_port)
@@ -257,7 +257,7 @@ def _join_ray_cluster(address: str) -> int:
         num_cpus=int(cpus) if cpus else None,
         num_gpus=num_gpus,
         metrics_export_port=int(metrics_port) if metrics_port else None,
-        resources=node_capability_resources(),
+        labels=node_labels(),
     )
 
     # Fail early and clearly if auth is on but no token is available locally,

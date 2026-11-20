@@ -106,6 +106,27 @@ def _check_security_contexts() -> None:
     assert own["securityContext"] == base | {"supplementalGroups": [44]}, own["securityContext"]
 
 
+def _check_node_labels() -> None:
+    head, (labelled, own, bare) = _containers(
+        _cluster(
+            {
+                "head": {"labels": {"role": "control"}},
+                "workerGroups": [
+                    _group("labelled", labels={"rack": "r1", "gpu": "fast"}),
+                    _group("own", labels={"gpu": "fast"}, env=[{"name": "MSHIP_NODE_LABELS", "value": "gpu=slow"}]),
+                    _group("bare"),
+                ],
+            }
+        )
+    )
+    assert _env(head)["MSHIP_NODE_LABELS"]["value"] == "role=control", _env(head)
+    assert _env(labelled)["MSHIP_NODE_LABELS"]["value"] == "gpu=fast,rack=r1", _env(labelled)
+    assert [e for e in own["env"] if e["name"] == "MSHIP_NODE_LABELS"] == [
+        {"name": "MSHIP_NODE_LABELS", "value": "gpu=slow"}
+    ]
+    assert "MSHIP_NODE_LABELS" not in _env(bare), _env(bare)
+
+
 def main() -> int:
     cluster = _cluster(
         {
@@ -201,11 +222,12 @@ def main() -> int:
 
     _check_variants()
     _check_security_contexts()
+    _check_node_labels()
 
     print(
         "OK: head runs mship start and waits for its gateway, workers run mship join and are Ready only while "
         "their Serve proxy answers, sizing env follows pod resources, variants map to image tags, worker groups "
-        "extend the pod security context"
+        "extend the pod security context, group labels become MSHIP_NODE_LABELS"
     )
     return 0
 
