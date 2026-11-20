@@ -6,6 +6,8 @@ Ray-free until it hands off to modelship.driver.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import logging
 import os
 import platform
 import re
@@ -14,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from modelship.deploy.capabilities import deployment_capability_resources, node_capability_resources
+from modelship.deploy.capabilities import node_labels, operator_node_labels, runs_on
 from modelship.utils.cache import resolve_cache_root, resolve_node_cache_root
 from modelship.utils.variant import VariantError, current_variant
 
@@ -63,7 +65,8 @@ def _cmd_run(command: str, argv: list[str]) -> None:
     if command in ("start", "join"):
         try:
             current_variant()
-        except VariantError as e:
+            operator_node_labels()
+        except (VariantError, ValueError) as e:
             sys.exit(f"error: {e}")
 
     remote = command == "deploy" and bool(os.environ.get("MSHIP_RAY_DASHBOARD_URL"))
@@ -79,6 +82,11 @@ def _cmd_run(command: str, argv: list[str]) -> None:
 
 
 def _cmd_info() -> None:
+    from modelship.utils.ray_auth import resolve_ray_auth_env
+
+    os.environ.setdefault("RAY_num_grpc_internal_threads", "2")
+    # Before `import ray`: RAY_AUTH_MODE latches at import.
+    resolve_ray_auth_env()
     print(f"variant: {os.environ.get('MSHIP_VARIANT') or 'unset'}")
     print(f"python: {platform.python_version()}")
     print(f"cache: {resolve_cache_root()}")
@@ -95,6 +103,86 @@ def _cmd_info() -> None:
     variant = os.environ.get("MSHIP_VARIANT")
     if variant in ("cuda", "vulkan", "metal"):
         _print_gpus(variant)
+    _print_node_labels()
+    _print_clusters()
+
+
+def _print_node_labels() -> None:
+    """The labels start and join give this node."""
+    try:
+        labels = node_labels()
+    except VariantError:
+        return
+    except ValueError as e:
+        print(f"node labels: {e}")
+        return
+    print(f"node labels: {_format_labels(labels)}")
+
+
+def _print_clusters() -> None:
+    """Each cluster a node on this machine belongs to, with its live nodes."""
+    try:
+        import ray
+        from ray._private.services import find_gcs_addresses
+    except ImportError:
+        return
+    addresses = sorted(find_gcs_addresses())
+    if not addresses:
+        print("cluster: no node running on this machine")
+    # Seconds ray.init retries the GCS, once a second, logging each failure to stderr.
+    os.environ.setdefault("RAY_gcs_server_port_wait_time_s", "5")
+    for address in addresses:
+        try:
+            with _stderr_silenced():
+                ray.init(address=address, logging_level=logging.ERROR, log_to_driver=False)
+            nodes = [node for node in ray.nodes() if node["Alive"]]
+        except Exception as e:
+            print(f"cluster {address}: can't connect: {_connect_error(e)}")
+            continue
+        finally:
+            ray.shutdown()
+        print(f"cluster {address}: {len(nodes)} node(s)")
+        for node in sorted(nodes, key=lambda n: "node:__internal_head__" not in n["Resources"]):
+            print(f"  {_describe_node(node)}")
+
+
+@contextlib.contextmanager
+def _stderr_silenced():
+    """Points fd 2 at /dev/null: Ray's C++ client logs there directly."""
+    sys.stderr.flush()
+    saved = os.dup(2)
+    try:
+        with open(os.devnull, "w") as devnull:
+            os.dup2(devnull.fileno(), 2)
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
+
+
+def _connect_error(error: Exception) -> str:
+    chain: list[BaseException] = []
+    cause: BaseException | None = error
+    while cause is not None and cause not in chain:
+        chain.append(cause)
+        cause = cause.__cause__ or cause.__context__
+    if any("InvalidAuthToken" in str(e) or type(e).__name__ == "AuthenticationError" for e in chain):
+        return "it requires its Ray auth token: set MSHIP_RAY_AUTH_TOKEN."
+    return str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+
+
+def _describe_node(node: dict) -> str:
+    resources = node["Resources"]
+    head = " (head)" if "node:__internal_head__" in resources else ""
+    labels = {k: v for k, v in sorted(node["Labels"].items()) if k != "ray.io/node-id"}
+    return (
+        f"{node['NodeManagerHostname']}{head}: {resources.get('CPU', 0):g} CPU(s), {resources.get('GPU', 0):g} GPU(s)"
+        f"  {_format_labels(labels)}"
+    )
+
+
+def _format_labels(labels: dict[str, str]) -> str:
+    return ", ".join(f"{key}={value}" for key, value in labels.items())
 
 
 def _print_gpus(variant: str) -> None:
@@ -188,12 +276,12 @@ def _flagged(error: ValidationError) -> str:
 
 
 def _check_capabilities(models: list[ModelshipModelConfig]) -> None:
-    node = node_capability_resources()
+    variant = current_variant()
     for model in models:
-        if not deployment_capability_resources(model.loader.value, model.num_gpus).keys() <= node.keys():
+        if not runs_on(model.loader.value, model.num_gpus, variant, platform.system()):
             sys.exit(
                 f"error: model '{model.name}' uses loader: {model.loader.value} with num_gpus: {model.num_gpus:g}, "
-                f"which a {current_variant()} node doesn't run."
+                f"which a {variant} node doesn't run."
             )
 
 

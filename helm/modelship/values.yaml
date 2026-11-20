@@ -135,6 +135,9 @@ head:
     variant: ""
   # Extra env for the head's `mship start` (e.g. MSHIP_LOG_LEVEL, which covers the head's actors only).
   env: []
+  # Ray labels for the head node (MSHIP_NODE_LABELS), which a model's node_selector matches. Every node
+  # also labels itself modelship/variant, modelship/os and modelship/hostname; the modelship/ prefix is reserved.
+  labels: {}
   resources:
     requests:
       cpu: "2"
@@ -168,6 +171,11 @@ workerGroups: []
   #   # Extra env for this group's `mship join` (e.g. MSHIP_LOG_LEVEL for this group's actors). Its node
   #   # sizing comes from the `resources` limits, else requests (MSHIP_NODE_NUM_CPUS), unless set here.
   #   env: []
+  #   # Ray labels for this group's nodes (MSHIP_NODE_LABELS), which a model's node_selector matches, e.g.
+  #   # node_selector: {gpu: fast}. Every node also labels itself modelship/variant, modelship/os and
+  #   # modelship/hostname; the modelship/ prefix is reserved.
+  #   labels:
+  #     gpu: fast
   #   resources:
   #     requests:
   #       cpu: "4"

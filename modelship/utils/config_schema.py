@@ -272,6 +272,8 @@ class ModelshipModelConfig(_StrictModel):
     # Load-driven replica scaling; mutually exclusive with the fixed num_replicas.
     autoscaling_config: AutoscalingConfig | None = None
     max_ongoing_requests: int | None = Field(default=None, ge=1)
+    # Ray label selector merged over the loader's: {key: value | !value | in(a,b) | !in(a,b)}.
+    node_selector: dict[str, str] = Field(default_factory=dict)
     vllm_engine_kwargs: VllmEngineConfig = Field(default_factory=VllmEngineConfig)
     diffusers_config: DiffusersConfig | None = None
     llama_server_config: LlamaServerConfig | None = None
@@ -292,6 +294,12 @@ class ModelshipModelConfig(_StrictModel):
         if isinstance(data, dict) and data.get("loader") in image_loaders and data.get("usecase") is None:
             data = {**data, "usecase": ModelUsecase.image}
         return data
+
+    @field_validator("node_selector")
+    @classmethod
+    def sort_node_selector(cls, value: dict[str, str]) -> dict[str, str]:
+        # Key order means nothing to Ray; sorted, it leaves the fingerprint alone.
+        return dict(sorted(value.items()))
 
     @model_validator(mode="after")
     def check_autoscaling_excludes_num_replicas(self):

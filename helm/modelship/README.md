@@ -309,6 +309,7 @@ This never gates the OpenAI API (`gateway.port`) or Prometheus metrics
 | `nodeCache.sizeLimit` | `""` (uncapped) | Per-pod compile-cache emptyDir; a pod over the cap is evicted |
 | `workerGroups` | `[]` | Worker pool layout (a list — set the full set; copy the example in `values.yaml`) |
 | `head.env` / `workerGroups[].env` | `[]` | Extra env for the head's `mship start` / a group's `mship join` (e.g. `MSHIP_NODE_NUM_GPUS`) |
+| `head.labels` / `workerGroups[].labels` | `{}` | Ray labels for the head / a group's nodes (`MSHIP_NODE_LABELS`), which a model's `node_selector` matches, e.g. `labels: {gpu: fast}` and `node_selector: {gpu: fast}`. The `modelship/` prefix is reserved. Every node also has `ray.io/node-group` set to its group's `name` (`headgroup` on the head), from KubeRay, so `node_selector: {ray.io/node-group: cuda}` picks a group without any `labels` |
 | `deploy.reconcile` | `false` | Remove dropped models on upgrade |
 | `deploy.replaceStrategy` | `blue_green` | How changed models are replaced |
 | `redis.address` | `""` | **Required.** `host:port` of your Redis — backs GCS-FT + the state store (see [Redis](#redis-required)) |

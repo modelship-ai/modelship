@@ -100,6 +100,7 @@ spec:
               failureThreshold: 120
             env:
               {{- include "modelship.env" . | nindent 14 }}
+              {{- include "modelship.nodeLabelsEnv" (dict "labels" .Values.head.labels "env" .Values.head.env) | nindent 14 }}
               {{- with .Values.head.env }}
               {{- toYaml . | nindent 14 }}
               {{- end }}
@@ -189,6 +190,7 @@ spec:
               env:
                 {{- include "modelship.env" $ | nindent 16 }}
                 {{- include "modelship.nodeResourceEnv" (dict "resources" .resources "env" .env "container" "ray-worker") | nindent 16 }}
+                {{- include "modelship.nodeLabelsEnv" (dict "labels" .labels "env" .env) | nindent 16 }}
                 {{- with .env }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}

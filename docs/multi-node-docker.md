@@ -186,14 +186,36 @@ and of a replica's first startup lines.
 
 ## Capability-aware scheduling
 
-Every node advertises `mship_<loader>_<gpu|cpu>` Ray custom resources for the
-loaders its variant runs and the devices it runs them on, and every deploy
-requests its loader's resource for its device (`gpu` when `num_gpus > 0`). A thin
-head advertises none — it never accidentally schedules a model onto itself. A
-deploy no node can run (e.g. a `loader: vllm` model with `num_gpus: 1` and only
-`-cpu` workers) just stays pending; Ray's own scheduling message names the
-missing resource, nothing hard-fails at driver time. Replace a node's set with
-`MSHIP_NODE_CAPABILITIES` (JSON), e.g. to disable a loader on one node. See
+Every node labels itself with its variant (`modelship/variant`), OS and hostname,
+and every deploy selects the variants that run its loader on its device (`gpu`
+when `num_gpus > 0`). No loader runs on `thin`, so a thin head never schedules a
+model onto itself. A deploy no node can run (e.g. a `loader: vllm` model with
+`num_gpus: 1` and only `-cpu` workers) just stays pending; nothing hard-fails at
+driver time.
+
+To pick the node yourself, give the model a `node_selector`. With a cuda node and
+a vulkan node, both one GPU, two GPU `llama_server` models can each go to their own:
+
+```yaml
+models:
+  - name: qwen-8b
+    model: "lmstudio-community/Qwen3-8B-GGUF:*Q4_K_M.gguf"
+    usecase: generate
+    loader: llama_server
+    num_gpus: 1
+    node_selector: {modelship/variant: cuda}
+  - name: qwen-4b
+    model: "lmstudio-community/Qwen3-4B-GGUF:*Q4_K_M.gguf"
+    usecase: generate
+    loader: llama_server
+    num_gpus: 1
+    node_selector: {modelship/variant: vulkan}
+```
+
+Labels of your own go on the node with `--node-labels gpu=fast,rack=r1`
+(`MSHIP_NODE_LABELS`) and are matched the same way, e.g. `node_selector: {gpu: fast}`.
+The `modelship/hostname` label pins a model to one machine. `mship info --<variant>`
+on any node lists every node of the cluster with its labels. See
 [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling)
 for the table.
 

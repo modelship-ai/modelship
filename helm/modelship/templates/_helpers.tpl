@@ -165,6 +165,22 @@ Call with (dict "resources" <resources> "env" <group env> "container" <container
 {{- end -}}
 
 {{/*
+MSHIP_NODE_LABELS for a node, from its group's `labels` map as key=value pairs in key order.
+Skipped when the group's own env sets it.
+Call with (dict "labels" <labels> "env" <group env>).
+*/}}
+{{- define "modelship.nodeLabelsEnv" -}}
+{{- $names := list -}}
+{{- range .env }}{{- $names = append $names .name -}}{{- end -}}
+{{- if and .labels (not (has "MSHIP_NODE_LABELS" $names)) }}
+{{- $pairs := list -}}
+{{- range $key, $value := .labels }}{{- $pairs = append $pairs (printf "%s=%s" $key $value) -}}{{- end }}
+- name: MSHIP_NODE_LABELS
+  value: {{ join "," $pairs | quote }}
+{{- end }}
+{{- end -}}
+
+{{/*
 Explicit env for every Ray pod (head + workers): the state-store URI the head's
 `mship start` reads and forwards to every actor and replica.
 

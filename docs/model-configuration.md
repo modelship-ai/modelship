@@ -31,6 +31,7 @@ marked for it (env vars work as fallbacks; CLI wins over env):
 | `--ray-dashboard-port` | start | `MSHIP_RAY_DASHBOARD_PORT` | `8265` | Ray dashboard port. Only needed to run multiple modelship heads on one host under `--network=host` |
 | `--node-num-cpus` | start, join | `MSHIP_NODE_NUM_CPUS` | auto-detect | CPUs this node reserves |
 | `--node-num-gpus` | start, join | `MSHIP_NODE_NUM_GPUS` | auto-detect | GPUs this node reserves. Refused at startup if it exceeds what the container can actually see |
+| `--node-labels` | start, join | `MSHIP_NODE_LABELS` | — | Ray labels for this node as `KEY=VALUE[,KEY=VALUE...]`, which a model's `node_selector` matches. The `modelship/` prefix is reserved |
 | `--prune-ray-sessions` | start, join | `MSHIP_PRUNE_RAY_SESSIONS` | `true` | At node startup, delete stale `session_*` dirs left under the Ray temp root by previous, no-longer-running nodes. A live node's session is always kept |
 | `--reconcile` | deploy | — | `false` | Make the cluster match the config: add new models, remove dropped ones, replace changed ones (vs. the default additive union). With no `--config`, redeploys this gateway's committed models that are missing (self-heal) |
 | `--replace-strategy` | deploy | — | `blue_green` | How to replace a changed model: `blue_green` (deploy new before dropping old, no request loss) or `stop_start` (drop old first, brief unavailability) |
@@ -80,6 +81,7 @@ These flags mirror the root-level fields of a `models:` entry one for one, and a
 | `--num-cpus` | `num_cpus` |
 | `--num-replicas` | `num_replicas` |
 | `--max-ongoing-requests` | `max_ongoing_requests` |
+| `--node-selector` | `node_selector`, e.g. `'{modelship/variant: vulkan}'` |
 
 #### Tuning blocks
 
@@ -226,6 +228,7 @@ If it's unset (the default), or a request doesn't carry the header, the caller l
 | `num_replicas` | int | Fixed Ray Serve replica count. Default `1`. Mutually exclusive with `autoscaling_config`. Above `1`, a `vllm` or `llama_server` model must [set its context length](#scaling-a-deployment) |
 | `autoscaling_config` | object | Autoscale replicas with load instead of a fixed `num_replicas` (see [Autoscaling](#autoscaling)). A `vllm` or `llama_server` model with it must [set its context length](#scaling-a-deployment) |
 | `max_ongoing_requests` | int | Per-replica Ray Serve concurrency cap (default: Ray Serve's own default). Streaming requests hold a slot for the whole generation, so a low cap throttles upstream of the engine |
+| `node_selector` | map | Ray node labels the model's nodes must match, as `{key: value}`; a value can also be `!value`, `in(a,b)` or `!in(a,b)`. Every node has `modelship/variant`, `modelship/os` and `modelship/hostname`, plus its `--node-labels`, and on Kubernetes `ray.io/node-group` (the worker group's name); `mship info --<variant>` lists each node's. A `modelship/variant` key replaces the variants modelship picks for the loader. Default `{}`. See [Multi-node clusters](#multi-node-clusters) |
 | `vllm_engine_kwargs` | object | vLLM engine options (see [vLLM Loader](#vllm-loader)) |
 | `diffusers_config` | object | Diffusers pipeline options (see [Diffusers Loader](#diffusers-loader)) |
 | `llama_server_config` | object | llama-server loader options (see [llama_server Loader](#llama_server-loader)) |
@@ -283,7 +286,7 @@ Each node downloads its own copy of whatever gets scheduled onto it — **not** 
 - Every node that can host a gated model needs `HF_TOKEN` in its own environment; replicas read it from the node, not the driver.
 - A local-path `model:` is resolved on whichever node hosts the replica — the path must exist on every node that could host it; there's no cross-node copying.
 
-A model also only schedules onto a node whose variant runs its loader on the device it asks for (`cpu` has no `diffusers`, and `cuda` runs `vllm` only on a GPU, for instance): every node advertises `mship_<loader>_<gpu|cpu>` Ray custom resources for what it runs, and every deploy requests its loader's resource for its device. See [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling) and `MSHIP_NODE_CAPABILITIES` to replace a node's set.
+A model also only schedules onto a node whose variant runs its loader on the device it asks for (`cpu` has no `diffusers`, and `cuda` runs `vllm` only on a GPU, for instance): every node labels itself with its variant (`modelship/variant`), and every deploy selects the variants that run its loader on its device. `node_selector` narrows that further, e.g. `{modelship/variant: vulkan}` when both a cuda and a vulkan node could run the model, or a label you gave a node with `--node-labels`. See [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling).
 
 See [Multi-node without Kubernetes](multi-node-docker.md) for the full non-k8s cluster setup (auth, ports, co-location).
 
@@ -713,7 +716,7 @@ Changing `autoscaling_config` on a deployed model is applied to the running depl
 | `MSHIP_RAY_AUTH_TOKEN` | The Ray auth token, never a flag. `join`/`deploy` send it to a cluster started with `--enable-ray-auth`; `start --enable-ray-auth` uses it instead of generating one, and refuses it without the flag | — |
 | `MSHIP_NODE_NUM_CPUS` | Override: CPUs this node reserves | auto-detect |
 | `MSHIP_NODE_NUM_GPUS` | Override: GPUs this node reserves. Refused at startup if it exceeds what the container can actually see | auto-detect |
-| `MSHIP_NODE_CAPABILITIES` | Override: this node's advertised `mship_<loader>_<gpu\|cpu>` capability resources, as JSON (e.g. `{"mship_vllm_gpu": 1}`) — replaces its variant's set. See [Architecture: Capability-aware scheduling](architecture.md#capability-aware-scheduling) | from the variant |
+| `MSHIP_NODE_LABELS` | Ray labels for this node as `KEY=VALUE[,KEY=VALUE...]` (`--node-labels`), matched by a model's `node_selector`. The `modelship/` prefix is reserved | — |
 | `RAY_OBJECT_STORE_SHM_SIZE` | Shared memory for Ray object store | `8g` |
 | `VLLM_USE_V1` | Use vLLM v1 API | `1` |
 | `ONNX_PROVIDER` | ONNX Runtime execution provider | `CUDAExecutionProvider` |

@@ -1,18 +1,22 @@
-"""Node/deployment capability resources: `mship_<loader>_<device>` alongside Ray's native `GPU`, so a deploy only
-schedules onto a node whose variant runs that loader on that device.
+"""Node labels and deployment label selectors: a node labels itself with its variant and OS, and a deploy selects
+the variants that run its loader on its device, so it only schedules onto a node that can run it.
 
 Must stay ray-free at import time: modelship/launcher.py imports it before resolve_ray_auth_env runs.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import platform
+import re
+import socket
 
 from modelship.utils.variant import current_variant
 
-RESOURCE_PREFIX = "mship_"
+LABEL_PREFIX = "modelship/"
+VARIANT_LABEL = f"{LABEL_PREFIX}variant"
+OS_LABEL = f"{LABEL_PREFIX}os"
+HOSTNAME_LABEL = f"{LABEL_PREFIX}hostname"
 GPU = "gpu"
 CPU = "cpu"
 
@@ -49,25 +53,50 @@ VARIANT_LOADERS: dict[str, dict[str, frozenset[str]]] = {
 }
 
 
-def variant_loaders(variant: str, system: str) -> dict[str, frozenset[str]]:
-    loaders = dict(VARIANT_LOADERS[variant])
-    if variant in ("cpu", "vulkan") and system != "Linux":
-        del loaders["vllm"]
-    return loaders
+# Loaders pinned for Linux only on every variant that lists them.
+LINUX_ONLY_LOADERS = frozenset({"vllm"})
+
+_INVALID_VALUE_CHARS = re.compile(r"[^A-Za-z0-9_.-]")
 
 
 def runs_on_gpu(loader: str) -> bool:
     return any(GPU in loaders.get(loader, ()) for loaders in VARIANT_LOADERS.values())
 
 
-def node_capability_resources() -> dict[str, float]:
-    override = os.environ.get("MSHIP_NODE_CAPABILITIES")
-    if override:
-        return {str(name): float(qty) for name, qty in json.loads(override).items()}
-    loaders = variant_loaders(current_variant(), platform.system())
-    return {f"{RESOURCE_PREFIX}{loader}_{device}": 1 for loader, devices in loaders.items() for device in devices}
-
-
-def deployment_capability_resources(loader: str, num_gpus: float) -> dict[str, float]:
+def capable_variants(loader: str, num_gpus: float) -> tuple[str, ...]:
     device = GPU if num_gpus > 0 and runs_on_gpu(loader) else CPU
-    return {f"{RESOURCE_PREFIX}{loader}_{device}": 0.001}
+    return tuple(variant for variant, loaders in VARIANT_LOADERS.items() if device in loaders.get(loader, ()))
+
+
+def runs_on(loader: str, num_gpus: float, variant: str, system: str) -> bool:
+    return variant in capable_variants(loader, num_gpus) and (loader not in LINUX_ONLY_LOADERS or system == "Linux")
+
+
+def deployment_label_selector(loader: str, num_gpus: float, node_selector: dict[str, str]) -> dict[str, str]:
+    """Ray label selector for a deploy: the variants that run *loader* on its device, then *node_selector*,
+    whose keys replace the computed ones."""
+    selector = {VARIANT_LABEL: f"in({','.join(capable_variants(loader, num_gpus))})"}
+    if loader in LINUX_ONLY_LOADERS:
+        selector[OS_LABEL] = "linux"
+    return selector | node_selector
+
+
+def node_labels() -> dict[str, str]:
+    labels = {VARIANT_LABEL: current_variant(), OS_LABEL: platform.system().lower()}
+    hostname = _INVALID_VALUE_CHARS.sub("-", socket.gethostname().split(".")[0])[:63].strip("-_.")
+    if hostname:
+        labels[HOSTNAME_LABEL] = hostname
+    return labels | operator_node_labels()
+
+
+def operator_node_labels() -> dict[str, str]:
+    """MSHIP_NODE_LABELS as `key=value,key=value`; Ray validates the keys and values."""
+    labels = {}
+    for item in filter(None, (part.strip() for part in os.environ.get("MSHIP_NODE_LABELS", "").split(","))):
+        key, sep, value = (part.strip() for part in item.partition("="))
+        if not sep or not key:
+            raise ValueError(f"--node-labels (MSHIP_NODE_LABELS): {item!r} is not key=value.")
+        if key.startswith(LABEL_PREFIX):
+            raise ValueError(f"--node-labels (MSHIP_NODE_LABELS): {key!r} uses the reserved prefix {LABEL_PREFIX}.")
+        labels[key] = value
+    return labels
