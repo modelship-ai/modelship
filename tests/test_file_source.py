@@ -10,6 +10,7 @@ import pytest
 
 from modelship.utils.sources import (
     FileSource,
+    ModelSourceError,
     check_file_source,
     download_model_source,
     file,
@@ -66,6 +67,15 @@ class TestDownloadFileSource:
             path = download_model_source(_source())
         download.assert_not_called()
         assert path == str(cache_root / "vad" / "silero-12345678.onnx")
+
+    def test_a_published_file_that_fails_its_sha256_is_reported_not_deleted(self, cache_root):
+        published = cache_root / "vad" / "silero-12345678.onnx"
+        published.parent.mkdir(parents=True)
+        published.write_bytes(b"truncat")
+        with patch.object(file, "download") as download, pytest.raises(ModelSourceError, match="delete it"):
+            download_model_source(_source())
+        download.assert_not_called()
+        assert published.read_bytes() == b"truncat"
 
     def test_a_sha256_mismatch_publishes_nothing(self, cache_root):
         with (

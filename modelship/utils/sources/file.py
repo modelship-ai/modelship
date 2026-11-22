@@ -5,6 +5,7 @@ from typing import NamedTuple
 
 from modelship.logging import get_logger
 from modelship.utils import cache_dir, download, random_uuid, verify_sha256
+from modelship.utils.sources.errors import ModelSourceError
 from modelship.utils.sources.http import content_length
 from modelship.utils.sources.progress import DownloadProgress
 
@@ -34,11 +35,11 @@ def is_file_cached(source: FileSource) -> bool:
 
 
 def download_file_source(source: FileSource) -> str:
-    """Publication is download-to-temp + verify + `os.replace`, so an existing
-    `dest` passed its sha256 check."""
+    """Publication is download-to-temp + verify + `os.replace`. An existing `dest`
+    is verified again, and one that fails is reported, never deleted."""
     dest = _dest(source)
     if os.path.isfile(dest):
-        return dest
+        return _published(dest, source.sha256)
 
     root, name = os.path.split(dest)
     os.makedirs(root, exist_ok=True)
@@ -57,6 +58,14 @@ def download_file_source(source: FileSource) -> str:
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.remove(tmp_path)
+    return dest
+
+
+def _published(dest: str, sha256: str) -> str:
+    try:
+        verify_sha256(dest, sha256)
+    except ValueError as e:
+        raise ModelSourceError(f"{e}; delete it to fetch again") from None
     return dest
 
 
