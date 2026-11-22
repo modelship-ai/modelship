@@ -28,10 +28,10 @@ _GCS = "http://localhost:6380"
 
 def _flags(name: str, *, num_cpus: int = 1, broken: bool = False) -> list[str]:
     return [
-        "--model.name",
-        name,
         "--model",
         _SOURCE,
+        "--model.name",
+        name,
         "--model.usecase",
         "generate",
         "--model.loader",
