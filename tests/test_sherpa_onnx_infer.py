@@ -115,8 +115,8 @@ def _config(**overrides) -> ModelshipModelConfig:
     return ModelshipModelConfig(**{**defaults, **overrides})
 
 
-def _infer(entry: SherpaOnnxRegistryEntry = _ENTRY, tts: _FakeOfflineTts | None = None) -> SherpaOnnxInfer:
-    infer = SherpaOnnxInfer(_config())
+def _infer(entry: SherpaOnnxRegistryEntry = _ENTRY, tts: _FakeOfflineTts | None = None, **config) -> SherpaOnnxInfer:
+    infer = SherpaOnnxInfer(_config(**config))
     infer.entry = entry
     infer.tts = tts or _FakeOfflineTts(_FakeTtsConfig(), num_speakers=len(entry.voice_names))
     infer.frontend = _FakeFrontend()
@@ -132,13 +132,47 @@ class TestResolveSid:
         infer = _infer()
         assert infer._resolve_sid("3") == 3
 
-    def test_numeric_sid_out_of_range(self):
+    def test_numeric_sid_out_of_range_falls_back_to_the_first_voice(self):
         infer = _infer()
-        assert infer._resolve_sid(str(len(_ENTRY.voice_names))) is None
+        assert infer._resolve_sid(str(len(_ENTRY.voice_names))) == 0
 
-    def test_unknown_name(self):
+    def test_unknown_name_falls_back_to_the_first_voice(self):
         infer = _infer()
-        assert infer._resolve_sid("not_a_voice") is None
+        assert infer._resolve_sid("alloy") == 0
+
+    def test_no_voice_falls_back_to_the_first_voice(self):
+        infer = _infer()
+        assert infer._resolve_sid(None) == 0
+
+    def test_unknown_name_falls_back_to_the_default_voice(self):
+        infer = _infer(sherpa_onnx_config={"default_voice": "af_bella"})
+        assert infer._resolve_sid("alloy") == _ENTRY.voice_names.index("af_bella")
+
+    def test_no_voice_falls_back_to_the_default_voice(self):
+        infer = _infer(sherpa_onnx_config={"default_voice": "af_bella"})
+        assert infer._resolve_sid(None) == _ENTRY.voice_names.index("af_bella")
+
+    def test_a_known_voice_wins_over_the_default_voice(self):
+        infer = _infer(sherpa_onnx_config={"default_voice": "af_bella"})
+        assert infer._resolve_sid(_ENTRY.voice_names[0]) == 0
+
+
+class TestDefaultVoiceConfig:
+    def test_accepts_a_voice_of_the_bundle(self):
+        config = _config(sherpa_onnx_config={"default_voice": "af_bella"})
+        assert config.sherpa_onnx_config is not None
+        assert config.sherpa_onnx_config.default_voice == "af_bella"
+
+    def test_rejects_a_voice_the_bundle_lacks(self):
+        with pytest.raises(ValueError, match="default_voice 'af_heart' is not a voice of 'kokoro-en-v0_19'"):
+            _config(sherpa_onnx_config={"default_voice": "af_heart"})
+
+    def test_checks_the_bundle_a_local_dir_names(self):
+        _config(model="/models/kokoro-multi-lang-v1_0", sherpa_onnx_config={"default_voice": "af_heart"})
+
+    def test_rejects_unknown_keys(self):
+        with pytest.raises(ValueError, match="voice"):
+            _config(sherpa_onnx_config={"voice": "af_bella"})
 
 
 def _resolved(config: ModelshipModelConfig, path: str = "/bundle") -> ModelshipModelConfig:
@@ -217,12 +251,23 @@ class TestShutdown:
 
 class TestCreateSpeech:
     @pytest.mark.asyncio
-    async def test_unknown_voice_returns_400(self):
-        infer = _infer()
-        req = SpeechRequest(input="hi", model="tts", voice="not_a_voice")
+    async def test_unknown_voice_speaks_with_the_default_voice(self):
+        tts = _FakeOfflineTts(_FakeTtsConfig(), num_speakers=len(_ENTRY.voice_names))
+        infer = _infer(tts=tts, sherpa_onnx_config={"default_voice": "af_bella"})
+        req = SpeechRequest(input="hi", model="tts", voice="alloy")
         result = await infer.create_speech(req, RawRequestProxy(None, {}))
-        assert isinstance(result, ErrorResponse)
-        assert "not_a_voice" in result.error.message
+        assert isinstance(result, RawSpeechResponse)
+        assert tts.generate_calls[0][1] == _ENTRY.voice_names.index("af_bella")
+        assert infer.frontend.calls == [("hi", "af_bella")]
+
+    @pytest.mark.asyncio
+    async def test_no_voice_speaks_with_the_first_voice(self):
+        tts = _FakeOfflineTts(_FakeTtsConfig(), num_speakers=len(_ENTRY.voice_names))
+        infer = _infer(tts=tts)
+        req = SpeechRequest(input="hi", model="tts")
+        result = await infer.create_speech(req, RawRequestProxy(None, {}))
+        assert isinstance(result, RawSpeechResponse)
+        assert tts.generate_calls[0][1] == 0
 
     @pytest.mark.asyncio
     async def test_generates_wav_and_passes_codepoints_sid_speed(self):
@@ -251,11 +296,14 @@ class TestCreateSpeech:
         assert infer.frontend.calls == [("hi", _ENTRY.voice_names[2])]
 
     @pytest.mark.asyncio
-    async def test_unknown_voice_returns_400_even_when_streaming(self):
-        infer = _infer()
-        req = SpeechRequest(input="hi", model="tts", voice="not_a_voice", stream_format="sse")
+    async def test_unknown_voice_streams_with_the_default_voice(self):
+        infer = _infer(sherpa_onnx_config={"default_voice": "af_bella"})
+        req = SpeechRequest(input="hi", model="tts", voice="alloy", stream_format="sse")
         result = await infer.create_speech(req, RawRequestProxy(None, {}))
-        assert isinstance(result, ErrorResponse)
+        assert not isinstance(result, ErrorResponse)
+        events = [e async for e in result]
+        assert infer.frontend.calls == [("hi", "af_bella")]
+        assert '"type":"speech.audio.done"' in events[-1]
 
 
 class TestStreaming:

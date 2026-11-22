@@ -120,9 +120,9 @@ class SpeechRequest(OpenAIBaseModel):
         ...,
         description="The model to use for generation.",
     )
-    voice: str = Field(
-        ...,
-        description="The voice to use for generation.",
+    voice: str | None = Field(
+        default=None,
+        description="The voice to use for generation; unset or unknown, the model's default voice.",
     )
     response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = Field(
         default="mp3",

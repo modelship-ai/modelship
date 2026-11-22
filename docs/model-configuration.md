@@ -234,8 +234,9 @@ If it's unset (the default), or a request doesn't carry the header, the caller l
 | `llama_server_config` | object | llama-server loader options (see [llama_server Loader](#llama_server-loader)) |
 | `stable_diffusion_cpp_config` | object | stable-diffusion.cpp loader options (see [stable-diffusion.cpp Loader](#stable-diffusioncpp-loader)) |
 | `whispercpp_config` | object | whisper.cpp loader options (see [whispercpp Loader](#whispercpp-loader)) |
+| `sherpa_onnx_config` | object | sherpa-onnx loader options (see [sherpa_onnx Loader](#sherpa_onnx-loader)) |
 
-`sherpa_onnx` has no `sherpa_onnx_config`: `provider` is always `cpu` and thread count is derived from `num_cpus`, neither user-supplied.
+For `sherpa_onnx`, `provider` is always `cpu` and the thread count is derived from `num_cpus`; neither is user-supplied.
 
 ## Sharing one GPU
 
@@ -621,6 +622,20 @@ models:
     usecase: "tts"
     loader: "sherpa_onnx"
     num_cpus: 2
+```
+
+| `sherpa_onnx_config` key | Default | Description |
+|---|---|---|
+| `default_voice` | the bundle's first voice | The voice for a `/v1/audio/speech` request that names no voice, or one the bundle doesn't have (for example OpenAI's `alloy`). Must be one of the bundle's voices. A voice the bundle has, or a numeric speaker id within range, is always used as given |
+
+```yaml
+models:
+  - name: "kokoro"
+    model: "kokoro-multi-lang-v1_0"
+    usecase: "tts"
+    loader: "sherpa_onnx"
+    sherpa_onnx_config:
+      default_voice: "af_heart"
 ```
 
 See `config/examples/sherpa-onnx.yaml` for the local-directory form.
