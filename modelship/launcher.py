@@ -244,31 +244,42 @@ def _advertises_no_capacity() -> bool:
 
 
 def _validate_config(args: argparse.Namespace) -> ModelshipConfig | None:
-    """Validate the requested models before the driver imports ray. None when
-    the invocation asks for none."""
+    """Validate the requested models and pipelines before the driver imports ray.
+    None when the invocation asks for no models."""
     from pydantic import ValidationError
 
-    from modelship.deploy.config import resolve_input_models, validate_models
+    from modelship.deploy.config import resolve_input_models, resolve_input_pipelines, validate_models
 
     try:
         raw_models = resolve_input_models(args)
-        if raw_models is None:
+        raw_pipelines = resolve_input_pipelines(args)
+        if raw_models is None and raw_pipelines is None:
             return None
-        return validate_models(raw_models)
+        config = validate_models(raw_models or [], raw_pipelines)
     except ValidationError as e:
-        print(f"error: invalid config: {_flagged(e, len(args.models)) if args.models else e}", file=sys.stderr)
+        print(f"error: invalid config: {_flagged(e, args) if _from_cli(args) else e}", file=sys.stderr)
         sys.exit(1)
     except (FileNotFoundError, yaml.YAMLError, ValueError) as e:
         print(f"error: invalid config: {e}", file=sys.stderr)
         sys.exit(1)
+    if config.pipelines:
+        names = ", ".join(pipeline.name for pipeline in config.pipelines)
+        print(f"error: pipelines can't be deployed yet ({names}); remove them to deploy the models.", file=sys.stderr)
+        sys.exit(1)
+    return config if raw_models is not None else None
 
 
-def _flagged(error: ValidationError, count: int) -> str:
-    """Pydantic's `models.<i>.<path>` locations as the `--model.<path>` flags a
-    CLI deploy passed, not a models.yaml shape."""
+def _from_cli(args: argparse.Namespace) -> bool:
+    return getattr(args, "models", None) is not None or getattr(args, "pipelines", None) is not None
+
+
+def _flagged(error: ValidationError, args: argparse.Namespace) -> str:
+    """Pydantic's `models.<i>.<path>` and `pipelines.<i>.<path>` locations as the
+    `--model.<path>`/`--pipeline.<path>` flags a CLI deploy passed, not a models.yaml shape."""
     from modelship.utils.model_flags import flag_locations
 
-    return flag_locations(str(error), count)
+    counts = {"models": len(args.models or []), "pipelines": len(args.pipelines or [])}
+    return flag_locations(str(error), counts)
 
 
 def _check_capabilities(models: list[ModelshipModelConfig]) -> None:

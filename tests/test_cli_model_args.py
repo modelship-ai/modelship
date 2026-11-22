@@ -352,14 +352,18 @@ class TestFlagLocations:
     _ERROR = "models.0.llama_server_config.n_ctx\n  Input should be a valid integer"
 
     def test_one_model_names_the_flag(self):
-        assert flag_locations(self._ERROR, 1).startswith("--model.llama-server-config.n-ctx\n")
+        assert flag_locations(self._ERROR, {"models": 1}).startswith("--model.llama-server-config.n-ctx\n")
 
     def test_several_models_also_name_which_one(self):
-        text = flag_locations("models.1.num_gpus\n  Input should be greater than or equal to 0", 2)
+        text = flag_locations("models.1.num_gpus\n  Input should be greater than or equal to 0", {"models": 2})
         assert text.startswith("--model.num-gpus (--model #2)\n")
 
+    def test_pipeline_locations_name_pipeline_flags(self):
+        text = flag_locations("pipelines.0.session_defaults.max_output_tokens\n  x", {"models": 3, "pipelines": 1})
+        assert text.startswith("--pipeline.session-defaults.max-output-tokens\n")
+
     def test_any_depth(self):
-        text = flag_locations("models.0.vllm_engine_kwargs.reasoning_config.reasoning_end_str\n  x", 1)
+        text = flag_locations("models.0.vllm_engine_kwargs.reasoning_config.reasoning_end_str\n  x", {"models": 1})
         assert text.startswith("--model.vllm-engine-kwargs.reasoning-config.reasoning-end-str\n")
 
 

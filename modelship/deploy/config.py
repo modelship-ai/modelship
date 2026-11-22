@@ -33,15 +33,36 @@ def load_raw_models(path: str) -> list[dict]:
         return parse_raw_models(f.read())
 
 
-def parse_raw_models(text: str) -> list[dict]:
-    """models.yaml text as raw, pre-validation dicts."""
+_TOP_LEVEL_KEYS = ("models", "pipelines")
+
+
+def _parse_document(text: str) -> dict:
     data = yaml.safe_load(text) or {}
     if not isinstance(data, dict):
         raise ValueError("models.yaml: top-level document must be a mapping with a 'models' key.")
-    models = data.get("models", [])
-    if not isinstance(models, list):
-        raise ValueError("models.yaml: 'models' must be a list.")
-    return models
+    if unknown := [key for key in data if key not in _TOP_LEVEL_KEYS]:
+        raise ValueError(f"models.yaml: unknown top-level key {unknown[0]!r}; expected {', '.join(_TOP_LEVEL_KEYS)}.")
+    for key in _TOP_LEVEL_KEYS:
+        if not isinstance(data.get(key, []), list):
+            raise ValueError(f"models.yaml: {key!r} must be a list.")
+    return data
+
+
+def parse_raw_models(text: str) -> list[dict]:
+    """models.yaml text's models as raw, pre-validation dicts."""
+    return _parse_document(text).get("models", [])
+
+
+def parse_raw_pipelines(text: str) -> list[dict]:
+    """models.yaml text's pipelines as raw, pre-validation dicts."""
+    return _parse_document(text).get("pipelines", [])
+
+
+def load_raw_pipelines(path: str) -> list[dict]:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"--config {path} not found.")
+    with open(path) as f:
+        return parse_raw_pipelines(f.read())
 
 
 WHISPERCPP_REPO = "ggerganov/whisper.cpp"
@@ -132,10 +153,10 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
             )
 
 
-def validate_models(raw_models: list[dict]) -> ModelshipConfig:
-    """Validate raw model dicts into a ModelshipConfig. Both models.yaml and the
-    ``--model`` flags land here."""
-    return ModelshipConfig.model_validate({"models": raw_models})
+def validate_models(raw_models: list[dict], raw_pipelines: list[dict] | None = None) -> ModelshipConfig:
+    """Validate raw model and pipeline dicts into a ModelshipConfig. Both models.yaml
+    and the ``--model``/``--pipeline`` flags land here."""
+    return ModelshipConfig.model_validate({"models": raw_models, "pipelines": raw_pipelines or []})
 
 
 def resolve_input_models(args: argparse.Namespace) -> list[dict] | None:
@@ -160,3 +181,18 @@ def resolve_input_models(args: argparse.Namespace) -> list[dict] | None:
     if args.config is None:
         return None
     return load_raw_models(args.config)
+
+
+def resolve_input_pipelines(args: argparse.Namespace) -> list[dict] | None:
+    """The raw pipeline dicts this invocation asks for, or None when it asks for
+    none: the ``--pipeline`` groups, else the ``--config`` file's ``pipelines:``."""
+    cli_pipelines = getattr(args, "pipelines", None)
+    if cli_pipelines is not None:
+        return cli_pipelines
+    if getattr(args, "config_from_job", False):
+        from modelship.remote import job_models_yaml
+
+        return parse_raw_pipelines(job_models_yaml()) or None
+    if args.config is None:
+        return None
+    return load_raw_pipelines(args.config) or None
