@@ -92,8 +92,10 @@ class SherpaOnnxInfer(BaseInfer):
             return int(voice)
         config = self.model_config.sherpa_onnx_config
         default = config.default_voice if config and config.default_voice else names[0]
-        if voice is not None:
-            logger.info("unknown voice %r for '%s', using %r", voice, self.model_config.name, default)
+        if voice is None:
+            logger.info("no voice for '%s', using the default %r", self.model_config.name, default)
+        else:
+            logger.info("unknown voice %r for '%s', using the default %r", voice, self.model_config.name, default)
         return names.index(default)
 
     async def create_speech(
