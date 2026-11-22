@@ -8,7 +8,7 @@ import re
 import sys
 from pathlib import Path
 
-from modelship.utils.model_flags import ModelGroup, add_model_help, model_entry, split_model_groups
+from modelship.utils.model_flags import MODEL, PIPELINE, Group, add_group_help, group_entry, split_groups
 from modelship.utils.model_ref import parse_model_ref
 
 # Marks a `--model` path as a file rather than a directory when it doesn't
@@ -58,7 +58,9 @@ _SWITCH_TO_ENV: dict[str, tuple[str, str]] = {
     "enable_ray_auth": ("MSHIP_RAY_AUTH", "true"),
 }
 
-_MODEL_USAGE = "[options] [--model REF [--model.<key> VALUE ...] ...]"
+_MODEL_USAGE = (
+    "[options] [--model REF [--model.<key> VALUE ...] ...] [--pipeline NAME [--pipeline.<key> VALUE ...] ...]"
+)
 _USAGE = {
     "start": f"mship start {_MODEL_USAGE}",
     "join": "mship join --gcs-address HOST[:PORT] [options]",
@@ -150,15 +152,16 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
         )
 
     argv = list(sys.argv[1:] if argv is None else argv)
-    groups: list[ModelGroup] = []
+    groups: list[Group] = []
     if command in ("start", "deploy"):
         try:
-            argv, groups = split_model_groups(argv)
+            argv, groups = split_groups(argv)
         except ValueError as e:
             parser.error(str(e))
     args = parser.parse_args(argv)
     try:
-        args.models = _models_from_groups(groups)
+        args.models = _models_from_groups([group for group in groups if group.kind is MODEL])
+        args.pipelines = [group_entry(group) for group in groups if group.kind is PIPELINE] or None
     except ValueError as e:
         parser.error(str(e))
     if command == "join" and not (args.gcs_address or os.environ.get("MSHIP_GCS_ADDRESS")):
@@ -166,8 +169,9 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
     url = args.ray_dashboard_url or os.environ.get("MSHIP_RAY_DASHBOARD_URL") if command == "deploy" else None
     if url and not re.match(r"https?://", url):
         parser.error(f"--ray-dashboard-url takes a URL, e.g. http://{url}; got {url!r}.")
-    if command == "deploy" and args.config_from_job and (args.config is not None or args.models is not None):
-        parser.error("--config-from-job takes no --config or --model.")
+    cli_entries = args.models is not None or args.pipelines is not None
+    if command == "deploy" and args.config_from_job and (args.config is not None or cli_entries):
+        parser.error("--config-from-job takes no --config, --model or --pipeline.")
     if command == "deploy" and args.cancel is not None:
         _check_cancel_args(parser, args)
     elif command in ("start", "deploy"):
@@ -188,17 +192,26 @@ def _check_cancel_args(parser: argparse.ArgumentParser, args: argparse.Namespace
     ]
     if args.models is not None:
         given.append("--model")
+    if args.pipelines is not None:
+        given.append("--pipeline")
     if given:
         parser.error(f"--cancel takes no model options: {', '.join(given)}.")
 
 
 def _check_model_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    if args.models is not None and args.config is not None:
-        # Rejected here rather than in resolve_input_models so both entry points fail
-        # before the driver starts a Ray head.
+    if args.config is None:
+        return
+    # Rejected here rather than in resolve_input_models so both entry points fail
+    # before the driver starts a Ray head.
+    if args.models is not None:
         parser.error(
             "--model and --config are mutually exclusive: --model deploys the models it opens, "
             "--config deploys the set in a models.yaml. Add the models to the file instead."
+        )
+    if args.pipelines is not None:
+        parser.error(
+            "--pipeline and --config are mutually exclusive: --pipeline deploys the pipelines it opens, "
+            "--config deploys those in a models.yaml. Add the pipelines to the file instead."
         )
 
 
@@ -414,16 +427,16 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
             "defaults plus explicit config (env: MSHIP_PREFLIGHT). Useful for benchmarking."
         ),
     )
-    add_model_help(parser)
+    add_group_help(parser)
 
 
-def _models_from_groups(groups: list[ModelGroup]) -> list[dict] | None:
+def _models_from_groups(groups: list[Group]) -> list[dict] | None:
     """The raw models.yaml entries the `--model` groups describe, or None for none.
     A group without `--model.name` gets the name its reference implies."""
     models = []
     for group in groups:
-        raw = model_entry(group)
-        models.append(raw if "name" in raw else {"name": infer_model_name(group.ref), **raw})
+        raw = group_entry(group)
+        models.append(raw if "name" in raw else {"name": infer_model_name(group.value), **raw})
     return models or None
 
 

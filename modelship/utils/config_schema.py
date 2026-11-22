@@ -5,7 +5,7 @@ RAY_AUTH_MODE at import, before resolve_ray_auth_env() runs.
 import hashlib
 import re
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
@@ -506,8 +506,51 @@ def default_gpu_memory_utilization(config: ModelshipModelConfig) -> float:
     return _VLLM_GPU_DEFAULT_GPU_MEMORY_UTILIZATION
 
 
+class SessionDefaults(_StrictModel):
+    """A pipeline's defaults for the OpenAI Realtime session fields, in the session's
+    own shape; a client's `session.update` overrides any of them."""
+
+    instructions: str | None = None
+    output_modalities: list[Literal["text", "audio"]] | None = None
+    max_output_tokens: Annotated[int, Field(ge=1)] | Literal["inf"] | None = None
+
+
+class PipelineConfig(_StrictModel):
+    """A `/v1/realtime` pipeline: the models of the gateway it runs a session over.
+    Experimental."""
+
+    name: str
+    num_replicas: int = Field(default=1, ge=1)
+    # model names, from the gateway's models
+    stt: str | None = None
+    llm: str | None = None
+    tts: str | None = None
+    session_defaults: SessionDefaults | None = None
+
+    @model_validator(mode="after")
+    def check_name_has_no_hash(self):
+        # Serve rejects '#' in a deployment name, as for a model's.
+        if "#" in self.name:
+            raise ValueError(f"name {self.name!r} must not contain '#'")
+        return self
+
+    @model_validator(mode="after")
+    def check_stt_or_llm(self):
+        if self.stt is None and self.llm is None:
+            raise ValueError(f"pipeline {self.name!r} names no stt and no llm model: set at least one.")
+        return self
+
+
 class ModelshipConfig(_StrictModel):
     models: list[ModelshipModelConfig]
+    pipelines: list[PipelineConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def check_unique_pipeline_names(self):
+        names = [pipeline.name for pipeline in self.pipelines]
+        if duplicates := sorted({name for name in names if names.count(name) > 1}):
+            raise ValueError(f"duplicate pipeline name {duplicates[0]!r}: a pipeline name maps to one pipeline.")
+        return self
 
     @model_validator(mode="after")
     def check_unique_names(self):

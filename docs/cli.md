@@ -55,7 +55,7 @@ Provisions a pinned Python 3.12.10 environment for the role, the matching `llama
 ## `mship start`
 
 ```bash
-mship start [options] [--config models.yaml | --model REF [--model.<key> VALUE ...] ...]
+mship start [options] [--config models.yaml | --model REF [--model.<key> VALUE ...] ... [--pipeline NAME [--pipeline.<key> VALUE ...] ...]]
 ```
 
 Creates this machine's Ray head, brings up the gateway and sends the models given. The gateway then serves exactly those models. It stays running and tears the cluster down on exit. Without `--config` or `--model`, it serves the models its gateway last committed.

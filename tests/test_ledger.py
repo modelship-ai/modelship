@@ -168,7 +168,11 @@ class TestLoadRawModels:
         assert load_raw_models(self._write(tmp_path, "")) == []
 
     def test_missing_models_key_is_empty_list(self, tmp_path):
-        assert load_raw_models(self._write(tmp_path, "other: 1\n")) == []
+        assert load_raw_models(self._write(tmp_path, "pipelines: []\n")) == []
+
+    def test_unknown_top_level_key_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="unknown top-level key 'other'"):
+            load_raw_models(self._write(tmp_path, "other: 1\n"))
 
     def test_top_level_list_rejected(self, tmp_path):
         # A bare list at the top level has no .get(); must raise cleanly, not AttributeError.

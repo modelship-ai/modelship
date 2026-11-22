@@ -1,6 +1,6 @@
 # Model Configuration
 
-Reference for `models.yaml`, the file `--config` takes. Each entry under `models:` defines one deployment. Unknown keys are rejected: a typo like `n_ctxx` is a validation error, not a silently ignored setting — in the file and in the [CLI flags](#deploying-from-the-command-line-no-config-file) alike.
+Reference for `models.yaml`, the file `--config` takes. Each entry under `models:` defines one deployment; an optional [`pipelines:`](#pipelines-experimental) list sits beside it, and any other top-level key is an error. Unknown keys are rejected: a typo like `n_ctxx` is a validation error, not a silently ignored setting — in the file and in the [CLI flags](#deploying-from-the-command-line-no-config-file) alike.
 
 ## CLI Options
 
@@ -189,6 +189,48 @@ Deploy 3f2a9c1d04be succeeded; the gateway is on version 8.
 Replica counts are compared with Serve, not with the committed version, so sending the same config again puts back a count that no longer matches it. A deploy with no config does that for every committed model, and redeploys the ones Serve no longer has.
 
 A request that fails or is cancelled after step 2 gets its scale-downs undone too, which loads the stopped replicas again.
+
+## Pipelines (experimental)
+
+> **Experimental, and not deployable yet.** The `pipelines:` schema and its flags are in place for OpenAI's Realtime API (`/v1/realtime`); deploying one arrives in a later release. Until then, a config or command with a pipeline is rejected before anything starts.
+
+A pipeline runs an OpenAI Realtime session over models the gateway already serves: speech to text, a chat model, and text to speech. Clients will pick one with `/v1/realtime?model=<name>`. Pipelines sit beside `models:` in the same file:
+
+```yaml
+models:
+  - name: "qwen"
+    model: "lmstudio-community/Qwen3-8B-GGUF:*Q4_K_M.gguf"
+    usecase: "generate"
+    loader: "llama_server"
+
+pipelines:
+  - name: "assistant"
+    llm: "qwen"
+    session_defaults:
+      instructions: "You are a helpful home assistant."
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Name clients pass as `/v1/realtime?model=<name>`. No `#` |
+| `num_replicas` | int | Replicas of the pipeline. Default `1`. A pipeline reserves no CPU or GPU |
+| `stt` | string | Name of the speech-to-text model it transcribes with |
+| `llm` | string | Name of the chat model that answers |
+| `tts` | string | Name of the text-to-speech model that speaks the answer |
+| `session_defaults` | object | Defaults for OpenAI's Realtime session fields; a client's `session.update` overrides any of them |
+
+A pipeline needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (`[text]`, `[audio]` or both) and `max_output_tokens` (an integer or `inf`); more of OpenAI's session fields arrive as the pipeline learns to use them.
+
+From the command line, `--pipeline NAME` opens a pipeline the way `--model REF` opens a model, on `mship start` and `mship deploy` alike, and its keys are `--pipeline.<key>` flags right after it:
+
+```bash
+mship deploy --model lmstudio-community/Qwen3-8B-GGUF:'*Q4_K_M.gguf' \
+               --model.name qwen --model.loader llama_server --model.usecase generate \
+             --pipeline assistant --pipeline.llm qwen \
+               --pipeline.session-defaults '{instructions: "You are a helpful home assistant."}'
+```
+
+A `--model.*` flag must follow its own `--model`, and a `--pipeline.*` flag its own `--pipeline`: one placed after the other kind is an error.
 
 ## Trusted Identity Header
 
