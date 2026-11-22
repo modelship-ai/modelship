@@ -12,7 +12,7 @@ from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
 from modelship.infer.sherpa_onnx.family.kokoro import KokoroFrontend
 from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry, registry_name
 from modelship.logging import get_logger
-from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest, create_error_response
+from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest
 from modelship.openai.utils.audio import sse_stream_speech
 from modelship.utils import base_request_id
 from modelship.utils.audio import to_pcm16, to_wav
@@ -83,15 +83,20 @@ class SherpaOnnxInfer(BaseInfer):
     async def warmup(self) -> None:
         pass
 
-    def _resolve_sid(self, voice: str) -> int | None:
+    def _resolve_sid(self, voice: str | None) -> int:
         assert self.entry is not None
-        if voice in self.entry.voice_names:
-            return self.entry.voice_names.index(voice)
-        if voice.isdigit():
-            sid = int(voice)
-            if 0 <= sid < len(self.entry.voice_names):
-                return sid
-        return None
+        names = self.entry.voice_names
+        if voice in names:
+            return names.index(voice)
+        if voice is not None and voice.isdigit() and int(voice) < len(names):
+            return int(voice)
+        config = self.model_config.sherpa_onnx_config
+        default = config.default_voice if config and config.default_voice else names[0]
+        if voice is None:
+            logger.info("no voice for '%s', using the default %r", self.model_config.name, default)
+        else:
+            logger.info("unknown voice %r for '%s', using the default %r", voice, self.model_config.name, default)
+        return names.index(default)
 
     async def create_speech(
         self, request: SpeechRequest, raw_request: RawRequestProxy
@@ -99,17 +104,13 @@ class SherpaOnnxInfer(BaseInfer):
         request_id = f"tts-{base_request_id(raw_request)}"
         assert self.entry is not None
         sid = self._resolve_sid(request.voice)
-        if sid is None:
-            return create_error_response(
-                f"unknown voice {request.voice!r}. Valid voices: {', '.join(self.entry.voice_names)}"
-            )
         voice = self.entry.voice_names[sid]
 
         if "stream_format" in request.model_fields_set and request.stream_format == "sse":
-            logger.info("%s: voice=%s sid=%d stream=sse", request_id, request.voice, sid)
+            logger.info("%s: voice=%s sid=%d stream=sse", request_id, voice, sid)
             return self._stream(request.input, voice, sid, request.speed)
 
-        logger.info("%s: voice=%s sid=%d", request_id, request.voice, sid)
+        logger.info("%s: voice=%s sid=%d", request_id, voice, sid)
         wav = await self._generate(request.input, voice, sid, request.speed)
         return RawSpeechResponse(audio=wav)
 

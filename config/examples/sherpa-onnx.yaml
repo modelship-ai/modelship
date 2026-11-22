@@ -10,6 +10,8 @@ models:
     usecase: "tts"
     loader: "sherpa_onnx"
     num_cpus: 2
+    sherpa_onnx_config:
+      default_voice: "af_heart"
 
   - name: "kokoro-local"
     model: "/models/kokoro-en-v0_19"

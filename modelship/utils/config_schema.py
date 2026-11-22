@@ -184,6 +184,13 @@ class WhispercppConfig(_StrictModel):
     flash_attn: bool = False
 
 
+class SherpaOnnxConfig(_StrictModel):
+    """Tunables for the ``sherpa_onnx`` loader."""
+
+    # Voice for a request that names none or an unknown one; unset, the bundle's first voice.
+    default_voice: str | None = None
+
+
 class StableDiffusionCppConfig(_StrictModel):
     """Tunables for the ``stable_diffusion_cpp`` image loader, which runs an
     ``sd-server`` subprocess (stable-diffusion.cpp). Each field maps to one sd-server flag."""
@@ -279,6 +286,7 @@ class ModelshipModelConfig(_StrictModel):
     llama_server_config: LlamaServerConfig | None = None
     stable_diffusion_cpp_config: StableDiffusionCppConfig | None = None
     whispercpp_config: WhispercppConfig | None = None
+    sherpa_onnx_config: SherpaOnnxConfig | None = None
 
     # Checked by `resolve_all_model_sources`, downloaded into
     # `_resolved_path` by `BaseInfer.ensure_downloaded`.
@@ -376,7 +384,7 @@ class ModelshipModelConfig(_StrictModel):
         # `model:` must be a registry name, or a local dir named for one.
         if self.loader != ModelLoader.sherpa_onnx:
             return self
-        from modelship.infer.sherpa_onnx.registry import registry_name, registry_names
+        from modelship.infer.sherpa_onnx.registry import REGISTRY, registry_name, registry_names
 
         assert self.model is not None  # enforced by check_model_required above
         name = registry_name(self.model)
@@ -388,6 +396,13 @@ class ModelshipModelConfig(_StrictModel):
             )
         if self.usecase is not ModelUsecase.tts:
             raise ValueError(f"loader='sherpa_onnx' only supports usecase='tts' (v1 scope), got {self.usecase!r}")
+        voice = self.sherpa_onnx_config.default_voice if self.sherpa_onnx_config else None
+        voices = REGISTRY[name].voice_names
+        if voice is not None and voice not in voices:
+            raise ValueError(
+                f"model '{self.name}': sherpa_onnx_config.default_voice {voice!r} is not a voice of {name!r}. "
+                f"Voices: {', '.join(voices)}"
+            )
         return self
 
     @model_validator(mode="after")
