@@ -83,8 +83,8 @@ class TestSherpaOnnx:
         assert "numeric" in _transcribe(client, audio, tmp_path)
 
     def test_unknown_voice_speaks_with_the_default_voice(self, client, tmp_path):
-        audio = client.audio.speech.create(model="tts-model", voice="alloy", input="Fallback voice selection.").content
-        assert "fallback" in _transcribe(client, audio, tmp_path)
+        audio = client.audio.speech.create(model="tts-model", voice="alloy", input="Default voice selection.").content
+        assert "default" in _transcribe(client, audio, tmp_path)
 
     def test_speed_parameter_changes_duration(self, client):
         normal = client.audio.speech.create(
