@@ -160,6 +160,10 @@ class TestConfigFile:
         with pytest.raises(ValueError, match="unknown top-level key 'pipeline'"):
             parse_raw_models("models: []\npipeline: []\n")
 
+    def test_unknown_keys_of_mixed_types_are_reported(self):
+        with pytest.raises(ValueError, match="unknown top-level key 1"):
+            parse_raw_models("1: []\nother: []\nmodels: []\n")
+
     def test_pipelines_must_be_a_list(self):
         with pytest.raises(ValueError, match="'pipelines' must be a list"):
             parse_raw_pipelines("models: []\npipelines: {name: a}\n")

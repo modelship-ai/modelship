@@ -40,7 +40,7 @@ def _parse_document(text: str) -> dict:
     data = yaml.safe_load(text) or {}
     if not isinstance(data, dict):
         raise ValueError("models.yaml: top-level document must be a mapping with a 'models' key.")
-    if unknown := sorted(set(data) - set(_TOP_LEVEL_KEYS)):
+    if unknown := [key for key in data if key not in _TOP_LEVEL_KEYS]:
         raise ValueError(f"models.yaml: unknown top-level key {unknown[0]!r}; expected {', '.join(_TOP_LEVEL_KEYS)}.")
     for key in _TOP_LEVEL_KEYS:
         if not isinstance(data.get(key, []), list):
