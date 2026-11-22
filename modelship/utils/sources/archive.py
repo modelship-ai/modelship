@@ -4,17 +4,14 @@ import os
 import shutil
 from typing import NamedTuple
 
-import requests
-
 from modelship.logging import get_logger
 from modelship.utils import cache_dir, download, fetch_and_extract_archive, random_uuid
 from modelship.utils.sources.errors import ModelSourceError
+from modelship.utils.sources.http import content_length
 from modelship.utils.sources.local import check_required
 from modelship.utils.sources.progress import DownloadProgress
 
 logger = get_logger("startup")
-
-_HEAD_TIMEOUT_SECONDS = 30
 
 
 class ArchiveSource(NamedTuple):
@@ -29,14 +26,7 @@ class ArchiveSource(NamedTuple):
 
 
 def check_archive_source(url: str, sha256: str, dest: str, required: tuple[str, ...]) -> ArchiveSource:
-    try:
-        response = requests.head(url, allow_redirects=True, timeout=_HEAD_TIMEOUT_SECONDS)
-        response.raise_for_status()
-    except requests.RequestException as e:
-        raise RuntimeError(f"Failed to reach {url}: {e}") from e
-    length = response.headers.get("content-length", "")
-    total_bytes = int(length) if length.isdigit() and int(length) > 0 else None
-    return ArchiveSource(url, sha256, dest, required, total_bytes)
+    return ArchiveSource(url, sha256, dest, required, content_length(url))
 
 
 def _dest(source: ArchiveSource) -> str:

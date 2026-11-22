@@ -138,6 +138,7 @@ Under `MSHIP_CACHE_DIR` (default `/.cache`; may be shared storage):
 |---|---|---|
 | `huggingface` | HF models and tokenizers | `HF_HOME`, `HF_HUB_CACHE` (take precedence over a node's own `HF_HOME`, `HF_HUB_CACHE` and `HUGGINGFACE_HUB_CACHE`) |
 | `sherpa_onnx/<name>-<sha256 prefix>` | sherpa-onnx registry tarballs | — |
+| `vad/<file>-<sha256 prefix>` | the Silero voice activity model, from `model-bundles` | — |
 | `.mship-cache-id` | Identifies this cache, so nodes sharing it take turns downloading | — |
 
 Under `MSHIP_NODE_CACHE_DIR` (default `$MSHIP_HOME/node-cache` — `/opt/mship/node-cache` in the image). Never put this on storage shared between nodes: vLLM keys its GPU peer-access cache by device index alone, so nodes would read each other's results.
