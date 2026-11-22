@@ -8,6 +8,27 @@ import struct
 import librosa
 import numpy as np
 import soundfile as sf
+import soxr
+
+
+def from_pcm16(pcm: bytes) -> np.ndarray:
+    """Decode signed 16-bit little-endian PCM bytes as float32 in [-1, 1)."""
+    return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+
+
+class StreamResampler:
+    """Resamples mono float32 audio chunk by chunk, keeping the filter state between
+    chunks, so the output matches resampling the whole stream at once."""
+
+    def __init__(self, from_rate: int, to_rate: int) -> None:
+        self._stream = None if from_rate == to_rate else soxr.ResampleStream(from_rate, to_rate, 1, dtype="float32")
+
+    def __call__(self, chunk: np.ndarray, last: bool = False) -> np.ndarray:
+        """*last* flushes the filter's tail; the stream takes no chunk after it."""
+        chunk = np.asarray(chunk, dtype=np.float32)
+        if self._stream is None:
+            return chunk
+        return self._stream.resample_chunk(chunk, last=last)
 
 
 def to_pcm16(audio: np.ndarray) -> bytes:

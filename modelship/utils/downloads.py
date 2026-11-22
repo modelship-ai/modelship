@@ -15,6 +15,7 @@ from modelship.utils.cache import shared_cache_id
 from modelship.utils.download_leases import RENEW_SECONDS, get_or_create_leases, remove_leftovers_on
 from modelship.utils.sources import (
     ArchiveSource,
+    FileSource,
     HfSource,
     LocalSource,
     ModelDownloadError,
@@ -80,6 +81,8 @@ def lease_key(source: RemoteSource) -> str:
             return f"{cache_id}/hf/{source.repo}"
         case ArchiveSource():
             return f"{cache_id}/archive/{source.dest}"
+        case FileSource():
+            return f"{cache_id}/file/{source.dest}"
 
 
 async def _acquire(key: str, source: RemoteSource, holder: str, node_id: str, model_name: str):

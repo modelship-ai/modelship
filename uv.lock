@@ -1800,6 +1800,7 @@ cpu = [
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core" },
     { name = "soundfile" },
+    { name = "soxr" },
     { name = "unidic-lite" },
 ]
 cuda = [
@@ -1819,6 +1820,7 @@ cuda = [
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core" },
     { name = "soundfile" },
+    { name = "soxr" },
     { name = "torch", version = "2.14.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torchaudio", version = "2.11.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
     { name = "torchvision", version = "0.29.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
@@ -1852,6 +1854,7 @@ metal = [
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core" },
     { name = "soundfile" },
+    { name = "soxr" },
     { name = "unidic-lite" },
 ]
 otel = [
@@ -1938,6 +1941,9 @@ requires-dist = [
     { name = "soundfile", marker = "extra == 'cpu'", specifier = ">=0.13.0" },
     { name = "soundfile", marker = "extra == 'cuda'", specifier = ">=0.13.0" },
     { name = "soundfile", marker = "extra == 'metal'", specifier = ">=0.13.0" },
+    { name = "soxr", marker = "extra == 'cpu'", specifier = ">=1.0.0" },
+    { name = "soxr", marker = "extra == 'cuda'", specifier = ">=1.0.0" },
+    { name = "soxr", marker = "extra == 'metal'", specifier = ">=1.0.0" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==2.14.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },
     { name = "torch", marker = "extra == 'cuda'", specifier = ">=2.10.0", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "mship-engine", extra = "cuda" } },
     { name = "torchaudio", marker = "sys_platform == 'linux' and extra == 'vllm-cpu'", specifier = "==2.11.0+cpu", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "mship-engine", extra = "vllm-cpu" } },

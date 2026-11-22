@@ -12,7 +12,7 @@ from modelship.infer.sherpa_onnx.bundle import bundle_paths
 from modelship.infer.sherpa_onnx.registry import REGISTRY
 from modelship.utils.sources import ArchiveSource, LocalSource
 
-_HEAD = "modelship.utils.sources.archive.requests.head"
+_HEAD = "modelship.utils.sources.http.requests.head"
 
 
 def _cfg(model: str) -> ModelshipModelConfig:

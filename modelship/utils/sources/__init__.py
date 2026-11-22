@@ -4,14 +4,16 @@ replica by `download_model_source`, which returns the path a loader reads."""
 from pathlib import Path
 
 from modelship.utils.model_ref import parse_model_ref
-from modelship.utils.sources import archive, hf, local
+from modelship.utils.sources import archive, file, hf, local
 from modelship.utils.sources.archive import ArchiveSource, check_archive_source
 from modelship.utils.sources.errors import ModelDownloadError, ModelSourceError
+from modelship.utils.sources.file import FileSource, check_file_source
 from modelship.utils.sources.hf import HfSource
 from modelship.utils.sources.local import LocalSource, check_required
 
 __all__ = [
     "ArchiveSource",
+    "FileSource",
     "HfSource",
     "LocalSource",
     "ModelDownloadError",
@@ -19,6 +21,7 @@ __all__ = [
     "PinnedSource",
     "RemoteSource",
     "check_archive_source",
+    "check_file_source",
     "check_model_source",
     "check_required",
     "download_model_source",
@@ -27,7 +30,7 @@ __all__ = [
     "resolve_model_source",
 ]
 
-RemoteSource = HfSource | ArchiveSource
+RemoteSource = HfSource | ArchiveSource | FileSource
 PinnedSource = LocalSource | RemoteSource
 
 
@@ -49,6 +52,8 @@ def download_model_source(pinned: PinnedSource) -> str:
             return hf.download_hf_source(pinned)
         case ArchiveSource():
             return archive.download_archive_source(pinned)
+        case FileSource():
+            return file.download_file_source(pinned)
 
 
 def is_cached(pinned: RemoteSource) -> bool:
@@ -58,6 +63,8 @@ def is_cached(pinned: RemoteSource) -> bool:
             return hf.is_hf_cached(pinned)
         case ArchiveSource():
             return archive.is_archive_cached(pinned)
+        case FileSource():
+            return file.is_file_cached(pinned)
 
 
 def remove_leftovers(pinned: RemoteSource) -> int:
@@ -67,6 +74,8 @@ def remove_leftovers(pinned: RemoteSource) -> int:
             return hf.remove_hf_leftovers(pinned)
         case ArchiveSource():
             return archive.remove_archive_leftovers(pinned)
+        case FileSource():
+            return file.remove_file_leftovers(pinned)
 
 
 def resolve_model_source(model_ref: str, trust_remote_code: bool = False) -> str:
