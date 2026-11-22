@@ -16,7 +16,7 @@ from tests.conftest import MSHIP, MSHIP_CWD, OPENAI_API_BASE, cluster_env, run_o
 
 _SOURCE = "lmstudio-community/Qwen2.5-0.5B-Instruct-GGUF:*Q4_K_M.gguf"
 # a text model's GGUF as the vision projector: passes the source check, llama-server exits at startup
-_BROKEN = ["--llama-server-config.mmproj", _SOURCE]
+_BROKEN = ["--model.llama-server-config.mmproj", _SOURCE]
 # long enough for anything that deletes apps in the background to have acted
 _PAST_GRACE_S = 15
 _PING = [{"role": "user", "content": "hi"}]
@@ -28,15 +28,15 @@ _GCS = "http://localhost:6380"
 
 def _flags(name: str, *, num_cpus: int = 1, broken: bool = False) -> list[str]:
     return [
-        "--name",
-        name,
         "--model",
         _SOURCE,
-        "--usecase",
+        "--model.name",
+        name,
+        "--model.usecase",
         "generate",
-        "--loader",
+        "--model.loader",
         "llama_server",
-        "--num-cpus",
+        "--model.num-cpus",
         str(num_cpus),
         *(_BROKEN if broken else []),
     ]
