@@ -52,8 +52,8 @@ One command, one model. Pick your hardware:
 ```bash
 docker run --rm --shm-size=8g --gpus all -p 8000:8000 -v modelship-cache:/.cache \
   ghcr.io/modelship-ai/modelship:latest-cuda start \
-  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
-  --usecase generate --num-gpus 1
+  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --model.loader llama_server \
+  --model.usecase generate --model.num-gpus 1
 ```
 
 **AMD or Intel GPU** — Linux, through Vulkan:
@@ -61,16 +61,16 @@ docker run --rm --shm-size=8g --gpus all -p 8000:8000 -v modelship-cache:/.cache
 ```bash
 docker run --rm --shm-size=8g --device /dev/dri -p 8000:8000 -v modelship-cache:/.cache \
   ghcr.io/modelship-ai/modelship:latest-vulkan start \
-  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
-  --usecase generate --num-gpus 1
+  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --model.loader llama_server \
+  --model.usecase generate --model.num-gpus 1
 ```
 
 **Apple Silicon** — native, with Metal offload:
 
 ```bash
 uv tool install mship && mship bootstrap --metal
-mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
-  --usecase generate --num-gpus 1
+mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --model.loader llama_server \
+  --model.usecase generate --model.num-gpus 1
 ```
 
 **CPU** — Linux, Windows, or macOS via Docker (images are multi-arch: amd64 + arm64):
@@ -78,8 +78,8 @@ mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
 ```bash
 docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
   ghcr.io/modelship-ai/modelship:latest-cpu start \
-  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
-  --usecase generate --num-cpus 4
+  --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --model.loader llama_server \
+  --model.usecase generate --model.num-cpus 4
 ```
 
 Wait for the `Deploy … succeeded` log line, then talk to it — this hits the **Responses API** and streams the model's reasoning as it thinks:
@@ -91,9 +91,9 @@ uvx --with httpx llm openai endpoint http://localhost:8000/modelship/v1 \
 
 Add `--chat` for an interactive session, `-T` to hand it a tool, or `--models` to list what's deployed.
 
-The model serves as `qwen3-8b`, inferred from the reference. It pulls ~5 GB and wants ~10 GB of free RAM; `--num-cpus 4` reserves four cores for it, so lower it if the container has fewer (the deploy waits for resources it can't get). On a small box, swap in `lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf`.
+The model serves as `qwen3-8b`, inferred from the reference. It pulls ~5 GB and wants ~10 GB of free RAM; `--model.num-cpus 4` reserves four cores for it, so lower it if the container has fewer (the deploy waits for resources it can't get). On a small box, swap in `lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf`.
 
-Deploying several models at once uses a `models.yaml` instead; one model's tuning blocks have flags too (`--llama-server-config.n-ctx 8192`) — see [Model Configuration](docs/model-configuration.md). Hitting an error? Check [Troubleshooting](docs/troubleshooting.md).
+Every key of a model's config has a flag (`--model.llama-server-config.n-ctx 8192`), and repeating `--model` deploys several models at once, each followed by its own flags; a `models.yaml` does the same from a file — see [Model Configuration](docs/model-configuration.md). Hitting an error? Check [Troubleshooting](docs/troubleshooting.md).
 
 <details>
 <summary>Prefer <code>curl</code>?</summary>
@@ -216,7 +216,7 @@ mship start --config models.yaml
 
 `mship bootstrap` installs a pinned Python 3.12.10 environment for that role and records it, so `deploy` afterwards needs no variant flag and installs nothing. A new node joins the cluster by running the same two commands. Platform prerequisites apply — see [Native install](docs/install-native.md).
 
-**High-throughput GPU serving** — use `--loader vllm` with safetensors or AWQ/GPTQ/FP8 weights instead of GGUF, and set `HF_TOKEN` for gated models. **Multi-node** — join hosts into one Ray cluster with plain `docker run`, or deploy on Kubernetes with the [Helm chart](helm/modelship/).
+**High-throughput GPU serving** — use `--model.loader vllm` with safetensors or AWQ/GPTQ/FP8 weights instead of GGUF, and set `HF_TOKEN` for gated models. **Multi-node** — join hosts into one Ray cluster with plain `docker run`, or deploy on Kubernetes with the [Helm chart](helm/modelship/).
 
 > [!TIP]
 > Always set `--shm-size=8g` (or higher) — Ray falls back to slower disk-backed storage without enough shared memory.

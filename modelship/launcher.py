@@ -10,7 +10,6 @@ import contextlib
 import logging
 import os
 import platform
-import re
 import sys
 from typing import TYPE_CHECKING
 
@@ -257,22 +256,19 @@ def _validate_config(args: argparse.Namespace) -> ModelshipConfig | None:
             return None
         return validate_models(raw_models)
     except ValidationError as e:
-        print(f"error: invalid config: {_flagged(e) if args.model else e}", file=sys.stderr)
+        print(f"error: invalid config: {_flagged(e, len(args.models)) if args.models else e}", file=sys.stderr)
         sys.exit(1)
     except (FileNotFoundError, yaml.YAMLError, ValueError) as e:
         print(f"error: invalid config: {e}", file=sys.stderr)
         sys.exit(1)
 
 
-def _flagged(error: ValidationError) -> str:
-    """Rewrite pydantic's `models.0.<block>.<field>` locations as
-    `--<block>.<field>` so a single-model deploy reports its own flags, not a
-    models.yaml shape."""
-    return re.sub(
-        r"\bmodels\.\d+\.([a-z_]+)(?:\.([a-z_]+))?",
-        lambda m: "--" + ".".join(part for part in m.groups() if part).replace("_", "-"),
-        str(error),
-    )
+def _flagged(error: ValidationError, count: int) -> str:
+    """Pydantic's `models.<i>.<path>` locations as the `--model.<path>` flags a
+    CLI deploy passed, not a models.yaml shape."""
+    from modelship.utils.model_flags import flag_locations
+
+    return flag_locations(str(error), count)
 
 
 def _check_capabilities(models: list[ModelshipModelConfig]) -> None:

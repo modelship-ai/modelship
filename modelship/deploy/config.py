@@ -7,7 +7,6 @@ from pydantic_yaml import parse_yaml_raw_as
 
 from modelship.logging import get_logger
 from modelship.utils import is_pathy
-from modelship.utils.cli import model_from_args
 from modelship.utils.config_schema import ModelLoader, ModelshipConfig
 
 if TYPE_CHECKING:
@@ -141,19 +140,19 @@ def validate_models(raw_models: list[dict]) -> ModelshipConfig:
 
 def resolve_input_models(args: argparse.Namespace) -> list[dict] | None:
     """The raw model dicts this invocation asks for, or None when it asks for
-    none. ``--model`` describes one entry; otherwise the ``--config`` file supplies them.
+    none. Each ``--model`` describes one entry; otherwise the ``--config`` file supplies them.
 
     Ray-free, so the launcher can validate the result before importing ray.
     """
+    cli_models = getattr(args, "models", None)
     # parse_args rejects this first; kept for callers that build a Namespace directly.
-    if args.model is not None and args.config is not None:
+    if cli_models is not None and args.config is not None:
         raise ValueError(
-            "--model and --config are mutually exclusive: --model deploys a single model, "
-            "--config deploys the set in a models.yaml. Add the model to the file instead."
+            "--model and --config are mutually exclusive: --model deploys the models it opens, "
+            "--config deploys the set in a models.yaml. Add the models to the file instead."
         )
-    cli_model = model_from_args(args)
-    if cli_model is not None:
-        return [cli_model]
+    if cli_models is not None:
+        return cli_models
     if getattr(args, "config_from_job", False):
         from modelship.remote import job_models_yaml
 

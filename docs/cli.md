@@ -55,14 +55,14 @@ Provisions a pinned Python 3.12.10 environment for the role, the matching `llama
 ## `mship start`
 
 ```bash
-mship start [options] [--config models.yaml | --model REF [--<block>.<key> VALUE ...]]
+mship start [options] [--config models.yaml | --model REF [--model.<key> VALUE ...] ...]
 ```
 
 Creates this machine's Ray head, brings up the gateway and sends the models given. The gateway then serves exactly those models. It stays running and tears the cluster down on exit. Without `--config` or `--model`, it serves the models its gateway last committed.
 
 ```bash
 mship start --config models.yaml
-mship start --model Qwen/Qwen3-8B-GGUF:'*Q4_K_M.gguf' --loader llama_server --usecase generate
+mship start --model Qwen/Qwen3-8B-GGUF:'*Q4_K_M.gguf' --model.loader llama_server --model.usecase generate
 ```
 
 Refuses to start when a Ray node already runs on the machine, or when one of its ports is held by another program or given to two of them: `--gcs-port`, `--openai-api-port`, `--metrics-port` and, when set, `--ray-dashboard-port`.
@@ -121,6 +121,6 @@ These are the labels a model's `node_selector` matches. A cluster started with `
 
 ## Flags
 
-Every flag, its environment variable, default and the commands it applies to are in the [CLI Options table](model-configuration.md#cli-options). Per-model flags such as `--llama-server-config.n-ctx 8192` are generated from the `models.yaml` schema: see [Single-model deploys](model-configuration.md#single-model-deploys-no-config-file). Environment variables work as fallbacks; the CLI wins.
+Every flag, its environment variable, default and the commands it applies to are in the [CLI Options table](model-configuration.md#cli-options). Per-model flags such as `--model.llama-server-config.n-ctx 8192` are generated from the `models.yaml` schema: see [Deploying from the command line](model-configuration.md#deploying-from-the-command-line-no-config-file). Environment variables work as fallbacks; the CLI wins.
 
 `mship start --help`, `mship join --help`, `mship deploy --help` and `mship stop --help` print the usage and flags of that command. `bootstrap` and `info` take only the role flag.
