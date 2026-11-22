@@ -529,7 +529,9 @@ def test_deploy_with_inferred_model_name(client, model_deployer):
     """`--model` with no `--name`: the name inferred from the ref is what the
     gateway serves under."""
     ref = MODEL_CONFIGS["chat-llama-server-plain"]["model"]
-    model_deployer.deploy_cli("--model", ref, "--loader", "llama_server", "--usecase", "generate", "--num-cpus", "1")
+    model_deployer.deploy_cli(
+        "--model", ref, "--model.loader", "llama_server", "--model.usecase", "generate", "--model.num-cpus", "1"
+    )
 
     inferred = infer_model_name(ref)
     assert inferred in {m.id for m in client.models.list().data}

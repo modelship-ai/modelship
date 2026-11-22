@@ -1,6 +1,6 @@
 # Model Configuration
 
-Reference for `models.yaml`, the file `--config` takes. Each entry under `models:` defines one deployment. Unknown keys are rejected: a typo like `n_ctxx` is a validation error, not a silently ignored setting — in the file and in the [CLI flags](#single-model-deploys-no-config-file) alike.
+Reference for `models.yaml`, the file `--config` takes. Each entry under `models:` defines one deployment. Unknown keys are rejected: a typo like `n_ctxx` is a validation error, not a silently ignored setting — in the file and in the [CLI flags](#deploying-from-the-command-line-no-config-file) alike.
 
 ## CLI Options
 
@@ -60,64 +60,52 @@ deploy fails or is cancelled or the cluster refuses the Ray auth token, `2` on a
 dashboard answered at `--ray-dashboard-url` within the wait (or it stopped answering mid-deploy), `4` when the
 cluster still had no deploy coordinator, and `130` when a signal stops the wait.
 
-### Single-model deploys (no config file)
+### Deploying from the command line (no config file)
 
-`--model` deploys one model straight from the command line, no `models.yaml` needed:
-
-```bash
-mship start --model lmstudio-community/Qwen3-8B-GGUF:'*Q4_K_M.gguf' \
-            --loader llama_server --usecase generate --num-cpus 4
-```
-
-These flags mirror the root-level fields of a `models:` entry one for one, and are validated by the same schema — anything rejected in the file is rejected here, with the same message:
-
-| Flag | Field |
-|---|---|
-| `--model` | `model` |
-| `--name` | `name` (inferred from `--model` when omitted) |
-| `--usecase` | `usecase` |
-| `--loader` | `loader` |
-| `--num-gpus` | `num_gpus` |
-| `--num-cpus` | `num_cpus` |
-| `--num-replicas` | `num_replicas` |
-| `--max-ongoing-requests` | `max_ongoing_requests` |
-| `--node-selector` | `node_selector`, e.g. `'{modelship/variant: vulkan}'` |
-
-#### Tuning blocks
-
-The nested blocks are generated from the same schema, one flag per key, named for its config path — `--<block>.<key>`, hyphenated:
+`--model` deploys models straight from the command line, no `models.yaml` needed. Each `--model REF` opens a model, and the `--model.<key>` flags after it, up to the next `--model`, set keys of that model's entry:
 
 ```bash
 mship start --model lmstudio-community/Qwen3-8B-GGUF:'*Q4_K_M.gguf' \
-            --loader llama_server --usecase generate \
-             --llama-server-config.n-ctx 8192 \
-             --llama-server-config.parallel 4
+              --model.loader llama_server --model.usecase generate --model.num-cpus 4 \
+            --model kokoro-multi-lang-v1_0 \
+              --model.loader sherpa_onnx --model.usecase tts
 ```
 
-So `--vllm-engine-kwargs.max-model-len 8192` is `vllm_engine_kwargs: {max_model_len: 8192}`, `--autoscaling-config.max-replicas 3` is `autoscaling_config: {max_replicas: 3}`, and so on for `diffusers_config`, `stable_diffusion_cpp_config` and `whispercpp_config`. `mship deploy --help` lists every flag with its type and default.
+Every key of a `models:` entry has a flag, at any depth, named for its config path, hyphenated: `--model.num-gpus` is `num_gpus`, `--model.llama-server-config.n-ctx` is `llama_server_config: {n_ctx: …}`, and `--model.vllm-engine-kwargs.reasoning-config.reasoning-end-str` is three levels down. The `model` key itself is the `--model REF` that opens the entry. Other flags (`--wait`, `--gateway-name`, …) can go anywhere on the line. The entries are validated by the same schema as the file, so anything rejected in the file is rejected here, with the same message, naming the flag. `mship deploy --help` lists every flag with its type and default.
 
 Values are read as YAML: the same text you would write after the colon in the file.
 
 | Flag | Value |
 |---|---|
-| `--llama-server-config.n-ctx 8192` | `8192` |
-| `--vllm-engine-kwargs.trust-remote-code true` | `true` |
-| `--vllm-engine-kwargs.limit-mm-per-prompt '{image: 2}'` | a map |
-| `--llama-server-config.tensor-split '[3, 1]'` | a list |
-| `--llama-server-config.threads null` | `null` — an explicit value, not "left unset" |
-| `--vllm-engine-kwargs.default-chat-template-kwargs '{enable_thinking: false}'` | a map |
+| `--model.llama-server-config.n-ctx 8192` | `8192` |
+| `--model.vllm-engine-kwargs.trust-remote-code true` | `true` |
+| `--model.vllm-engine-kwargs.limit-mm-per-prompt '{image: 2}'` | a map |
+| `--model.llama-server-config.tensor-split '[3, 1]'` | a list |
+| `--model.llama-server-config.threads null` | `null` — an explicit value, not "left unset" |
+| `--model.node-selector '{modelship/variant: vulkan}'` | a map |
 
-That includes YAML's own quirks: bare `on`, `off`, `yes` and `no` are booleans, so quote them — `--llama-server-config.chat-template '"on"'` — when the string is what you mean.
+That includes YAML's own quirks: bare `on`, `off`, `yes` and `no` are booleans, so quote them — `--model.llama-server-config.chat-template '"on"'` — when the string is what you mean.
+
+A block's own flag sets the whole block as a YAML mapping, and deeper flags then set keys inside it, whatever their order on the line:
+
+```bash
+mship deploy --model lmstudio-community/Qwen3-8B-GGUF:'*Q4_K_M.gguf' \
+               --model.loader llama_server --model.usecase generate \
+               --model.llama-server-config '{n_ctx: 8192, parallel: 4}' \
+               --model.llama-server-config.n-ctx 16384
+```
+
+deploys `llama_server_config: {n_ctx: 16384, parallel: 4}`.
 
 Limits:
 
-- **One model per invocation.** Use `--config` for several. A second `mship deploy --model ...` against a running cluster adds to it (the default additive merge), so models can also be added one at a time.
-- **`--model` and `--config` are mutually exclusive.** The tuning flags configure the model `--model` deploys, so they need it too.
+- **`--model` and `--config` are mutually exclusive.** A `--model.<key>` flag before the first `--model` is an error, and so is the same flag twice for one model.
 - **A flag can set a key, not unset one.** Omitting it leaves the schema default; pass `null` for the fields that accept it.
+- **`mship start` deploys exactly the models given,** as with a file. A later `mship deploy --model …` adds to the running cluster (the default additive merge).
 
 #### Inferred names
 
-With no `--name`, the name clients call the model by comes from the `model` reference — its basename (or the filename stem for a local weight file), minus GGUF and quantization decoration. The selector is ignored: it picks a quant, it doesn't identify the model.
+With no `--model.name`, the name clients call the model by comes from the `model` reference — its basename (or the filename stem for a local weight file), minus GGUF and quantization decoration. The selector is ignored: it picks a quant, it doesn't identify the model.
 
 | `--model` | Inferred `name` |
 |---|---|
@@ -128,7 +116,7 @@ With no `--name`, the name clients call the model by comes from the `model` refe
 | `~/models/Qwen3-8B/` | `qwen3-8b` |
 | `base.en` | `base.en` |
 
-Inference is deterministic, so re-running the same command is idempotent. It also means two different references can infer the same name — deploying `Qwen/Qwen3-8B` on `vllm` and then a `Qwen3-8B` GGUF on `llama_server` both resolve to `qwen3-8b`, and the second **replaces** the first, since a name maps to exactly one deployment. That is what you want when swapping a model's loader; pass `--name` to run both side by side.
+Inference is deterministic, so re-running the same command is idempotent. It also means two different references can infer the same name — deploying `Qwen/Qwen3-8B` on `vllm` and then a `Qwen3-8B` GGUF on `llama_server` both resolve to `qwen3-8b`, and the second **replaces** the first, since a name maps to exactly one deployment. That is what you want when swapping a model's loader; pass `--model.name` to run both side by side.
 
 ### Cache directory structure
 

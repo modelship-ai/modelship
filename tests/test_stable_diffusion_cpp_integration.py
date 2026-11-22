@@ -227,13 +227,13 @@ class TestImageStableDiffusionCppGpu:
 class TestAModelSdServerCannotLoad:
     def test_fails_the_deploy_with_sd_servers_exit(self, model_deployer):
         log = model_deployer.run(
-            "--name",
-            "sd-broken",
             "--model",
             _NOT_A_DIFFUSION_MODEL,
-            "--loader",
+            "--model.name",
+            "sd-broken",
+            "--model.loader",
             "stable_diffusion_cpp",
-            "--num-cpus",
+            "--model.num-cpus",
             "1",
             log_name="sd-broken",
             expect_code=1,

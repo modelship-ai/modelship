@@ -107,7 +107,9 @@ class TestValidateConfigFromModelFlag:
 
     def test_model_flag_returns_parsed_model(self):
         parsed = launcher._validate_config(
-            self._args("--model", "x/y-GGUF:*Q4_K_M.gguf", "--loader", "llama_server", "--usecase", "generate")
+            self._args(
+                "--model", "x/y-GGUF:*Q4_K_M.gguf", "--model.loader", "llama_server", "--model.usecase", "generate"
+            )
         )
         assert parsed is not None
         assert [(m.name, m.loader.value) for m in parsed.models] == [("y", "llama_server")]
@@ -121,14 +123,21 @@ class TestValidateConfigFromModelFlag:
 
     def test_missing_loader_exits(self):
         with pytest.raises(SystemExit) as exc:
-            launcher._validate_config(self._args("--model", "x/y", "--usecase", "generate"))
+            launcher._validate_config(self._args("--model", "x/y", "--model.usecase", "generate"))
         assert exc.value.code == 1
 
     def test_fractional_num_gpus_with_whole_gpu_loader_exits(self):
         with pytest.raises(SystemExit) as exc:
             launcher._validate_config(
                 self._args(
-                    "--model", "x/y.gguf", "--loader", "llama_server", "--usecase", "generate", "--num-gpus", "1.5"
+                    "--model",
+                    "x/y.gguf",
+                    "--model.loader",
+                    "llama_server",
+                    "--model.usecase",
+                    "generate",
+                    "--model.num-gpus",
+                    "1.5",
                 )
             )
         assert exc.value.code == 1
@@ -141,7 +150,7 @@ class TestFlaggedErrors:
         with pytest.raises(SystemExit):
             launcher._validate_config(parse_args("deploy", ["--model", "x/y"]))
         err = capsys.readouterr().err
-        assert "--usecase" in err and "--loader" in err
+        assert "--model.usecase" in err and "--model.loader" in err
         assert "models.0." not in err
 
     def test_config_errors_keep_pydantic_paths(self, tmp_path, capsys):

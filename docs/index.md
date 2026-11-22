@@ -23,8 +23,8 @@ One command, one model. Pick your hardware.
     ```bash
     docker run --rm --shm-size=8g -p 8000:8000 -v modelship-cache:/.cache \
       ghcr.io/modelship-ai/modelship:latest-cpu start \
-      --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
-      --usecase generate --num-cpus 4
+      --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --model.loader llama_server \
+      --model.usecase generate --model.num-cpus 4
     ```
 
 === "NVIDIA GPU"
@@ -34,8 +34,8 @@ One command, one model. Pick your hardware.
     ```bash
     docker run --rm --shm-size=8g --gpus all -p 8000:8000 -v modelship-cache:/.cache \
       ghcr.io/modelship-ai/modelship:latest-cuda start \
-      --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
-      --usecase generate --num-gpus 1
+      --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --model.loader llama_server \
+      --model.usecase generate --model.num-gpus 1
     ```
 
 === "AMD or Intel GPU"
@@ -45,8 +45,8 @@ One command, one model. Pick your hardware.
     ```bash
     docker run --rm --shm-size=8g --device /dev/dri -p 8000:8000 -v modelship-cache:/.cache \
       ghcr.io/modelship-ai/modelship:latest-vulkan start \
-      --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
-      --usecase generate --num-gpus 1
+      --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --model.loader llama_server \
+      --model.usecase generate --model.num-gpus 1
     ```
 
 === "Apple Silicon"
@@ -55,8 +55,8 @@ One command, one model. Pick your hardware.
 
     ```bash
     uv tool install mship && mship bootstrap --metal
-    mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --loader llama_server \
-      --usecase generate --num-gpus 1
+    mship start --model "Qwen/Qwen3-8B-GGUF:*Q4_K_M.gguf" --model.loader llama_server \
+      --model.usecase generate --model.num-gpus 1
     ```
 
 Wait for the `Deploy … succeeded` log line, then talk to it — this hits
@@ -71,12 +71,13 @@ Add `--chat` for an interactive session, `-T` to hand it a tool, or `--models`
 to list what's deployed.
 
 The model serves as `qwen3-8b`, inferred from the reference. It pulls ~5 GB and
-wants ~10 GB of free RAM; `--num-cpus 4` reserves four cores for it, so lower it
+wants ~10 GB of free RAM; `--model.num-cpus 4` reserves four cores for it, so lower it
 if the container has fewer (the deploy waits for resources it can't get). On a
 small box, swap in `lmstudio-community/Qwen3-0.6B-GGUF:*Q4_K_M.gguf`.
 
-Deploying several models at once uses a `models.yaml` instead; one model's
-tuning blocks have flags too (`--llama-server-config.n-ctx 8192`) — see
+Every key of a model's config has a flag (`--model.llama-server-config.n-ctx 8192`),
+and repeating `--model` deploys several models at once, each followed by its own
+flags; a `models.yaml` does the same from a file — see
 [Model Configuration](model-configuration.md).
 Hitting an error? Check [Troubleshooting](troubleshooting.md).
 

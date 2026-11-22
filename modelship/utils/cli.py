@@ -5,15 +5,10 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import sys
 from pathlib import Path
 
-from modelship.utils.config_schema import ModelLoader, ModelUsecase
-from modelship.utils.model_flags import (
-    MODEL_ARG_KEYS,
-    add_generated_model_args,
-    apply_generated_args,
-    set_generated_options,
-)
+from modelship.utils.model_flags import ModelGroup, add_model_help, model_entry, split_model_groups
 from modelship.utils.model_ref import parse_model_ref
 
 # Marks a `--model` path as a file rather than a directory when it doesn't
@@ -63,7 +58,7 @@ _SWITCH_TO_ENV: dict[str, tuple[str, str]] = {
     "enable_ray_auth": ("MSHIP_RAY_AUTH", "true"),
 }
 
-_MODEL_USAGE = "[options] [--model REF [--<block>.<key> VALUE ...]]"
+_MODEL_USAGE = "[options] [--model REF [--model.<key> VALUE ...] ...]"
 _USAGE = {
     "start": f"mship start {_MODEL_USAGE}",
     "join": "mship join --gcs-address HOST[:PORT] [options]",
@@ -154,13 +149,24 @@ def parse_args(command: str, argv: list[str] | None = None) -> argparse.Namespac
             help="How long a node may take to shut down before it is killed (default: 90)",
         )
 
+    argv = list(sys.argv[1:] if argv is None else argv)
+    groups: list[ModelGroup] = []
+    if command in ("start", "deploy"):
+        try:
+            argv, groups = split_model_groups(argv)
+        except ValueError as e:
+            parser.error(str(e))
     args = parser.parse_args(argv)
+    try:
+        args.models = _models_from_groups(groups)
+    except ValueError as e:
+        parser.error(str(e))
     if command == "join" and not (args.gcs_address or os.environ.get("MSHIP_GCS_ADDRESS")):
         parser.error("--gcs-address is required: the head's GCS address as HOST[:PORT] (env: MSHIP_GCS_ADDRESS)")
     url = args.ray_dashboard_url or os.environ.get("MSHIP_RAY_DASHBOARD_URL") if command == "deploy" else None
     if url and not re.match(r"https?://", url):
         parser.error(f"--ray-dashboard-url takes a URL, e.g. http://{url}; got {url!r}.")
-    if command == "deploy" and args.config_from_job and (args.config is not None or args.model is not None):
+    if command == "deploy" and args.config_from_job and (args.config is not None or args.models is not None):
         parser.error("--config-from-job takes no --config or --model.")
     if command == "deploy" and args.cancel is not None:
         _check_cancel_args(parser, args)
@@ -180,28 +186,19 @@ def _check_cancel_args(parser: argparse.ArgumentParser, args: argparse.Namespace
         )
         if value
     ]
-    given += [f"--{key.replace('_', '-')}" for key in MODEL_ARG_KEYS if getattr(args, key) is not None]
-    given += set_generated_options(args)
+    if args.models is not None:
+        given.append("--model")
     if given:
         parser.error(f"--cancel takes no model options: {', '.join(given)}.")
 
 
 def _check_model_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    tuning = set_generated_options(args)
-    if tuning and args.model is None:
-        shown = ", ".join(tuning[:3]) + (", ..." if len(tuning) > 3 else "")
-        if args.config is not None:
-            parser.error(
-                f"{shown}: the model tuning flags only apply to --model. Set these keys "
-                "on the model's entry in the config file instead."
-            )
-        parser.error(f"{shown}: the model tuning flags configure the model --model deploys; pass --model.")
-    if args.model is not None and args.config is not None:
+    if args.models is not None and args.config is not None:
         # Rejected here rather than in resolve_input_models so both entry points fail
         # before the driver starts a Ray head.
         parser.error(
-            "--model and --config are mutually exclusive: --model deploys a single model, "
-            "--config deploys the set in a models.yaml. Add the model to the file instead."
+            "--model and --config are mutually exclusive: --model deploys the models it opens, "
+            "--config deploys the set in a models.yaml. Add the models to the file instead."
         )
 
 
@@ -417,58 +414,17 @@ def _add_model_args(parser: argparse.ArgumentParser) -> None:
             "defaults plus explicit config (env: MSHIP_PREFLIGHT). Useful for benchmarking."
         ),
     )
-    _add_single_model_args(parser)
+    add_model_help(parser)
 
 
-def _add_single_model_args(parser: argparse.ArgumentParser) -> None:
-    """The models.yaml root-level scalars, as flags for a single-model deploy.
-
-    None is `required`: unset flags are dropped from the raw dict, leaving the
-    schema to raise requiredness for both surfaces.
-    """
-    group = parser.add_argument_group(
-        "single-model deploy",
-        "Deploy one model with no config file; use --config for several. The nested "
-        "tuning blocks are generated from the same schema, one flag per key, named for "
-        "its config path: --llama-server-config.n-ctx 8192. Their values are read as "
-        "YAML, i.e. the text you'd write after the colon in models.yaml.",
-    )
-    group.add_argument(
-        "--model",
-        help=(
-            "Model reference: an HF repo id, a repo id with a file selector "
-            "(repo:*Q4_K_M.gguf), or a local file/directory path. Mutually exclusive "
-            "with --config."
-        ),
-    )
-    group.add_argument("--name", help="Model name clients call it by (default: inferred from --model)")
-    group.add_argument("--usecase", choices=[u.value for u in ModelUsecase])
-    group.add_argument("--loader", choices=[loader.value for loader in ModelLoader])
-    group.add_argument("--num-gpus", type=float, help="GPUs to reserve; a fraction < 1 shares one GPU")
-    group.add_argument("--num-cpus", type=float, help="CPUs to reserve (default: 0.1)")
-    group.add_argument("--num-replicas", type=int, help="Fixed replica count (default: 1)")
-    group.add_argument("--max-ongoing-requests", type=int, help="Per-replica concurrency cap")
-    add_generated_model_args(parser)
-
-
-def model_from_args(args: argparse.Namespace) -> dict | None:
-    """The raw models.yaml entry `--model` describes, or None when it's absent.
-
-    Unset flags are omitted, not defaulted — validators branch on
-    `model_fields_set`, so a materialized default validates differently.
-    """
-    if args.model is None:
-        return None
-
-    raw: dict = {"name": args.name if args.name is not None else infer_model_name(args.model)}
-    for key in MODEL_ARG_KEYS:
-        if key == "name":
-            continue
-        value = getattr(args, key, None)
-        if value is not None:
-            raw[key] = value
-    apply_generated_args(args, raw)
-    return raw
+def _models_from_groups(groups: list[ModelGroup]) -> list[dict] | None:
+    """The raw models.yaml entries the `--model` groups describe, or None for none.
+    A group without `--model.name` gets the name its reference implies."""
+    models = []
+    for group in groups:
+        raw = model_entry(group)
+        models.append(raw if "name" in raw else {"name": infer_model_name(group.ref), **raw})
+    return models or None
 
 
 def infer_model_name(model: str) -> str:
@@ -485,7 +441,7 @@ def infer_model_name(model: str) -> str:
 
     name = _sanitize_name(base)
     if not name:
-        raise ValueError(f"cannot infer a model name from --model {model!r}; pass --name explicitly.")
+        raise ValueError(f"cannot infer a model name from --model {model!r}; pass --model.name explicitly.")
     return name
 
 

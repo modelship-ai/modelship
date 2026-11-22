@@ -273,7 +273,7 @@ def _send(args, gateway_name: str, coordinator, reconcile: bool) -> dict:
     from modelship.deploy.ledger import DeployRequest
 
     from_job = getattr(args, "config_from_job", False)
-    bare = args.config is None and args.model is None and not from_job and reconcile
+    bare = args.config is None and args.models is None and not from_job and reconcile
     models = None if bare else resolve_input_models(args)
     if models is None:
         logger.info("No models given: redeploying gateway %r's committed models that are missing.", gateway_name)

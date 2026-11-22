@@ -136,11 +136,9 @@ class TestParseArgs:
         [
             ["--config", "models.yaml"],
             ["--model", "org/repo"],
-            ["--name", "qwen"],
             ["--reconcile"],
             ["--replace-strategy", "stop_start"],
             ["--no-preflight"],
-            ["--llama-server-config.n-ctx", "8192"],
         ],
     )
     def test_cancel_takes_no_model_options(self, argv, capsys):
@@ -666,7 +664,9 @@ class TestSend:
         assert (request.mode, request.models) == ("reconcile", [{"name": "a"}])
 
     def test_models_given_are_sent_additively(self, send):
-        receipt = send.run(["--model", "org/qwen-gguf:qwen.gguf", "--loader", "llama_server", "--usecase", "generate"])
+        receipt = send.run(
+            ["--model", "org/qwen-gguf:qwen.gguf", "--model.loader", "llama_server", "--model.usecase", "generate"]
+        )
         (request,) = send.submitted
         assert (request.gateway, request.mode, request.strategy) == ("gw", "additive", "blue_green")
         assert request.models[0]["model"] == "org/qwen-gguf:qwen.gguf"
