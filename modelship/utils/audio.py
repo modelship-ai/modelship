@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import io
 import struct
-from math import gcd
 
 import librosa
 import numpy as np
 import soundfile as sf
-from scipy.signal import resample_poly
 
 
 def to_pcm16(audio: np.ndarray) -> bytes:
@@ -22,14 +20,6 @@ def to_pcm16(audio: np.ndarray) -> bytes:
     elif audio.dtype != np.int16:
         audio = audio.astype(np.int16)
     return audio.tobytes()
-
-
-def resample(audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
-    """Resample audio to `to_rate`. Returns the array unchanged if rates match."""
-    if from_rate == to_rate:
-        return audio
-    g = gcd(to_rate, from_rate)
-    return resample_poly(audio, to_rate // g, from_rate // g).astype(audio.dtype)
 
 
 def wrap_pcm16_wav(pcm: bytes, sample_rate: int) -> bytes:

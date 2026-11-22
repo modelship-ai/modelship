@@ -870,7 +870,6 @@ scipy==1.16.3 \
     --hash=sha256:c97176013d404c7346bf57874eaac5187d969293bf40497140b0a2b2b7482e07
     # via
     #   librosa
-    #   mship-engine
     #   scikit-learn
 sherpa-onnx==2.0.1 \
     --hash=sha256:0cbd91033dd7027464aa34b0f18a4da3eb8ed6382011736c6693ac19bba05341 \
