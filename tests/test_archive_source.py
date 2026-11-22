@@ -65,14 +65,14 @@ def _source(sha256: str = "0" * 64) -> ArchiveSource:
 class TestCheckArchiveSource:
     def test_follows_redirects_and_records_size(self):
         response = MagicMock(headers={"content-length": "319625534"})
-        with patch("modelship.utils.sources.archive.requests.head", return_value=response) as head:
+        with patch("modelship.utils.sources.http.requests.head", return_value=response) as head:
             pinned = check_archive_source("http://x/a.tar.bz2", "ab" * 32, "d/a-abababab", _REQUIRED)
         assert head.call_args.kwargs["allow_redirects"] is True
         assert pinned == ArchiveSource("http://x/a.tar.bz2", "ab" * 32, "d/a-abababab", _REQUIRED, 319625534)
 
     @pytest.mark.parametrize("headers", [{}, {"content-length": "0"}])
     def test_unknown_size_is_none(self, headers):
-        with patch("modelship.utils.sources.archive.requests.head", return_value=MagicMock(headers=headers)):
+        with patch("modelship.utils.sources.http.requests.head", return_value=MagicMock(headers=headers)):
             pinned = check_archive_source("http://x/a.tar.bz2", "ab" * 32, "d/a", _REQUIRED)
         assert pinned.total_bytes is None
 
@@ -83,7 +83,7 @@ class TestCheckArchiveSource:
         response = MagicMock()
         response.raise_for_status.side_effect = error
         with (
-            patch("modelship.utils.sources.archive.requests.head", return_value=response),
+            patch("modelship.utils.sources.http.requests.head", return_value=response),
             pytest.raises(RuntimeError, match=r"Failed to reach http://x/a\.tar\.bz2"),
         ):
             check_archive_source("http://x/a.tar.bz2", "ab" * 32, "d/a", _REQUIRED)
