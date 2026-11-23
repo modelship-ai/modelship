@@ -4,7 +4,6 @@ stt model transcribes, and answers it in text with the pipeline's LLM."""
 
 import asyncio
 import base64
-import binascii
 import json
 from collections.abc import Awaitable, Callable, Collection, Mapping
 from typing import Any
@@ -48,7 +47,7 @@ from modelship.openai.protocol.realtime import (
     session_event,
 )
 from modelship.openai.protocol.responses.schemas import ResponsesRequest
-from modelship.openai.realtime.audio import G711_RATE, MIN_SECONDS, InputAudioBuffer, to_pcm16
+from modelship.openai.realtime.audio import G711_RATE, MAX_SECONDS, MIN_SECONDS, InputAudioBuffer, to_pcm16
 from modelship.openai.realtime.calls import Answer, PipelineCalls
 from modelship.openai.realtime.conversation import Conversation, as_input
 from modelship.openai.realtime.response import ActiveResponse
@@ -235,6 +234,8 @@ class Session:
         # the last transcription queued; each runs after the one before it
         self._transcribing: asyncio.Task | None = None
         self._transcriptions: set[asyncio.Task] = set()
+        # the audio of the committed turns not transcribed yet
+        self._queued_seconds = 0.0
         self._sending = asyncio.Lock()
         self._closed = False
         self._handlers: dict[str, Handler] = {
@@ -467,7 +468,8 @@ class Session:
             return error
         try:
             audio = base64.b64decode(event.audio, validate=True)
-        except binascii.Error:
+        except ValueError:
+            # binascii.Error for bad base64, ValueError for non-ASCII text
             return RealtimeError(message="audio is not valid base64.", code="invalid_value", param="audio")
         audio_format = self.state.audio.input.format
         rate = audio_format.rate if isinstance(audio_format, AudioPcm) else G711_RATE
@@ -485,6 +487,12 @@ class Session:
                 f" {MIN_SECONDS * 1000:.0f} ms.",
                 code="input_audio_buffer_commit_empty",
             )
+        if self._queued_seconds + self.buffer.seconds > MAX_SECONDS:
+            return RealtimeError(
+                message=f"The turns waiting to be transcribed hold {self._queued_seconds:.0f} s, and a session queues"
+                f" at most {MAX_SECONDS:.0f} s; commit again once they are transcribed.",
+                code="input_audio_transcription_busy",
+            )
         wav, seconds = self.buffer.take()
         item = UserMessage(type="message", role="user", content=[InputAudio(type="input_audio")])
         before = self.conversation.insert(item)
@@ -493,8 +501,13 @@ class Session:
         task = asyncio.ensure_future(self._transcribe(item, wav, seconds, self._transcribing))
         self._transcribing = task
         self._transcriptions.add(task)
-        task.add_done_callback(self._transcriptions.discard)
+        self._queued_seconds += seconds
+        task.add_done_callback(lambda done: self._transcribed(done, seconds))
         return None
+
+    def _transcribed(self, task: asyncio.Task, seconds: float) -> None:
+        self._transcriptions.discard(task)
+        self._queued_seconds -= seconds
 
     async def _audio_clear(self, event: AudioClear) -> RealtimeError | None:
         self.buffer.clear()

@@ -995,15 +995,43 @@ class TestAudioInput:
         assert short["code"] == empty["code"] == "input_audio_buffer_commit_empty"
         assert cleared["type"] == "input_audio_buffer.cleared"
 
+    def _g711(self, ws) -> None:
+        # one byte per sample at 8 kHz keeps long turns small
+        ws.send_json({"type": "session.update", "session": {"audio": {"input": {"format": {"type": "audio/pcmu"}}}}})
+        ws.receive_json()
+
     def test_the_buffer_holds_at_most_120_seconds(self):
         with self._session(_Stt()) as ws:
             _open(ws)
-            slow = {"type": "audio/pcm", "rate": 1000}
-            ws.send_json({"type": "session.update", "session": {"audio": {"input": {"format": slow}}}})
-            ws.receive_json()
-            _append(ws, _pcm(121, 1000))
+            self._g711(ws)
+            _append(ws, b"\xff" * 8000 * 121)
             error = ws.receive_json()["error"]
         assert error["code"] == "input_audio_buffer_full"
+
+    def test_the_turns_waiting_for_transcription_hold_at_most_120_seconds(self):
+        stt = _Stt("One.", "Two.", delay=0.5)
+        with self._session(stt) as ws:
+            _open(ws)
+            self._g711(ws)
+            _append(ws, b"\xff" * 8000 * 70)
+            ws.send_json({"type": "input_audio_buffer.commit"})
+            _until(ws, "conversation.item.added")
+            _append(ws, b"\xff" * 8000 * 70)
+            ws.send_json({"type": "input_audio_buffer.commit"})
+            error = ws.receive_json()["error"]
+            _until(ws, "conversation.item.done")
+            ws.send_json({"type": "input_audio_buffer.commit"})
+            later = _until(ws, "conversation.item.done")
+        assert error["code"] == "input_audio_transcription_busy"
+        assert later[0]["type"] == "input_audio_buffer.committed"
+
+    def test_a_pcm_rate_outside_8_to_48_khz_is_refused(self):
+        with self._session(_Stt()) as ws:
+            _open(ws)
+            fast = {"type": "audio/pcm", "rate": 96000}
+            ws.send_json({"type": "session.update", "session": {"audio": {"input": {"format": fast}}}})
+            error = ws.receive_json()["error"]
+        assert (error["code"], error["param"]) == ("invalid_value", "session.audio.input.format.rate")
 
     def test_the_format_cannot_change_with_audio_in_the_buffer(self):
         with self._session(_Stt()) as ws:
@@ -1031,10 +1059,11 @@ class TestAudioInput:
             error = ws.receive_json()["error"]
         assert (error["code"], error["param"]) == ("unsupported_value", "item.content[0]")
 
-    def test_audio_that_is_not_base64_is_refused(self):
+    @pytest.mark.parametrize("audio", ["not base64!", "é"])
+    def test_audio_that_is_not_base64_is_refused(self, audio):
         with self._session(_Stt()) as ws:
             _open(ws)
-            ws.send_json({"type": "input_audio_buffer.append", "audio": "not base64!"})
+            ws.send_json({"type": "input_audio_buffer.append", "audio": audio})
             error = ws.receive_json()["error"]
         assert (error["code"], error["param"]) == ("invalid_value", "audio")
 

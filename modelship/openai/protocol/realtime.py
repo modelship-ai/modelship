@@ -144,7 +144,7 @@ class RealtimeReasoning(BaseModel):
 class AudioPcm(BaseModel):
     type: Literal["audio/pcm"]
     # OpenAI's spec allows 24000 only
-    rate: int = Field(default=24000, gt=0)
+    rate: int = Field(default=24000, ge=8000, le=48000)
 
 
 class AudioG711(BaseModel):

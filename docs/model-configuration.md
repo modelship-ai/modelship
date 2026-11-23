@@ -234,7 +234,7 @@ A session on a pipeline with an `llm`:
 
 A session on a pipeline with `stt` takes the client's audio:
 
-- The client sends `input_audio_buffer.append` events of base64 audio in the session's `audio.input.format`: `audio/pcm` (16-bit mono, at its `rate`, 24000 by default; any rate works, beyond OpenAI's spec), `audio/pcmu` or `audio/pcma` (G.711 at 8 kHz). A turn holds at most 120 s.
+- The client sends `input_audio_buffer.append` events of base64 audio in the session's `audio.input.format`: `audio/pcm` (16-bit mono, at its `rate`, 24000 by default; any rate from 8000 to 48000, beyond OpenAI's spec), `audio/pcmu` or `audio/pcma` (G.711 at 8 kHz). A turn holds at most 120 s, and so do the turns waiting to be transcribed: a commit beyond that is refused with `input_audio_transcription_busy`.
 - `input_audio_buffer.commit` ends the turn (at least 100 ms of audio) and adds it to the conversation as a user message, and `input_audio_buffer.clear` drops it. The `stt` model transcribes one committed turn at a time, in order, and the session sends `conversation.item.input_audio_transcription.completed` with the transcript, or `.failed`. The audio itself isn't kept.
 - `audio.input.transcription` takes `language` and `prompt` for the `stt` model; its `model` is ignored, since the pipeline names it. A model that detects the spoken language gets the language it found on the first turn for every later one.
 - A `response.create` waits for the turns committed before it to be transcribed, and the LLM sees each turn as its transcript. A turn that failed isn't sent.
