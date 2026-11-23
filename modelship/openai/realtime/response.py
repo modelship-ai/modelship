@@ -11,6 +11,7 @@ from modelship.metrics import RequestTracker
 from modelship.openai.protocol import ErrorResponse
 from modelship.openai.protocol.realtime import (
     AssistantMessage,
+    FunctionCall,
     OutputText,
     RealtimeError,
     RealtimeResponse,
@@ -70,7 +71,7 @@ class ActiveResponse:
         self._conversation = conversation
         self._send = send
         # its message items by id; reasoning and tool calls have none
-        self._items: dict[str, AssistantMessage] = {}
+        self._items: dict[str, AssistantMessage | FunctionCall] = {}
         self._terminal: dict[str, Any] | None = None
         self._started = False
         self._cancelled = False
@@ -159,14 +160,30 @@ class ActiveResponse:
             self._terminal = event["response"]
             return
         if kind == "response.output_item.added":
-            if event["item"].get("type") == "message":
-                await self._add_item(event["item"]["id"])
+            added = event["item"]
+            if added.get("type") == "message":
+                await self._add_item(
+                    AssistantMessage(id=added["id"], type="message", role="assistant", status="in_progress", content=[])
+                )
+            elif added.get("type") == "function_call":
+                call = FunctionCall(
+                    id=added["id"],
+                    type="function_call",
+                    status="in_progress",
+                    call_id=added["call_id"],
+                    name=added["name"],
+                    arguments="",
+                )
+                await self._add_item(call)
             return
         item_id = event["item"]["id"] if kind == "response.output_item.done" else event.get("item_id")
         item = self._items.get(item_id or "")
         if item is None:
             return
         where = {"response_id": self.response.id, "item_id": item.id, "output_index": self._index(item)}
+        if isinstance(item, FunctionCall):
+            await self._on_call_event(kind, event, item, where)
+            return
         if kind in _PART_EVENTS:
             where["content_index"] = event["content_index"]
         if kind == "response.content_part.added":
@@ -183,11 +200,24 @@ class ActiveResponse:
             item.status = event["item"]["status"]
             await self._item_done(item)
 
-    def _index(self, item: AssistantMessage) -> int:
+    async def _on_call_event(self, kind: str | None, event: dict[str, Any], call: FunctionCall, where: dict) -> None:
+        if kind == "response.function_call_arguments.delta":
+            call.arguments += event["delta"]
+            await self._send(server_event(kind, **where, call_id=call.call_id, delta=event["delta"]))
+        elif kind == "response.function_call_arguments.done":
+            call.arguments = event["arguments"]
+            await self._send(server_event(kind, **where, call_id=call.call_id, arguments=call.arguments))
+        elif kind == "response.output_item.done":
+            done = event["item"]
+            # a loader may send the function's name after its first chunk
+            call.name, call.arguments, call.status = done["name"], done["arguments"], done["status"]
+            await self._item_done(call)
+
+    def _index(self, item: AssistantMessage | FunctionCall) -> int:
         return next(i for i, other in enumerate(self.response.output) if other is item)
 
-    async def _add_item(self, item_id: str) -> None:
-        item = AssistantMessage(id=item_id, type="message", role="assistant", status="in_progress", content=[])
+    async def _add_item(self, item: AssistantMessage | FunctionCall) -> None:
+        item_id = item.id
         self._items[item_id] = item
         self.response.output.append(item)
         await self._send(
@@ -199,7 +229,7 @@ class ActiveResponse:
             before = self._conversation.insert(item)
             await self._send(server_event("conversation.item.added", previous_item_id=before, item=item))
 
-    async def _item_done(self, item: AssistantMessage) -> None:
+    async def _item_done(self, item: AssistantMessage | FunctionCall) -> None:
         await self._send(
             server_event(
                 "response.output_item.done", response_id=self.response.id, output_index=self._index(item), item=item

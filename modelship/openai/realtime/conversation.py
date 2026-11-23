@@ -7,8 +7,8 @@ from modelship.utils import random_uuid
 
 
 def as_input(items: list[Item]) -> list[dict[str, Any]]:
-    """*items* as Responses input items."""
-    return [item.model_dump(include={"type", "role", "content"}) for item in items]
+    """*items* as Responses input items: without the Realtime-only `id`, `object` and `status`."""
+    return [item.model_dump(exclude={"id", "object", "status"}) for item in items]
 
 
 class Conversation:

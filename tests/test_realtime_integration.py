@@ -103,7 +103,16 @@ def _say(ws, text: str) -> None:
 
 
 def _text(response: dict) -> str:
-    return "".join(part["text"] for item in response["output"] for part in item["content"])
+    messages = [item for item in response["output"] if item["type"] == "message"]
+    return "".join(part["text"] for item in messages for part in item["content"])
+
+
+LIGHTS = {
+    "type": "function",
+    "name": "turn_on",
+    "description": "Turns a room's lights on.",
+    "parameters": {"type": "object", "properties": {"room": {"type": "string"}}, "required": ["room"]},
+}
 
 
 @pytest.mark.integration
@@ -156,3 +165,21 @@ class TestTextConversation:
         assert cancelled["status"] == "cancelled"
         assert again["status"] in ("completed", "incomplete")
         assert _text(again)
+
+    def test_a_forced_tool_call_comes_back_and_its_output_is_answered(self, ws):
+        _send(ws, {"type": "session.update", "session": {"tools": [LIGHTS], "tool_choice": "required"}})
+        _until(ws, "session.updated")
+        _say(ws, "Turn on the kitchen lights.")
+        _send(ws, {"type": "response.create"})
+        called = _until(ws, "response.done")[-1]["response"]
+        calls = [item for item in called["output"] if item["type"] == "function_call"]
+        assert calls, called
+        assert calls[0]["name"] == "turn_on"
+        assert isinstance(json.loads(calls[0]["arguments"]), dict)
+        result = {"type": "function_call_output", "call_id": calls[0]["call_id"], "output": '{"ok": true}'}
+        _send(ws, {"type": "conversation.item.create", "item": result})
+        _until(ws, "conversation.item.done")
+        _send(ws, {"type": "response.create", "response": {"tool_choice": "none"}})
+        answered = _until(ws, "response.done")[-1]["response"]
+        assert answered["status"] == "completed"
+        assert _text(answered)

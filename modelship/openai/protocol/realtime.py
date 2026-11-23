@@ -64,8 +64,38 @@ class AssistantMessage(_Message):
     content: list[OutputText]
 
 
-Item = UserMessage | SystemMessage | AssistantMessage
-Message = Annotated[Item, Field(discriminator="role")]
+Message = Annotated[UserMessage | SystemMessage | AssistantMessage, Field(discriminator="role")]
+
+
+def call_id() -> str:
+    return f"call_{random_uuid()[:20]}"
+
+
+class FunctionCall(BaseModel):
+    """The model calling one of the session's functions; the client runs it."""
+
+    id: str = Field(default_factory=item_id)
+    type: Literal["function_call"]
+    object: Literal["realtime.item"] = "realtime.item"
+    status: ItemStatus = "completed"
+    call_id: str = Field(default_factory=call_id)
+    name: str
+    arguments: str
+
+
+class FunctionCallOutput(BaseModel):
+    """What a function the model called returned, from the client."""
+
+    id: str = Field(default_factory=item_id)
+    type: Literal["function_call_output"]
+    object: Literal["realtime.item"] = "realtime.item"
+    status: ItemStatus = "completed"
+    call_id: str
+    output: str
+
+
+Item = UserMessage | SystemMessage | AssistantMessage | FunctionCall | FunctionCallOutput
+ConversationItem = Annotated[Message | FunctionCall | FunctionCallOutput, Field(discriminator="type")]
 
 
 class ItemReference(BaseModel):
@@ -75,7 +105,25 @@ class ItemReference(BaseModel):
     id: str
 
 
-InputItem = Annotated[Message | ItemReference, Field(discriminator="type")]
+InputItem = Annotated[Message | FunctionCall | FunctionCallOutput | ItemReference, Field(discriminator="type")]
+
+
+# Tools
+
+
+class FunctionTool(BaseModel):
+    type: Literal["function"]
+    name: str
+    description: str | None = None
+    parameters: dict[str, Any] | None = None
+
+
+class ToolChoiceFunction(BaseModel):
+    type: Literal["function"]
+    name: str
+
+
+ToolChoice = Literal["auto", "none", "required"] | ToolChoiceFunction
 
 
 # Session and response settings
@@ -96,6 +144,9 @@ class RealtimeSession(BaseModel):
     output_modalities: Modalities | None = None
     max_output_tokens: MaxOutputTokens | None = None
     reasoning: RealtimeReasoning | None = None
+    tools: list[FunctionTool] | None = None
+    tool_choice: ToolChoice | None = None
+    parallel_tool_calls: bool | None = None
 
 
 class SessionFields(BaseModel):
@@ -108,6 +159,9 @@ class SessionFields(BaseModel):
     output_modalities: Modalities | None = None
     max_output_tokens: MaxOutputTokens | None = None
     reasoning: RealtimeReasoning | None = None
+    tools: list[FunctionTool] | None = None
+    tool_choice: ToolChoice | None = None
+    parallel_tool_calls: bool | None = None
 
 
 class ResponseParams(BaseModel):
@@ -123,6 +177,9 @@ class ResponseParams(BaseModel):
     metadata: dict[str, str] | None = None
     output_modalities: Modalities | None = None
     reasoning: RealtimeReasoning | None = None
+    tools: list[FunctionTool] | None = None
+    tool_choice: ToolChoice | None = None
+    parallel_tool_calls: bool | None = None
 
 
 # Client events
@@ -139,7 +196,7 @@ class SessionUpdate(_ClientEvent):
 
 class ItemCreate(_ClientEvent):
     type: Literal["conversation.item.create"]
-    item: Message
+    item: ConversationItem
     previous_item_id: str | None = None
 
 
@@ -181,7 +238,7 @@ class RealtimeResponse(BaseModel):
     object: Literal["realtime.response"] = "realtime.response"
     status: ResponseStatus = "in_progress"
     status_details: StatusDetails | None = None
-    output: list[AssistantMessage] = Field(default_factory=list)
+    output: list[AssistantMessage | FunctionCall] = Field(default_factory=list)
     # None for a response kept out of the conversation
     conversation_id: str | None = None
     output_modalities: list[Modality]
