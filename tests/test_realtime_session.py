@@ -117,6 +117,16 @@ class TestEvents:
         assert error["code"] == "invalid_value"
         assert error["param"].startswith("session.output_modalities")
 
+    def test_max_output_tokens_below_one_is_refused(self):
+        with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
+            self._open(ws)
+            ws.send_json({"type": "session.update", "session": {"max_output_tokens": 0}})
+            error = ws.receive_json()["error"]
+            ws.send_json({"type": "session.update", "session": {"max_output_tokens": "inf"}})
+            updated = ws.receive_json()
+        assert error["param"].startswith("session.max_output_tokens")
+        assert updated["session"]["max_output_tokens"] == "inf"
+
     def test_other_events_are_not_supported_yet_and_the_session_stays_open(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
             self._open(ws)

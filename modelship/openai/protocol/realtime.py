@@ -1,14 +1,15 @@
 """OpenAI Realtime (GA) events, as modelship sends and reads them. Our own models, so the engine doesn't depend
 on `openai`; field names and shapes follow openai-python's `types.realtime`. Experimental."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from modelship.utils import random_uuid
 
 SessionType = Literal["realtime", "transcription"]
 Modality = Literal["text", "audio"]
+MaxOutputTokens = Annotated[int, Field(ge=1)] | Literal["inf"]
 
 SESSION_OBJECTS: dict[str, str] = {
     "realtime": "realtime.session",
@@ -29,7 +30,7 @@ class RealtimeSession(BaseModel):
     model: str
     instructions: str | None = None
     output_modalities: list[Modality] | None = None
-    max_output_tokens: int | Literal["inf"] | None = None
+    max_output_tokens: MaxOutputTokens | None = None
 
 
 class SessionFields(BaseModel):
@@ -40,7 +41,7 @@ class SessionFields(BaseModel):
     type: SessionType | None = None
     instructions: str | None = None
     output_modalities: list[Modality] | None = None
-    max_output_tokens: int | Literal["inf"] | None = None
+    max_output_tokens: MaxOutputTokens | None = None
 
 
 class RealtimeError(BaseModel):
