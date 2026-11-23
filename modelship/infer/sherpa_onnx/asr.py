@@ -1,7 +1,7 @@
 """Offline speech to text on sherpa-onnx: the registry's `AsrEntry` bundles, on `/v1/audio/transcriptions`.
 
-Audio up to `MAX_SEGMENT_S` is decoded in one pass. Longer audio is cut at Silero's silences into pieces of
-at most that length, decoded one after another: a transducer's memory and time grow faster than the audio.
+Audio longer than `MAX_SEGMENT_S` is cut at Silero's silences into pieces of at most that length, decoded one
+after another. A transducer's memory and time grow faster than its input.
 """
 
 import asyncio
