@@ -530,13 +530,24 @@ def default_gpu_memory_utilization(config: ModelshipModelConfig) -> float:
     return _VLLM_GPU_DEFAULT_GPU_MEMORY_UTILIZATION
 
 
+class SessionReasoning(_StrictModel):
+    effort: Literal["minimal", "low", "medium", "high", "xhigh"] | None = None
+
+
 class SessionDefaults(_StrictModel):
     """A pipeline's defaults for the OpenAI Realtime session fields, in the session's
     own shape; a client's `session.update` overrides any of them."""
 
     instructions: str | None = None
-    output_modalities: list[Literal["text", "audio"]] | None = None
+    output_modalities: Annotated[list[Literal["text", "audio"]], Field(min_length=1)] | None = None
     max_output_tokens: Annotated[int, Field(ge=1)] | Literal["inf"] | None = None
+    reasoning: SessionReasoning | None = None
+
+    @model_validator(mode="after")
+    def check_text_output(self):
+        if self.output_modalities is not None and "audio" in self.output_modalities:
+            raise ValueError("output_modalities: audio output is not supported yet, set [text].")
+        return self
 
 
 class PipelineConfig(_StrictModel):

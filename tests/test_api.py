@@ -826,14 +826,65 @@ class TestPipelines:
         self._snapshot(api)
         assert (await api.model_info("voice")).owned_by == "modelship-pipeline"
 
-    @pytest.mark.asyncio
-    async def test_the_realtime_socket_runs_a_session_over_the_gateway_tables(self, api):
+    async def _realtime_respond(self, api, registry):
+        """The `respond` a realtime session on the gateway gets, with the tables it was given."""
         self._snapshot(api)
         websocket = MagicMock()
+        websocket.headers = {"x-device": "kitchen"}
         with (
             patch("modelship.openai.api.realtime.serve_session") as serve_session,
-            patch.object(api, "_set_identity") as set_identity,
+            patch.object(api, "_set_identity", return_value="caller") as set_identity,
+            patch.dict(_ModelshipAPI.realtime_ws.__globals__, {"get_disconnect_registry": lambda: registry}),
         ):
             await api.realtime_ws(websocket)
         set_identity.assert_called_once_with(websocket)
-        serve_session.assert_awaited_once_with(websocket, api.pipelines, ["qwen"], {"qwen"})
+        (sent, pipelines, known, serving, respond), _ = serve_session.await_args
+        assert sent is websocket
+        assert (pipelines, known, serving) == (api.pipelines, ["qwen"], {"qwen"})
+        return respond
+
+    @staticmethod
+    def _stream(api, *events):
+        class _Stream:
+            cancelled = False
+
+            async def __aiter__(self):
+                for event in events:
+                    yield event
+                await asyncio.Event().wait()
+
+            def cancel(self):
+                self.cancelled = True
+
+        stream = _Stream()
+        handle = next(reversed(api.models["qwen"].values()))
+        handle.respond.options.return_value.remote.return_value = stream
+        return handle, stream
+
+    @pytest.mark.asyncio
+    async def test_a_realtime_session_calls_a_model_with_the_connections_plumbing(self, api):
+        registry = MagicMock()
+        registry.set.remote = AsyncMock()
+        respond = await self._realtime_respond(api, registry)
+        assert respond("nope", MagicMock(), "s1") is None
+        handle, _ = self._stream(api, {"type": "response.created"})
+        request = MagicMock()
+        answer = respond("qwen", request, "s1")
+        assert await answer.__anext__() == {"type": "response.created"}
+        handle.respond.options.assert_called_once_with(stream=True, session_id="s1")
+        (sent, headers, sent_registry, _req_id, identity), _ = handle.respond.options.return_value.remote.call_args
+        assert (sent, headers, sent_registry, identity) == (request, {"x-device": "kitchen"}, registry, "caller")
+        await answer.aclose()
+
+    @pytest.mark.asyncio
+    async def test_closing_a_realtime_answer_early_cancels_the_call_and_tells_the_replica(self, api):
+        registry = MagicMock()
+        registry.set.remote = AsyncMock()
+        respond = await self._realtime_respond(api, registry)
+        handle, stream = self._stream(api, {"type": "response.created"})
+        answer = respond("qwen", MagicMock(), "s1")
+        await answer.__anext__()
+        await answer.aclose()
+        (_, _, _, req_id, _), _ = handle.respond.options.return_value.remote.call_args
+        assert stream.cancelled
+        registry.set.remote.assert_awaited_once_with(req_id)

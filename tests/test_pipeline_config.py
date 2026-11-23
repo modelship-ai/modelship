@@ -49,22 +49,40 @@ class TestSchema:
         defaults = PipelineConfig(
             name="assistant",
             llm="qwen",
-            session_defaults={"instructions": "Be brief.", "output_modalities": ["text"], "max_output_tokens": "inf"},
+            session_defaults={
+                "instructions": "Be brief.",
+                "output_modalities": ["text"],
+                "max_output_tokens": "inf",
+                "reasoning": {"effort": "low"},
+            },
         ).session_defaults
         assert defaults is not None
-        assert (defaults.instructions, defaults.output_modalities, defaults.max_output_tokens) == (
-            "Be brief.",
-            ["text"],
-            "inf",
-        )
+        assert defaults.reasoning is not None
+        assert (
+            defaults.instructions,
+            defaults.output_modalities,
+            defaults.max_output_tokens,
+            defaults.reasoning.effort,
+        ) == ("Be brief.", ["text"], "inf", "low")
 
     @pytest.mark.parametrize(
         "session_defaults",
-        [{"max_output_tokens": 0}, {"output_modalities": ["video"]}, {"voice": "af_heart"}, {"turn_detection": None}],
+        [
+            {"max_output_tokens": 0},
+            {"output_modalities": ["video"]},
+            {"output_modalities": []},
+            {"voice": "af_heart"},
+            {"turn_detection": None},
+            {"reasoning": {"effort": "huge"}},
+        ],
     )
     def test_session_defaults_reject_what_they_dont_hold(self, session_defaults):
         with pytest.raises(ValidationError):
             PipelineConfig(name="assistant", llm="qwen", session_defaults=session_defaults)
+
+    def test_audio_output_is_not_supported_yet(self):
+        with pytest.raises(ValidationError, match="audio output is not supported yet"):
+            PipelineConfig(name="assistant", llm="qwen", session_defaults={"output_modalities": ["audio"]})
 
     @pytest.mark.parametrize("extra", [{"num_gpus": 1}, {"num_cpus": 1}, {"vad": "silero"}])
     def test_unknown_keys_are_rejected(self, extra):

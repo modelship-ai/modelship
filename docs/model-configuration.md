@@ -194,7 +194,7 @@ A request that fails or is cancelled after step 2 gets its scale-downs undone to
 
 ## Pipelines (experimental)
 
-> **Experimental.** Pipelines deploy, and a client can open a `/v1/realtime` session on one and update it. Nothing else in a session works yet: every other event is answered with an `unsupported_event` error. Audio, text turns and tools arrive in later releases.
+> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a text conversation that the pipeline's `llm` answers. Audio in and out, and tools, arrive in later releases; until then their events are answered with an `unsupported_event` error.
 
 A pipeline runs an OpenAI Realtime session over models the gateway already serves: speech to text, a chat model, and text to speech. Clients pick one with `/v1/realtime?model=<name>`. Pipelines sit beside `models:` in the same file:
 
@@ -221,7 +221,15 @@ pipelines:
 | `tts` | string | Name of the text-to-speech model that speaks the answer |
 | `session_defaults` | object | Defaults for OpenAI's Realtime session fields; a client's `session.update` overrides any of them |
 
-A pipeline needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (`[text]`, `[audio]` or both) and `max_output_tokens` (an integer or `inf`); more of OpenAI's session fields arrive as the pipeline learns to use them.
+A pipeline needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (only `[text]` for now), `max_output_tokens` (an integer or `inf`) and `reasoning` (`{effort: low}`, from `minimal` to `xhigh`); more of OpenAI's session fields arrive as the pipeline learns to use them.
+
+A session on a pipeline with an `llm`:
+
+- Keeps its conversation in the memory of the gateway replica it runs on. The conversation ends when the socket closes, and nothing of it is stored. A client adds, reads and deletes items with `conversation.item.create`, `conversation.item.retrieve` and `conversation.item.delete`; an item is a text message from the user, the assistant or the system.
+- Answers a `response.create` with the LLM, given the conversation, the session's `instructions`, `max_output_tokens` and `reasoning`. A `response.create` can set each of these for its own answer, give its own `input` items instead of the conversation (an `item_reference` names an item of the conversation), and keep its answer out of the conversation with `conversation: "none"`.
+- Runs one response at a time; `response.cancel` stops it, and what it said so far stays in the conversation.
+- Streams the answer as `response.output_text.delta` events and ends it with `response.done`, which carries the token usage. The model's reasoning is neither sent nor kept.
+- Sends every response of the session to the same LLM replica while that replica isn't overloaded, so its prompt cache holds the conversation.
 
 From the command line, `--pipeline NAME` opens a pipeline the way `--model REF` opens a model, on `mship start` and `mship deploy` alike, and its keys are `--pipeline.<key>` flags right after it:
 
