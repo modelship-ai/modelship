@@ -205,7 +205,8 @@ class ActiveResponse:
             call.arguments += event["delta"]
             await self._send(server_event(kind, **where, call_id=call.call_id, delta=event["delta"]))
         elif kind == "response.function_call_arguments.done":
-            await self._send(server_event(kind, **where, call_id=call.call_id, arguments=event["arguments"]))
+            call.arguments = event["arguments"]
+            await self._send(server_event(kind, **where, call_id=call.call_id, arguments=call.arguments))
         elif kind == "response.output_item.done":
             done = event["item"]
             # a loader may send the function's name after its first chunk
