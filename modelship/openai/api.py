@@ -221,12 +221,17 @@ async def _respond_stream(
         finished = True
     finally:
         if not finished:
-            # cancelling the task that awaits the stream doesn't reach the replica
-            stream.cancel()
-            try:
-                await registry.set.remote(req_id)
-            except RayActorError:
-                logger.warning("Disconnect registry unavailable; lost the cancel of %s", req_id)
+            await _stop_call(stream, registry, req_id)
+
+
+async def _stop_call(stream: DeploymentResponseGenerator, registry: Any, req_id: str) -> None:
+    """Stops the model call behind *stream*, which its caller left early."""
+    # cancelling the task that awaits the stream doesn't reach the replica
+    stream.cancel()
+    try:
+        await registry.set.remote(req_id)
+    except RayActorError:
+        logger.warning("Disconnect registry unavailable; lost the cancel of %s", req_id)
 
 
 class _PipelineCalls:
@@ -256,6 +261,29 @@ class _PipelineCalls:
         if handle is None:
             return None
         return await handle.stt_capabilities.remote()
+
+    async def transcribe(
+        self, model: str, audio: bytes, request: TranscriptionRequest, session_id: str
+    ) -> TranscriptionResponse | TranscriptionResponseVerbose | ErrorResponse | None:
+        handle = self._handle(model)
+        if handle is None:
+            return None
+        req_id = random_uuid()
+        stream = cast(
+            "DeploymentResponseGenerator[Any]",
+            handle.transcribe.options(stream=True, session_id=session_id).remote(
+                audio, request, self._headers, self._registry, req_id, self._identity
+            ),
+        )
+        finished = False
+        try:
+            # a request that doesn't stream answers with one item
+            results = [result async for result in stream]
+            finished = True
+        finally:
+            if not finished:
+                await _stop_call(stream, self._registry, req_id)
+        return results[0] if results else None
 
 
 @serve.deployment

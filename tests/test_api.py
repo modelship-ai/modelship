@@ -898,3 +898,55 @@ class TestPipelines:
         handle.stt_capabilities.remote = AsyncMock(return_value=whisper)
         assert await calls.stt_capabilities("qwen") == whisper
         assert await calls.stt_capabilities("nope") is None
+
+    @pytest.mark.asyncio
+    async def test_a_realtime_session_transcribes_a_turn_with_the_connections_plumbing(self, api):
+        calls = await self._realtime_calls(api, "registry")
+        transcript = MagicMock()
+
+        class _One:
+            async def __aiter__(self):
+                yield transcript
+
+        handle = next(reversed(api.models["qwen"].values()))
+        handle.transcribe.options.return_value.remote.return_value = _One()
+        request = MagicMock()
+        assert await calls.transcribe("qwen", b"RIFF", request, "s1") is transcript
+        handle.transcribe.options.assert_called_once_with(stream=True, session_id="s1")
+        (audio, sent, headers, registry, _req_id, identity), _ = handle.transcribe.options.return_value.remote.call_args
+        assert (audio, sent, headers, registry, identity) == (
+            b"RIFF",
+            request,
+            {"x-device": "kitchen"},
+            "registry",
+            "caller",
+        )
+        assert await calls.transcribe("nope", b"RIFF", request, "s1") is None
+
+    @pytest.mark.asyncio
+    async def test_a_transcription_cancelled_mid_call_stops_the_model(self, api):
+        registry = MagicMock()
+        registry.set.remote = AsyncMock()
+        calls = await self._realtime_calls(api, registry)
+
+        class _Endless:
+            cancelled = False
+
+            async def __aiter__(self):
+                await asyncio.Event().wait()
+                yield None
+
+            def cancel(self):
+                self.cancelled = True
+
+        stream = _Endless()
+        handle = next(reversed(api.models["qwen"].values()))
+        handle.transcribe.options.return_value.remote.return_value = stream
+        task = asyncio.ensure_future(calls.transcribe("qwen", b"RIFF", MagicMock(), "s1"))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        (_, _, _, _, req_id, _), _ = handle.transcribe.options.return_value.remote.call_args
+        assert stream.cancelled
+        registry.set.remote.assert_awaited_once_with(req_id)

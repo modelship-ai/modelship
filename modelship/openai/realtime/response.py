@@ -58,16 +58,19 @@ def _usage(usage: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+Start = Callable[[], Awaitable[Answer | RealtimeError]]
+
+
 class ActiveResponse:
-    """A response in progress: *model*'s *answer*, sent through *send*. Its output joins *conversation*, unless that
-    is None."""
+    """A response in progress: the answer *start* gets from *model*, or the error it can't, sent through *send*. Its
+    output joins *conversation*, unless that is None."""
 
     def __init__(
-        self, response: RealtimeResponse, model: str, answer: Answer, conversation: Conversation | None, send: Send
+        self, response: RealtimeResponse, model: str, start: Start, conversation: Conversation | None, send: Send
     ):
         self.response = response
         self._model = model
-        self._answer = answer
+        self._start = start
         self._conversation = conversation
         self._send = send
         # its message items by id; reasoning and tool calls have none
@@ -140,9 +143,13 @@ class ActiveResponse:
         await self._end("completed", None)
 
     async def _generate(self) -> tuple[RealtimeError, str] | None:
-        """Streams the LLM's answer to the client. The error a loader answered with instead, or None."""
+        """Streams the LLM's answer to the client. The error it couldn't start with or a loader answered with
+        instead, or None."""
+        started = await self._start()
+        if isinstance(started, RealtimeError):
+            return started, "model_not_ready"
         failure = None
-        async with contextlib.aclosing(self._answer) as answer:
+        async with contextlib.aclosing(started) as answer:
             async for event in answer:
                 if isinstance(event, ErrorResponse):
                     error = event.error

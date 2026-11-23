@@ -1,8 +1,11 @@
 """Pipelines on a real cluster: deployed with their models, listed in /v1/models, opening a /v1/realtime session,
-and a text conversation the pipeline's LLM answers. `test_realtime_session.py` and the deploy unit tests cover the
-same logic against fakes."""
+a text conversation the pipeline's LLM answers, and a spoken turn its stt model transcribes.
+`test_realtime_session.py` and the deploy unit tests cover the same logic against fakes."""
 
+import base64
+import io
 import json
+import wave
 
 import httpx
 import pytest
@@ -20,6 +23,7 @@ VOICE = {"name": "voice", "stt": STT["name"], "session_defaults": {"instructions
 GHOST = {"name": "ghost", "stt": "not-deployed"}
 LLM = MODEL_CONFIGS["chat-llama-server-plain"]
 CHAT = {"name": "chat", "llm": LLM["name"], "session_defaults": {"instructions": "Answer in one short sentence."}}
+TTS = MODEL_CONFIGS["tts-model"]
 
 
 def _audio_app(raw: dict) -> str:
@@ -183,3 +187,41 @@ class TestTextConversation:
         answered = _until(ws, "response.done")[-1]["response"]
         assert answered["status"] == "completed"
         assert _text(answered)
+
+
+@pytest.mark.integration
+class TestAudioInput:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer, tmp_path_factory):
+        config = tmp_path_factory.mktemp("realtime-audio") / "models.yaml"
+        config.write_text(yaml.dump({"models": [STT, TTS], "pipelines": [VOICE]}))
+        model_deployer.run("--config", str(config), "--reconcile", log_name="realtime-audio")
+        model_deployer.forget()
+        yield
+        model_deployer.deploy()
+
+    def test_a_spoken_turn_is_streamed_committed_and_transcribed(self):
+        body = {
+            "model": TTS["name"],
+            "voice": "af_bella",
+            "input": "Turn on the kitchen lights.",
+            "response_format": "wav",
+        }
+        speech = httpx.post(f"{OPENAI_API_BASE}/audio/speech", json=body, timeout=120).content
+        with wave.open(io.BytesIO(speech)) as wav:
+            rate, pcm = wav.getframerate(), wav.readframes(wav.getnframes())
+        with connect(f"{REALTIME}?model=voice", open_timeout=30) as ws:
+            _until(ws, "session.created")
+            audio_format = {"type": "audio/pcm", "rate": rate}
+            _send(ws, {"type": "session.update", "session": {"audio": {"input": {"format": audio_format}}}})
+            _until(ws, "session.updated")
+            # 100 ms per append, as a client streaming its microphone does
+            step = rate // 10 * 2
+            for start in range(0, len(pcm), step):
+                chunk = base64.b64encode(pcm[start : start + step]).decode()
+                _send(ws, {"type": "input_audio_buffer.append", "audio": chunk})
+            _send(ws, {"type": "input_audio_buffer.commit"})
+            events = _until(ws, "conversation.item.done")
+        done = [event for event in events if event["type"].startswith("conversation.item.input_audio_transcription")]
+        assert [event["type"] for event in done] == ["conversation.item.input_audio_transcription.completed"], done
+        assert "kitchen" in done[0]["transcript"].lower(), done[0]["transcript"]

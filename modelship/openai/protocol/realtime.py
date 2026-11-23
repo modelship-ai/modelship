@@ -37,6 +37,14 @@ class InputText(BaseModel):
     text: str
 
 
+class InputAudio(BaseModel):
+    """A committed turn of the client's audio; the session keeps only its transcript."""
+
+    type: Literal["input_audio"]
+    # None until the turn is transcribed
+    transcript: str | None = None
+
+
 class OutputText(BaseModel):
     type: Literal["output_text"]
     text: str
@@ -51,7 +59,7 @@ class _Message(BaseModel):
 
 class UserMessage(_Message):
     role: Literal["user"]
-    content: list[InputText]
+    content: list[Annotated[InputText | InputAudio, Field(discriminator="type")]]
 
 
 class SystemMessage(_Message):
@@ -133,6 +141,50 @@ class RealtimeReasoning(BaseModel):
     effort: ReasoningEffort | None = None
 
 
+class AudioPcm(BaseModel):
+    type: Literal["audio/pcm"]
+    # OpenAI's spec allows 24000 only
+    rate: int = Field(default=24000, ge=8000, le=48000)
+
+
+class AudioG711(BaseModel):
+    """G.711 at 8 kHz: mu-law (`audio/pcmu`) or A-law (`audio/pcma`)."""
+
+    type: Literal["audio/pcmu", "audio/pcma"]
+
+
+AudioFormat = Annotated[AudioPcm | AudioG711, Field(discriminator="type")]
+
+
+def _pcm24k() -> AudioPcm:
+    return AudioPcm(type="audio/pcm")
+
+
+class AudioTranscription(BaseModel):
+    """How the session transcribes the client's audio. `model` is the pipeline's; other fields are ignored."""
+
+    model_config = ConfigDict(extra="allow")
+
+    model: str | None = None
+    language: str | None = None
+    prompt: str | None = None
+
+
+class AudioInput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    format: AudioFormat = Field(default_factory=_pcm24k)
+    transcription: AudioTranscription | None = None
+    # null: the client commits each turn
+    turn_detection: dict[str, Any] | None = None
+
+
+class SessionAudio(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    input: AudioInput = Field(default_factory=AudioInput)
+
+
 class RealtimeSession(BaseModel):
     """The session fields a pipeline answers with so far; more arrive as the pipeline uses them."""
 
@@ -147,6 +199,7 @@ class RealtimeSession(BaseModel):
     tools: list[FunctionTool] | None = None
     tool_choice: ToolChoice | None = None
     parallel_tool_calls: bool | None = None
+    audio: SessionAudio = Field(default_factory=SessionAudio)
 
 
 class SessionFields(BaseModel):
@@ -162,6 +215,7 @@ class SessionFields(BaseModel):
     tools: list[FunctionTool] | None = None
     tool_choice: ToolChoice | None = None
     parallel_tool_calls: bool | None = None
+    audio: SessionAudio | None = None
 
 
 class ResponseParams(BaseModel):
@@ -220,7 +274,31 @@ class ResponseCancel(_ClientEvent):
     response_id: str | None = None
 
 
-ClientEvent = SessionUpdate | ItemCreate | ItemRetrieve | ItemDelete | ResponseCreate | ResponseCancel
+class AudioAppend(_ClientEvent):
+    type: Literal["input_audio_buffer.append"]
+    # base64, in the session's input format
+    audio: str
+
+
+class AudioCommit(_ClientEvent):
+    type: Literal["input_audio_buffer.commit"]
+
+
+class AudioClear(_ClientEvent):
+    type: Literal["input_audio_buffer.clear"]
+
+
+ClientEvent = (
+    SessionUpdate
+    | ItemCreate
+    | ItemRetrieve
+    | ItemDelete
+    | ResponseCreate
+    | ResponseCancel
+    | AudioAppend
+    | AudioCommit
+    | AudioClear
+)
 CLIENT_EVENTS: TypeAdapter[ClientEvent] = TypeAdapter(Annotated[ClientEvent, Field(discriminator="type")])
 
 
@@ -265,7 +343,7 @@ def server_event(kind: str, **fields: Any) -> dict:
 
 
 def session_event(kind: Literal["session.created", "session.updated"], session: RealtimeSession) -> dict:
-    return server_event(kind, session=session.model_dump(mode="json", exclude_none=True))
+    return server_event(kind, session=session.model_dump(mode="json"))
 
 
 def response_event(kind: Literal["response.created", "response.done"], response: RealtimeResponse) -> dict:

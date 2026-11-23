@@ -2,13 +2,28 @@
 
 from typing import Any
 
-from modelship.openai.protocol.realtime import Item
+from modelship.openai.protocol.realtime import Item, UserMessage
 from modelship.utils import random_uuid
 
 
+def _input_part(part: dict[str, Any]) -> dict[str, Any] | None:
+    if part["type"] != "input_audio":
+        return part
+    return {"type": "input_text", "text": part["transcript"]} if part["transcript"] else None
+
+
 def as_input(items: list[Item]) -> list[dict[str, Any]]:
-    """*items* as Responses input items: without the Realtime-only `id`, `object` and `status`."""
-    return [item.model_dump(exclude={"id", "object", "status"}) for item in items]
+    """*items* as Responses input items: without the Realtime-only `id`, `object` and `status`. An audio turn
+    becomes its transcript; one with no transcript (failed, or still running) is left out."""
+    found = []
+    for item in items:
+        dumped = item.model_dump(exclude={"id", "object", "status"})
+        if isinstance(item, UserMessage):
+            dumped["content"] = [part for part in map(_input_part, dumped["content"]) if part is not None]
+            if not dumped["content"]:
+                continue
+        found.append(dumped)
+    return found
 
 
 class Conversation:

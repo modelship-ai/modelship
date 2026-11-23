@@ -194,7 +194,7 @@ A request that fails or is cancelled after step 2 gets its scale-downs undone to
 
 ## Pipelines (experimental)
 
-> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a text conversation that the pipeline's `llm` answers, calling the client's functions. Audio in and out arrive in later releases; until then their events are answered with an `unsupported_event` error.
+> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a conversation of text and of the client's spoken turns, which the pipeline's `stt` transcribes and its `llm` answers in text, calling the client's functions. The client commits each turn itself; turn detection and audio out arrive in later releases, and until then their events are answered with an `unsupported_event` error.
 
 A pipeline runs an OpenAI Realtime session over models the gateway already serves: speech to text, a chat model, and text to speech. Clients pick one with `/v1/realtime?model=<name>`. Pipelines sit beside `models:` in the same file:
 
@@ -231,6 +231,14 @@ A session on a pipeline with an `llm`:
 - Calls the client's functions: `tools` (function tools only), `tool_choice` and `parallel_tool_calls`, set with `session.update` or for one response with `response.create`, reach the LLM as they are. A call streams as `response.function_call_arguments.delta` events and stays in the conversation as a `function_call` item; the client runs the function, adds its result as a `function_call_output` item with the call's `call_id`, and sends `response.create` for the answer.
 - Streams the answer as `response.output_text.delta` events and ends it with `response.done`, which carries the token usage. The model's reasoning is neither sent nor kept.
 - Sends every response of the session to the same LLM replica while that replica isn't overloaded, so its prompt cache holds the conversation.
+
+A session on a pipeline with `stt` takes the client's audio:
+
+- The client sends `input_audio_buffer.append` events of base64 audio in the session's `audio.input.format`: `audio/pcm` (16-bit mono, at its `rate`, 24000 by default; any rate from 8000 to 48000, beyond OpenAI's spec), `audio/pcmu` or `audio/pcma` (G.711 at 8 kHz). A turn holds at most 120 s, and so do the turns waiting to be transcribed: a commit beyond that is refused with `input_audio_transcription_busy`.
+- `input_audio_buffer.commit` ends the turn (at least 100 ms of audio) and adds it to the conversation as a user message, and `input_audio_buffer.clear` drops it. The `stt` model transcribes one committed turn at a time, in order, and the session sends `conversation.item.input_audio_transcription.completed` with the transcript, or `.failed`. The audio itself isn't kept.
+- `audio.input.transcription` takes `language` and `prompt` for the `stt` model; its `model` is ignored, since the pipeline names it. A model that detects the spoken language gets the language it found on the first turn for every later one.
+- A `response.create` waits for the turns committed before it to be transcribed, and the LLM sees each turn as its transcript. A turn that failed isn't sent.
+- A transcription session (a pipeline without `llm`) takes the same audio and sends the same transcripts, and has no responses.
 
 From the command line, `--pipeline NAME` opens a pipeline the way `--model REF` opens a model, on `mship start` and `mship deploy` alike, and its keys are `--pipeline.<key>` flags right after it:
 
