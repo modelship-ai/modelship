@@ -7,7 +7,7 @@ from pydantic_yaml import parse_yaml_raw_as
 
 from modelship.logging import get_logger
 from modelship.utils import is_pathy
-from modelship.utils.config_schema import ModelLoader, ModelshipConfig
+from modelship.utils.config_schema import ModelLoader, ModelshipConfig, ModelUsecase
 
 if TYPE_CHECKING:
     from modelship.utils.sources import PinnedSource
@@ -103,6 +103,7 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     # Deferred: pulls huggingface_hub.
     from modelship.infer.sherpa_onnx.bundle import bundle_source
     from modelship.utils.sources import check_model_source
+    from modelship.utils.vad import silero_vad_source
 
     for cfg in yml_conf.models:
         assert cfg.model is not None  # validator guarantees this for built-in loaders
@@ -110,6 +111,8 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
             logger.info("Checking sherpa_onnx bundle for '%s': %s", cfg.name, cfg.model)
             cfg._pinned_source = bundle_source(cfg.model)
             logger.info("Checked '%s' (%s)", cfg.name, _pin_label(cfg._pinned_source))
+            if cfg.usecase != ModelUsecase.tts:
+                cfg._pinned_vad = silero_vad_source()
             continue
         trust_remote_code = bool(cfg.vllm_engine_kwargs and cfg.vllm_engine_kwargs.trust_remote_code)
         # cfg.model stays as written: it feeds the fingerprint.

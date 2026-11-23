@@ -116,6 +116,14 @@ class BaseInfer[Prepared](ABC):
                 raise ModelDownloadError(f"Failed to download model for '{model_config.name}': {e}") from e
             logger.info("Downloaded '%s' -> %s", model_config.name, model_config._resolved_path)
 
+        if model_config._pinned_vad is not None and model_config._resolved_vad is None:
+            try:
+                model_config._resolved_vad = await locked_download(model_config._pinned_vad, model_config.name)
+            except ModelSourceError:
+                raise
+            except Exception as e:
+                raise ModelDownloadError(f"Failed to download the VAD model for '{model_config.name}': {e}") from e
+
         llama_cfg = model_config.llama_server_config
         if llama_cfg is not None and llama_cfg._pinned_mmproj is not None:
             # Overwrites the public `mmproj` field with the final path.

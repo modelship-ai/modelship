@@ -261,7 +261,7 @@ If it's unset (the default), or a request doesn't carry the header, the caller l
 |---|---|---|
 | `name` | string | Model identifier used in API requests. Maps to exactly one deployment — a repeated name with different settings is a validation error |
 | `model` | string | HuggingFace repo ID, local path, or `repo:filename` (see [Model source](#model-source)) |
-| `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image`. Defaults to `image` and is otherwise rejected for `diffusers`/`stable_diffusion_cpp`; must be `tts` for `sherpa_onnx` |
+| `usecase` | string | `generate`, `embed`, `transcription`, `translation`, `tts`, or `image`. Defaults to `image` and is otherwise rejected for `diffusers`/`stable_diffusion_cpp`; for `sherpa_onnx`, the one its registry name gives (`tts` or `transcription`) |
 | `loader` | string | `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, `whispercpp`, `sherpa_onnx` |
 | `num_gpus` | float \| int | Default `0`: the model gets no GPU, and the node's GPUs are hidden from it. Fractional `< 1` shares one GPU — supported by `vllm`, `diffusers`, `llama_server`, `stable_diffusion_cpp`, and (Metal-only) `whispercpp`; forced to `0` for `sherpa_onnx`. `whispercpp` with `num_gpus > 0` schedules only onto a `metal` node. Integer `≥ 1` requests that many whole GPUs (for `vllm`, auto-sets `tensor_parallel_size = num_gpus` unless tp/pp is already specified; left unset with tp × pp above 1, it defaults to tp × pp). `llama_server`/`whispercpp` reject a non-integer `≥ 1`; `stable_diffusion_cpp` takes at most `1`. See [Sharing one GPU](#sharing-one-gpu) |
 | `num_cpus` | float | CPU units to allocate. Default `0.1` |
@@ -646,14 +646,17 @@ See `config/examples/whispercpp.yaml` for every `model:` form and a Metal exampl
 
 ## sherpa_onnx Loader
 
-Runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Python bindings. Current scope: TTS only, kokoro family only, CPU only — never touches CUDA or CoreML, so `num_gpus` is ignored entirely (any value accepted at config time, forced to `0` at deploy with a warning if nonzero) and reserves no GPU capacity another deploy could use.
+Runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Python bindings: text to speech with Kokoro, and offline speech to text with Parakeet. CPU only — never touches CUDA or CoreML, so `num_gpus` is ignored entirely (any value accepted at config time, forced to `0` at deploy with a warning if nonzero) and reserves no GPU capacity another deploy could use.
 
 `model:` is not an HF repo or path — it's a name from a curated built-in registry (or a local directory whose basename matches one). Each name maps to a tarball with a pinned sha256 in modelship's own [`model-bundles`](https://github.com/modelship-ai/model-bundles) releases (unmodified copies of the sherpa-onnx project's files), downloaded and cached under `<cache_root>/sherpa_onnx/<name>-<sha256 prefix>/` on first use.
 
-| Name | Speakers | Notes |
+| Name | `usecase` | Notes |
 |---|---|---|
-| `kokoro-en-v0_19` | 11 | English only. Includes `af_bella` |
-| `kokoro-multi-lang-v1_0` | 54 | English, Mandarin, Japanese, and more. Includes `af_bella` and `af_heart` |
+| `kokoro-en-v0_19` | `tts` | 11 speakers. English only. Includes `af_bella` |
+| `kokoro-multi-lang-v1_0` | `tts` | 54 speakers. English, Mandarin, Japanese, and more. Includes `af_bella` and `af_heart` |
+| `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8` | `transcription` | NVIDIA's Parakeet TDT 0.6b v3 (CC-BY-4.0): 25 European languages, punctuated, with word timestamps. About 30× faster than real time on 2 threads |
+
+`usecase` must be the one the name's row gives.
 
 ```yaml
 models:
@@ -666,7 +669,7 @@ models:
 
 | `sherpa_onnx_config` key | Default | Description |
 |---|---|---|
-| `default_voice` | the bundle's first voice | The voice for a `/v1/audio/speech` request that names no voice, or one the bundle doesn't have (for example OpenAI's `alloy`). Must be one of the bundle's voices. A voice the bundle has, or a numeric speaker id within range, is always used as given |
+| `default_voice` | the bundle's first voice | `tts` models only. The voice for a `/v1/audio/speech` request that names no voice, or one the bundle doesn't have (for example OpenAI's `alloy`). Must be one of the bundle's voices. A voice the bundle has, or a numeric speaker id within range, is always used as given |
 
 ```yaml
 models:
@@ -676,6 +679,21 @@ models:
     loader: "sherpa_onnx"
     sherpa_onnx_config:
       default_voice: "af_heart"
+```
+
+A speech-to-text model serves `/v1/audio/transcriptions` in every `response_format` and with `stream`:
+
+- It finds the language itself and takes none: a request's `language` and `prompt` are accepted and ignored. `verbose_json` reports `language` as the request's, or `unknown`.
+- `verbose_json` has a segment per sentence, and word timestamps when `timestamp_granularities` includes `word`.
+- Audio longer than 30 s is cut at its pauses into pieces of at most 30 s, found with [Silero VAD](https://github.com/snakers4/silero-vad), which the model downloads beside its bundle. With `stream`, each piece is a `transcript.text.delta`.
+
+```yaml
+models:
+  - name: "parakeet"
+    model: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+    usecase: "transcription"
+    loader: "sherpa_onnx"
+    num_cpus: 2
 ```
 
 See `config/examples/sherpa-onnx.yaml` for the local-directory form.
