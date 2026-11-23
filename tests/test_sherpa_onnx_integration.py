@@ -169,3 +169,70 @@ class TestSherpaOnnxMultiLang:
             self._speak(client, "ef_dora", ":-ॠ")
         recovered = self._speak(client, "af_heart", "Still serving after the crash.")
         assert recovered.startswith(b"RIFF")
+
+
+def _silence(seconds: float, rate: int) -> bytes:
+    return b"\x00\x00" * int(seconds * rate)
+
+
+def _wav(frames: bytes, rate: int) -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(frames)
+    return buffer.getvalue()
+
+
+def _speech_frames(client, text: str) -> tuple[bytes, int]:
+    audio = client.audio.speech.create(model="tts-model", voice="af_bella", input=text, response_format="wav").content
+    with wave.open(io.BytesIO(audio)) as w:
+        return w.readframes(w.getnframes()), w.getframerate()
+
+
+@pytest.mark.integration
+@pytest.mark.sherpa_onnx
+class TestParakeet:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy("tts-model", "stt-parakeet")
+
+    def _transcribe(self, client, audio: bytes, tmp_path, **fields):
+        path = tmp_path / "speech.wav"
+        path.write_bytes(audio)
+        with open(path, "rb") as f:
+            return client.audio.transcriptions.create(model="stt-parakeet", file=f, **fields)
+
+    def test_speech_round_trips_through_parakeet(self, client, tmp_path):
+        frames, rate = _speech_frames(client, "Please turn on the kitchen lights.")
+        text = self._transcribe(client, _wav(frames, rate), tmp_path).text.lower()
+        assert "kitchen" in text and "lights" in text, text
+
+    def test_long_audio_is_cut_at_silences_and_keeps_its_timeline(self, client, tmp_path):
+        frames, rate = _speech_frames(client, "Open the garage door.")
+        # about 45 s: past the 30 s a piece may hold
+        audio = _wav((frames + _silence(2.0, rate)) * 12, rate)
+        result = self._transcribe(
+            client, audio, tmp_path, response_format="verbose_json", timestamp_granularities=["word", "segment"]
+        )
+        assert result.text.lower().count("garage") == 12, result.text
+        assert result.duration > 40
+        assert result.segments[-1].end > 40
+        assert result.words[0].start < result.words[-1].start
+
+    def test_stream_sends_deltas_then_the_text(self, tmp_path, client):
+        frames, rate = _speech_frames(client, "Close the window.")
+        path = tmp_path / "speech.wav"
+        path.write_bytes(_wav(frames, rate))
+        with open(path, "rb") as f:
+            response = httpx.post(
+                f"{OPENAI_API_BASE}/audio/transcriptions",
+                files={"file": ("speech.wav", f, "audio/wav")},
+                data={"model": "stt-parakeet", "stream": "true"},
+                timeout=120,
+            )
+        events = _sse_events(response.text)
+        assert events[0]["type"] == "transcript.text.delta"
+        assert events[-1]["type"] == "transcript.text.done"
+        assert "window" in events[-1]["text"].lower()

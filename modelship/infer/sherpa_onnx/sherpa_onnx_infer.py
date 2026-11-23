@@ -55,6 +55,7 @@ class SherpaOnnxInfer(BaseInfer):
                 f"Check driver logs for resolution errors."
             )
         entry = REGISTRY[registry_name(self.model_config.model)]
+        assert isinstance(entry, SherpaOnnxRegistryEntry)
 
         cfg = sherpa_onnx.OfflineTtsConfig()
         family_cfg = getattr(cfg.model, entry.family)

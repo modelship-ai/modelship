@@ -346,6 +346,13 @@ MODEL_CONFIGS: dict[str, dict] = {
         "loader": "whispercpp",
         "num_cpus": 1,
     },
+    "stt-parakeet": {
+        "name": "stt-parakeet",
+        "model": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+        "usecase": "transcription",
+        "loader": "sherpa_onnx",
+        "num_cpus": 2,
+    },
     "tts-model": {
         "name": "tts-model",
         "model": "kokoro-en-v0_19",

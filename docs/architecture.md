@@ -8,7 +8,7 @@ Modelship is a **FastAPI gateway** exposing an OpenAI-compatible API, built on [
 - **llama-server** — proxied `llama-server` subprocess for quantized GGUF chat/embeddings/vision, CPU or GPU
 - **[HuggingFace Diffusers](https://github.com/huggingface/diffusers)** — image generation via `AutoPipelineForText2Image`
 - **stable-diffusion.cpp** — `sd-server` subprocess for GGUF SD/Flux image generation, CPU or GPU (CUDA, Vulkan, Metal)
-- **sherpa-onnx** — TTS (Kokoro), CPU/CoreML
+- **sherpa-onnx** — TTS (Kokoro) and offline STT (Parakeet), CPU
 - **whisper.cpp** — STT via `pywhispercpp`, CPU everywhere plus Metal on Apple Silicon
 
 ## Request Lifecycle
@@ -43,7 +43,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 | `diffusers` | HuggingFace Diffusers | Image generation | No — GPU or CPU, `cuda` variant only |
 | `stable_diffusion_cpp` | sd-server subprocess (stable-diffusion.cpp) | Image generation (GGUF SD1.5/SDXL/SD-Turbo, Flux) | No — CPU or GPU (CUDA, Vulkan, Metal; fractional or one whole GPU) |
 | `whispercpp` | `pywhispercpp` | STT | No — CPU everywhere, Metal on Apple Silicon |
-| `sherpa_onnx` | sherpa-onnx | TTS (Kokoro) | No — never touches CUDA |
+| `sherpa_onnx` | sherpa-onnx | TTS (Kokoro), STT (Parakeet) | No — never touches CUDA |
 
 Every deployment also carries a Ray label selector for the nodes that can run it (see [Capability-aware scheduling](#capability-aware-scheduling)) alongside `num_gpus`/`GPU`.
 
@@ -152,5 +152,5 @@ An unsatisfiable deploy pends. Ray Serve's slow-start warning lists only the rep
 | `modelship/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |
 | `modelship/infer/stable_diffusion_cpp/stable_diffusion_cpp_infer.py` | sd-server subprocess driver (image gen over its job API) |
 | `modelship/infer/whispercpp/` | whisper.cpp STT wrapper |
-| `modelship/infer/sherpa_onnx/` | sherpa-onnx TTS wrapper |
+| `modelship/infer/sherpa_onnx/` | sherpa-onnx TTS and offline STT |
 | `config/examples/` | Example model configurations, for `--config` |

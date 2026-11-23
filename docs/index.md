@@ -164,7 +164,7 @@ suffix or the `mship bootstrap` flag):
 | **stable-diffusion.cpp** (`stable_diffusion_cpp`) | GGUF image generation (SD, Flux) | GPU, CPU | CPU | GPU, CPU | GPU, CPU |
 | **Diffusers** (`diffusers`) | Image generation | GPU, CPU | — | — | — |
 | **whisper.cpp** (`whispercpp`) | Speech-to-text | CPU | CPU | CPU | GPU, CPU |
-| **sherpa-onnx** (`sherpa_onnx`) | Text-to-speech (Kokoro) | CPU | CPU | CPU | CPU |
+| **sherpa-onnx** (`sherpa_onnx`) | Text-to-speech (Kokoro), speech-to-text (Parakeet) | CPU | CPU | CPU | CPU |
 
 GPU means an NVIDIA GPU on `cuda`, an AMD or Intel GPU through Vulkan on
 `vulkan`, and Apple Silicon on `metal`. ¹ Linux only. The `thin` variant is a

@@ -2,7 +2,7 @@
 
 import os
 
-from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry, registry_name
+from modelship.infer.sherpa_onnx.registry import REGISTRY, AsrEntry, SherpaOnnxRegistryEntry, registry_name
 from modelship.utils import is_pathy
 from modelship.utils.sources import ArchiveSource, LocalSource, check_archive_source, check_required
 
@@ -20,7 +20,9 @@ def bundle_source(model: str) -> LocalSource | ArchiveSource:
     return check_archive_source(entry.tarball_url, entry.sha256, dest, required)
 
 
-def bundle_paths(entry: SherpaOnnxRegistryEntry) -> tuple[str, ...]:
+def bundle_paths(entry: SherpaOnnxRegistryEntry | AsrEntry) -> tuple[str, ...]:
     """Every path the loader reads from the bundle, relative to its root."""
+    if isinstance(entry, AsrEntry):
+        return tuple(entry.files.values())
     lexicon = (entry.chinese_lexicon,) if entry.chinese_lexicon else ()
     return (*entry.files.values(), *lexicon, *(f"{d}/" for d in entry.dirs.values()))
