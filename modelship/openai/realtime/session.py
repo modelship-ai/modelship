@@ -5,7 +5,6 @@ as not supported yet."""
 import asyncio
 import json
 from collections.abc import Callable, Collection, Mapping
-from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import WebSocket
@@ -26,7 +25,7 @@ from modelship.openai.protocol.realtime import (
 )
 from modelship.openai.protocol.responses.schemas import ResponsesRequest
 from modelship.openai.realtime.conversation import Conversation, as_input, new_item
-from modelship.openai.realtime.response import ActiveResponse, LlmCall
+from modelship.openai.realtime.response import ActiveResponse, Respond
 from modelship.utils import random_uuid
 from modelship.utils.config_schema import PipelineConfig
 
@@ -36,23 +35,6 @@ logger = get_logger("realtime")
 _CLOSE_REFUSED = 1008
 _UPDATABLE = ("instructions", "output_modalities", "max_output_tokens", "reasoning")
 _REALTIME_ONLY = frozenset({"conversation.item.create", "response.create", "response.cancel"})
-
-
-@dataclass
-class Gateway:
-    """What a session needs from the gateway replica it runs in."""
-
-    pipelines: Mapping[str, dict]
-    # the gateway's models
-    known: Collection[str]
-    # the models it can route to now
-    serving: Collection[str]
-    # a model's handle, None while it isn't serving
-    handle: Callable[[str], Any]
-    identity: str = ""
-    headers: dict[str, str] = field(default_factory=dict)
-    # the disconnect registry; None without one
-    registry: Any = None
 
 
 def _refusal(
@@ -105,24 +87,31 @@ def _audio_output(param: str) -> RealtimeError:
     return RealtimeError(message="Audio output is not supported yet.", code="unsupported_value", param=param)
 
 
-async def serve_session(websocket: WebSocket, gateway: Gateway) -> None:
-    """Runs one session until the client leaves."""
+async def serve_session(
+    websocket: WebSocket,
+    pipelines: Mapping[str, dict],
+    known: Collection[str],
+    serving: Collection[str],
+    respond: Respond,
+) -> None:
+    """Runs one session until the client leaves. *pipelines* is the gateway's pipeline table, *known* its models,
+    *serving* those it can route to now, and *respond* how the session calls a model."""
     await websocket.accept()
     name = websocket.query_params.get("model")
-    refusal = _refusal(name, gateway.pipelines, gateway.known, gateway.serving)
+    refusal = _refusal(name, pipelines, known, serving)
     if refusal is not None:
         await websocket.send_text(json.dumps(error_event(refusal)))
         await websocket.close(code=_CLOSE_REFUSED)
         return
     assert name is not None
-    await Session(websocket, PipelineConfig.model_validate(gateway.pipelines[name]["config"]), gateway).run()
+    await Session(websocket, PipelineConfig.model_validate(pipelines[name]["config"]), respond).run()
 
 
 class Session:
-    def __init__(self, websocket: WebSocket, config: PipelineConfig, gateway: Gateway):
+    def __init__(self, websocket: WebSocket, config: PipelineConfig, respond: Respond):
         self.websocket = websocket
         self.config = config
-        self.gateway = gateway
+        self.respond = respond
         self.state = _new_session(config)
         self.conversation = Conversation()
         self.active: ActiveResponse | None = None
@@ -292,9 +281,6 @@ class Session:
             return items
         llm = self.config.llm
         assert llm is not None
-        handle = self.gateway.handle(llm)
-        if handle is None:
-            return RealtimeError(message=f"Pipeline model {llm!r} isn't ready.", code="model_not_ready")
         max_output_tokens = params.max_output_tokens or self.state.max_output_tokens or "inf"
         reasoning = params.reasoning or self.state.reasoning
         request = ResponsesRequest(
@@ -306,6 +292,9 @@ class Session:
             stream=True,
             store=False,
         )
+        answer = self.respond(llm, request, self.state.id)
+        if answer is None:
+            return RealtimeError(message=f"Pipeline model {llm!r} isn't ready.", code="model_not_ready")
         in_conversation = params.conversation != "none"
         response = RealtimeResponse(
             id=f"resp_{random_uuid()[:20]}",
@@ -314,16 +303,8 @@ class Session:
             max_output_tokens=max_output_tokens,
             metadata=params.metadata,
         )
-        call = LlmCall(
-            handle=handle,
-            request=request,
-            headers=self.gateway.headers,
-            registry=self.gateway.registry,
-            request_id=random_uuid(),
-            identity=self.gateway.identity,
-            session_id=self.state.id,
-        )
-        self.active = ActiveResponse(response, self.conversation if in_conversation else None, call, self.send)
+        conversation = self.conversation if in_conversation else None
+        self.active = ActiveResponse(response, llm, answer, conversation, self.send)
         return None
 
     async def _response_cancel(self, event: dict) -> RealtimeError | None:

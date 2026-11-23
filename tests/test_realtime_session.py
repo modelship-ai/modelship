@@ -19,8 +19,8 @@ from modelship.openai.protocol import (
 from modelship.openai.protocol.realtime import RealtimeResponse
 from modelship.openai.protocol.responses.schemas import ResponsesRequest
 from modelship.openai.protocol.responses.streaming import ResponsesStreamTranslator
-from modelship.openai.realtime import Gateway, serve_session
-from modelship.openai.realtime.response import ActiveResponse, LlmCall
+from modelship.openai.realtime import serve_session
+from modelship.openai.realtime.response import ActiveResponse
 
 ASSISTANT = {"name": "assistant", "stt": "whisper", "llm": "qwen", "session_defaults": {"instructions": "Be brief."}}
 SCRIBE = {"name": "scribe", "stt": "whisper"}
@@ -62,68 +62,48 @@ def _answer(*text: str, reasoning: str | None = None, finish: str | None = "stop
     return script
 
 
-class _Stream:
-    def __init__(self, events: list, endless: bool):
-        self.events = events
-        self.endless = endless
-        self.cancelled = False
-
-    def __aiter__(self):
-        return self._events()
-
-    async def _events(self):
-        for event in self.events:
-            yield event
-        if self.endless:
-            await asyncio.Event().wait()
-
-    def cancel(self):
-        self.cancelled = True
-
-
 class _Llm:
-    """A model answering each `respond` call with the next script, and recording the calls."""
+    """The model "qwen", answering each call with the next script and recording the calls."""
 
     def __init__(self, *scripts):
         self.scripts = list(scripts)
         self.requests: list[ResponsesRequest] = []
-        self.options: list[dict] = []
-        self.streams: list[_Stream] = []
+        self.sessions: list[str] = []
+        self.started = 0
+        # per answer: whether it was closed before its end
+        self.closed_early: list[bool] = []
 
-    def remote(self, request, headers, registry, request_id, identity):
+    def respond(self, model: str, request: ResponsesRequest, session_id: str):
+        if model != "qwen":
+            return None
         self.requests.append(request)
+        self.sessions.append(session_id)
         script = self.scripts.pop(0)
         events = script(request) if callable(script) else script
-        stream = _Stream(events, getattr(script, "endless", False))
-        self.streams.append(stream)
-        return stream
+        return self._answer(events, getattr(script, "endless", False))
 
-
-class _Handle:
-    """`handle.respond.options(...).remote(...)` on an `_Llm`."""
-
-    def __init__(self, llm: _Llm):
-        self.llm = llm
-
-    @property
-    def respond(self):
-        return self
-
-    def options(self, **options):
-        self.llm.options.append(options)
-        return self.llm
+    async def _answer(self, events: list, endless: bool):
+        self.started += 1
+        finished = False
+        try:
+            for event in events:
+                yield event
+            if endless:
+                await asyncio.Event().wait()
+            finished = True
+        finally:
+            self.closed_early.append(not finished)
 
 
 def _client(pipelines: dict, known=("whisper", "qwen"), serving=("whisper", "qwen"), llm: _Llm | None = None):
     app = FastAPI()
 
-    def handle(name: str):
-        return _Handle(llm) if llm is not None and name == "qwen" else None
+    def respond(model: str, request: ResponsesRequest, session_id: str):
+        return llm.respond(model, request, session_id) if llm is not None else None
 
     @app.websocket("/v1/realtime")
     async def realtime(websocket: WebSocket):
-        gateway = Gateway(pipelines=pipelines, known=list(known), serving=set(serving), handle=handle, identity="me")
-        await serve_session(websocket, gateway)
+        await serve_session(websocket, pipelines, list(known), set(serving), respond)
 
     return TestClient(app)
 
@@ -437,7 +417,8 @@ class TestResponses:
             True,
         )
         assert request.max_output_tokens is None
-        assert llm.options == [{"stream": True, "session_id": session["id"]}]
+        assert llm.sessions == [session["id"]]
+        assert llm.closed_early == [False]
 
     def test_the_next_response_sees_the_last_answer(self):
         llm = _Llm(_answer("Four."), _answer("Eight."))
@@ -552,7 +533,7 @@ class TestResponses:
         assert events[0]["item"]["status"] == "incomplete"
         done = events[-1]["response"]
         assert (done["status"], done["status_details"]["reason"]) == ("cancelled", "client_cancelled")
-        assert llm.streams[0].cancelled
+        assert llm.closed_early[0]
         assert [(item["role"], _text(item)) for item in llm.requests[1].input][-1] == ("assistant", "Once upon")
 
     def test_cancelling_with_nothing_in_progress_is_an_error(self):
@@ -574,7 +555,7 @@ class TestResponses:
             _say(ws, "Tell me a story.")
             ws.send_json({"type": "response.create"})
             _until(ws, "response.output_text.delta")
-        assert llm.streams[0].cancelled
+        assert llm.closed_early == [True]
 
     def test_a_loader_error_fails_the_response(self):
         llm = _Llm([create_error_response("The prompt is too long.", err_type="invalid_request_error")])
@@ -633,19 +614,12 @@ class TestActiveResponse:
         async def send(event: dict) -> None:
             sent.append(event)
 
-        call = LlmCall(
-            handle=_Handle(llm),
-            request=ResponsesRequest(model="qwen", input=[]),
-            headers={},
-            registry=None,
-            request_id="r1",
-            identity="",
-            session_id="s1",
-        )
+        answer = llm.respond("qwen", ResponsesRequest(model="qwen", input=[]), "s1")
+        assert answer is not None
         response = RealtimeResponse(id="resp_1", output_modalities=["text"], max_output_tokens="inf")
-        active = ActiveResponse(response, None, call, send)
+        active = ActiveResponse(response, "qwen", answer, None, send)
         active.cancel()
         await active.task
         assert [event["type"] for event in sent] == ["response.created", "response.done"]
         assert sent[-1]["response"]["status"] == "cancelled"
-        assert llm.requests == []
+        assert llm.started == 0

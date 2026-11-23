@@ -3,16 +3,12 @@ answer as Realtime events. Reasoning reaches neither the client nor the conversa
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
-
-from ray.exceptions import RayActorError, RayTaskError
 
 from modelship.logging import get_logger
 from modelship.metrics import RequestTracker
 from modelship.openai.protocol import ErrorResponse
-from modelship.openai.protocol.error import validation_error_from_cause
 from modelship.openai.protocol.realtime import (
     RealtimeError,
     RealtimeResponse,
@@ -28,6 +24,11 @@ from modelship.openai.realtime.conversation import Conversation
 logger = get_logger("realtime")
 
 Send = Callable[[dict], Awaitable[None]]
+# a model's streamed answer: Responses event dicts, or the ErrorResponse its loader answered with instead; closing
+# it stops the model
+Answer = AsyncGenerator[Any, None]
+# starts *model* answering *request* for session *session_id*; None while nothing serves *model*
+Respond = Callable[[str, ResponsesRequest, str], Answer | None]
 
 _TERMINAL = frozenset({"response.completed", "response.incomplete", "response.failed"})
 _PART_EVENTS = frozenset(
@@ -38,20 +39,6 @@ _PART_EVENTS = frozenset(
         "response.content_part.done",
     }
 )
-
-
-@dataclass
-class LlmCall:
-    """A response's call to its LLM."""
-
-    handle: Any
-    request: ResponsesRequest
-    headers: dict[str, str]
-    # the disconnect registry; None without one
-    registry: Any
-    request_id: str
-    identity: str
-    session_id: str
 
 
 def _usage(usage: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -74,13 +61,16 @@ def _usage(usage: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 class ActiveResponse:
-    """A response in progress, sending its events through *send*. Its output joins *conversation*, unless that is
-    None."""
+    """A response in progress: *model*'s *answer*, sent through *send*. Its output joins *conversation*, unless that
+    is None."""
 
-    def __init__(self, response: RealtimeResponse, conversation: Conversation | None, call: LlmCall, send: Send):
+    def __init__(
+        self, response: RealtimeResponse, model: str, answer: Answer, conversation: Conversation | None, send: Send
+    ):
         self.response = response
+        self._model = model
+        self._answer = answer
         self._conversation = conversation
-        self._call = call
         self._send = send
         # its message items by id; reasoning and tool calls have none
         self._items: dict[str, dict[str, Any]] = {}
@@ -110,7 +100,7 @@ class ActiveResponse:
 
     async def _run(self) -> None:
         self._started = True
-        tracker = RequestTracker(self._call.request.model or "", "realtime_response")
+        tracker = RequestTracker(self._model, "realtime_response")
         try:
             await self._send(response_event("response.created", self.response))
             if self._cancelled:
@@ -123,14 +113,6 @@ class ActiveResponse:
             self._finishing = True
             await self._end("cancelled", StatusDetails(type="cancelled", reason="client_cancelled"))
             return
-        except RayTaskError as exc:
-            cause = exc.cause if isinstance(exc.cause, BaseException) else None
-            if isinstance(cause, ValueError):
-                error = validation_error_from_cause(cause).error
-                failure = (RealtimeError(message=error.message, type=error.type, code=error.code), "validation_error")
-            else:
-                logger.exception("Realtime response %s failed", self.response.id)
-                failure = (_server_error(), "unhandled")
         except Exception:
             logger.exception("Realtime response %s failed", self.response.id)
             failure = (_server_error(), "unhandled")
@@ -161,14 +143,9 @@ class ActiveResponse:
 
     async def _generate(self) -> tuple[RealtimeError, str] | None:
         """Streams the LLM's answer to the client. The error a loader answered with instead, or None."""
-        call = self._call
-        stream = call.handle.respond.options(stream=True, session_id=call.session_id).remote(
-            call.request, call.headers, call.registry, call.request_id, call.identity
-        )
         failure = None
-        exhausted = False
-        try:
-            async for event in stream:
+        async with contextlib.aclosing(self._answer) as answer:
+            async for event in answer:
                 if isinstance(event, ErrorResponse):
                     error = event.error
                     failure = (
@@ -177,20 +154,7 @@ class ActiveResponse:
                     )
                     continue
                 await self._on_event(event)
-            exhausted = True
-        finally:
-            if not exhausted:
-                stream.cancel()
-                await self._stop_generation()
         return failure
-
-    async def _stop_generation(self) -> None:
-        if self._call.registry is None:
-            return
-        try:
-            await self._call.registry.set.remote(self._call.request_id)
-        except RayActorError:
-            logger.warning("Disconnect registry unavailable; lost the cancel of %s", self._call.request_id)
 
     async def _on_event(self, event: dict[str, Any]) -> None:
         kind = event.get("type")

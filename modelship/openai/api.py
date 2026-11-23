@@ -3,7 +3,7 @@ import contextlib
 import json
 import os
 import time
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from http import HTTPStatus
 from typing import Annotated, Any, cast
 
@@ -190,6 +190,42 @@ def _recorded(tracker: RequestTracker):
     except BaseException:
         tracker.finish("error", "unhandled")
         raise
+
+
+async def _respond_stream(
+    handle: DeploymentHandle,
+    request: ResponsesRequest,
+    headers: dict[str, str],
+    registry: Any,
+    identity: str,
+    session_id: str,
+) -> AsyncGenerator[Any, None]:
+    """*handle*'s streamed answer to *request*, routed on *session_id*; a validation failure in the replica comes
+    back as an ErrorResponse. Closed early, it cancels the call and tells the replica through *registry*."""
+    req_id = random_uuid()
+    stream = cast(
+        "DeploymentResponseGenerator[Any]",
+        handle.respond.options(stream=True, session_id=session_id).remote(request, headers, registry, req_id, identity),
+    )
+    finished = False
+    try:
+        try:
+            async for event in stream:
+                yield event
+        except RayTaskError as exc:
+            cause = exc.cause if isinstance(exc.cause, BaseException) else None
+            if not isinstance(cause, ValueError):
+                raise
+            yield validation_error_from_cause(cause)
+        finished = True
+    finally:
+        if not finished:
+            # cancelling the task that awaits the stream doesn't reach the replica
+            stream.cancel()
+            try:
+                await registry.set.remote(req_id)
+            except RayActorError:
+                logger.warning("Disconnect registry unavailable; lost the cancel of %s", req_id)
 
 
 @serve.deployment
@@ -565,21 +601,18 @@ class ModelshipAPI:
     async def realtime_ws(self, websocket: WebSocket):
         """OpenAI Realtime over WebSocket, on a pipeline: `/v1/realtime?model=<pipeline>`. Experimental."""
         self._ensure_watching()
-        gateway = realtime.Gateway(
-            pipelines=self.pipelines,
-            known=self.expected_models,
-            serving=set(self.models),
-            handle=self._serving_handle,
-            identity=self._set_identity(websocket),
-            headers=dict(websocket.headers),
-            registry=get_disconnect_registry(),
-        )
-        await realtime.serve_session(websocket, gateway)
+        identity = self._set_identity(websocket)
+        headers = dict(websocket.headers)
+        registry = get_disconnect_registry()
 
-    def _serving_handle(self, model_name: str) -> DeploymentHandle | None:
-        """*model_name*'s handle, None while nothing serves it."""
-        handles = self.models.get(model_name)
-        return next(reversed(handles.values())) if handles else None
+        def respond(model: str, request: ResponsesRequest, session_id: str) -> realtime.Answer | None:
+            handles = self.models.get(model)
+            if not handles:
+                return None
+            handle = next(reversed(handles.values()))
+            return _respond_stream(handle, request, headers, registry, identity, session_id)
+
+        await realtime.serve_session(websocket, self.pipelines, self.expected_models, set(self.models), respond)
 
     @app.post("/v1/chat/completions")
     async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):
