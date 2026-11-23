@@ -795,3 +795,45 @@ class TestRequestOutcomes:
             await api.create_chat_completion(request, MagicMock(headers={}))
 
         assert request_outcomes() == [("m", "create_chat_completion", "error", "unhandled")]
+
+
+class TestPipelines:
+    def _snapshot(self, api, ready: bool = True) -> None:
+        with patch("modelship.openai.api.serve.get_app_handle", side_effect=lambda *a, **k: MagicMock()):
+            api._apply_snapshot(
+                {
+                    "models": {"qwen-a3f9k": "qwen"},
+                    "expected": ["qwen"],
+                    "pipelines": {
+                        "assistant": {"config": {"name": "assistant", "llm": "qwen"}, "app": None, "ready": True},
+                        "voice": {"config": {"name": "voice", "stt": "qwen"}, "app": "gw.voice-p0", "ready": ready},
+                    },
+                    "generation": 2,
+                }
+            )
+
+    @pytest.mark.asyncio
+    async def test_models_lists_the_pipelines_that_can_serve(self, api):
+        self._snapshot(api, ready=False)
+        listed = await api.list_models()
+        assert [(card.id, card.owned_by) for card in listed.data] == [
+            ("qwen", "modelship"),
+            ("assistant", "modelship-pipeline"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_pipeline_has_a_model_card(self, api):
+        self._snapshot(api)
+        assert (await api.model_info("voice")).owned_by == "modelship-pipeline"
+
+    @pytest.mark.asyncio
+    async def test_the_realtime_socket_runs_a_session_over_the_gateway_tables(self, api):
+        self._snapshot(api)
+        websocket = MagicMock()
+        with (
+            patch("modelship.openai.api.realtime.serve_session") as serve_session,
+            patch.object(api, "_set_identity") as set_identity,
+        ):
+            await api.realtime_ws(websocket)
+        set_identity.assert_called_once_with(websocket)
+        serve_session.assert_awaited_once_with(websocket, api.pipelines, ["qwen"], {"qwen"})

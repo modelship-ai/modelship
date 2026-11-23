@@ -1,4 +1,4 @@
-"""What Serve holds for the model apps, and the submits that change it."""
+"""What Serve holds for the model apps and the pipelines' audio apps, and the submits that change it."""
 
 from typing import NamedTuple
 
@@ -6,11 +6,12 @@ from ray import serve
 from ray.serve.config import AutoscalingConfig as ServeAutoscalingConfig
 from ray.serve.schema import ApplicationStatus, LoggingConfig
 
-from modelship.deploy.actor_options import build_deployment_options
+from modelship.deploy.actor_options import build_deployment_options, build_pipeline_deployment_options
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.infer.model_deployment import ModelDeployment
+from modelship.infer.pipeline_deployment import PipelineDeployment
 from modelship.logging import get_logger
-from modelship.utils.config_schema import AutoscalingConfig, parse_deployment_name
+from modelship.utils.config_schema import AutoscalingConfig, PipelineConfig, parse_gateway_app_name
 
 logger = get_logger("startup")
 
@@ -26,17 +27,17 @@ class ServeApp(NamedTuple):
 class LiveApp(NamedTuple):
     """What Serve holds for an app's deployment."""
 
-    config: ModelshipModelConfig
+    config: ModelshipModelConfig | PipelineConfig
     runtime_env: dict
     version: str
 
 
 def gateway_apps(apps, gateway_name: str) -> dict[str, str]:
-    """The gateway's model apps among *apps*, each mapped to its model name."""
+    """The gateway's model apps and pipeline audio apps among *apps*, each mapped to its model or pipeline name."""
     return {
         name: parsed[1]
         for name in apps
-        if (parsed := parse_deployment_name(name)) is not None and parsed[0] == gateway_name
+        if (parsed := parse_gateway_app_name(name)) is not None and parsed[0] == gateway_name
     }
 
 
@@ -97,8 +98,27 @@ def live_app(app_name: str) -> LiveApp | None:
     return LiveApp(replica.init_args[0], replica.ray_actor_options["runtime_env"], info.version)
 
 
+def submit_pipeline_app(
+    pipeline: PipelineConfig,
+    gateway_name: str,
+    serve_logging_config: LoggingConfig,
+    env: dict[str, str] | None = None,
+) -> None:
+    """Hand one pipeline's audio app to Serve and return."""
+    app_name = pipeline.deployment_name(gateway_name)
+    logger.info("Deploying pipeline: %s (deployment: %s)", pipeline.name, app_name)
+    _run_pipeline(pipeline, app_name, build_pipeline_deployment_options(pipeline, env), serve_logging_config)
+
+
 def rescale_app(app_name: str, live: LiveApp, scaling: dict, serve_logging_config: LoggingConfig) -> None:
     """Re-submits the live app with *scaling* as its replica-count fields; its running replicas stay."""
+    if isinstance(live.config, PipelineConfig):
+        pipeline = live.config.model_copy(update=scaling)
+        deploy_opts = build_pipeline_deployment_options(pipeline, {})
+        deploy_opts["ray_actor_options"]["runtime_env"] = live.runtime_env
+        logger.info("Rescaling pipeline: %s (deployment: %s)", pipeline.name, app_name)
+        _run_pipeline(pipeline, app_name, deploy_opts, serve_logging_config, live.version)
+        return
     config = live.config.model_copy(update=scaling)
     deploy_opts = build_deployment_options(config, {})
     deploy_opts["ray_actor_options"]["runtime_env"] = live.runtime_env
@@ -131,5 +151,27 @@ def _run(
         deployment._version = version
     serve.run_many(
         [serve.RunTarget(target=deployment.bind(config), name=deployment_name, route_prefix=None)],
+        wait_for_applications_running=False,
+    )
+
+
+def _run_pipeline(
+    pipeline: PipelineConfig,
+    app_name: str,
+    deploy_opts: dict,
+    serve_logging_config: LoggingConfig,
+    version: str | None = None,
+) -> None:
+    deployment = PipelineDeployment.options(
+        name=app_name,
+        max_constructor_retry_count=1,
+        logging_config=serve_logging_config,
+        num_replicas=pipeline.num_replicas,
+        **deploy_opts,
+    )
+    if version is not None:
+        deployment._version = version
+    serve.run_many(
+        [serve.RunTarget(target=deployment.bind(pipeline), name=app_name, route_prefix=None)],
         wait_for_applications_running=False,
     )

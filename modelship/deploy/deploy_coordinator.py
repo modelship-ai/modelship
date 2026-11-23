@@ -33,7 +33,7 @@ from ray import serve
 from ray.exceptions import RayActorError
 
 from modelship.deploy.gateway_sizing import GATEWAY_SIZING_ENV_VARS, gateway_sizing
-from modelship.deploy.ledger import DeployRequest, Version, commit_version, read_versions
+from modelship.deploy.ledger import DeployRequest, Version, commit_version, pipeline_apps, read_versions
 from modelship.logging import configure_logging, get_logger, serve_logging_config
 from modelship.metrics import (
     BACKEND_DEATHS_TOTAL,
@@ -43,7 +43,7 @@ from modelship.metrics import (
 )
 from modelship.state import get_state_store, state_store_env_var
 from modelship.utils import head_node_options, random_uuid
-from modelship.utils.config_schema import parse_deployment_name
+from modelship.utils.config_schema import parse_deployment_name, parse_gateway_app_name
 from modelship.utils.runtime_env import DEPLOY_COORDINATOR_ENV_VARS, build_env_vars, cluster_env_vars
 
 if TYPE_CHECKING:
@@ -81,6 +81,8 @@ class _Routing(NamedTuple):
     models: list[dict] | None
     # model -> app, from models; empty without a committed version
     apps: dict[str, str]
+    # the raw pipelines the gateway routes by
+    pipelines: list[dict]
 
 
 @dataclass
@@ -111,8 +113,9 @@ def _seconds_env(name: str, default: float) -> float:
     return value
 
 
-def _routing(seq: int, models: list[dict] | None, gateway_name: str) -> _Routing:
-    return _Routing(seq, models, Version(0, models).apps(gateway_name) if models is not None else {})
+def _routing(seq: int, models: list[dict] | None, gateway_name: str, pipelines: list[dict] | None = None) -> _Routing:
+    apps = Version(0, models).apps(gateway_name) if models is not None else {}
+    return _Routing(seq, models, apps, pipelines or [])
 
 
 def _outcome(entry: _Entry, state: str, reason: str) -> dict:
@@ -330,12 +333,15 @@ class DeployCoordinator:
         if entry is not None and entry.request.id == request_id:
             entry.state = "rolling_back"
 
-    async def switch(self, request_id: str, gateway_name: str, models: list[dict]) -> int:
-        """Routes the gateway by *models* while the request confirms its replicas follow; returns the routing seq."""
+    async def switch(
+        self, request_id: str, gateway_name: str, models: list[dict], pipelines: list[dict] | None = None
+    ) -> int:
+        """Routes the gateway by *models* and *pipelines* while the request confirms its replicas follow; returns
+        the routing seq."""
         entry = self._running_entry(request_id, gateway_name)
         entry.state = "switching"
         entry.switched = True
-        self._routing[gateway_name] = _routing(self._next_seq(), models, gateway_name)
+        self._routing[gateway_name] = _routing(self._next_seq(), models, gateway_name, pipelines)
         logger.info("Deploy %s: switching gateway %s to its new models", request_id, gateway_name)
         return self._routing[gateway_name].seq
 
@@ -353,45 +359,55 @@ class DeployCoordinator:
         from modelship.deploy.strategy import serve_apps
 
         async with self._version_locks[request.gateway]:
-            committed = await self._committed(request.gateway)
+            committed = await self._committed_version(request.gateway)
         try:
             apps = await asyncio.to_thread(serve_apps)
         except Exception:
             logger.debug("Could not read Serve's apps", exc_info=True)
             return None
-        return build_diff(request, committed, apps)
+        if committed is None:
+            return build_diff(request, None, apps)
+        return build_diff(request, committed.models, apps, committed.pipelines)
 
     async def reset_routing(self, gateway_name: str) -> int:
         """Routes the gateway by its committed version again; returns the routing seq."""
         async with self._version_locks[gateway_name]:
-            committed = await self._committed(gateway_name)
+            committed = await self._committed_version(gateway_name)
+        models, pipelines = (committed.models, committed.pipelines) if committed is not None else (None, [])
         current = self._routing.get(gateway_name)
-        if current is None or current.models != committed:
-            self._routing[gateway_name] = _routing(self._next_seq(), committed, gateway_name)
+        if current is None or current.models != models or current.pipelines != pipelines:
+            self._routing[gateway_name] = _routing(self._next_seq(), models, gateway_name, pipelines)
         return self._routing[gateway_name].seq
 
-    async def commit(self, request_id: str, gateway_name: str, models: list[dict]) -> int | None:
-        """Writes *models* as the gateway's next version; None, writing nothing, for a cancelled request."""
+    async def commit(
+        self, request_id: str, gateway_name: str, models: list[dict], pipelines: list[dict] | None = None
+    ) -> int | None:
+        """Writes *models* and *pipelines* as the gateway's next version; None, writing nothing, for a cancelled
+        request."""
         entry = self._running_entry(request_id, gateway_name)
         if entry.cancelled:
             return None
         entry.state = "committing"
         async with self._version_locks[gateway_name]:
-            version = await asyncio.to_thread(commit_version, self._store, gateway_name, models)
+            version = await asyncio.to_thread(commit_version, self._store, gateway_name, models, pipelines)
         entry.state = "retiring"
         logger.info("Deploy %s committed version %d of gateway %s", request_id, version.number, gateway_name)
         return version.number
 
     async def routing_versions(self, gateway_names: list[str]) -> dict[str, dict]:
-        """Each gateway's routing seq and model -> app table; the table is empty without a committed version."""
+        """Each gateway's routing seq, model -> app table and pipelines (each its raw config and audio app); both
+        are empty without a committed version."""
         self._start_recovery()
         versions = {}
         for name in gateway_names:
             if name not in self._routing:
-                committed = await self._committed(name)
-                self._routing.setdefault(name, _routing(self._next_seq(), committed, name))
+                committed = await self._committed_version(name)
+                models, pipelines = (committed.models, committed.pipelines) if committed is not None else (None, [])
+                self._routing.setdefault(name, _routing(self._next_seq(), models, name, pipelines))
             routing = self._routing[name]
-            versions[name] = {"seq": routing.seq, "apps": routing.apps}
+            apps = pipeline_apps(routing.pipelines, name)
+            pipelines = {raw["name"]: {"config": raw, "app": apps[raw["name"]]} for raw in routing.pipelines}
+            versions[name] = {"seq": routing.seq, "apps": routing.apps, "pipelines": pipelines}
         return versions
 
     async def cluster_settings(self) -> dict:
@@ -423,9 +439,9 @@ class DeployCoordinator:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _committed(self, gateway_name: str) -> list[dict] | None:
+    async def _committed_version(self, gateway_name: str) -> Version | None:
         committed, _ = await asyncio.to_thread(read_versions, self._store, gateway_name)
-        return committed.models if committed is not None else None
+        return committed
 
     async def _drain(self, gateway_name: str) -> None:
         """Runs the gateway's queued requests one at a time."""
@@ -510,7 +526,7 @@ class DeployCoordinator:
         """Rolls every gateway with model apps back to its committed version."""
         try:
             apps = await asyncio.to_thread(lambda: list(serve.status().applications))
-            gateways = sorted({parsed[0] for name in apps if (parsed := parse_deployment_name(name)) is not None})
+            gateways = sorted({parsed[0] for name in apps if (parsed := parse_gateway_app_name(name)) is not None})
             await asyncio.gather(*(self._roll_back(gateway, switching=True) for gateway in gateways))
         except Exception:
             logger.exception("Could not check for leftover deployments")

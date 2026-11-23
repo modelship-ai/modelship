@@ -105,3 +105,23 @@ class TestStatusOverview:
         details = serve_details({"gw": {"r1": "RUNNING", "r2": "STOPPING"}, OLD: {"r3": "STARTING"}})
         overviews = {name: status_overview(app) for name, app in details["applications"].items()}
         assert overviews == ServeInstanceDetails(**details)._get_status().applications
+
+
+class TestPipelines:
+    def test_a_pipeline_is_ready_once_its_audio_app_can_serve(self):
+        app = "gw.voice-p0123456789"
+        pipelines = {"voice": {"config": {"name": "voice", "stt": "m"}, "app": app}}
+        routing = compute_routing(
+            "gw", {}, {"gw": _app(), app: _app(running=0, status=ApplicationStatus.DEPLOYING)}, pipelines
+        )
+        assert routing is not None
+        assert routing.pipelines["voice"]["ready"] is False
+        routing = compute_routing("gw", {}, {"gw": _app(), app: _app()}, pipelines)
+        assert routing is not None
+        assert routing.pipelines["voice"] == {**pipelines["voice"], "ready": True}
+
+    def test_a_pipeline_without_an_app_is_ready(self):
+        pipelines = {"chat": {"config": {"name": "chat", "llm": "m"}, "app": None}}
+        routing = compute_routing("gw", {}, {"gw": _app()}, pipelines)
+        assert routing is not None
+        assert routing.pipelines["chat"]["ready"] is True

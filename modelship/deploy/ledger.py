@@ -1,16 +1,17 @@
-"""Each gateway's deploy versions: the committed model set and the one before it, in the state store.
+"""Each gateway's deploy versions: the committed models and pipelines, and the version before it, in the state store.
 
 The store holds raw, user-equivalent model dicts, not dumped validated configs: validation normalizes
 ``num_gpus``/``tensor_parallel_size`` non-idempotently, so a dumped config would reload with another fingerprint.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from modelship.deploy.config import validate_models
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.state import StateStore
+from modelship.utils.config_schema import PipelineConfig
 
 logger = get_logger("startup")
 
@@ -32,6 +33,8 @@ class DeployRequest:
     models: list[dict] | None
     # per-deploy settings replicas read from their runtime_env
     env: dict[str, str]
+    # raw pipeline dicts as sent; None when the request names none
+    pipelines: list[dict] | None = None
     # set by the deploy coordinator
     id: str = ""
 
@@ -40,6 +43,7 @@ class DeployRequest:
 class Version:
     number: int
     models: list[dict]
+    pipelines: list[dict] = field(default_factory=list)
 
     def apps(self, gateway_name: str) -> dict[str, str]:
         """Model name -> the app it runs on."""
@@ -47,10 +51,17 @@ class Version:
         return {c.name: c.deployment_name(gateway_name) for c in configs}
 
 
+def pipeline_apps(pipelines: list[dict], gateway_name: str) -> dict[str, str | None]:
+    """Pipeline name -> its audio app; None for a pipeline without one."""
+    configs = [PipelineConfig.model_validate(raw) for raw in pipelines]
+    return {c.name: c.deployment_name(gateway_name) if c.has_audio_app() else None for c in configs}
+
+
 def _version(data) -> Version | None:
     if not isinstance(data, dict) or not isinstance(data.get("models"), list):
         return None
-    return Version(int(data.get("version", 0)), data["models"])
+    pipelines = data.get("pipelines")
+    return Version(int(data.get("version", 0)), data["models"], pipelines if isinstance(pipelines, list) else [])
 
 
 def read_versions(store: StateStore, gateway_name: str) -> tuple[Version | None, Version | None]:
@@ -61,13 +72,15 @@ def read_versions(store: StateStore, gateway_name: str) -> tuple[Version | None,
     return committed, previous
 
 
-def commit_version(store: StateStore, gateway_name: str, models: list[dict]) -> Version:
-    """Writes *models* as the gateway's next version, keeping the committed one as its previous."""
+def commit_version(
+    store: StateStore, gateway_name: str, models: list[dict], pipelines: list[dict] | None = None
+) -> Version:
+    """Writes *models* and *pipelines* as the gateway's next version, keeping the committed one as its previous."""
     committed, _ = read_versions(store, gateway_name)
-    version = Version(committed.number + 1 if committed else 1, models)
-    value: dict = {"version": version.number, "models": models}
+    version = Version(committed.number + 1 if committed else 1, models, pipelines or [])
+    value: dict = {"version": version.number, "models": models, "pipelines": version.pipelines}
     if committed is not None:
-        value["previous"] = {"version": committed.number, "models": committed.models}
+        value["previous"] = {"version": committed.number, "models": committed.models, "pipelines": committed.pipelines}
     store.set(f"{_NAMESPACE}/{gateway_name}", value)
     return version
 
@@ -122,6 +135,16 @@ def merge(
     return list(merged.values())
 
 
+def merge_pipelines(effective_raw: list[dict], input_raw: list[dict], mode: DeployMode) -> list[dict]:
+    """Fold the input pipelines into the committed ones under *mode*: additive replaces by name, reconcile
+    replaces the set."""
+    if mode == "reconcile":
+        return list(input_raw)
+    names = {PipelineConfig.model_validate(raw).name for raw in input_raw}
+    kept = [raw for raw in effective_raw if PipelineConfig.model_validate(raw).name not in names]
+    return kept + list(input_raw)
+
+
 def _log_replacement(model_name: str, prior: dict, incoming: dict) -> None:
     """A name already in the committed set is replaced, not joined. Pointing it at
     different weights is worth a warning; any other config change is routine."""
@@ -137,6 +160,6 @@ def _log_replacement(model_name: str, prior: dict, incoming: dict) -> None:
     )
 
 
-def to_config(raw_models: list[dict]) -> ModelshipConfig:
-    """Validate raw model dicts into a ModelshipConfig for the deploy path."""
-    return validate_models(raw_models)
+def to_config(raw_models: list[dict], raw_pipelines: list[dict] | None = None) -> ModelshipConfig:
+    """Validate raw model and pipeline dicts into a ModelshipConfig for the deploy path."""
+    return validate_models(raw_models, raw_pipelines)

@@ -170,8 +170,9 @@ The actions run in a fixed order, so that what frees room runs before what needs
 3. `stop_start` only: the old deployments of replaced and removed models are deleted.
 4. New deployments come up (`add`, `replace`, `redeploy`).
 5. Rescales that raise a replica limit.
-6. The gateway switches to the new models and the version is committed.
-7. `blue_green` only: the old deployments of replaced and removed models are deleted.
+6. [Pipelines](#pipelines-experimental): their audio deployments come up or rescale, after every model.
+7. The gateway switches to the new models and pipelines, and the version is committed.
+8. `blue_green` only: the old deployments of replaced and removed models and pipelines are deleted.
 
 The head's log lists the request's actions by step, and `--wait` prints them with the outcome:
 
@@ -193,9 +194,9 @@ A request that fails or is cancelled after step 2 gets its scale-downs undone to
 
 ## Pipelines (experimental)
 
-> **Experimental, and not deployable yet.** The `pipelines:` schema and its flags are in place for OpenAI's Realtime API (`/v1/realtime`); deploying one arrives in a later release. Until then, a config or command with a pipeline is rejected before anything starts.
+> **Experimental.** Pipelines deploy, and a client can open a `/v1/realtime` session on one and update it. Nothing else in a session works yet: every other event is answered with an `unsupported_event` error. Audio, text turns and tools arrive in later releases.
 
-A pipeline runs an OpenAI Realtime session over models the gateway already serves: speech to text, a chat model, and text to speech. Clients will pick one with `/v1/realtime?model=<name>`. Pipelines sit beside `models:` in the same file:
+A pipeline runs an OpenAI Realtime session over models the gateway already serves: speech to text, a chat model, and text to speech. Clients pick one with `/v1/realtime?model=<name>`. Pipelines sit beside `models:` in the same file:
 
 ```yaml
 models:
@@ -214,7 +215,7 @@ pipelines:
 | Field | Type | Description |
 |---|---|---|
 | `name` | string | Name clients pass as `/v1/realtime?model=<name>`. No `#` |
-| `num_replicas` | int | Replicas of the pipeline. Default `1`. A pipeline reserves no CPU or GPU |
+| `num_replicas` | int | Replicas of the pipeline's audio deployment. Default `1`. It reserves no CPU or GPU |
 | `stt` | string | Name of the speech-to-text model it transcribes with |
 | `llm` | string | Name of the chat model that answers |
 | `tts` | string | Name of the text-to-speech model that speaks the answer |
@@ -232,6 +233,14 @@ mship deploy --model lmstudio-community/Qwen3-8B-GGUF:'*Q4_K_M.gguf' \
 ```
 
 A `--model.*` flag must follow its own `--model`, and a `--pipeline.*` flag its own `--pipeline`: one placed after the other kind is an error.
+
+A pipeline deploys with the models, through the same request:
+
+- A pipeline with `stt` gets an audio deployment, named `<gateway>.<pipeline>-p<fingerprint>`. It takes no CPU or GPU and runs on any node whose variant isn't `thin`. It comes up after every model of the request, and a change to `num_replicas` rescales it in place. A pipeline with only `llm` has no deployment.
+- Every other change to a pipeline (its models, `session_defaults`) reaches the gateway with the new version, and nothing restarts.
+- `mship deploy` adds or replaces pipelines by name and leaves the others. `deploy --reconcile` and `mship start` remove the pipelines the request doesn't name.
+- A deploy never checks the models a pipeline names. A session on a pipeline whose model the gateway doesn't have, or doesn't serve yet, is refused with an error naming that model.
+- A pipeline can't take a model's name: `/v1/models` lists both, and a pipeline's card has `owned_by: "modelship-pipeline"`. A pipeline is listed once its audio deployment is up.
 
 ## Trusted Identity Header
 

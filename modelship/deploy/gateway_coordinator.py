@@ -23,7 +23,7 @@ from modelship.deploy.routing import Routing, compute_routing, running_replica_i
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import GATEWAY_REPLICAS_BEHIND, MODEL_UP
 from modelship.utils import head_node_options
-from modelship.utils.config_schema import parse_deployment_name
+from modelship.utils.config_schema import parse_gateway_app_name
 from modelship.utils.runtime_env import cluster_env_vars
 
 logger = get_logger("gateway_coordinator")
@@ -61,7 +61,8 @@ class GatewayCoordinator:
         # Nothing else configures logging here; without it the logger falls back to Python's lastResort handler.
         configure_logging()
         self._routing: dict[str, Routing] = {}
-        # gateway -> {"seq": int, "apps": {model: app}}, as the deploy coordinator last gave it
+        # gateway -> {"seq": int, "apps": {model: app}, "pipelines": {name: {"config", "app"}}}, as the deploy
+        # coordinator last gave it
         self._versions: dict[str, dict[str, Any]] = {}
         # gateway -> the routing seq its published table was computed from
         self._seqs: dict[str, int] = {}
@@ -96,13 +97,13 @@ class GatewayCoordinator:
         apps, running = await asyncio.to_thread(_read_serve)
         gateways = set(self._watched)
         for name in apps:
-            if (parsed := parse_deployment_name(name)) is not None:
+            if (parsed := parse_gateway_app_name(name)) is not None:
                 gateways.add(parsed[0])
         await self._fetch_versions(sorted(gateways))
         for gateway in gateways:
             if (version := self._versions.get(gateway)) is None:
                 continue
-            if (routing := compute_routing(gateway, version["apps"], apps)) is None:
+            if (routing := compute_routing(gateway, version["apps"], apps, version.get("pipelines"))) is None:
                 continue
             self._replicas[gateway] = running.get(gateway, set())
             self._publish(gateway, routing, version["seq"])
@@ -140,7 +141,11 @@ class GatewayCoordinator:
     def _publish(self, gateway: str, routing: Routing, seq: int) -> None:
         previous = self._routing.get(gateway)
         self._routing[gateway] = routing
-        changed = previous is None or (previous.models, previous.expected) != (routing.models, routing.expected)
+        changed = previous is None or (previous.models, previous.expected, previous.pipelines) != (
+            routing.models,
+            routing.expected,
+            routing.pipelines,
+        )
         if changed or seq != self._seqs.get(gateway):
             self._bump(gateway)
         self._seqs[gateway] = seq
@@ -152,13 +157,14 @@ class GatewayCoordinator:
             event.set()
 
     async def get_routing(self, gateway_name: str) -> dict:
-        """The gateway's model table (app -> model), expected models, generation and routing seq."""
+        """The gateway's model table (app -> model), expected models, pipelines, generation and routing seq."""
         self._watched.add(gateway_name)
         await asyncio.wait_for(self._computed.wait(), _FIRST_PASS_TIMEOUT_S)
         routing = self._routing.get(gateway_name)
         return {
             "models": dict(routing.models) if routing else {},
             "expected": list(routing.expected) if routing else [],
+            "pipelines": dict(routing.pipelines) if routing else {},
             "generation": self._generation.get(gateway_name, self._first_generation),
             "routing": self._seqs.get(gateway_name),
         }
