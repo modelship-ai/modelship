@@ -565,8 +565,21 @@ class ModelshipAPI:
     async def realtime_ws(self, websocket: WebSocket):
         """OpenAI Realtime over WebSocket, on a pipeline: `/v1/realtime?model=<pipeline>`. Experimental."""
         self._ensure_watching()
-        self._set_identity(websocket)
-        await realtime.serve_session(websocket, self.pipelines, self.expected_models, set(self.models))
+        gateway = realtime.Gateway(
+            pipelines=self.pipelines,
+            known=self.expected_models,
+            serving=set(self.models),
+            handle=self._serving_handle,
+            identity=self._set_identity(websocket),
+            headers=dict(websocket.headers),
+            registry=get_disconnect_registry(),
+        )
+        await realtime.serve_session(websocket, gateway)
+
+    def _serving_handle(self, model_name: str) -> DeploymentHandle | None:
+        """*model_name*'s handle, None while nothing serves it."""
+        handles = self.models.get(model_name)
+        return next(reversed(handles.values())) if handles else None
 
     @app.post("/v1/chat/completions")
     async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):

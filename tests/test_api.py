@@ -830,10 +830,17 @@ class TestPipelines:
     async def test_the_realtime_socket_runs_a_session_over_the_gateway_tables(self, api):
         self._snapshot(api)
         websocket = MagicMock()
+        websocket.headers = {"x-device": "kitchen"}
         with (
             patch("modelship.openai.api.realtime.serve_session") as serve_session,
-            patch.object(api, "_set_identity") as set_identity,
+            patch.object(api, "_set_identity", return_value="caller") as set_identity,
+            patch.dict(_ModelshipAPI.realtime_ws.__globals__, {"get_disconnect_registry": lambda: "registry"}),
         ):
             await api.realtime_ws(websocket)
         set_identity.assert_called_once_with(websocket)
-        serve_session.assert_awaited_once_with(websocket, api.pipelines, ["qwen"], {"qwen"})
+        (sent, gateway), _ = serve_session.await_args
+        assert sent is websocket
+        assert (gateway.pipelines, gateway.known, gateway.serving) == (api.pipelines, ["qwen"], {"qwen"})
+        assert (gateway.identity, gateway.headers, gateway.registry) == ("caller", {"x-device": "kitchen"}, "registry")
+        assert gateway.handle("qwen") is next(reversed(api.models["qwen"].values()))
+        assert gateway.handle("nope") is None
