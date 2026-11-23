@@ -194,7 +194,7 @@ A request that fails or is cancelled after step 2 gets its scale-downs undone to
 
 ## Pipelines (experimental)
 
-> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a text conversation that the pipeline's `llm` answers. Audio in and out, and tools, arrive in later releases; until then their events are answered with an `unsupported_event` error.
+> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a text conversation that the pipeline's `llm` answers, calling the client's functions. Audio in and out arrive in later releases; until then their events are answered with an `unsupported_event` error.
 
 A pipeline runs an OpenAI Realtime session over models the gateway already serves: speech to text, a chat model, and text to speech. Clients pick one with `/v1/realtime?model=<name>`. Pipelines sit beside `models:` in the same file:
 
@@ -228,6 +228,7 @@ A session on a pipeline with an `llm`:
 - Keeps its conversation in the memory of the gateway replica it runs on. The conversation ends when the socket closes, and nothing of it is stored. A client adds, reads and deletes items with `conversation.item.create`, `conversation.item.retrieve` and `conversation.item.delete`; an item is a text message from the user, the assistant or the system.
 - Answers a `response.create` with the LLM, given the conversation, the session's `instructions`, `max_output_tokens` and `reasoning`. A `response.create` can set each of these for its own answer, give its own `input` items instead of the conversation (an `item_reference` names an item of the conversation), and keep its answer out of the conversation with `conversation: "none"`.
 - Runs one response at a time; `response.cancel` stops it, and what it said so far stays in the conversation.
+- Calls the client's functions: `tools` (function tools only), `tool_choice` and `parallel_tool_calls`, set with `session.update` or for one response with `response.create`, reach the LLM as they are. A call streams as `response.function_call_arguments.delta` events and stays in the conversation as a `function_call` item; the client runs the function, adds its result as a `function_call_output` item with the call's `call_id`, and sends `response.create` for the answer.
 - Streams the answer as `response.output_text.delta` events and ends it with `response.done`, which carries the token usage. The model's reasoning is neither sent nor kept.
 - Sends every response of the session to the same LLM replica while that replica isn't overloaded, so its prompt cache holds the conversation.
 

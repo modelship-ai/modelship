@@ -11,7 +11,9 @@ from starlette.websockets import WebSocketDisconnect
 from modelship.openai.protocol import (
     ChatCompletionResponseStreamChoice,
     ChatCompletionStreamResponse,
+    DeltaFunctionCall,
     DeltaMessage,
+    DeltaToolCall,
     PromptTokenUsageInfo,
     SttCapabilities,
     UsageInfo,
@@ -408,7 +410,9 @@ class TestConversation:
     @pytest.mark.parametrize(
         ("item", "code", "param"),
         [
-            ({"type": "function_call", "name": "f"}, "invalid_value", "item"),
+            ({"type": "function_call", "name": "f"}, "invalid_value", "item.arguments"),
+            ({"type": "function_call_output", "output": "on"}, "invalid_value", "item.call_id"),
+            ({"type": "mcp_call", "name": "f"}, "invalid_value", "item"),
             (
                 {"type": "message", "role": "user", "content": [{"type": "input_audio", "audio": ""}]},
                 "invalid_value",
@@ -691,6 +695,116 @@ class TestResponses:
             ws.send_json({"type": "response.create"})
             error = ws.receive_json()["error"]
         assert error == {**error, "code": "model_not_ready", "message": "Pipeline model 'qwen' isn't ready."}
+
+
+LIGHTS = {
+    "type": "function",
+    "name": "turn_on",
+    "description": "Turns a room's lights on.",
+    "parameters": {"type": "object", "properties": {"room": {"type": "string"}}},
+}
+
+
+def _tool_call(name: str, *arguments: str):
+    """A script: the Responses events a loader streams for one call of *name* with *arguments* in pieces."""
+
+    def script(request: ResponsesRequest) -> list:
+        translator = ResponsesStreamTranslator(request)
+        events = [*translator.start()]
+        first = DeltaToolCall(index=0, id="call_1", function=DeltaFunctionCall(name=name, arguments=""))
+        events += translator.process(_chunk(DeltaMessage(tool_calls=[first])))
+        for piece in arguments:
+            more = DeltaToolCall(index=0, function=DeltaFunctionCall(arguments=piece))
+            events += translator.process(_chunk(DeltaMessage(tool_calls=[more])))
+        events += translator.process(_chunk(finish_reason="tool_calls", usage=USAGE))
+        return events + list(translator.finish())
+
+    return script
+
+
+class TestTools:
+    def _session(self, llm: _Llm):
+        return _client(_route(ASSISTANT), llm=llm).websocket_connect("/v1/realtime?model=assistant")
+
+    def test_a_function_call_streams_its_arguments_and_joins_the_conversation(self):
+        llm = _Llm(_tool_call("turn_on", '{"room":', ' "kitchen"}'))
+        with self._session(llm) as ws:
+            _open(ws)
+            ws.send_json({"type": "session.update", "session": {"tools": [LIGHTS]}})
+            ws.receive_json()
+            _say(ws, "Kitchen lights on.")
+            ws.send_json({"type": "response.create"})
+            events = _until(ws, "response.done")
+        assert [event["type"] for event in events] == [
+            "response.created",
+            "response.output_item.added",
+            "conversation.item.added",
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.done",
+            "response.output_item.done",
+            "conversation.item.done",
+            "response.done",
+        ]
+        assert [event["delta"] for event in events[3:5]] == ['{"room":', ' "kitchen"}']
+        assert events[5] == {**events[5], "call_id": "call_1", "arguments": '{"room": "kitchen"}'}
+        (call,) = events[-1]["response"]["output"]
+        assert call == {
+            **call,
+            "type": "function_call",
+            "status": "completed",
+            "call_id": "call_1",
+            "name": "turn_on",
+            "arguments": '{"room": "kitchen"}',
+        }
+        (request,) = llm.requests
+        assert request.tools == [LIGHTS]
+
+    def test_the_function_output_goes_back_to_the_model_with_its_call(self):
+        llm = _Llm(_tool_call("turn_on", '{"room": "kitchen"}'), _answer("Done."))
+        with self._session(llm) as ws:
+            _open(ws)
+            ws.send_json({"type": "session.update", "session": {"tools": [LIGHTS]}})
+            ws.receive_json()
+            _say(ws, "Kitchen lights on.")
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.done")
+            output = {"type": "function_call_output", "call_id": "call_1", "output": '{"ok": true}'}
+            ws.send_json({"type": "conversation.item.create", "item": output})
+            added = ws.receive_json()
+            ws.receive_json()
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.done")
+        assert added["item"] == {**added["item"], "object": "realtime.item", **output}
+        assert llm.requests[1].input[1:] == [
+            {"type": "function_call", "call_id": "call_1", "name": "turn_on", "arguments": '{"room": "kitchen"}'},
+            output,
+        ]
+
+    def test_a_response_takes_its_own_tools_over_the_sessions(self):
+        llm = _Llm(_answer("A."), _answer("B."))
+        with self._session(llm) as ws:
+            _open(ws)
+            session = {"tools": [LIGHTS], "tool_choice": "required", "parallel_tool_calls": False}
+            ws.send_json({"type": "session.update", "session": session})
+            updated = ws.receive_json()["session"]
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.done")
+            named = {"type": "function", "name": "turn_on"}
+            ws.send_json({"type": "response.create", "response": {"tools": [], "tool_choice": named}})
+            _until(ws, "response.done")
+        assert (updated["tools"], updated["tool_choice"]) == ([LIGHTS], "required")
+        first, second = llm.requests
+        assert (first.tools, first.tool_choice, first.parallel_tool_calls) == ([LIGHTS], "required", False)
+        assert (second.tools, second.tool_choice) == (None, named)
+
+    def test_only_function_tools_are_taken(self):
+        mcp = {"type": "mcp", "server_label": "home", "server_url": "http://ha.local/mcp"}
+        with self._session(_Llm()) as ws:
+            _open(ws)
+            ws.send_json({"type": "session.update", "session": {"tools": [mcp]}})
+            error = ws.receive_json()["error"]
+        assert (error["code"], error["param"]) == ("invalid_value", "session.tools[0].type")
 
 
 class TestActiveResponse:

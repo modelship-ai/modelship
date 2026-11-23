@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping
 from typing import Any
 
 from fastapi import WebSocket
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from starlette.websockets import WebSocketDisconnect
 
 from modelship.logging import get_logger
@@ -43,10 +43,20 @@ logger = get_logger("realtime")
 
 # RFC 6455 policy violation: the session can't open as asked
 _CLOSE_REFUSED = 1008
-_UPDATABLE = ("instructions", "output_modalities", "max_output_tokens", "reasoning")
+_UPDATABLE = (
+    "instructions",
+    "output_modalities",
+    "max_output_tokens",
+    "reasoning",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+)
 _REALTIME_ONLY = frozenset({"conversation.item.create", "response.create", "response.cancel"})
 # the union members pydantic names in a validation error's location
-_UNION_TAGS = frozenset({"user", "system", "assistant", "message", "item_reference"})
+_UNION_TAGS = frozenset(
+    {"user", "system", "assistant", "message", "function_call", "function_call_output", "item_reference"}
+)
 
 Handler = Callable[[Any], Awaitable[RealtimeError | None]]
 
@@ -329,12 +339,18 @@ class Session:
         assert llm is not None
         max_output_tokens = params.max_output_tokens or self.state.max_output_tokens or "inf"
         reasoning = params.reasoning or self.state.reasoning
+        tools = params.tools if params.tools is not None else self.state.tools
+        tool_choice = params.tool_choice if params.tool_choice is not None else self.state.tool_choice
+        parallel = params.parallel_tool_calls
         request = ResponsesRequest(
             model=llm,
             input=as_input(items),
             instructions=params.instructions if params.instructions is not None else self.state.instructions,
             max_output_tokens=None if max_output_tokens == "inf" else max_output_tokens,
             reasoning={"effort": reasoning.effort} if reasoning is not None and reasoning.effort else None,
+            tools=[tool.model_dump(exclude_none=True) for tool in tools] if tools else None,
+            tool_choice=tool_choice.model_dump() if isinstance(tool_choice, BaseModel) else tool_choice,
+            parallel_tool_calls=parallel if parallel is not None else self.state.parallel_tool_calls,
             stream=True,
             store=False,
         )
