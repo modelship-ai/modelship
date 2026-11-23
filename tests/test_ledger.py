@@ -4,9 +4,18 @@ import pytest
 from ray.serve.schema import ApplicationStatus
 
 from modelship.deploy.config import load_raw_models
-from modelship.deploy.ledger import Version, commit_version, merge, read_versions, to_config
+from modelship.deploy.ledger import (
+    Version,
+    commit_version,
+    merge,
+    merge_pipelines,
+    pipeline_apps,
+    read_versions,
+    to_config,
+)
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
+from modelship.utils.config_schema import PipelineConfig
 
 # The plain class behind @ray.remote — a real store with no cluster, the same
 # pattern test_state.py uses.
@@ -191,3 +200,34 @@ class TestLoadRawModels:
     def test_missing_file_names_the_flag(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="--config"):
             load_raw_models(str(tmp_path / "missing.yaml"))
+
+
+VOICE = {"name": "voice", "stt": "a"}
+CHAT = {"name": "chat", "llm": "a"}
+
+
+class TestPipelines:
+    def test_a_version_keeps_its_pipelines_and_the_previous_ones(self):
+        store = _MemoryStore()
+        commit_version(store, "g", [_model("a")], [VOICE])
+        commit_version(store, "g", [_model("a")], [CHAT])
+        committed, previous = read_versions(store, "g")
+        assert committed == Version(2, [_model("a")], [CHAT])
+        assert previous == Version(1, [_model("a")], [VOICE])
+
+    def test_a_version_stored_without_pipelines_has_none(self):
+        store = _MemoryStore()
+        store.set("effective/g", {"version": 3, "models": [_model("a")]})
+        assert read_versions(store, "g")[0] == Version(3, [_model("a")], [])
+
+    def test_additive_replaces_by_name_and_keeps_the_rest(self):
+        changed = {**VOICE, "llm": "a"}
+        assert merge_pipelines([VOICE, CHAT], [changed], "additive") == [CHAT, changed]
+
+    def test_reconcile_replaces_the_set(self):
+        assert merge_pipelines([VOICE, CHAT], [CHAT], "reconcile") == [CHAT]
+
+    def test_only_a_pipeline_with_stt_has_an_app(self):
+        apps = pipeline_apps([VOICE, CHAT], "g")
+        assert apps["chat"] is None
+        assert apps["voice"] == PipelineConfig.model_validate(VOICE).deployment_name("g")

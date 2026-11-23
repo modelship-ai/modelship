@@ -9,7 +9,13 @@ from pydantic import BaseModel, ValidationError
 from modelship import launcher
 from modelship.deploy.config import parse_raw_models, parse_raw_pipelines, resolve_input_pipelines, validate_models
 from modelship.utils.cli import parse_args
-from modelship.utils.config_schema import ModelshipConfig, PipelineConfig
+from modelship.utils.config_schema import (
+    ModelshipConfig,
+    PipelineConfig,
+    parse_deployment_name,
+    parse_gateway_app_name,
+    parse_pipeline_app_name,
+)
 from modelship.utils.model_flags import GENERATED_PIPELINE_ARGS, _block_model
 
 _QWEN = {"name": "qwen", "model": "org/qwen", "usecase": "generate", "loader": "vllm"}
@@ -178,23 +184,30 @@ class TestConfigFile:
         assert [p.name for p in config.pipelines] == ["assistant"]
 
 
-class TestNotDeployableYet:
-    def test_a_cli_pipeline_is_refused_before_ray(self, capsys):
-        with pytest.raises(SystemExit) as exc:
-            launcher._validate_config(_args("deploy", "--pipeline", "assistant", "--pipeline.llm", "qwen"))
-        assert exc.value.code == 1
-        assert "pipelines can't be deployed yet (assistant)" in capsys.readouterr().err
+class TestLauncherValidation:
+    def test_a_cli_pipeline_alone_validates_and_asks_for_no_models(self):
+        assert launcher._validate_config(_args("deploy", "--pipeline", "assistant", "--pipeline.llm", "qwen")) is None
 
-    def test_a_file_pipeline_is_refused_before_ray(self, tmp_path, capsys):
+    def test_a_file_pipeline_validates_with_its_models(self, tmp_path):
         config = tmp_path / "models.yaml"
         config.write_text(
             "models:\n  - {name: qwen, model: org/qwen, usecase: generate, loader: vllm}\n"
             "pipelines:\n  - {name: assistant, llm: qwen}\n"
         )
+        validated = launcher._validate_config(_args("start", "--config", str(config)))
+        assert validated is not None
+        assert [p.name for p in validated.pipelines] == ["assistant"]
+
+    def test_a_pipeline_named_like_a_model_is_refused(self, tmp_path, capsys):
+        config = tmp_path / "models.yaml"
+        config.write_text(
+            "models:\n  - {name: qwen, model: org/qwen, usecase: generate, loader: vllm}\n"
+            "pipelines:\n  - {name: qwen, llm: qwen}\n"
+        )
         with pytest.raises(SystemExit) as exc:
             launcher._validate_config(_args("start", "--config", str(config)))
         assert exc.value.code == 1
-        assert "pipelines can't be deployed yet" in capsys.readouterr().err
+        assert "pipeline 'qwen' has the name of a model" in capsys.readouterr().err
 
     def test_an_invalid_cli_pipeline_names_its_flag(self, capsys):
         with pytest.raises(SystemExit):
@@ -211,3 +224,25 @@ class TestNotDeployableYet:
         )
         assert config is not None
         assert [m.name for m in config.models] == ["qwen"]
+
+
+class TestAudioAppName:
+    def test_it_reads_back_as_a_pipeline_and_never_as_a_model(self):
+        name = PipelineConfig(name="voice", stt="whisper").deployment_name("modelship")
+        assert name.startswith("modelship.voice-p")
+        assert parse_pipeline_app_name(name) == ("modelship", "voice")
+        assert parse_deployment_name(name) is None
+        assert parse_gateway_app_name(name) == ("modelship", "voice")
+
+    def test_a_model_app_never_reads_as_a_pipeline(self):
+        assert parse_pipeline_app_name("modelship.qwen-p-3f9a0c12de") is None
+        assert parse_pipeline_app_name("modelship.qwen-3f9a0c12de") is None
+
+    def test_settings_outside_the_audio_app_keep_its_name(self):
+        base = PipelineConfig(name="voice", stt="whisper")
+        changed = PipelineConfig(name="voice", stt="other", llm="qwen", num_replicas=3)
+        assert base.deployment_name("g") == changed.deployment_name("g")
+
+    def test_only_a_pipeline_with_stt_has_an_audio_app(self):
+        assert PipelineConfig(name="voice", stt="whisper").has_audio_app()
+        assert not PipelineConfig(name="chat", llm="qwen").has_audio_app()

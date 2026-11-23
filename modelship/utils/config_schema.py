@@ -23,6 +23,10 @@ FINGERPRINT_LEN = 10
 
 # `{gateway}.{model}-{fingerprint}`; gateway names never contain '.'.
 _DEPLOYMENT_NAME_RE = re.compile(rf"([^.]+)\.(.+)-[0-9a-f]{{{FINGERPRINT_LEN}}}")
+# `{gateway}.{pipeline}-p{fingerprint}`, a pipeline's audio app; the `p` means neither pattern matches the other's names.
+_PIPELINE_APP_NAME_RE = re.compile(rf"([^.]+)\.(.+)-p[0-9a-f]{{{FINGERPRINT_LEN}}}")
+# The pipeline fields its audio app is built from.
+_PIPELINE_APP_FIELDS: set[str] = set()
 
 # Excluded from the fingerprint: `name` is already in the deployment name, and the
 # replica-count fields are applied to the app while it runs.
@@ -491,6 +495,17 @@ def parse_deployment_name(app_name: str) -> tuple[str, str] | None:
     return (match[1], match[2]) if match else None
 
 
+def parse_pipeline_app_name(app_name: str) -> tuple[str, str] | None:
+    """(gateway, pipeline name) of an app named by `PipelineConfig.deployment_name`, else None."""
+    match = _PIPELINE_APP_NAME_RE.fullmatch(app_name)
+    return (match[1], match[2]) if match else None
+
+
+def parse_gateway_app_name(app_name: str) -> tuple[str, str] | None:
+    """(gateway, model or pipeline name) of a model app or a pipeline's audio app, else None."""
+    return parse_deployment_name(app_name) or parse_pipeline_app_name(app_name)
+
+
 def resolve_gpu_memory_utilization(config: ModelshipModelConfig, recommended: float | None = None) -> float:
     """The VRAM fraction vLLM may claim (host RAM on a CPU deploy). Precedence: a
     fractional num_gpus, the share Ray reserved, then preflight, then the default."""
@@ -540,6 +555,21 @@ class PipelineConfig(_StrictModel):
             raise ValueError(f"pipeline {self.name!r} names no stt and no llm model: set at least one.")
         return self
 
+    def has_audio_app(self) -> bool:
+        """Whether the pipeline takes audio, and so runs an audio app."""
+        return self.stt is not None
+
+    def fingerprint(self) -> str:
+        payload = self.model_dump_json(include=_PIPELINE_APP_FIELDS)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:FINGERPRINT_LEN]
+
+    def deployment_name(self, gateway_name: str) -> str:
+        """Its audio app's name."""
+        return f"{gateway_name}.{self.name}-p{self.fingerprint()}"
+
+    def scaling(self) -> dict:
+        return {"num_replicas": self.num_replicas}
+
 
 class ModelshipConfig(_StrictModel):
     models: list[ModelshipModelConfig]
@@ -550,6 +580,14 @@ class ModelshipConfig(_StrictModel):
         names = [pipeline.name for pipeline in self.pipelines]
         if duplicates := sorted({name for name in names if names.count(name) > 1}):
             raise ValueError(f"duplicate pipeline name {duplicates[0]!r}: a pipeline name maps to one pipeline.")
+        return self
+
+    @model_validator(mode="after")
+    def check_pipeline_names_differ_from_models(self):
+        # /v1/models and a request's `model` share one namespace
+        models = {cfg.name for cfg in self.models}
+        if clashes := sorted(pipeline.name for pipeline in self.pipelines if pipeline.name in models):
+            raise ValueError(f"pipeline {clashes[0]!r} has the name of a model: give one of them another name.")
         return self
 
     @model_validator(mode="after")

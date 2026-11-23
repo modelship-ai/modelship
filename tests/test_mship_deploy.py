@@ -472,7 +472,7 @@ class TestDriverVerbs:
             "state": "succeeded",
             "reason": "",
             "models": {"a": "up"},
-            "diff": ["4. add a", "6. switch the gateway and commit"],
+            "diff": ["4. add a", "7. switch the gateway and commit"],
             "version": 1,
         }
         receipt = {"id": "r1", "behind": None, "outcome": "outcome-ref"}
@@ -593,7 +593,7 @@ class TestDriverVerbs:
         assert caplog.messages[-5:] == [
             "Deploy r1's diff:",
             "  4. add a",
-            "  6. switch the gateway and commit",
+            "  7. switch the gateway and commit",
             "  a: up",
             "Deploy r1 succeeded; the gateway is on version 1.",
         ]
@@ -685,6 +685,27 @@ class TestSend:
         send.run(["--config", str(config)], command="start")
         (request,) = send.submitted
         assert (request.mode, request.strategy, request.models) == ("reconcile", "blue_green", [])
+
+    def test_pipelines_alone_are_sent_with_no_models(self, send):
+        send.run(["--pipeline", "assistant", "--pipeline.llm", "qwen"])
+        (request,) = send.submitted
+        assert (request.mode, request.models) == ("additive", [])
+        assert request.pipelines == [{"name": "assistant", "llm": "qwen"}]
+
+    def test_pipelines_alone_given_to_start_are_a_reconcile_not_a_bare_request(self, send):
+        send.run(["--pipeline", "assistant", "--pipeline.llm", "qwen"], command="start")
+        (request,) = send.submitted
+        assert (request.mode, request.models, request.pipelines) == (
+            "reconcile",
+            [],
+            [{"name": "assistant", "llm": "qwen"}],
+        )
+
+    def test_a_configs_pipelines_ride_the_request(self, send, tmp_path):
+        config = tmp_path / "models.yaml"
+        config.write_text("models: []\npipelines:\n  - {name: assistant, llm: qwen}\n")
+        send.run(["--config", str(config)])
+        assert send.submitted[0].pipelines == [{"name": "assistant", "llm": "qwen"}]
 
     @pytest.mark.parametrize(("command", "argv"), [("deploy", ["--reconcile"]), ("deploy", []), ("start", [])])
     def test_no_models_sends_a_bare_request(self, send, command, argv):

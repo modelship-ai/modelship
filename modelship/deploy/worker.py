@@ -18,11 +18,12 @@ from modelship.deploy.actor_options import build_cache_env_vars, build_deploymen
 from modelship.deploy.config import resolve_all_model_sources
 from modelship.deploy.diff import Diff, Rescale
 from modelship.deploy.ledger import DeployRequest, to_config
-from modelship.deploy.strategy import live_app, rescale_app, submit_app
+from modelship.deploy.strategy import live_app, rescale_app, submit_app, submit_pipeline_app
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.logging import configure_logging, get_logger, serve_logging_config
 from modelship.state import state_store_env_var
 from modelship.utils import head_node_options
+from modelship.utils.config_schema import PipelineConfig
 from modelship.utils.runtime_env import cluster_env_vars
 
 logger = get_logger("deploy")
@@ -40,8 +41,14 @@ _STARTS_AS = {
     "replace": "coming up",
     "redeploy": "coming up",
     "rescale": "rescaling",
+    "update": "updated",
     "keep": "unchanged",
 }
+
+
+def _result_key(name: str, pipeline: bool) -> str:
+    """A model's or a pipeline's key in a request's results."""
+    return f"pipeline {name}" if pipeline else name
 
 
 class RequestFailedError(Exception):
@@ -112,14 +119,18 @@ class DeployLedger:
     def rollback_diff(self, gateway_name: str) -> Diff | None:
         return self._call("rollback_diff", gateway_name)
 
-    def switch(self, request_id: str, gateway_name: str, models: list[dict]) -> int:
-        return self._call("switch", request_id, gateway_name, models)
+    def switch(
+        self, request_id: str, gateway_name: str, models: list[dict], pipelines: list[dict] | None = None
+    ) -> int:
+        return self._call("switch", request_id, gateway_name, models, pipelines)
 
     def reset_routing(self, gateway_name: str) -> int:
         return self._call("reset_routing", gateway_name)
 
-    def commit(self, request_id: str, gateway_name: str, models: list[dict]) -> int | None:
-        return self._call("commit", request_id, gateway_name, models)
+    def commit(
+        self, request_id: str, gateway_name: str, models: list[dict], pipelines: list[dict] | None = None
+    ) -> int | None:
+        return self._call("commit", request_id, gateway_name, models, pipelines)
 
 
 class GatewayReplicas:
@@ -164,7 +175,7 @@ def roll_back(
     if diff.leftovers:
         logger.info("Rolling back gateway %s: deleting %s", gateway_name, ", ".join(diff.leftovers))
     delete_apps(diff.leftovers, read_until_readable)
-    restore_scaling(gateway_name, diff.scale_downs + diff.scale_ups)
+    restore_scaling(gateway_name, diff.scale_downs + diff.scale_ups + diff.pipeline_rescales)
     return diff.leftovers
 
 
@@ -191,7 +202,7 @@ def restore_scaling(gateway_name: str, rescales: list[Rescale]) -> None:
 
 @dataclass
 class _Add:
-    config: ModelshipModelConfig
+    config: ModelshipModelConfig | PipelineConfig
     failures: int = 0
     last_error: str = ""
     # set while waiting out the backoff before being submitted again
@@ -251,6 +262,9 @@ class Run:
         for model, action in diff.actions.items():
             if action != "remove":
                 self._results[model] = _STARTS_AS[action]
+        for pipeline, action in diff.pipeline_actions.items():
+            if action != "remove":
+                self._results[_result_key(pipeline, True)] = _STARTS_AS[action]
         self._log(diff)
 
         if diff.deploys:
@@ -264,12 +278,21 @@ class Run:
             delete_apps(diff.retired, self._read)
         self._bring_up(diff.deploys)
         self._rescale(diff.scale_ups)
+        self._bring_up(diff.pipeline_deploys)
+        self._rescale(diff.pipeline_rescales)
         if diff.commits:
             assert diff.models is not None
-            self._switch_and_commit(diff.models)
+            self._switch_and_commit(diff.models, diff.pipelines)
         for model, action in diff.actions.items():
             if action == "remove":
                 self._results[model] = "removed"
+        for pipeline, action in diff.pipeline_actions.items():
+            key = _result_key(pipeline, True)
+            if action == "remove":
+                self._results[key] = "removed"
+            # a pipeline without an audio app is up once the gateway routes by it
+            elif self._results.get(key) == "coming up":
+                self._results[key] = "up"
         return diff
 
     def _diff(self) -> Diff:
@@ -308,7 +331,7 @@ class Run:
                 cluster_gpus,
             )
 
-    def _bring_up(self, adds: list[ModelshipModelConfig]) -> None:
+    def _bring_up(self, adds: list[ModelshipModelConfig] | list[PipelineConfig]) -> None:
         """Submits *adds* and polls until every one is RUNNING, retrying a failed deploy."""
         gateway = self._request.gateway
         pending = {c.deployment_name(gateway): _Add(c) for c in adds}
@@ -333,19 +356,21 @@ class Run:
             statuses = read
             crashing = self._ledger.crash_looping(list(pending))
             for name, item in list(pending.items()):
+                pipeline = isinstance(item.config, PipelineConfig)
                 if name in crashing:
-                    self._fail(item.config.name, f"its backend keeps dying: {crashing[name]}")
+                    self._fail(item.config.name, f"its backend keeps dying: {crashing[name]}", pipeline)
                 if item.retry_at is not None:
                     continue
                 app = statuses.get(name)
                 if app is None or app.status == ApplicationStatus.DELETING:
                     if item.seen:
-                        self._fail(item.config.name, f"deployment {name} was deleted")
+                        self._fail(item.config.name, f"deployment {name} was deleted", pipeline)
                     continue
                 item.seen = True
                 if app.status == ApplicationStatus.RUNNING:
-                    logger.info("Model ready: %s (deployment: %s)", item.config.name, name)
-                    self._results[item.config.name] = "up"
+                    kind = "Pipeline" if pipeline else "Model"
+                    logger.info("%s ready: %s (deployment: %s)", kind, item.config.name, name)
+                    self._results[_result_key(item.config.name, pipeline)] = "up"
                     del pending[name]
                 # UNHEALTHY follows RUNNING while Serve replaces a replica, so it stays pending
                 elif app.status == ApplicationStatus.DEPLOY_FAILED:
@@ -367,9 +392,9 @@ class Run:
                 if live is not None:
                     rescale_app(name, live, rescale.scaling, serve_logging_config())
             except Exception as e:
-                self._fail(rescale.model, f"{type(e).__name__}: {e}")
+                self._fail(rescale.model, f"{type(e).__name__}: {e}", rescale.pipeline)
             if live is None:
-                self._fail(rescale.model, f"deployment {name} was deleted")
+                self._fail(rescale.model, f"deployment {name} was deleted", rescale.pipeline)
 
         polls = 0
         while pending:
@@ -380,18 +405,20 @@ class Run:
             crashing = self._ledger.crash_looping(list(pending))
             for name, rescale in list(pending.items()):
                 if name in crashing:
-                    self._fail(rescale.model, f"its backend keeps dying: {crashing[name]}")
+                    self._fail(rescale.model, f"its backend keeps dying: {crashing[name]}", rescale.pipeline)
                 # Serve retries a new replica without limit and never reports DEPLOY_FAILED
                 if (fatal := self._ledger.pop_fatal_error(name)) is not None:
-                    self._fail(rescale.model, fatal)
+                    self._fail(rescale.model, fatal, rescale.pipeline)
                 app = statuses.get(name)
                 if app is None or app.status == ApplicationStatus.DELETING:
-                    self._fail(rescale.model, f"deployment {name} was deleted")
+                    self._fail(rescale.model, f"deployment {name} was deleted", rescale.pipeline)
                 if app.status == ApplicationStatus.RUNNING:
-                    logger.info("Model rescaled: %s (deployment: %s)", rescale.model, name)
+                    kind = "Pipeline" if rescale.pipeline else "Model"
+                    logger.info("%s rescaled: %s (deployment: %s)", kind, rescale.model, name)
                     # a replaced app's rescale leaves its model coming up
-                    if self._results.get(rescale.model) == "rescaling":
-                        self._results[rescale.model] = "rescaled"
+                    key = _result_key(rescale.model, rescale.pipeline)
+                    if self._results.get(key) == "rescaling":
+                        self._results[key] = "rescaled"
                     del pending[name]
             if pending and (polls == 1 or polls % _PENDING_LOG_EVERY_N_POLLS == 0):
                 _log_pending({name: rescale.model for name, rescale in pending.items()}, statuses)
@@ -399,35 +426,39 @@ class Run:
     def _submit(self, name: str, item: _Add) -> None:
         request = self._request
         try:
-            submit_app(item.config, request.gateway, serve_logging_config(), request.env)
+            if isinstance(item.config, PipelineConfig):
+                submit_pipeline_app(item.config, request.gateway, serve_logging_config(), request.env)
+            else:
+                submit_app(item.config, request.gateway, serve_logging_config(), request.env)
         except Exception as e:
             self._failed_attempt(name, item, f"{type(e).__name__}: {e}")
 
     def _failed_attempt(self, name: str, item: _Add, message: str) -> None:
         """Schedules a resubmit after a backoff, or fails the request on a fatal error or the last attempt."""
+        pipeline = isinstance(item.config, PipelineConfig)
         fatal = self._ledger.pop_fatal_error(name)
         if fatal is not None:
-            self._fail(item.config.name, fatal)
+            self._fail(item.config.name, fatal, pipeline)
         item.failures += 1
         item.last_error = message
         if item.failures >= _MAX_TRANSIENT_FAILURES:
-            self._fail(item.config.name, f"{item.failures} failed attempts; last: {message}")
+            self._fail(item.config.name, f"{item.failures} failed attempts; last: {message}", pipeline)
         logger.warning("Deploy failed for %s (deployment=%s); will retry: %s", item.config.name, name, message)
         item.retry_at = time.monotonic() + _RETRY_SLEEP_S * 2**item.failures
 
-    def _fail(self, model: str, reason: str) -> NoReturn:
-        self._results[model] = f"failed: {reason}"
-        raise RequestFailedError(f"model {model!r}: {reason}")
+    def _fail(self, name: str, reason: str, pipeline: bool = False) -> NoReturn:
+        self._results[_result_key(name, pipeline)] = f"failed: {reason}"
+        raise RequestFailedError(f"{'pipeline' if pipeline else 'model'} {name!r}: {reason}")
 
-    def _switch_and_commit(self, proposed: list[dict]) -> None:
+    def _switch_and_commit(self, proposed: list[dict], pipelines: list[dict]) -> None:
         request = self._request
-        routing = self._ledger.switch(request.id, request.gateway, proposed)
+        routing = self._ledger.switch(request.id, request.gateway, proposed, pipelines)
         self._switching = True
         if not self._replicas.wait_switched(request.gateway, routing, self._switch_timeout):
             raise RequestFailedError(
                 f"gateway {request.gateway!r} did not switch to the new models within {self._switch_timeout:.0f} s"
             )
-        version = self._ledger.commit(request.id, request.gateway, proposed)
+        version = self._ledger.commit(request.id, request.gateway, proposed, pipelines)
         if version is None:
             raise RequestCancelledError()
         self._switching = False
