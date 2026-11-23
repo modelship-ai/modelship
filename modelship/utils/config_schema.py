@@ -585,7 +585,7 @@ class ModelshipConfig(_StrictModel):
     @model_validator(mode="after")
     def check_pipeline_names_differ_from_models(self):
         # /v1/models lists both
-        models ={cfg.name for cfg in self.models}
+        models = {cfg.name for cfg in self.models}
         if clashes := sorted(pipeline.name for pipeline in self.pipelines if pipeline.name in models):
             raise ValueError(f"pipeline {clashes[0]!r} has the name of a model: give one of them another name.")
         return self
