@@ -23,6 +23,7 @@ from modelship.deploy.ledger import DeployRequest, to_config
 from modelship.deploy.strategy import LiveApp, ServeApp, rescale_app, serve_apps, serve_scaling, submit_app
 from modelship.deploy.worker import DeployLedger, Run, roll_back
 from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.utils.config_schema import PipelineConfig
 from modelship.utils.sources import LocalSource
 
 
@@ -98,8 +99,11 @@ class _Serve:
         self.apps[name] = DEPLOYING
 
     def read(self) -> dict[str, ServeApp]:
+        def scaling(config):
+            return config.scaling() if isinstance(config, PipelineConfig) else serve_scaling(config)
+
         return {
-            name: ServeApp(app.status, serve_scaling(self.configs[name]) if name in self.configs else None)
+            name: ServeApp(app.status, scaling(self.configs[name]) if name in self.configs else None)
             for name, app in self.status().applications.items()
         }
 
@@ -123,6 +127,7 @@ class _Ledger:
         # the commit's store write lands, then the call raises
         self.commit_error: Exception | None = None
         self.committed: list[dict] | None = None
+        self.committed_pipelines: list[dict] = []
         self.crashing: dict[str, str] = {}
         self.fatal: dict[str, str] = {}
         self.routing = 0
@@ -140,7 +145,7 @@ class _Ledger:
 
     def _diff(self, request):
         try:
-            return build_diff(request, self.committed, self.serve.read())
+            return build_diff(request, self.committed, self.serve.read(), self.committed_pipelines)
         except RuntimeError:
             return None
 
@@ -156,7 +161,7 @@ class _Ledger:
     def forget_deaths(self, apps):
         pass
 
-    def switch(self, request_id, gateway_name, models):
+    def switch(self, request_id, gateway_name, models, pipelines=None):
         self.routing += 1
         self.serve.events.append(("switch", str(self.routing)))
         return self.routing
@@ -165,10 +170,11 @@ class _Ledger:
         self.serve.events.append(("reset", str(self.routing)))
         return self.routing
 
-    def commit(self, request_id, gateway_name, models):
+    def commit(self, request_id, gateway_name, models, pipelines=None):
         if self.cancel_on_commit:
             return None
         self.committed = models
+        self.committed_pipelines = pipelines or []
         if self.commit_error is not None:
             raise self.commit_error
         self.commits.append(models)
@@ -206,6 +212,7 @@ def cluster(monkeypatch):
     monkeypatch.setattr(worker.serve, "status", serve.status)
     monkeypatch.setattr(worker.serve, "delete", serve.delete)
     monkeypatch.setattr(worker, "submit_app", serve.submit)
+    monkeypatch.setattr(worker, "submit_pipeline_app", serve.submit)
     monkeypatch.setattr(worker, "live_app", serve.live)
     monkeypatch.setattr(worker, "rescale_app", serve.rescale)
     monkeypatch.setattr(worker.time, "sleep", clock.sleep)
@@ -216,9 +223,12 @@ def cluster(monkeypatch):
     return SimpleNamespace(serve=serve, ledger=_Ledger(serve), replicas=_Replicas(), clock=clock)
 
 
-def _run(cluster, models, committed=None, mode="additive", strategy="blue_green") -> dict:
-    request = DeployRequest("gw", mode, strategy, models, {}, id="r1")
+def _run(
+    cluster, models, committed=None, mode="additive", strategy="blue_green", pipelines=None, committed_pipelines=()
+) -> dict:
+    request = DeployRequest("gw", mode, strategy, models, {}, pipelines=pipelines, id="r1")
     cluster.ledger.committed = committed
+    cluster.ledger.committed_pipelines = list(committed_pipelines)
     cluster.ledger.request = request
     return Run(request, cluster.ledger, cluster.replicas, 60.0).execute()
 
@@ -241,7 +251,7 @@ class TestSucceeds:
             "state": "succeeded",
             "reason": "",
             "models": {"a": "up"},
-            "diff": ["4. add a", "6. switch the gateway and commit"],
+            "diff": ["4. add a", "7. switch the gateway and commit"],
             "version": 1,
             "actions": {"add": 1},
         }
@@ -279,7 +289,7 @@ class TestSucceeds:
         _existing(cluster, C)
         outcome = _run(cluster, [C2], committed=[C])
         assert outcome["models"] == {"c": "rescaled"}
-        assert outcome["diff"] == ["5. rescale c: num_replicas: 1 -> 2", "6. switch the gateway and commit"]
+        assert outcome["diff"] == ["5. rescale c: num_replicas: 1 -> 2", "7. switch the gateway and commit"]
         assert cluster.serve.events == [("rescale", _app_name(C)), ("switch", "1"), ("commit", "1")]
         assert cluster.ledger.commits == [[C2]]
         assert cluster.serve.configs[_app_name(C)].num_replicas == 2
@@ -671,3 +681,64 @@ class TestRescaleApp:
         assert "version" in inspect.signature(DeploymentInfo.__init__).parameters
         assert isinstance(inspect.getattr_static(ReplicaConfig, "init_args"), property)
         assert "ray_actor_options" in inspect.signature(ReplicaConfig.__init__).parameters
+
+
+VOICE = {"name": "voice", "stt": "a"}
+CHAT = {"name": "chat", "llm": "a"}
+
+
+def _pipeline_app(raw: dict, gateway: str = "gw") -> str:
+    return PipelineConfig.model_validate(raw).deployment_name(gateway)
+
+
+class TestPipelines:
+    def test_a_pipeline_app_comes_up_after_the_models_then_the_gateway_switches(self, cluster):
+        outcome = _run(cluster, [A], pipelines=[VOICE])
+        assert outcome["state"] == "succeeded"
+        assert cluster.serve.events == [
+            ("submit", _app_name(A)),
+            ("submit", _pipeline_app(VOICE)),
+            ("switch", "1"),
+            ("commit", "1"),
+        ]
+        assert outcome["models"] == {"a": "up", "pipeline voice": "up"}
+        assert cluster.ledger.committed_pipelines == [VOICE]
+
+    def test_a_pipeline_without_audio_has_no_app_and_is_up_once_committed(self, cluster):
+        _existing(cluster, A)
+        outcome = _run(cluster, [], committed=[A], pipelines=[CHAT])
+        assert outcome["state"] == "succeeded"
+        assert ("submit", _pipeline_app(CHAT)) not in cluster.serve.events
+        assert outcome["models"] == {"pipeline chat": "up"}
+        assert cluster.ledger.committed == [A]
+        assert cluster.ledger.committed_pipelines == [CHAT]
+
+    def test_a_pipeline_app_that_fails_rolls_the_request_back(self, cluster):
+        cluster.serve.scripts["voice"] = [FAILED]
+        outcome = _run(cluster, [A], pipelines=[VOICE])
+        assert outcome["state"] == "failed"
+        assert outcome["reason"].startswith("pipeline 'voice': 3 failed attempts")
+        assert outcome["models"]["a"] == "rolled back"
+        assert _pipeline_app(VOICE) not in cluster.serve.apps
+        assert cluster.ledger.commits == []
+
+    def test_a_routing_only_change_submits_nothing(self, cluster):
+        _existing(cluster, A)
+        cluster.serve.apps[_pipeline_app(VOICE)] = RUNNING
+        cluster.serve.configs[_pipeline_app(VOICE)] = PipelineConfig.model_validate(VOICE)
+        changed = {**VOICE, "session_defaults": {"instructions": "Be brief."}}
+        outcome = _run(cluster, [], committed=[A], pipelines=[changed], committed_pipelines=[VOICE])
+        assert outcome["state"] == "succeeded"
+        assert [event for event in cluster.serve.events if event[0] == "submit"] == []
+        assert outcome["models"] == {"pipeline voice": "updated"}
+        assert cluster.ledger.committed_pipelines == [changed]
+
+    def test_a_reconcile_without_the_pipeline_deletes_its_app_after_the_commit(self, cluster):
+        _existing(cluster, A)
+        cluster.serve.apps[_pipeline_app(VOICE)] = RUNNING
+        cluster.serve.configs[_pipeline_app(VOICE)] = PipelineConfig.model_validate(VOICE)
+        outcome = _run(cluster, [A], committed=[A], mode="reconcile", committed_pipelines=[VOICE])
+        assert outcome["state"] == "succeeded"
+        assert cluster.serve.events[-1] == ("delete", _pipeline_app(VOICE))
+        assert outcome["models"]["pipeline voice"] == "removed"
+        assert cluster.ledger.committed_pipelines == []

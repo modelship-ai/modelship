@@ -269,12 +269,16 @@ def _send(args, gateway_name: str, coordinator, reconcile: bool) -> dict:
     import ray
 
     from modelship.deploy.actor_options import deploy_env_vars
-    from modelship.deploy.config import resolve_input_models
+    from modelship.deploy.config import resolve_input_models, resolve_input_pipelines
     from modelship.deploy.ledger import DeployRequest
 
     from_job = getattr(args, "config_from_job", False)
-    bare = args.config is None and args.models is None and not from_job and reconcile
+    named = args.config is not None or args.models is not None or getattr(args, "pipelines", None) is not None
+    bare = not named and not from_job and reconcile
     models = None if bare else resolve_input_models(args)
+    pipelines = None if bare else resolve_input_pipelines(args)
+    if models is None and pipelines is not None:
+        models = []
     if models is None:
         logger.info("No models given: redeploying gateway %r's committed models that are missing.", gateway_name)
     mode = "bare" if models is None else ("reconcile" if reconcile else "additive")
@@ -284,6 +288,7 @@ def _send(args, gateway_name: str, coordinator, reconcile: bool) -> dict:
         strategy=getattr(args, "replace_strategy", None) or "blue_green",
         models=models,
         env=deploy_env_vars(),
+        pipelines=pipelines,
     )
 
     receipt: dict = ray.get(coordinator.submit.remote(request))

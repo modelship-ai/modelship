@@ -31,6 +31,7 @@ from modelship.metrics import (
     RequestTracker,
     stamp_gateway,
 )
+from modelship.openai import realtime
 from modelship.openai.auth import resolve_identity
 from modelship.openai.mcp import loop as mcp_loop
 from modelship.openai.protocol import (
@@ -204,6 +205,8 @@ class ModelshipAPI:
         self.models: dict[str, dict[str, DeploymentHandle]] = {}
         self.model_list: list[OpenAiModelCard] = []
         self.expected_models: list[str] = []
+        # pipeline name -> {"config": raw pipeline, "app": its audio app or None, "ready": whether it can serve}
+        self.pipelines: dict[str, dict] = {}
         self._started_at = time.time()
         self._gateway_name = gateway_name
         # /v1/responses conversation state. Construction is inert (no Ray call, no
@@ -290,6 +293,7 @@ class ModelshipAPI:
         new_gen = snapshot.get("generation", self._gen)
         # before the routes, which raise when an app isn't resolvable yet
         self.expected_models = list(snapshot.get("expected", []))
+        self.pipelines = dict(snapshot.get("pipelines", {}))
         self._apply_routing(snapshot.get("models", {}))
         self._gen = new_gen
         self._routing_seq = snapshot.get("routing")
@@ -539,15 +543,30 @@ class ModelshipAPI:
     @app.get("/v1/models", response_model=OpenaiModelList)
     async def list_models(self):
         self._ensure_watching()
-        return OpenaiModelList(data=self.model_list)
+        return OpenaiModelList(data=self.model_list + self._pipeline_cards())
 
     @app.get("/v1/models/{model}", response_model=OpenAiModelCard)
     async def model_info(self, model: str) -> OpenAiModelCard:
         self._ensure_watching()
-        for card in self.model_list:
+        for card in self.model_list + self._pipeline_cards():
             if card.id == model:
                 return card
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
+
+    def _pipeline_cards(self) -> list[OpenAiModelCard]:
+        """A card for each pipeline whose audio app can serve; clients pass its name to /v1/realtime."""
+        return [
+            OpenAiModelCard(id=name, owned_by="modelship-pipeline")
+            for name, pipeline in sorted(self.pipelines.items())
+            if pipeline["ready"]
+        ]
+
+    @app.websocket("/v1/realtime")
+    async def realtime_ws(self, websocket: WebSocket):
+        """OpenAI Realtime over WebSocket, on a pipeline: `/v1/realtime?model=<pipeline>`. Experimental."""
+        self._ensure_watching()
+        self._set_identity(websocket)
+        await realtime.serve_session(websocket, self.pipelines, self.expected_models, set(self.models))
 
     @app.post("/v1/chat/completions")
     async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):

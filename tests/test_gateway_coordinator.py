@@ -579,3 +579,28 @@ def test_get_or_create_sets_max_restarts(monkeypatch):
     gateway_coordinator.get_or_create_gateway_coordinator()
     assert options["max_restarts"] == -1
     assert options["lifetime"] == "detached"
+
+
+class TestPipelines:
+    @pytest.mark.asyncio
+    async def test_get_routing_carries_the_pipelines_and_a_change_bumps_the_generation(self, cluster):
+        cluster.configure(NEW)
+        app = "gw.voice-p0123456789"
+        cluster.apps[app] = _app()
+        pipelines = {"voice": {"config": {"name": "voice", "stt": "m"}, "app": app}}
+        coord = _coordinator("gw")
+        await _pass(coord)
+        before = (await coord.get_routing("gw"))["generation"]
+        cluster.versions["gw"] = {**cluster.versions["gw"], "pipelines": pipelines}
+        await _pass(coord)
+        routing = await coord.get_routing("gw")
+        assert routing["pipelines"] == {"voice": {**pipelines["voice"], "ready": True}}
+        assert routing["generation"] > before
+
+    @pytest.mark.asyncio
+    async def test_a_gateway_found_only_through_a_pipeline_app_is_computed(self, cluster):
+        cluster.apps["gw.voice-p0123456789"] = _app()
+        cluster.configure()
+        coord = _coordinator()
+        await _pass(coord)
+        assert "gw" in coord._routing

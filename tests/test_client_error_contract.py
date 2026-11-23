@@ -215,7 +215,8 @@ def test_every_route_is_in_the_contract():
         elif isinstance(route, APIWebSocketRoute):
             routes.add(("WS", route.path))
 
-    assert routes == set(MODEL_ROUTES) | OTHER_ROUTES | {("WS", "/v1/responses")}
+    # /v1/realtime calls no model yet: its errors are the session's own
+    assert routes == set(MODEL_ROUTES) | OTHER_ROUTES | {("WS", "/v1/responses"), ("WS", "/v1/realtime")}
 
 
 @pytest.mark.parametrize("result", SERVER_FAILURES.values(), ids=SERVER_FAILURES.keys())

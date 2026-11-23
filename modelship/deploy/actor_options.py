@@ -9,6 +9,7 @@ from modelship.deploy.request_router import AffinityRouter
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.state import state_store_env_var
+from modelship.utils.config_schema import PipelineConfig
 from modelship.utils.runtime_env import MODEL_ENV_VARS, build_env_vars, cluster_env_vars
 
 logger = get_logger("startup")
@@ -119,3 +120,23 @@ def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] |
         opts["max_ongoing_requests"] = max_ongoing
     opts["request_router_config"] = RequestRouterConfig(request_router_class=AffinityRouter)  # type: ignore[arg-type]
     return opts
+
+
+# The loader whose library a pipeline's audio app runs: Silero VAD comes with sherpa-onnx.
+PIPELINE_AUDIO_LOADER = ModelLoader.sherpa_onnx.value
+
+
+def build_pipeline_deployment_options(pipeline: PipelineConfig, env: dict[str, str] | None = None) -> dict:
+    """kwargs for a pipeline audio app's `Deployment.options(**...)`: no CPU or GPU, on a node whose variant
+    runs sherpa-onnx; *env* as for `build_deployment_options`."""
+    env_vars = build_cache_env_vars()
+    env_vars.update(deploy_env_vars() if env is None else env)
+    env_vars.update(cluster_env_vars() | state_store_env_var())
+    return {
+        "ray_actor_options": {
+            "num_gpus": 0,
+            "num_cpus": 0,
+            "runtime_env": {"env_vars": env_vars},
+            "label_selector": deployment_label_selector(PIPELINE_AUDIO_LOADER, 0, {}),
+        }
+    }

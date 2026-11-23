@@ -2,7 +2,7 @@
 
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ray.serve._private.common import ReplicaState
 from ray.serve.schema import ApplicationStatus, ApplicationStatusOverview, DeploymentStatusOverview
@@ -16,6 +16,8 @@ class Routing:
     models: dict[str, str]
     # models the gateway reports ready only once they are in `models`
     expected: list[str]
+    # pipeline name -> {"config": raw pipeline, "app": its audio app or None, "ready": whether that app can serve}
+    pipelines: dict[str, dict] = field(default_factory=dict)
 
 
 def can_serve(app: ApplicationStatusOverview) -> bool:
@@ -58,10 +60,18 @@ def running_replica_ids(app: dict) -> set[str]:
 
 
 def compute_routing(
-    gateway_name: str, targets: Mapping[str, str], apps: Mapping[str, ApplicationStatusOverview]
+    gateway_name: str,
+    targets: Mapping[str, str],
+    apps: Mapping[str, ApplicationStatusOverview],
+    pipelines: Mapping[str, dict] | None = None,
 ) -> Routing | None:
-    """Each model's app from *targets* (model -> app), while it can serve. None when *apps* lacks the gateway's own app."""
+    """Each model's app from *targets* (model -> app), while it can serve, and each of *pipelines* (name ->
+    {"config", "app"}) with whether its audio app can serve. None when *apps* lacks the gateway's own app."""
     if gateway_name not in apps:
         return None
     models = {app: model for model, app in targets.items() if app in apps and can_serve(apps[app])}
-    return Routing(models=models, expected=list(targets))
+    ready = {
+        name: {**pipeline, "ready": (app := pipeline["app"]) is None or (app in apps and can_serve(apps[app]))}
+        for name, pipeline in (pipelines or {}).items()
+    }
+    return Routing(models=models, expected=list(targets), pipelines=ready)

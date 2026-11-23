@@ -262,10 +262,6 @@ def _validate_config(args: argparse.Namespace) -> ModelshipConfig | None:
     except (FileNotFoundError, yaml.YAMLError, ValueError) as e:
         print(f"error: invalid config: {e}", file=sys.stderr)
         sys.exit(1)
-    if config.pipelines:
-        names = ", ".join(pipeline.name for pipeline in config.pipelines)
-        print(f"error: pipelines can't be deployed yet ({names}); remove them to deploy the models.", file=sys.stderr)
-        sys.exit(1)
     return config if raw_models is not None else None
 
 

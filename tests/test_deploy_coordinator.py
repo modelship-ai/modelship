@@ -18,6 +18,7 @@ from modelship.deploy.strategy import ServeApp
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
 from modelship.state.base import StateStoreUnavailableError
+from modelship.utils.config_schema import PipelineConfig
 
 # The plain class behind @ray.remote; its methods are ordinary coroutines.
 _Coord = deploy_coordinator.DeployCoordinator.__ray_metadata__.modified_class
@@ -386,9 +387,9 @@ def _hold_commits(monkeypatch) -> threading.Event:
     """Store writes by commit wait until the returned event is set."""
     release = threading.Event()
 
-    def held(store, gateway_name, models):
+    def held(store, gateway_name, models, pipelines=None):
         release.wait(2)
-        return commit_version(store, gateway_name, models)
+        return commit_version(store, gateway_name, models, pipelines)
 
     monkeypatch.setattr(deploy_coordinator, "commit_version", held)
     return release
@@ -712,6 +713,26 @@ class TestRouting:
     async def test_a_gateway_without_a_version_has_an_empty_table(self, workers):
         assert (await _ledger().routing_versions(["g"]))["g"]["apps"] == {}
 
+    async def test_a_gateway_routes_by_its_committed_pipelines(self, workers):
+        coord = _ledger()
+        voice, chat = {"name": "voice", "stt": "a"}, {"name": "chat", "llm": "a"}
+        commit_version(coord._store, "g", [_raw("a")], [voice, chat])
+        pipelines = (await coord.routing_versions(["g"]))["g"]["pipelines"]
+        assert pipelines == {
+            "voice": {"config": voice, "app": PipelineConfig.model_validate(voice).deployment_name("g")},
+            "chat": {"config": chat, "app": None},
+        }
+
+    async def test_a_switch_and_commit_carry_the_pipelines(self, workers):
+        coord = _ledger()
+        voice = {"name": "voice", "stt": "b"}
+        receipt = await coord.submit(_request())
+        await _settle()
+        await coord.switch(receipt["id"], "g", [_raw("b")], [voice])
+        assert (await coord.routing_versions(["g"]))["g"]["pipelines"]["voice"]["config"] == voice
+        await coord.commit(receipt["id"], "g", [_raw("b")], [voice])
+        assert read_versions(coord._store, "g")[0] == Version(1, [_raw("b")], [voice])
+
     async def test_a_switch_routes_by_the_proposed_models_under_a_new_seq(self, workers):
         coord = _ledger()
         before = (await coord.routing_versions(["g"]))["g"]["seq"]
@@ -719,7 +740,9 @@ class TestRouting:
         await _settle()
         seq = await coord.switch(receipt["id"], "g", [_raw("b")])
         assert seq > before
-        assert await coord.routing_versions(["g"]) == {"g": {"seq": seq, "apps": {"b": _app_name(_raw("b"))}}}
+        assert await coord.routing_versions(["g"]) == {
+            "g": {"seq": seq, "apps": {"b": _app_name(_raw("b"))}, "pipelines": {}}
+        }
         assert coord._running["g"].state == "switching"
 
     async def test_a_reset_routes_back_under_another_seq(self, workers):

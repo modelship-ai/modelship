@@ -1,0 +1,61 @@
+"""OpenAI Realtime (GA) events, as modelship sends and reads them. Our own models, so the engine doesn't depend
+on `openai`; field names and shapes follow openai-python's `types.realtime`. Experimental."""
+
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from modelship.utils import random_uuid
+
+SessionType = Literal["realtime", "transcription"]
+Modality = Literal["text", "audio"]
+MaxOutputTokens = Annotated[int, Field(ge=1)] | Literal["inf"]
+
+SESSION_OBJECTS: dict[str, str] = {
+    "realtime": "realtime.session",
+    "transcription": "realtime.transcription_session",
+}
+
+
+def event_id() -> str:
+    return f"event_{random_uuid()[:20]}"
+
+
+class RealtimeSession(BaseModel):
+    """The session fields a pipeline answers with so far; more arrive as the pipeline uses them."""
+
+    type: SessionType
+    object: str
+    id: str
+    model: str
+    instructions: str | None = None
+    output_modalities: list[Modality] | None = None
+    max_output_tokens: MaxOutputTokens | None = None
+
+
+class SessionFields(BaseModel):
+    """What a client's `session.update` may set. Fields the pipeline doesn't use yet are accepted and ignored."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: SessionType | None = None
+    instructions: str | None = None
+    output_modalities: list[Modality] | None = None
+    max_output_tokens: MaxOutputTokens | None = None
+
+
+class RealtimeError(BaseModel):
+    message: str
+    type: str = "invalid_request_error"
+    code: str | None = None
+    param: str | None = None
+    # the client event this error answers
+    event_id: str | None = None
+
+
+def session_event(kind: Literal["session.created", "session.updated"], session: RealtimeSession) -> dict:
+    return {"type": kind, "event_id": event_id(), "session": session.model_dump(mode="json", exclude_none=True)}
+
+
+def error_event(error: RealtimeError) -> dict:
+    return {"type": "error", "event_id": event_id(), "error": error.model_dump(mode="json")}

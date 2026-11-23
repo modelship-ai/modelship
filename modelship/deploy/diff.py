@@ -6,22 +6,25 @@ from typing import NamedTuple
 
 from ray.serve.schema import ApplicationStatus
 
-from modelship.deploy.ledger import DeployRequest, merge, to_config
+from modelship.deploy.ledger import DeployRequest, merge, merge_pipelines, to_config
 from modelship.deploy.strategy import ServeApp, gateway_apps, serve_scaling
 from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.utils.config_schema import PipelineConfig
 
 # Serve has stopped starting replicas for these; submitting again replaces the app.
 _NOT_LIVE = (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.DELETING)
 
 # the order a request's actions run in
-_LEFTOVERS, _SCALE_DOWN, _STOP, _DEPLOY, _SCALE_UP, _COMMIT, _RETIRE = range(1, 8)
+_LEFTOVERS, _SCALE_DOWN, _STOP, _DEPLOY, _SCALE_UP, _PIPELINES, _COMMIT, _RETIRE = range(1, 9)
 
 
 class Rescale(NamedTuple):
+    # a model's name, or a pipeline's
     model: str
     app: str
     # the replica-count fields the app gets, as `ModelshipModelConfig.scaling` gives them
     scaling: dict
+    pipeline: bool = False
 
 
 @dataclass
@@ -36,11 +39,18 @@ class Diff:
     deploys: list[ModelshipModelConfig] = field(default_factory=list)
     # rescales that raise a replica limit
     scale_ups: list[Rescale] = field(default_factory=list)
-    # the apps of the replaced and the removed models
+    # the apps of the replaced and the removed models and pipelines
     retired: list[str] = field(default_factory=list)
+    # add | replace | rescale | redeploy | update | remove | keep, for each pipeline the request decides on
+    pipeline_actions: dict[str, str] = field(default_factory=dict)
+    # pipelines whose audio app is submitted, after the models' steps
+    pipeline_deploys: list[PipelineConfig] = field(default_factory=list)
+    pipeline_rescales: list[Rescale] = field(default_factory=list)
     # the gateway's models after the request; None without a version
     models: list[dict] | None = None
-    # whether the request writes *models* as the gateway's next version
+    # the gateway's pipelines after the request
+    pipelines: list[dict] = field(default_factory=list)
+    # whether the request writes *models* and *pipelines* as the gateway's next version
     commits: bool = False
     # (step, text) per action; step 0 for what stays as it is
     steps: list[tuple[int, str]] = field(default_factory=list)
@@ -51,26 +61,48 @@ class Diff:
         return [f"{step}. {text}" if step else text for step, text in ordered]
 
 
-def build_diff(request: DeployRequest, committed: list[dict] | None, apps: dict[str, ServeApp]) -> Diff:
-    """The diff of *request* against the gateway's *committed* version and Serve's *apps*."""
+def build_diff(
+    request: DeployRequest,
+    committed: list[dict] | None,
+    apps: dict[str, ServeApp],
+    committed_pipelines: list[dict] | None = None,
+) -> Diff:
+    """The diff of *request* against the gateway's *committed* version (its models and *committed_pipelines*)
+    and Serve's *apps*."""
     gateway = request.gateway
-    current = {c.name: c for c in to_config(committed).models} if committed else {}
+    committed_pipelines = committed_pipelines or []
+    committed_config = to_config(committed or [], committed_pipelines)
+    current = {c.name: c for c in committed_config.models}
+    current_pipelines = {p.name: p for p in committed_config.pipelines}
     named = {c.deployment_name(gateway) for c in current.values()}
-    diff = Diff(gateway, models=committed)
+    named |= {p.deployment_name(gateway) for p in current_pipelines.values() if p.has_audio_app()}
+    diff = Diff(gateway, models=committed, pipelines=committed_pipelines)
     diff.leftovers = sorted(name for name in gateway_apps(apps, gateway) if name not in named)
     if diff.leftovers:
         diff.steps.append((_LEFTOVERS, f"delete leftover apps: {', '.join(diff.leftovers)}"))
 
     wanted = list(current.values())
+    wanted_pipelines = list(current_pipelines.values())
     if request.mode != "bare" and request.models is not None:
         wanted = list(to_config(request.models).models)
+        wanted_pipelines = list(to_config([], request.pipelines or []).pipelines)
         proposed = merge(committed or [], request.models, gateway, request.mode)
-        diff.commits = committed is None or _deployed(proposed, gateway) != _deployed(committed, gateway)
+        proposed_pipelines = merge_pipelines(committed_pipelines, request.pipelines or [], request.mode)
+        # a pipeline may not take a model's name, across the merged sets too
+        to_config(proposed, proposed_pipelines)
+        diff.commits = (
+            committed is None
+            or _deployed(proposed, gateway) != _deployed(committed, gateway)
+            or _pipelines(proposed_pipelines) != _pipelines(committed_pipelines)
+        )
         if diff.commits:
             diff.models = proposed
+            diff.pipelines = proposed_pipelines
             diff.steps.append((_COMMIT, "switch the gateway and commit"))
     for config in wanted:
         _decide(diff, request, config, current.get(config.name), apps)
+    for pipeline in wanted_pipelines:
+        _decide_pipeline(diff, request, pipeline, current_pipelines.get(pipeline.name), apps)
 
     names = {c.name for c in wanted}
     others = sorted(name for name in current if name not in names)
@@ -84,8 +116,76 @@ def build_diff(request: DeployRequest, committed: list[dict] | None, apps: dict[
     kept = sorted(model for model, action in diff.actions.items() if action == "keep")
     if kept:
         diff.steps.append((0, f"keep: {', '.join(kept)}"))
+
+    names = {p.name for p in wanted_pipelines}
+    others = sorted(name for name in current_pipelines if name not in names)
+    if request.mode == "reconcile":
+        for name in others:
+            diff.pipeline_actions[name] = "remove"
+            before = current_pipelines[name]
+            if before.has_audio_app():
+                diff.retired.append(before.deployment_name(gateway))
+            diff.steps.append((_STOP if request.strategy == "stop_start" else _RETIRE, f"remove pipeline {name}"))
+    elif others:
+        diff.steps.append((0, f"keep pipelines, not in the request: {', '.join(others)}"))
+    kept = sorted(name for name, action in diff.pipeline_actions.items() if action == "keep")
+    if kept:
+        diff.steps.append((0, f"keep pipelines: {', '.join(kept)}"))
     diff.retired.sort()
     return diff
+
+
+def _decide_pipeline(
+    diff: Diff,
+    request: DeployRequest,
+    pipeline: PipelineConfig,
+    before: PipelineConfig | None,
+    apps: dict[str, ServeApp],
+) -> None:
+    """Adds *pipeline*'s action to *diff*; *before* is the committed pipeline of its name. Only its audio app
+    is Serve's; the rest of it reaches the gateway with the routing version."""
+    name = pipeline.name
+    app = pipeline.deployment_name(diff.gateway) if pipeline.has_audio_app() else None
+    old_app = before.deployment_name(diff.gateway) if before is not None and before.has_audio_app() else None
+    changed = before is None or before.model_dump(mode="json") != pipeline.model_dump(mode="json")
+    if old_app is not None and old_app != app:
+        diff.retired.append(old_app)
+    if app is None:
+        if before is None:
+            diff.pipeline_actions[name] = "add"
+            diff.steps.append((_PIPELINES, f"add pipeline {name}"))
+        elif changed:
+            diff.pipeline_actions[name] = "update"
+            diff.steps.append((_PIPELINES, f"update pipeline {name}: {', '.join(_config_changes(before, pipeline))}"))
+        else:
+            diff.pipeline_actions[name] = "keep"
+        return
+    if before is None or old_app is None:
+        diff.pipeline_actions[name] = "add"
+        diff.pipeline_deploys.append(pipeline)
+        diff.steps.append((_PIPELINES, f"add pipeline {name}"))
+        return
+    if old_app != app:
+        diff.pipeline_actions[name] = "replace"
+        diff.pipeline_deploys.append(pipeline)
+        diff.steps.append((_PIPELINES, f"replace pipeline {name}: {', '.join(_config_changes(before, pipeline))}"))
+        return
+    held = apps.get(app)
+    want = pipeline.scaling()
+    if held is None or held.status in _NOT_LIVE:
+        diff.pipeline_actions[name] = "redeploy"
+        diff.pipeline_deploys.append(pipeline)
+        why = "missing from Serve" if held is None else f"{held.status.value} in Serve"
+        diff.steps.append((_PIPELINES, f"redeploy pipeline {name} ({why})"))
+    elif held.scaling != want:
+        diff.pipeline_actions[name] = "rescale"
+        diff.pipeline_rescales.append(Rescale(name, app, want, pipeline=True))
+        diff.steps.append((_PIPELINES, f"rescale pipeline {name}: {_scaling_changes(held.scaling, want)}"))
+    elif changed:
+        diff.pipeline_actions[name] = "update"
+        diff.steps.append((_PIPELINES, f"update pipeline {name}: {', '.join(_config_changes(before, pipeline))}"))
+    else:
+        diff.pipeline_actions[name] = "keep"
 
 
 def _decide(
@@ -138,6 +238,12 @@ def _deployed(models: list[dict], gateway_name: str) -> dict[str, tuple[str, dic
     return {c.name: (c.deployment_name(gateway_name), c.scaling()) for c in configs}
 
 
+def _pipelines(pipelines: list[dict]) -> dict[str, dict]:
+    """Pipeline name -> its validated config."""
+    configs = [PipelineConfig.model_validate(raw) for raw in pipelines]
+    return {c.name: c.model_dump(mode="json") for c in configs}
+
+
 def _limits(scaling: dict) -> tuple[int, int]:
     """The fewest and the most replicas *scaling* allows."""
     if "num_replicas" in scaling:
@@ -170,7 +276,9 @@ def _replicas(scaling: dict) -> str:
     return f"num_replicas {low}" if "num_replicas" in scaling else f"autoscaling_config {low}..{high}"
 
 
-def _config_changes(before: ModelshipModelConfig, after: ModelshipModelConfig) -> list[str]:
+def _config_changes(
+    before: ModelshipModelConfig | PipelineConfig, after: ModelshipModelConfig | PipelineConfig
+) -> list[str]:
     old, new = (_flat(config.model_dump(mode="json", exclude={"name"})) for config in (before, after))
     return [
         f"{path}: {old.get(path)} -> {new.get(path)}"
