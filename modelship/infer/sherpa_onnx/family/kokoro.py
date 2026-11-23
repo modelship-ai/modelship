@@ -1,10 +1,15 @@
-"""Kokoro text frontend: text to phoneme-codepoint chunks for sherpa-onnx 2.x.
+"""Kokoro on sherpa-onnx 2.x: the `OfflineTts` for a bundle, and its text frontend, text to phoneme-codepoint
+chunks.
 
-Ports sherpa-onnx 1.13.4's kokoro frontend (removed upstream with espeak in
+The frontend ports sherpa-onnx 1.13.4's kokoro frontend (removed upstream with espeak in
 2.0). Chinese runs read the lexicon; Japanese voices use a dedicated G2P;
 everything else is phonemized by espeak in the voice's own language. Chunks are
 held at or below sherpa's own 400-codepoint split so the break falls on a word."""
 
+import os
+from typing import Any
+
+from modelship.infer.sherpa_onnx.registry import SherpaOnnxRegistryEntry
 from modelship.utils.phonemes import lexicon
 from modelship.utils.phonemes.espeak import Espeak
 from modelship.utils.phonemes.japanese import Japanese
@@ -22,6 +27,28 @@ def espeak_language(voice: str) -> str:
 
 def is_japanese(voice: str) -> bool:
     return voice[:1] == "j"
+
+
+def load(entry: SherpaOnnxRegistryEntry, bundle_dir: str, threads: int, provider: str) -> tuple[Any, "KokoroFrontend"]:
+    """The `OfflineTts` for a Kokoro bundle in *bundle_dir*, and its frontend."""
+    import sherpa_onnx
+
+    cfg = sherpa_onnx.OfflineTtsConfig()
+    for slot, rel_path in entry.files.items():
+        setattr(cfg.model.kokoro, slot, os.path.join(bundle_dir, rel_path))
+    for slot, rel_path in entry.dirs.items():
+        setattr(cfg.model.kokoro, slot, os.path.join(bundle_dir, rel_path))
+    cfg.model.provider = provider
+    cfg.model.num_threads = threads
+    tts = sherpa_onnx.OfflineTts(cfg)
+    if tts.num_speakers != len(entry.voice_names):
+        raise ValueError(
+            f"the bundle in {bundle_dir} reports {tts.num_speakers} speakers and its registry entry expects "
+            f"{len(entry.voice_names)}: the bundle on disk doesn't match its registry entry."
+        )
+    tokens = TokenTable.load(os.path.join(bundle_dir, entry.files["tokens"]))
+    chinese_lexicon = os.path.join(bundle_dir, entry.chinese_lexicon) if entry.chinese_lexicon else None
+    return tts, KokoroFrontend(tokens, chinese_lexicon)
 
 
 class KokoroFrontend:

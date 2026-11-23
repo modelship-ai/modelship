@@ -12,7 +12,7 @@ from modelship.utils import is_pathy
 
 
 class SherpaOnnxRegistryEntry(NamedTuple):
-    """`files`/`dirs` keys are sherpa's own `OfflineTtsKokoroModelConfig`
+    """A text-to-speech bundle. `files`/`dirs` keys are sherpa's own `OfflineTtsKokoroModelConfig`
     attribute names, values are paths relative to the bundle root.
     `chinese_lexicon` is the Chinese lexicon the frontend reads, relative to the
     bundle root (None when the bundle has none). `voice_names[i]` is the OpenAI
@@ -28,10 +28,22 @@ class SherpaOnnxRegistryEntry(NamedTuple):
     voice_names: tuple[str, ...]
 
 
-# copies of k2-fsa/sherpa-onnx's tts-models assets; a file name ends in its sha256 prefix
-_RELEASE_BASE = "https://github.com/modelship-ai/model-bundles/releases/download/tts/kokoro"
+class AsrEntry(NamedTuple):
+    """An offline speech-to-text bundle. `family` names its module in `family/`; `files` maps the files that
+    family reads to paths relative to the bundle root."""
 
-REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
+    tarball_url: str
+    sha256: str
+    family: str
+    usecase: str
+    files: dict[str, str]
+
+
+# copies of k2-fsa/sherpa-onnx's tts-models and asr-models assets; a file name ends in its sha256 prefix
+_BUNDLES = "https://github.com/modelship-ai/model-bundles/releases/download"
+_RELEASE_BASE = f"{_BUNDLES}/tts/kokoro"
+
+REGISTRY: dict[str, SherpaOnnxRegistryEntry | AsrEntry] = {
     "kokoro-en-v0_19": SherpaOnnxRegistryEntry(
         tarball_url=f"{_RELEASE_BASE}/kokoro-en-v0_19-91280485.tar.bz2",
         sha256="912804855a04745fa77a30be545b3f9a5d15c4d66db00b88cbcd4921df605ac7",
@@ -127,6 +139,19 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry] = {
             # sid 53 in the bundle, out of alphabetical order
             "em_santa",
         ),
+    ),
+    # NVIDIA's parakeet-tdt-0.6b-v3 (CC-BY-4.0): 25 European languages, punctuated; takes and reports no language
+    "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8": AsrEntry(
+        tarball_url=f"{_BUNDLES}/asr/parakeet/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8-1495e91b.tar.bz2",
+        sha256="1495e91b59d7fc53ddca91f3431758ec99f8fa253fdb0e1e851be0f72b14b0f9",
+        family="nemo_transducer",
+        usecase="transcription",
+        files={
+            "encoder": "encoder.int8.onnx",
+            "decoder": "decoder.int8.onnx",
+            "joiner": "joiner.int8.onnx",
+            "tokens": "tokens.txt",
+        },
     ),
 }
 

@@ -13,6 +13,12 @@ models:
     sherpa_onnx_config:
       default_voice: "af_heart"
 
+  - name: "parakeet"
+    model: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+    usecase: "transcription"
+    loader: "sherpa_onnx"
+    num_cpus: 2
+
   - name: "kokoro-local"
     model: "/models/kokoro-en-v0_19"
     usecase: "tts"

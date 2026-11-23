@@ -296,6 +296,9 @@ class ModelshipModelConfig(_StrictModel):
     # `_resolved_path` by `BaseInfer.ensure_downloaded`.
     _pinned_source: "PinnedSource | None" = PrivateAttr(default=None)
     _resolved_path: str | None = PrivateAttr(default=None)
+    # Silero VAD, for a sherpa_onnx speech-to-text model that cuts long audio at silences; set like the two above
+    _pinned_vad: "PinnedSource | None" = PrivateAttr(default=None)
+    _resolved_vad: str | None = PrivateAttr(default=None)
 
     @model_validator(mode="before")
     @classmethod
@@ -398,10 +401,16 @@ class ModelshipModelConfig(_StrictModel):
                 f"model '{self.name}': sherpa_onnx model {self.model!r} is not a supported registry name "
                 f"(or a local directory whose basename matches one). Supported names: {', '.join(names)}"
             )
-        if self.usecase is not ModelUsecase.tts:
-            raise ValueError(f"loader='sherpa_onnx' only supports usecase='tts' (v1 scope), got {self.usecase!r}")
+        entry = REGISTRY[name]
+        if self.usecase.value != entry.usecase:
+            raise ValueError(
+                f"model '{self.name}': sherpa_onnx model {name!r} is a {entry.usecase} model; set "
+                f"usecase: {entry.usecase} (got {self.usecase.value!r})."
+            )
         voice = self.sherpa_onnx_config.default_voice if self.sherpa_onnx_config else None
-        voices = REGISTRY[name].voice_names
+        voices = getattr(entry, "voice_names", ())
+        if voice is not None and not voices:
+            raise ValueError(f"model '{self.name}': sherpa_onnx_config.default_voice is for a tts model, not {name!r}.")
         if voice is not None and voice not in voices:
             raise ValueError(
                 f"model '{self.name}': sherpa_onnx_config.default_voice {voice!r} is not a voice of {name!r}. "

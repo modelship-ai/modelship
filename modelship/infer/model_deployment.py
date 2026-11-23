@@ -9,7 +9,7 @@ from ray import serve
 
 from modelship.deploy.deploy_leases import DeployLeaseError, wait_for_deploy_lease
 from modelship.infer.base_infer import BaseInfer
-from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, RawRequestProxy
+from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, RawRequestProxy
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
     EMBEDDING_DURATION_SECONDS,
@@ -98,10 +98,14 @@ class ModelDeployment:
                 from modelship.infer.whispercpp.whispercpp_infer import WhispercppInfer
 
                 self.infer = WhispercppInfer(config)
-            elif config.loader == ModelLoader.sherpa_onnx:
-                from modelship.infer.sherpa_onnx.sherpa_onnx_infer import SherpaOnnxInfer
+            elif config.loader == ModelLoader.sherpa_onnx and config.usecase == ModelUsecase.tts:
+                from modelship.infer.sherpa_onnx.tts_infer import SherpaOnnxTtsInfer
 
-                self.infer = SherpaOnnxInfer(config)
+                self.infer = SherpaOnnxTtsInfer(config)
+            elif config.loader == ModelLoader.sherpa_onnx:
+                from modelship.infer.sherpa_onnx.stt_infer import SherpaOnnxSttInfer
+
+                self.infer = SherpaOnnxSttInfer(config)
 
             await self.infer.start()
             await self.infer.warmup()
