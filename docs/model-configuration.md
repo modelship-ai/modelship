@@ -248,6 +248,7 @@ A pipeline deploys with the models, through the same request:
 - Every other change to a pipeline (its models, `session_defaults`) reaches the gateway with the new version, and nothing restarts.
 - `mship deploy` adds or replaces pipelines by name and leaves the others. `deploy --reconcile` and `mship start` remove the pipelines the request doesn't name.
 - A deploy never checks the models a pipeline names. A session on a pipeline whose model the gateway doesn't have, or doesn't serve yet, is refused with an error naming that model.
+- A session on a pipeline with `stt` asks that model once, as it opens, what it can do as speech to text (whether it detects the spoken language), and keeps the answer for the session. A model that doesn't transcribe, or doesn't answer, refuses the session with an error naming it.
 - A pipeline can't take a model's name: `/v1/models` lists both, and a pipeline's card has `owned_by: "modelship-pipeline"`. A pipeline is listed once its audio deployment is up.
 
 ## Trusted Identity Header
