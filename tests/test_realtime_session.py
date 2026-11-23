@@ -625,29 +625,27 @@ class TestResponses:
 
 
 class TestActiveResponse:
-    def test_a_cancel_before_its_task_starts_still_opens_and_ends_it(self):
+    @pytest.mark.asyncio
+    async def test_a_cancel_before_its_task_starts_still_opens_and_ends_it(self):
         llm = _Llm(_answer("Hi."))
         sent: list[dict] = []
 
         async def send(event: dict) -> None:
             sent.append(event)
 
-        async def run():
-            call = LlmCall(
-                handle=_Handle(llm),
-                request=ResponsesRequest(model="qwen", input=[]),
-                headers={},
-                registry=None,
-                request_id="r1",
-                identity="",
-                session_id="s1",
-            )
-            response = RealtimeResponse(id="resp_1", output_modalities=["text"], max_output_tokens="inf")
-            active = ActiveResponse(response, None, call, send)
-            active.cancel()
-            await active.task
-
-        asyncio.run(run())
+        call = LlmCall(
+            handle=_Handle(llm),
+            request=ResponsesRequest(model="qwen", input=[]),
+            headers={},
+            registry=None,
+            request_id="r1",
+            identity="",
+            session_id="s1",
+        )
+        response = RealtimeResponse(id="resp_1", output_modalities=["text"], max_output_tokens="inf")
+        active = ActiveResponse(response, None, call, send)
+        active.cancel()
+        await active.task
         assert [event["type"] for event in sent] == ["response.created", "response.done"]
         assert sent[-1]["response"]["status"] == "cancelled"
         assert llm.requests == []
