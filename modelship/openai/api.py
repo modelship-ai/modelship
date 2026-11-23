@@ -257,6 +257,22 @@ class _PipelineCalls:
             return None
         return await handle.stt_capabilities.remote()
 
+    async def transcribe(
+        self, model: str, audio: bytes, request: TranscriptionRequest, session_id: str
+    ) -> TranscriptionResponse | TranscriptionResponseVerbose | ErrorResponse | None:
+        handle = self._handle(model)
+        if handle is None:
+            return None
+        # a request that doesn't stream answers with one item
+        stream = cast(
+            "DeploymentResponseGenerator[Any]",
+            handle.transcribe.options(stream=True, session_id=session_id).remote(
+                audio, request, self._headers, self._registry, random_uuid(), self._identity
+            ),
+        )
+        results = [result async for result in stream]
+        return results[0] if results else None
+
 
 @serve.deployment
 @serve.ingress(app)

@@ -1,7 +1,11 @@
-"""`/v1/realtime` sessions in the gateway: opening on a pipeline, session.update, the conversation's items, and
-responses from a fake LLM that streams real Responses events."""
+"""`/v1/realtime` sessions in the gateway: opening on a pipeline, session.update, the conversation's items, audio
+turns a fake speech-to-text model transcribes, and responses from a fake LLM that streams real Responses events."""
 
 import asyncio
+import base64
+import io
+import warnings
+import wave
 
 import pytest
 from fastapi import FastAPI, WebSocket
@@ -16,6 +20,10 @@ from modelship.openai.protocol import (
     DeltaToolCall,
     PromptTokenUsageInfo,
     SttCapabilities,
+    TranscriptionRequest,
+    TranscriptionResponse,
+    TranscriptionResponseVerbose,
+    TranscriptionUsageAudio,
     UsageInfo,
     create_error_response,
 )
@@ -101,13 +109,41 @@ class _Llm:
 WHISPER = SttCapabilities(streaming=False, reports_language=True)
 
 
+class _Stt:
+    """The speech-to-text model "whisper": answers each turn with the next of *transcripts* (an ErrorResponse fails
+    it), detecting *language*, and records what it was sent."""
+
+    def __init__(self, *transcripts, language: str = "de", delay: float = 0.0):
+        self.transcripts = list(transcripts)
+        self.language = language
+        self.delay = delay
+        self.requests: list[TranscriptionRequest] = []
+        self.audio: list[bytes] = []
+
+    async def transcribe(self, audio: bytes, request: TranscriptionRequest):
+        self.requests.append(request)
+        self.audio.append(audio)
+        await asyncio.sleep(self.delay)
+        found = self.transcripts.pop(0)
+        if not isinstance(found, str):
+            return found
+        if request.response_format == "verbose_json":
+            return TranscriptionResponseVerbose(language=self.language, duration=1.0, text=found)
+        return TranscriptionResponse(text=found, usage=TranscriptionUsageAudio(seconds=1.0))
+
+
 class _Calls:
     """`PipelineCalls` over a fake LLM, "qwen", and a speech-to-text model, "whisper", answering *stt*."""
 
-    def __init__(self, llm: _Llm | None, stt: SttCapabilities | Exception | None):
+    def __init__(self, llm: _Llm | None, stt: SttCapabilities | Exception | None, transcriber: _Stt | None = None):
         self.llm = llm
         self.stt = stt
+        self.transcriber = transcriber
         self.asked: list[str] = []
+
+    async def transcribe(self, model: str, audio: bytes, request: TranscriptionRequest, session_id: str):
+        assert model == "whisper" and self.transcriber is not None
+        return await self.transcriber.transcribe(audio, request)
 
     def respond(self, model: str, request: ResponsesRequest, session_id: str):
         return self.llm.respond(model, request, session_id) if self.llm is not None else None
@@ -126,13 +162,14 @@ def _client(
     llm: _Llm | None = None,
     stt: SttCapabilities | Exception | None = WHISPER,
     sessions: list | None = None,
+    transcriber: _Stt | None = None,
 ) -> TestClient:
-    """A gateway app serving *pipelines*; each session's `_Calls` and `Session` go into *sessions*."""
+    """A gateway app serving *pipelines*; each session's `_Calls` go into *sessions*."""
     app = FastAPI()
 
     @app.websocket("/v1/realtime")
     async def realtime(websocket: WebSocket):
-        calls = _Calls(llm, stt)
+        calls = _Calls(llm, stt, transcriber)
         if sessions is not None:
             sessions.append(calls)
         await serve_session(websocket, pipelines, list(known), set(serving), calls)
@@ -285,7 +322,7 @@ class TestSessionUpdate:
             ws.send_json({"type": "session.update", "session": {"audio": {"output": {"voice": "marin"}}}})
             event = ws.receive_json()
         assert event["type"] == "session.updated"
-        assert "audio" not in event["session"]
+        assert "output" not in event["session"]["audio"]
 
     def test_the_session_type_cannot_change(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
@@ -321,15 +358,15 @@ class TestSessionUpdate:
 
 
 class TestEvents:
-    def test_audio_events_are_not_supported_yet_and_the_session_stays_open(self):
+    def test_audio_output_events_are_not_supported_yet_and_the_session_stays_open(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
             _open(ws)
-            ws.send_json({"type": "input_audio_buffer.append", "event_id": "e2", "audio": ""})
+            ws.send_json({"type": "output_audio_buffer.clear", "event_id": "e2"})
             error = ws.receive_json()["error"]
             ws.send_json({"type": "session.update", "session": {}})
             still_open = ws.receive_json()
         assert (error["code"], error["event_id"]) == ("unsupported_event", "e2")
-        assert error["message"] == "input_audio_buffer.append is not supported yet."
+        assert error["message"] == "output_audio_buffer.clear is not supported yet."
         assert still_open["type"] == "session.updated"
 
     @pytest.mark.parametrize(
@@ -415,13 +452,13 @@ class TestConversation:
             ({"type": "mcp_call", "name": "f"}, "invalid_value", "item"),
             (
                 {"type": "message", "role": "user", "content": [{"type": "input_audio", "audio": ""}]},
-                "invalid_value",
-                "item.content[0].type",
+                "unsupported_value",
+                "item.content[0]",
             ),
             (
                 {"type": "message", "role": "user", "content": [{"type": "output_text", "text": "x"}]},
                 "invalid_value",
-                "item.content[0].type",
+                "item.content[0]",
             ),
             ({"type": "message", "role": "tool", "content": []}, "invalid_value", "item"),
             ({"type": "image"}, "invalid_value", "item"),
@@ -689,12 +726,15 @@ class TestResponses:
             error = ws.receive_json()["error"]
         assert (error["code"], error["param"]) == ("invalid_value", param)
 
-    def test_an_llm_that_stopped_serving_refuses_the_response(self):
+    def test_an_llm_that_stopped_serving_fails_the_response(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
             _open(ws)
             ws.send_json({"type": "response.create"})
-            error = ws.receive_json()["error"]
+            events = _until(ws, "response.done")
+        assert [event["type"] for event in events] == ["response.created", "error", "response.done"]
+        error = events[1]["error"]
         assert error == {**error, "code": "model_not_ready", "message": "Pipeline model 'qwen' isn't ready."}
+        assert events[-1]["response"]["status"] == "failed"
 
 
 LIGHTS = {
@@ -807,6 +847,226 @@ class TestTools:
         assert (error["code"], error["param"]) == ("invalid_value", "session.tools[0].type")
 
 
+def _pcm(seconds: float, rate: int = 24000) -> bytes:
+    return b"\x01\x00" * int(seconds * rate)
+
+
+def _append(ws, audio: bytes) -> None:
+    ws.send_json({"type": "input_audio_buffer.append", "audio": base64.b64encode(audio).decode()})
+
+
+def _commit(ws) -> list[dict]:
+    """A commit's events, up to its transcript's item.done."""
+    ws.send_json({"type": "input_audio_buffer.commit"})
+    return _until(ws, "conversation.item.done")
+
+
+def _wav(audio: bytes) -> tuple[int, int]:
+    with wave.open(io.BytesIO(audio)) as wav:
+        return wav.getframerate(), wav.getnframes()
+
+
+class TestAudioInput:
+    def _session(self, stt: _Stt, llm: _Llm | None = None, pipeline: dict = ASSISTANT, caps=WHISPER):
+        client = _client(_route(pipeline), llm=llm, stt=caps, transcriber=stt)
+        return client.websocket_connect(f"/v1/realtime?model={pipeline['name']}")
+
+    def test_a_committed_turn_is_transcribed_into_the_conversation(self):
+        stt = _Stt("Hallo Welt.")
+        with self._session(stt) as ws:
+            session = _open(ws)
+            _append(ws, _pcm(0.5))
+            _append(ws, _pcm(0.5))
+            events = _commit(ws)
+        assert session["audio"]["input"] == {**session["audio"]["input"], "turn_detection": None}
+        assert session["audio"]["input"]["format"] == {"type": "audio/pcm", "rate": 24000}
+        assert [event["type"] for event in events] == [
+            "input_audio_buffer.committed",
+            "conversation.item.added",
+            "conversation.item.input_audio_transcription.completed",
+            "conversation.item.done",
+        ]
+        item_id = events[0]["item_id"]
+        assert events[1]["item"]["content"] == [{"type": "input_audio", "transcript": None}]
+        assert events[2] == {**events[2], "item_id": item_id, "content_index": 0, "transcript": "Hallo Welt."}
+        assert events[2]["usage"] == {"type": "duration", "seconds": 1.0}
+        assert events[3]["item"]["content"] == [{"type": "input_audio", "transcript": "Hallo Welt."}]
+        assert _wav(stt.audio[0]) == (24000, 24000)
+
+    def test_the_first_turn_detects_the_language_and_later_turns_reuse_it(self):
+        stt = _Stt("Hallo.", "Wie geht's?")
+        with self._session(stt) as ws:
+            _open(ws)
+            _append(ws, _pcm(0.2))
+            _commit(ws)
+            _append(ws, _pcm(0.2))
+            _commit(ws)
+        assert [(r.response_format, r.language) for r in stt.requests] == [("verbose_json", None), ("json", "de")]
+
+    def test_a_model_that_does_not_report_its_language_is_never_asked(self):
+        stt = _Stt("Hi.", "There.")
+        with self._session(stt, caps=SttCapabilities(streaming=False, reports_language=False)) as ws:
+            _open(ws)
+            for _ in range(2):
+                _append(ws, _pcm(0.2))
+                _commit(ws)
+        assert [(r.response_format, r.language) for r in stt.requests] == [("json", None), ("json", None)]
+
+    def test_the_clients_language_and_prompt_reach_the_model(self):
+        stt = _Stt("Bonjour.")
+        with self._session(stt) as ws:
+            _open(ws)
+            transcription = {"model": "whisper-1", "language": "fr", "prompt": "Maison"}
+            ws.send_json({"type": "session.update", "session": {"audio": {"input": {"transcription": transcription}}}})
+            ws.receive_json()
+            _append(ws, _pcm(0.2))
+            _commit(ws)
+        (request,) = stt.requests
+        assert (request.model, request.language, request.prompt, request.response_format) == (
+            "whisper",
+            "fr",
+            "Maison",
+            "json",
+        )
+
+    def test_a_response_waits_for_the_transcript_and_answers_it(self):
+        stt = _Stt("Turn on the lights.", delay=0.05)
+        llm = _Llm(_answer("Done."))
+        with self._session(stt, llm=llm) as ws:
+            _open(ws)
+            _append(ws, _pcm(0.2))
+            ws.send_json({"type": "input_audio_buffer.commit"})
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.done")
+        (request,) = llm.requests
+        assert request.input == [
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Turn on the lights."}]}
+        ]
+
+    def test_a_failed_turn_is_reported_and_left_out_of_the_answer(self):
+        stt = _Stt(create_error_response("Audio too noisy.", err_type="invalid_request_error"))
+        llm = _Llm(_answer("Pardon?"))
+        with self._session(stt, llm=llm) as ws:
+            _open(ws)
+            _say(ws, "Hi")
+            _append(ws, _pcm(0.2))
+            events = _commit(ws)
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.done")
+        failed = events[2]
+        assert failed["type"] == "conversation.item.input_audio_transcription.failed"
+        assert failed["error"] == {**failed["error"], "message": "Audio too noisy.", "type": "invalid_request_error"}
+        assert [_text(item) for item in llm.requests[0].input] == ["Hi"]
+
+    def test_g711_is_decoded_to_8_khz_pcm(self):
+        stt = _Stt("Hi.")
+        with self._session(stt) as ws:
+            _open(ws)
+            ws.send_json(
+                {"type": "session.update", "session": {"audio": {"input": {"format": {"type": "audio/pcmu"}}}}}
+            )
+            ws.receive_json()
+            _append(ws, bytes(range(256)) * 8)
+            _commit(ws)
+        assert _wav(stt.audio[0]) == (8000, 2048)
+
+    def test_audio_at_another_pcm_rate_keeps_it(self):
+        stt = _Stt("Hi.")
+        with self._session(stt) as ws:
+            _open(ws)
+            pcm16k = {"type": "audio/pcm", "rate": 16000}
+            ws.send_json({"type": "session.update", "session": {"audio": {"input": {"format": pcm16k}}}})
+            ws.receive_json()
+            _append(ws, _pcm(0.5, 16000))
+            _commit(ws)
+        assert _wav(stt.audio[0]) == (16000, 8000)
+
+    def test_a_commit_under_100_ms_is_refused_and_clear_empties_the_buffer(self):
+        with self._session(_Stt()) as ws:
+            _open(ws)
+            _append(ws, _pcm(0.05))
+            ws.send_json({"type": "input_audio_buffer.commit"})
+            short = ws.receive_json()["error"]
+            _append(ws, _pcm(0.5))
+            ws.send_json({"type": "input_audio_buffer.clear"})
+            cleared = ws.receive_json()
+            ws.send_json({"type": "input_audio_buffer.commit"})
+            empty = ws.receive_json()["error"]
+        assert short["code"] == empty["code"] == "input_audio_buffer_commit_empty"
+        assert cleared["type"] == "input_audio_buffer.cleared"
+
+    def test_the_buffer_holds_at_most_120_seconds(self):
+        with self._session(_Stt()) as ws:
+            _open(ws)
+            slow = {"type": "audio/pcm", "rate": 1000}
+            ws.send_json({"type": "session.update", "session": {"audio": {"input": {"format": slow}}}})
+            ws.receive_json()
+            _append(ws, _pcm(121, 1000))
+            error = ws.receive_json()["error"]
+        assert error["code"] == "input_audio_buffer_full"
+
+    def test_the_format_cannot_change_with_audio_in_the_buffer(self):
+        with self._session(_Stt()) as ws:
+            _open(ws)
+            _append(ws, _pcm(0.2))
+            ws.send_json(
+                {"type": "session.update", "session": {"audio": {"input": {"format": {"type": "audio/pcma"}}}}}
+            )
+            error = ws.receive_json()["error"]
+        assert (error["code"], error["param"]) == ("invalid_value", "session.audio.input.format")
+
+    def test_turn_detection_is_not_supported_yet(self):
+        with self._session(_Stt()) as ws:
+            _open(ws)
+            vad = {"turn_detection": {"type": "server_vad"}}
+            ws.send_json({"type": "session.update", "session": {"audio": {"input": vad}}})
+            error = ws.receive_json()["error"]
+        assert (error["code"], error["param"]) == ("unsupported_value", "session.audio.input.turn_detection")
+
+    def test_audio_inside_an_item_is_not_supported_yet(self):
+        with self._session(_Stt()) as ws:
+            _open(ws)
+            item = {"type": "message", "role": "user", "content": [{"type": "input_audio", "transcript": "hi"}]}
+            ws.send_json({"type": "conversation.item.create", "item": item})
+            error = ws.receive_json()["error"]
+        assert (error["code"], error["param"]) == ("unsupported_value", "item.content[0]")
+
+    def test_audio_that_is_not_base64_is_refused(self):
+        with self._session(_Stt()) as ws:
+            _open(ws)
+            ws.send_json({"type": "input_audio_buffer.append", "audio": "not base64!"})
+            error = ws.receive_json()["error"]
+        assert (error["code"], error["param"]) == ("invalid_value", "audio")
+
+    def test_a_pipeline_without_stt_takes_no_audio(self):
+        with self._session(_Stt(), pipeline={"name": "chat", "llm": "qwen"}) as ws:
+            _open(ws)
+            _append(ws, _pcm(0.2))
+            error = ws.receive_json()["error"]
+        assert error["code"] == "invalid_event"
+
+    def test_a_transcription_session_transcribes_its_turns(self):
+        stt = _Stt("Note one.", "Note two.")
+        with self._session(stt, pipeline=SCRIBE) as ws:
+            _open(ws)
+            transcripts = []
+            for _ in range(2):
+                _append(ws, _pcm(0.2))
+                transcripts.append(_commit(ws)[2]["transcript"])
+        assert transcripts == ["Note one.", "Note two."]
+
+
+def test_g711_tables_match_audioop():
+    from modelship.openai.realtime.audio import to_pcm16
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        audioop = pytest.importorskip("audioop")
+    codes = bytes(range(256))
+    assert to_pcm16(codes, "audio/pcmu") == audioop.ulaw2lin(codes, 2)
+    assert to_pcm16(codes, "audio/pcma") == audioop.alaw2lin(codes, 2)
+
+
 class TestActiveResponse:
     @pytest.mark.asyncio
     async def test_a_cancel_before_its_task_starts_still_opens_and_ends_it(self):
@@ -816,12 +1076,13 @@ class TestActiveResponse:
         async def send(event: dict) -> None:
             sent.append(event)
 
-        answer = llm.respond("qwen", ResponsesRequest(model="qwen", input=[]), "s1")
-        assert answer is not None
+        async def start():
+            return llm.respond("qwen", ResponsesRequest(model="qwen", input=[]), "s1")
+
         response = RealtimeResponse(id="resp_1", output_modalities=["text"], max_output_tokens="inf")
-        active = ActiveResponse(response, "qwen", answer, None, send)
+        active = ActiveResponse(response, "qwen", start, None, send)
         active.cancel()
         await active.task
         assert [event["type"] for event in sent] == ["response.created", "response.done"]
         assert sent[-1]["response"]["status"] == "cancelled"
-        assert llm.started == 0
+        assert llm.requests == []

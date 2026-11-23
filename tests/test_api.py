@@ -898,3 +898,27 @@ class TestPipelines:
         handle.stt_capabilities.remote = AsyncMock(return_value=whisper)
         assert await calls.stt_capabilities("qwen") == whisper
         assert await calls.stt_capabilities("nope") is None
+
+    @pytest.mark.asyncio
+    async def test_a_realtime_session_transcribes_a_turn_with_the_connections_plumbing(self, api):
+        calls = await self._realtime_calls(api, "registry")
+        transcript = MagicMock()
+
+        class _One:
+            async def __aiter__(self):
+                yield transcript
+
+        handle = next(reversed(api.models["qwen"].values()))
+        handle.transcribe.options.return_value.remote.return_value = _One()
+        request = MagicMock()
+        assert await calls.transcribe("qwen", b"RIFF", request, "s1") is transcript
+        handle.transcribe.options.assert_called_once_with(stream=True, session_id="s1")
+        (audio, sent, headers, registry, _req_id, identity), _ = handle.transcribe.options.return_value.remote.call_args
+        assert (audio, sent, headers, registry, identity) == (
+            b"RIFF",
+            request,
+            {"x-device": "kitchen"},
+            "registry",
+            "caller",
+        )
+        assert await calls.transcribe("nope", b"RIFF", request, "s1") is None
