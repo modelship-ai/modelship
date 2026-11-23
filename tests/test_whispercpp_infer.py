@@ -91,6 +91,16 @@ def _translation_request(**overrides) -> TranslationRequest:
     return TranslationRequest(**{"file": file, "model": "stt", **overrides})
 
 
+class TestSttCapabilities:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("multilingual", [True, False])
+    async def test_a_multilingual_model_reports_its_language(self, multilingual):
+        infer = _infer(_StubModel([]))
+        infer._multilingual = multilingual
+        found = await infer.stt_capabilities()
+        assert (found.streaming, found.reports_language) == (False, multilingual)
+
+
 class TestDecodeKwargs:
     """prompt/temperature must reach whisper.cpp's transcribe() call."""
 

@@ -86,6 +86,7 @@ from modelship.openai.protocol import (
     PromptTokenUsageInfo,
     ResponseObject,
     ResponsesRequest,
+    SttCapabilities,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
@@ -1025,6 +1026,13 @@ class VllmInfer(BaseInfer[_VllmPrepared]):
         if isinstance(result, VllmErrorResponse):
             return _to_error_response(result)
         return cast("ErrorResponse | Response", result)
+
+    async def stt_capabilities(self) -> SttCapabilities | None:
+        if self.serving_transcription is None:
+            return None
+        # Whisper's model class detects the language; others take it from the request or not at all
+        detects = getattr(self.serving_transcription.model_cls, "supports_explicit_language_detection", False)
+        return SttCapabilities(streaming=False, reports_language=bool(detects))
 
     async def create_transcription(
         self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy

@@ -21,6 +21,7 @@ from modelship.infer.sherpa_onnx.sherpa_onnx_infer import PROVIDER, SherpaOnnxIn
 from modelship.logging import TRACE, get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
+    SttCapabilities,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
@@ -129,6 +130,9 @@ class SherpaOnnxSttInfer(SherpaOnnxInfer):
     def _prepare(self, audio_data: bytes) -> tuple[list[Piece], float]:
         samples, duration = decode_audio(audio_data, SAMPLE_RATE)
         return pieces(np.asarray(samples, dtype=np.float32), self.model_config._resolved_vad), duration
+
+    async def stt_capabilities(self) -> SttCapabilities:
+        return SttCapabilities(streaming=False, reports_language=False)
 
     async def create_transcription(
         self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy

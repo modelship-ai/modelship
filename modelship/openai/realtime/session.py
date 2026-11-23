@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
 from modelship.logging import get_logger
+from modelship.openai.protocol import SttCapabilities
 from modelship.openai.protocol.realtime import (
     CLIENT_EVENTS,
     SESSION_OBJECTS,
@@ -32,8 +33,9 @@ from modelship.openai.protocol.realtime import (
     session_event,
 )
 from modelship.openai.protocol.responses.schemas import ResponsesRequest
+from modelship.openai.realtime.calls import PipelineCalls
 from modelship.openai.realtime.conversation import Conversation, as_input
-from modelship.openai.realtime.response import ActiveResponse, Respond
+from modelship.openai.realtime.response import ActiveResponse
 from modelship.utils import random_uuid
 from modelship.utils.config_schema import PipelineConfig
 
@@ -129,31 +131,62 @@ def _audio_output(param: str) -> RealtimeError:
     return RealtimeError(message="Audio output is not supported yet.", code="unsupported_value", param=param)
 
 
+async def _stt_capabilities(config: PipelineConfig, calls: PipelineCalls) -> SttCapabilities | RealtimeError | None:
+    """What the pipeline's stt model can do, asked once for the session; None without one."""
+    if config.stt is None:
+        return None
+    try:
+        found = await calls.stt_capabilities(config.stt)
+    except Exception:
+        logger.exception("Pipeline %r: model %r didn't say what it can do", config.name, config.stt)
+        return RealtimeError(
+            message=f"Pipeline {config.name!r} couldn't ask model {config.stt!r} what it can do.",
+            code="model_not_ready",
+        )
+    if found is None:
+        return RealtimeError(
+            message=f"Pipeline {config.name!r} uses model {config.stt!r} as stt, which doesn't transcribe.",
+            code="model_not_supported",
+        )
+    return found
+
+
+async def _refuse(websocket: WebSocket, error: RealtimeError) -> None:
+    await websocket.send_text(json.dumps(error_event(error)))
+    await websocket.close(code=_CLOSE_REFUSED)
+
+
 async def serve_session(
     websocket: WebSocket,
     pipelines: Mapping[str, dict],
     known: Collection[str],
     serving: Collection[str],
-    respond: Respond,
+    calls: PipelineCalls,
 ) -> None:
     """Runs one session until the client leaves. *pipelines* is the gateway's pipeline table, *known* its models,
-    *serving* those it can route to now, and *respond* how the session calls a model."""
+    *serving* those it can route to now, and *calls* how the session calls them."""
     await websocket.accept()
     name = websocket.query_params.get("model")
     refusal = _refusal(name, pipelines, known, serving)
     if refusal is not None:
-        await websocket.send_text(json.dumps(error_event(refusal)))
-        await websocket.close(code=_CLOSE_REFUSED)
+        await _refuse(websocket, refusal)
         return
     assert name is not None
-    await Session(websocket, PipelineConfig.model_validate(pipelines[name]["config"]), respond).run()
+    config = PipelineConfig.model_validate(pipelines[name]["config"])
+    stt = await _stt_capabilities(config, calls)
+    if isinstance(stt, RealtimeError):
+        await _refuse(websocket, stt)
+        return
+    await Session(websocket, config, calls, stt).run()
 
 
 class Session:
-    def __init__(self, websocket: WebSocket, config: PipelineConfig, respond: Respond):
+    def __init__(self, websocket: WebSocket, config: PipelineConfig, calls: PipelineCalls, stt: SttCapabilities | None):
         self.websocket = websocket
         self.config = config
-        self.respond = respond
+        self.calls = calls
+        # what the stt model can do, asked once at open; None without one
+        self.stt = stt
         self.state = _new_session(config)
         self.conversation = Conversation()
         self.active: ActiveResponse | None = None
@@ -305,7 +338,7 @@ class Session:
             stream=True,
             store=False,
         )
-        answer = self.respond(llm, request, self.state.id)
+        answer = self.calls.respond(llm, request, self.state.id)
         if answer is None:
             return RealtimeError(message=f"Pipeline model {llm!r} isn't ready.", code="model_not_ready")
         in_conversation = params.conversation != "none"

@@ -13,6 +13,7 @@ from modelship.openai.protocol import (
     ChatCompletionStreamResponse,
     DeltaMessage,
     PromptTokenUsageInfo,
+    SttCapabilities,
     UsageInfo,
     create_error_response,
 )
@@ -95,15 +96,44 @@ class _Llm:
             self.closed_early.append(not finished)
 
 
-def _client(pipelines: dict, known=("whisper", "qwen"), serving=("whisper", "qwen"), llm: _Llm | None = None):
-    app = FastAPI()
+WHISPER = SttCapabilities(streaming=False, reports_language=True)
 
-    def respond(model: str, request: ResponsesRequest, session_id: str):
-        return llm.respond(model, request, session_id) if llm is not None else None
+
+class _Calls:
+    """`PipelineCalls` over a fake LLM, "qwen", and a speech-to-text model, "whisper", answering *stt*."""
+
+    def __init__(self, llm: _Llm | None, stt: SttCapabilities | Exception | None):
+        self.llm = llm
+        self.stt = stt
+        self.asked: list[str] = []
+
+    def respond(self, model: str, request: ResponsesRequest, session_id: str):
+        return self.llm.respond(model, request, session_id) if self.llm is not None else None
+
+    async def stt_capabilities(self, model: str) -> SttCapabilities | None:
+        self.asked.append(model)
+        if isinstance(self.stt, Exception):
+            raise self.stt
+        return self.stt
+
+
+def _client(
+    pipelines: dict,
+    known=("whisper", "qwen"),
+    serving=("whisper", "qwen"),
+    llm: _Llm | None = None,
+    stt: SttCapabilities | Exception | None = WHISPER,
+    sessions: list | None = None,
+) -> TestClient:
+    """A gateway app serving *pipelines*; each session's `_Calls` and `Session` go into *sessions*."""
+    app = FastAPI()
 
     @app.websocket("/v1/realtime")
     async def realtime(websocket: WebSocket):
-        await serve_session(websocket, pipelines, list(known), set(serving), respond)
+        calls = _Calls(llm, stt)
+        if sessions is not None:
+            sessions.append(calls)
+        await serve_session(websocket, pipelines, list(known), set(serving), calls)
 
     return TestClient(app)
 
@@ -200,6 +230,40 @@ class TestOpening:
     def test_a_pipeline_whose_audio_app_is_not_ready_is_refused(self):
         error = _refused(_client(_route(ASSISTANT, ready=False)), "?model=assistant")
         assert error == {**error, "code": "model_not_ready", "message": "Pipeline 'assistant' isn't ready yet."}
+
+
+class TestSttCapabilities:
+    def test_a_session_asks_its_stt_model_once_and_keeps_the_answer(self):
+        sessions: list[_Calls] = []
+        llm = _Llm(_answer("Hi."))
+        with _client(_route(ASSISTANT), llm=llm, sessions=sessions).websocket_connect(
+            "/v1/realtime?model=assistant"
+        ) as ws:
+            _open(ws)
+            _say(ws, "Hi")
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.done")
+        assert sessions[0].asked == ["whisper"]
+
+    def test_a_pipeline_without_stt_asks_nothing(self):
+        sessions: list[_Calls] = []
+        chat = {"name": "chat", "llm": "qwen"}
+        with _client(_route(chat), sessions=sessions).websocket_connect("/v1/realtime?model=chat") as ws:
+            _open(ws)
+        assert sessions[0].asked == []
+
+    def test_an_stt_model_that_does_not_transcribe_refuses_the_session(self):
+        error = _refused(_client(_route(ASSISTANT), stt=None), "?model=assistant")
+        assert error["code"] == "model_not_supported"
+        assert "uses model 'whisper' as stt, which doesn't transcribe" in error["message"]
+
+    def test_an_stt_model_that_fails_to_answer_refuses_the_session(self):
+        error = _refused(_client(_route(ASSISTANT), stt=RuntimeError("replica died")), "?model=assistant")
+        assert error == {
+            **error,
+            "code": "model_not_ready",
+            "message": "Pipeline 'assistant' couldn't ask model 'whisper' what it can do.",
+        }
 
 
 class TestSessionUpdate:

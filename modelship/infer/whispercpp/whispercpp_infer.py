@@ -11,6 +11,7 @@ from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy, 
 from modelship.logging import TRACE, get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
+    SttCapabilities,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
@@ -104,6 +105,10 @@ class WhispercppInfer(BaseInfer):
         return lang
 
     # -- transcription -----------------------------------------------------
+
+    async def stt_capabilities(self) -> SttCapabilities:
+        # an English-only model always answers "en"
+        return SttCapabilities(streaming=False, reports_language=self._multilingual)
 
     async def create_transcription(
         self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy

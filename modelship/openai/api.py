@@ -51,6 +51,7 @@ from modelship.openai.protocol import (
     ResponseObject,
     ResponsesRequest,
     SpeechRequest,
+    SttCapabilities,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
@@ -226,6 +227,35 @@ async def _respond_stream(
                 await registry.set.remote(req_id)
             except RayActorError:
                 logger.warning("Disconnect registry unavailable; lost the cancel of %s", req_id)
+
+
+class _PipelineCalls:
+    """A realtime session's calls to its pipeline's models (`realtime.PipelineCalls`), with its connection's
+    headers, disconnect registry and identity. *models* is the gateway's live model → app → handle table."""
+
+    def __init__(
+        self, models: dict[str, dict[str, DeploymentHandle]], headers: dict[str, str], registry: Any, identity: str
+    ):
+        self._models = models
+        self._headers = headers
+        self._registry = registry
+        self._identity = identity
+
+    def _handle(self, model: str) -> DeploymentHandle | None:
+        handles = self._models.get(model)
+        return next(reversed(handles.values())) if handles else None
+
+    def respond(self, model: str, request: ResponsesRequest, session_id: str) -> realtime.Answer | None:
+        handle = self._handle(model)
+        if handle is None:
+            return None
+        return _respond_stream(handle, request, self._headers, self._registry, self._identity, session_id)
+
+    async def stt_capabilities(self, model: str) -> SttCapabilities | None:
+        handle = self._handle(model)
+        if handle is None:
+            return None
+        return await handle.stt_capabilities.remote()
 
 
 @serve.deployment
@@ -601,18 +631,10 @@ class ModelshipAPI:
     async def realtime_ws(self, websocket: WebSocket):
         """OpenAI Realtime over WebSocket, on a pipeline: `/v1/realtime?model=<pipeline>`. Experimental."""
         self._ensure_watching()
-        identity = self._set_identity(websocket)
-        headers = dict(websocket.headers)
-        registry = get_disconnect_registry()
-
-        def respond(model: str, request: ResponsesRequest, session_id: str) -> realtime.Answer | None:
-            handles = self.models.get(model)
-            if not handles:
-                return None
-            handle = next(reversed(handles.values()))
-            return _respond_stream(handle, request, headers, registry, identity, session_id)
-
-        await realtime.serve_session(websocket, self.pipelines, self.expected_models, set(self.models), respond)
+        calls = _PipelineCalls(
+            self.models, dict(websocket.headers), get_disconnect_registry(), self._set_identity(websocket)
+        )
+        await realtime.serve_session(websocket, self.pipelines, self.expected_models, set(self.models), calls)
 
     @app.post("/v1/chat/completions")
     async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):

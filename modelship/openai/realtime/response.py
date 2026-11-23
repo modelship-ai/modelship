@@ -3,7 +3,7 @@ answer as Realtime events. Reasoning reaches neither the client nor the conversa
 
 import asyncio
 import contextlib
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from modelship.logging import get_logger
@@ -20,17 +20,12 @@ from modelship.openai.protocol.realtime import (
     response_event,
     server_event,
 )
-from modelship.openai.protocol.responses.schemas import ResponsesRequest
+from modelship.openai.realtime.calls import Answer
 from modelship.openai.realtime.conversation import Conversation
 
 logger = get_logger("realtime")
 
 Send = Callable[[dict], Awaitable[None]]
-# a model's streamed answer: Responses event dicts, or the ErrorResponse its loader answered with instead; closing
-# it stops the model
-Answer = AsyncGenerator[Any, None]
-# starts *model* answering *request* for session *session_id*; None while nothing serves *model*
-Respond = Callable[[str, ResponsesRequest, str], Answer | None]
 
 _TERMINAL = frozenset({"response.completed", "response.incomplete", "response.failed"})
 _PART_EVENTS = frozenset(

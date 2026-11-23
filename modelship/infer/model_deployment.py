@@ -27,6 +27,7 @@ from modelship.openai.protocol import (
     ImageVariationRequest,
     ResponsesRequest,
     SpeechRequest,
+    SttCapabilities,
     TranscriptionRequest,
     TranslationRequest,
     client_safe,
@@ -221,6 +222,10 @@ class ModelDeployment:
                 yield client_safe(chunk)
         else:
             yield client_safe(result)
+
+    async def stt_capabilities(self) -> SttCapabilities | None:
+        """What this model can do as speech to text; None when it doesn't transcribe."""
+        return await self.infer.stt_capabilities()
 
     async def transcribe(
         self,

@@ -172,6 +172,12 @@ def _request(**fields) -> TranscriptionRequest:
     return TranscriptionRequest.model_construct(**(base | fields))
 
 
+@pytest.mark.asyncio
+async def test_parakeet_neither_streams_nor_reports_a_language():
+    found = await SherpaOnnxSttInfer(_config()).stt_capabilities()
+    assert (found.streaming, found.reports_language) == (False, False)
+
+
 class TestTranscription:
     def test_json_joins_the_pieces(self, monkeypatch):
         infer = _infer(monkeypatch, _result((" one", 0, 0.1)), _result((" two", 0, 0.1)), parts=2)

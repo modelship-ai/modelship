@@ -30,6 +30,7 @@ from modelship.openai.protocol import (
     ResponseObject,
     ResponsesRequest,
     SpeechRequest,
+    SttCapabilities,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
@@ -527,6 +528,10 @@ class BaseInfer[Prepared](ABC):
 
     async def create_embedding(self, request: EmbeddingRequest, raw_request: RawRequestProxy) -> ErrorResponse:
         return _NOT_SUPPORTED
+
+    async def stt_capabilities(self) -> SttCapabilities | None:
+        """What this model can do as speech to text; None when it doesn't transcribe."""
+        return None
 
     async def create_transcription(
         self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy

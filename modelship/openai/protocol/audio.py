@@ -14,6 +14,15 @@ from modelship.openai.protocol.base import OpenAIBaseModel
 AudioResponseFormat = Literal["json", "text", "srt", "verbose_json", "vtt"]
 
 
+class SttCapabilities(OpenAIBaseModel):
+    """What a speech-to-text model can do, as its replica reports it."""
+
+    # takes audio as it arrives
+    streaming: bool
+    # detects the spoken language and returns it
+    reports_language: bool
+
+
 class TranscriptionUsageAudio(OpenAIBaseModel):
     type: Literal["duration"] = "duration"
     seconds: float
