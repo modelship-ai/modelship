@@ -99,13 +99,13 @@ class ModelDeployment:
 
                 self.infer = WhispercppInfer(config)
             elif config.loader == ModelLoader.sherpa_onnx and config.usecase == ModelUsecase.tts:
-                from modelship.infer.sherpa_onnx.sherpa_onnx_infer import SherpaOnnxInfer
+                from modelship.infer.sherpa_onnx.tts_infer import SherpaOnnxTtsInfer
 
-                self.infer = SherpaOnnxInfer(config)
+                self.infer = SherpaOnnxTtsInfer(config)
             elif config.loader == ModelLoader.sherpa_onnx:
-                from modelship.infer.sherpa_onnx.asr import SherpaOnnxAsrInfer
+                from modelship.infer.sherpa_onnx.stt_infer import SherpaOnnxSttInfer
 
-                self.infer = SherpaOnnxAsrInfer(config)
+                self.infer = SherpaOnnxSttInfer(config)
 
             await self.infer.start()
             await self.infer.warmup()

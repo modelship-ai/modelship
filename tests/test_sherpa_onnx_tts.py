@@ -16,9 +16,9 @@ import numpy as np
 import pytest
 
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, RawRequestProxy
-from modelship.infer.sherpa_onnx import sherpa_onnx_infer
+from modelship.infer.sherpa_onnx.family import kokoro
 from modelship.infer.sherpa_onnx.registry import REGISTRY, SherpaOnnxRegistryEntry
-from modelship.infer.sherpa_onnx.sherpa_onnx_infer import SherpaOnnxInfer
+from modelship.infer.sherpa_onnx.tts_infer import SherpaOnnxTtsInfer
 from modelship.openai.protocol import ErrorResponse, RawSpeechResponse, SpeechRequest
 
 _ENTRY: SherpaOnnxRegistryEntry = REGISTRY["kokoro-en-v0_19"]
@@ -115,8 +115,8 @@ def _config(**overrides) -> ModelshipModelConfig:
     return ModelshipModelConfig(**{**defaults, **overrides})
 
 
-def _infer(entry: SherpaOnnxRegistryEntry = _ENTRY, tts: _FakeOfflineTts | None = None, **config) -> SherpaOnnxInfer:
-    infer = SherpaOnnxInfer(_config(**config))
+def _infer(entry: SherpaOnnxRegistryEntry = _ENTRY, tts: _FakeOfflineTts | None = None, **config) -> SherpaOnnxTtsInfer:
+    infer = SherpaOnnxTtsInfer(_config(**config))
     infer.entry = entry
     infer.tts = tts or _FakeOfflineTts(_FakeTtsConfig(), num_speakers=len(entry.voice_names))
     infer.frontend = _FakeFrontend()
@@ -182,9 +182,9 @@ def _resolved(config: ModelshipModelConfig, path: str = "/bundle") -> ModelshipM
 
 def _stub_frontend(monkeypatch) -> list[tuple]:
     built: list[tuple] = []
-    monkeypatch.setattr(sherpa_onnx_infer.TokenTable, "load", staticmethod(lambda path: f"tokens@{path}"))
+    monkeypatch.setattr(kokoro.TokenTable, "load", staticmethod(lambda path: f"tokens@{path}"))
     monkeypatch.setattr(
-        sherpa_onnx_infer,
+        kokoro,
         "KokoroFrontend",
         lambda tokens, chinese_lexicon: built.append((tokens, chinese_lexicon)) or _FakeFrontend(),
     )
@@ -194,9 +194,10 @@ def _stub_frontend(monkeypatch) -> list[tuple]:
 class TestLoad:
     def test_provider_threads_paths_and_no_lexicon_to_sherpa(self, monkeypatch):
         _stub_frontend(monkeypatch)
-        infer = SherpaOnnxInfer(_resolved(_config(num_cpus=3)))
-        tts, entry, _frontend = infer._load()
-        assert entry is _ENTRY
+        infer = SherpaOnnxTtsInfer(_resolved(_config(num_cpus=3)))
+        infer._load()
+        tts = infer.tts
+        assert infer.entry is _ENTRY
         assert tts.cfg.model.provider == "cpu"
         assert tts.cfg.model.num_threads == 3
         assert tts.cfg.model.kokoro.model == "/bundle/model.onnx"
@@ -207,7 +208,7 @@ class TestLoad:
 
     def test_english_bundle_frontend_has_no_lexicon(self, monkeypatch):
         built = _stub_frontend(monkeypatch)
-        SherpaOnnxInfer(_resolved(_config()))._load()
+        SherpaOnnxTtsInfer(_resolved(_config()))._load()
         assert built == [("tokens@/bundle/tokens.txt", None)]
 
     def test_multilang_frontend_gets_the_chinese_lexicon(self, monkeypatch):
@@ -215,27 +216,27 @@ class TestLoad:
         monkeypatch.setitem(
             sys.modules, "sherpa_onnx", _fake_sherpa_onnx_module(len(REGISTRY["kokoro-multi-lang-v1_0"].voice_names))
         )
-        SherpaOnnxInfer(_resolved(_config(model="kokoro-multi-lang-v1_0")))._load()
+        SherpaOnnxTtsInfer(_resolved(_config(model="kokoro-multi-lang-v1_0")))._load()
         assert built == [("tokens@/bundle/tokens.txt", "/bundle/lexicon-zh.txt")]
 
     def test_local_dir_uses_the_entry_its_basename_names(self, monkeypatch, tmp_path):
         _stub_frontend(monkeypatch)
         bundle = str(tmp_path / "kokoro-en-v0_19")
-        infer = SherpaOnnxInfer(_resolved(_config(model=f"{bundle}/"), bundle))
-        tts, entry, _frontend = infer._load()
-        assert entry is _ENTRY
-        assert tts.cfg.model.kokoro.model == f"{bundle}/model.onnx"
+        infer = SherpaOnnxTtsInfer(_resolved(_config(model=f"{bundle}/"), bundle))
+        infer._load()
+        assert infer.entry is _ENTRY
+        assert infer.tts.cfg.model.kokoro.model == f"{bundle}/model.onnx"
 
     def test_num_speakers_mismatch_raises(self, monkeypatch):
         _stub_frontend(monkeypatch)
         monkeypatch.setitem(sys.modules, "sherpa_onnx", _fake_sherpa_onnx_module(num_speakers=999))
-        infer = SherpaOnnxInfer(_resolved(_config()))
+        infer = SherpaOnnxTtsInfer(_resolved(_config()))
         with pytest.raises(ValueError, match="999"):
             infer._load()
 
     def test_rejects_a_config_without_a_resolved_path(self, monkeypatch):
         _stub_frontend(monkeypatch)
-        infer = SherpaOnnxInfer(_config())
+        infer = SherpaOnnxTtsInfer(_config())
         with pytest.raises(ValueError, match="no resolved bundle directory"):
             infer._load()
 

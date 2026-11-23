@@ -4,20 +4,20 @@ Audio longer than `MAX_SEGMENT_S` is cut at Silero's silences into pieces of at 
 after another. A transducer's memory and time grow faster than its input.
 """
 
-import asyncio
 import contextlib
 import json
-import os
 import threading
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Any, cast
 
 import numpy as np
 
-from modelship.infer.base_infer import BaseInfer
 from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
-from modelship.infer.sherpa_onnx.registry import REGISTRY, AsrEntry, registry_name
+from modelship.infer.sherpa_onnx.family import nemo_transducer
+from modelship.infer.sherpa_onnx.registry import AsrEntry
+from modelship.infer.sherpa_onnx.sherpa_onnx_infer import PROVIDER, SherpaOnnxInfer
 from modelship.logging import TRACE, get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
@@ -42,6 +42,8 @@ MAX_SEGMENT_S = 30.0
 _SENTENCE_ENDS = (".", "?", "!", "。", "？", "！")
 # verbose_json needs a language; these models neither take nor report one
 _UNKNOWN_LANGUAGE = "unknown"
+# `AsrEntry.family` -> its module, which builds the recognizer and reads words from its tokens
+_FAMILIES: dict[str, ModuleType] = {"nemo_transducer": nemo_transducer}
 
 
 @dataclass(frozen=True)
@@ -54,12 +56,9 @@ class Piece:
 
 @dataclass(frozen=True)
 class Decoded:
-    offset: float
     text: str
-    tokens: list[str]
-    # each token's start and length in seconds, from the piece's start
-    timestamps: list[float]
-    durations: list[float]
+    # timed from the start of the input
+    words: list[TranscriptionWord]
 
 
 def pieces(samples: np.ndarray, vad_model: str | None) -> list[Piece]:
@@ -69,22 +68,6 @@ def pieces(samples: np.ndarray, vad_model: str | None) -> list[Piece]:
     vad = Vad(vad_model, VadSettings(), max_speech_s=MAX_SEGMENT_S)
     events = vad.feed(samples) + vad.flush()
     return [Piece(e.audio_start_ms / 1000, e.audio) for e in events if isinstance(e, SpeechStopped)]
-
-
-def words(decoded: list[Decoded]) -> list[TranscriptionWord]:
-    """Words from the tokens: a token that starts with a space starts a word, any other extends the last."""
-    found: list[TranscriptionWord] = []
-    for piece in decoded:
-        for token, start, length in zip(piece.tokens, piece.timestamps, piece.durations, strict=False):
-            begin, end = piece.offset + start, piece.offset + start + length
-            if token.startswith((" ", "▁")) or not found or found[-1].end <= piece.offset:
-                text = token.lstrip(" ▁")
-                if text:
-                    found.append(TranscriptionWord(word=text, start=round(begin, 3), end=round(end, 3)))
-                continue
-            last = found[-1]
-            found[-1] = TranscriptionWord(word=last.word + token, start=last.start, end=round(end, 3))
-    return found
 
 
 def segments(found: list[TranscriptionWord]) -> list[TranscriptionSegment]:
@@ -110,13 +93,15 @@ def _encode_transcript_event(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-class SherpaOnnxAsrInfer(BaseInfer):
-    """In-process sherpa-onnx offline speech to text. CPU only."""
+class SherpaOnnxSttInfer(SherpaOnnxInfer):
+    """sherpa-onnx offline speech to text."""
 
     def __init__(self, model_config: ModelshipModelConfig):
         super().__init__(model_config)
+        assert isinstance(self.registry_entry, AsrEntry)
+        self.entry: AsrEntry = self.registry_entry
+        self.family = _FAMILIES[self.entry.family]
         self.recognizer: Any = None
-        self.entry: AsrEntry | None = None
 
     def shutdown(self) -> None:
         self.recognizer = None
@@ -124,46 +109,16 @@ class SherpaOnnxAsrInfer(BaseInfer):
     def __del__(self):
         self.shutdown()
 
-    async def start(self) -> None:
-        loop = asyncio.get_running_loop()
-        self.recognizer, self.entry = await loop.run_in_executor(None, self._load)
-
-    def _load(self) -> tuple[Any, AsrEntry]:
-        import sherpa_onnx
-
-        assert self.model_config.model is not None
-        bundle_dir = self.model_config._resolved_path
-        if bundle_dir is None:
-            raise ValueError(
-                f"sherpa_onnx deployment '{self.model_config.name}' has no resolved bundle directory. "
-                f"Check driver logs for resolution errors."
-            )
-        entry = REGISTRY[registry_name(self.model_config.model)]
-        assert isinstance(entry, AsrEntry)
-        files = {slot: os.path.join(bundle_dir, rel_path) for slot, rel_path in entry.files.items()}
-        logger.info("loading sherpa_onnx model %r for '%s'", self.model_config.model, self.model_config.name)
-        factory = getattr(sherpa_onnx.OfflineRecognizer, f"from_{entry.family}")
-        recognizer = factory(
-            **files,
-            num_threads=max(1, round(self.model_config.num_cpus)),
-            model_type=entry.model_type,
-            decoding_method="greedy_search",
-            # CoreML fails under Ray's forked actor processes
-            provider="cpu",
-        )
-        return recognizer, entry
-
-    async def warmup(self) -> None:
-        pass
+    def _load(self) -> None:
+        self.recognizer = self.family.recognizer(self.entry, self.bundle_dir(), self.threads, PROVIDER)
 
     def _decode(self, piece: Piece) -> Decoded:
         stream = self.recognizer.create_stream()
         stream.accept_waveform(SAMPLE_RATE, piece.samples)
         self.recognizer.decode_stream(stream)
         result = stream.result
-        return Decoded(
-            piece.offset, result.text.strip(), list(result.tokens), list(result.timestamps), list(result.durations)
-        )
+        found = self.family.words(list(result.tokens), list(result.timestamps), list(result.durations), piece.offset)
+        return Decoded(result.text.strip(), found)
 
     def _decode_all(self, parts: list[Piece], stop: threading.Event, emit: Callable[[Decoded], None]) -> None:
         for part in parts:
@@ -178,7 +133,7 @@ class SherpaOnnxAsrInfer(BaseInfer):
     async def create_transcription(
         self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | TranscriptionResponse | TranscriptionResponseVerbose | AsyncGenerator[str, None]:
-        request_id = f"asr-{base_request_id(raw_request)}"
+        request_id = f"stt-{base_request_id(raw_request)}"
         if request.prompt or request.language:
             logger.debug("%s: %s takes no prompt or language; ignoring them", request_id, self.model_config.name)
         try:
@@ -203,7 +158,7 @@ class SherpaOnnxAsrInfer(BaseInfer):
         usage = TranscriptionUsageAudio(seconds=duration)
         if request.response_format != "verbose_json":
             return TranscriptionResponse(text=text, usage=usage)
-        found = words(decoded)
+        found = [word for piece in decoded for word in piece.words]
         return TranscriptionResponseVerbose(
             language=request.language or _UNKNOWN_LANGUAGE,
             duration=duration,

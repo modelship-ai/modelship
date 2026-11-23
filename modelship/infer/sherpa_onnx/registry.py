@@ -29,15 +29,14 @@ class SherpaOnnxRegistryEntry(NamedTuple):
 
 
 class AsrEntry(NamedTuple):
-    """An offline speech-to-text bundle. `family` names the `OfflineRecognizer.from_<family>` factory, `files`
-    keys are its arguments and values paths relative to the bundle root, and `model_type` its `model_type`."""
+    """An offline speech-to-text bundle. `family` names its module in `family/`; `files` maps the files that
+    family reads to paths relative to the bundle root."""
 
     tarball_url: str
     sha256: str
     family: str
     usecase: str
     files: dict[str, str]
-    model_type: str
 
 
 # copies of k2-fsa/sherpa-onnx's tts-models and asr-models assets; a file name ends in its sha256 prefix
@@ -145,7 +144,7 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry | AsrEntry] = {
     "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8": AsrEntry(
         tarball_url=f"{_BUNDLES}/asr/parakeet/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8-1495e91b.tar.bz2",
         sha256="1495e91b59d7fc53ddca91f3431758ec99f8fa253fdb0e1e851be0f72b14b0f9",
-        family="transducer",
+        family="nemo_transducer",
         usecase="transcription",
         files={
             "encoder": "encoder.int8.onnx",
@@ -153,7 +152,6 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry | AsrEntry] = {
             "joiner": "joiner.int8.onnx",
             "tokens": "tokens.txt",
         },
-        model_type="nemo_transducer",
     ),
 }
 

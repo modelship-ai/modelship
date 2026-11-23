@@ -1,6 +1,6 @@
-"""sherpa_onnx offline speech to text: words and sentences from tokens, cutting long audio, the transcription
-responses against a fake recognizer, config validation and the Silero pin. `test_sherpa_onnx_integration.py`
-runs the real bundle."""
+"""sherpa_onnx offline speech to text: the NeMo transducer family's words, sentences, cutting long audio, the
+transcription responses against a fake recognizer, config validation and the Silero pin.
+`test_sherpa_onnx_integration.py` runs the real bundle."""
 
 import asyncio
 import io
@@ -15,10 +15,11 @@ from pydantic import ValidationError
 from modelship.deploy import config as deploy_config
 from modelship.infer import base_infer
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
-from modelship.infer.sherpa_onnx import asr
-from modelship.infer.sherpa_onnx.asr import Decoded, Piece, SherpaOnnxAsrInfer, pieces, segments, words
+from modelship.infer.sherpa_onnx import stt_infer
 from modelship.infer.sherpa_onnx.bundle import bundle_paths
+from modelship.infer.sherpa_onnx.family import nemo_transducer
 from modelship.infer.sherpa_onnx.registry import REGISTRY
+from modelship.infer.sherpa_onnx.stt_infer import Piece, SherpaOnnxSttInfer, pieces, segments
 from modelship.openai.protocol import (
     ErrorResponse,
     TranscriptionRequest,
@@ -35,13 +36,15 @@ def _config(**overrides) -> ModelshipModelConfig:
     return ModelshipModelConfig.model_validate(raw)
 
 
-def _decoded(offset: float, *tokens: tuple[str, float, float]) -> Decoded:
+def _result(*tokens: tuple[str, float, float]) -> SimpleNamespace:
+    """A recognizer result: each token with its start and length in seconds."""
     text = "".join(token for token, _, _ in tokens).strip()
-    return Decoded(offset, text, [t[0] for t in tokens], [t[1] for t in tokens], [t[2] for t in tokens])
+    return SimpleNamespace(
+        text=text, tokens=[t[0] for t in tokens], timestamps=[t[1] for t in tokens], durations=[t[2] for t in tokens]
+    )
 
 
-SENTENCES = _decoded(
-    0.0,
+SENTENCES = _result(
     (" Al", 0.0, 0.2),
     ("les", 0.2, 0.1),
     (" gut", 0.3, 0.2),
@@ -52,26 +55,30 @@ SENTENCES = _decoded(
 )
 
 
-class TestWords:
+def _words(result: SimpleNamespace, offset: float = 0.0):
+    return nemo_transducer.words(result.tokens, result.timestamps, result.durations, offset)
+
+
+class TestNemoTransducerWords:
     def test_a_token_with_a_leading_space_starts_a_word_and_the_rest_extend_it(self):
-        assert [(w.word, w.start, w.end) for w in words([SENTENCES])] == [
+        assert [(w.word, w.start, w.end) for w in _words(SENTENCES)] == [
             ("Alles", 0.0, 0.3),
             ("gut.", 0.3, 0.6),
             ("Ja?", 1.0, 1.3),
             ("Nein", 2.0, 2.3),
         ]
 
-    def test_a_later_piece_is_shifted_by_its_offset_and_starts_a_new_word(self):
-        found = words([_decoded(0.0, (" one", 0.0, 0.2)), _decoded(40.0, ("two", 0.1, 0.2))])
-        assert [(w.word, w.start, w.end) for w in found] == [("one", 0.0, 0.2), ("two", 40.1, 40.3)]
+    def test_words_are_shifted_by_the_pieces_offset(self):
+        found = _words(_result(("two", 0.1, 0.2)), offset=40.0)
+        assert [(w.word, w.start, w.end) for w in found] == [("two", 40.1, 40.3)]
 
     def test_sentencepiece_markers_start_a_word_too(self):
-        assert [w.word for w in words([_decoded(0.0, ("▁hi", 0.0, 0.1), ("▁you", 0.1, 0.1))])] == ["hi", "you"]
+        assert [w.word for w in _words(_result(("▁hi", 0.0, 0.1), ("▁you", 0.1, 0.1)))] == ["hi", "you"]
 
 
 class TestSegments:
     def test_a_segment_closes_after_a_sentence(self):
-        found = segments(words([SENTENCES]))
+        found = segments(_words(SENTENCES))
         assert [(s.id, s.start, s.end, s.text) for s in found] == [
             (0, 0.0, 0.6, "Alles gut."),
             (1, 1.0, 1.3, "Ja?"),
@@ -84,7 +91,7 @@ class TestSegments:
 
 class TestPieces:
     def test_audio_up_to_the_limit_is_one_piece(self):
-        samples = np.zeros(int(asr.MAX_SEGMENT_S * asr.SAMPLE_RATE), dtype=np.float32)
+        samples = np.zeros(int(stt_infer.MAX_SEGMENT_S * stt_infer.SAMPLE_RATE), dtype=np.float32)
         (piece,) = pieces(samples, "silero.onnx")
         assert piece.offset == 0.0
         assert len(piece.samples) == len(samples)
@@ -97,7 +104,7 @@ class TestPieces:
 
         class _Vad:
             def __init__(self, model, settings, max_speech_s):
-                assert (model, max_speech_s) == ("silero.onnx", asr.MAX_SEGMENT_S)
+                assert (model, max_speech_s) == ("silero.onnx", stt_infer.MAX_SEGMENT_S)
 
             def feed(self, samples):
                 return cut[:1]
@@ -105,8 +112,8 @@ class TestPieces:
             def flush(self):
                 return cut[1:]
 
-        monkeypatch.setattr(asr, "Vad", _Vad)
-        found = pieces(np.zeros(asr.SAMPLE_RATE * 45, dtype=np.float32), "silero.onnx")
+        monkeypatch.setattr(stt_infer, "Vad", _Vad)
+        found = pieces(np.zeros(stt_infer.SAMPLE_RATE * 45, dtype=np.float32), "silero.onnx")
         assert [(p.offset, len(p.samples)) for p in found] == [(0.0, 10), (31.5, 20)]
 
 
@@ -123,7 +130,7 @@ def _wav(seconds: float = 1.0) -> bytes:
 class _Recognizer:
     """Decodes each piece to the next scripted result."""
 
-    def __init__(self, *results: Decoded):
+    def __init__(self, *results: SimpleNamespace):
         self.results = list(results)
 
     def create_stream(self):
@@ -135,8 +142,7 @@ class _Recognizer:
 
             @property
             def result(self):
-                d = recognizer.results.pop(0)
-                return SimpleNamespace(text=d.text, tokens=d.tokens, timestamps=d.timestamps, durations=d.durations)
+                return recognizer.results.pop(0)
 
         return _Stream()
 
@@ -144,10 +150,11 @@ class _Recognizer:
         pass
 
 
-def _infer(monkeypatch, *results: Decoded, parts: int = 1) -> SherpaOnnxAsrInfer:
-    infer = SherpaOnnxAsrInfer(_config())
+def _infer(monkeypatch, *results: SimpleNamespace, parts: int = 1) -> SherpaOnnxSttInfer:
+    """An infer whose input is *parts* pieces, 40 s apart, each decoding to the next of *results*."""
+    infer = SherpaOnnxSttInfer(_config())
     infer.recognizer = _Recognizer(*results)
-    monkeypatch.setattr(asr, "pieces", lambda samples, vad: [Piece(float(i) * 40, samples) for i in range(parts)])
+    monkeypatch.setattr(stt_infer, "pieces", lambda samples, vad: [Piece(i * 40.0, samples) for i in range(parts)])
     return infer
 
 
@@ -167,11 +174,18 @@ def _request(**fields) -> TranscriptionRequest:
 
 class TestTranscription:
     def test_json_joins_the_pieces(self, monkeypatch):
-        infer = _infer(monkeypatch, _decoded(0, (" one", 0, 0.1)), _decoded(40, (" two", 0, 0.1)), parts=2)
+        infer = _infer(monkeypatch, _result((" one", 0, 0.1)), _result((" two", 0, 0.1)), parts=2)
         result = asyncio.run(infer.create_transcription(_wav(), _request(), None))
         assert isinstance(result, TranscriptionResponse)
         assert result.text == "one two"
         assert result.usage.seconds == pytest.approx(1.0)
+
+    def test_each_pieces_words_are_timed_from_the_start_of_the_input(self, monkeypatch):
+        infer = _infer(monkeypatch, _result((" one", 0.5, 0.1)), _result((" two", 0.5, 0.1)), parts=2)
+        request = _request(response_format="verbose_json", timestamp_granularities=["word"])
+        result = asyncio.run(infer.create_transcription(_wav(), request, None))
+        assert isinstance(result, TranscriptionResponseVerbose)
+        assert [(w.word, w.start) for w in result.words] == [("one", 0.5), ("two", 40.5)]
 
     def test_verbose_json_has_segments_and_words_only_when_asked(self, monkeypatch):
         request = _request(response_format="verbose_json")
@@ -187,7 +201,7 @@ class TestTranscription:
         assert result.language == "de"
 
     def test_stream_sends_a_delta_per_piece_then_the_text(self, monkeypatch):
-        infer = _infer(monkeypatch, _decoded(0, (" one", 0, 0.1)), _decoded(40, (" two", 0, 0.1)), parts=2)
+        infer = _infer(monkeypatch, _result((" one", 0, 0.1)), _result((" two", 0, 0.1)), parts=2)
 
         async def run():
             stream = await infer.create_transcription(_wav(), _request(stream=True), None)

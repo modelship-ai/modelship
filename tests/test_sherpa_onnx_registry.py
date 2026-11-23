@@ -63,13 +63,19 @@ class TestAsrEntries:
         assert _ASR
 
     @pytest.mark.parametrize("name", sorted(_ASR))
-    def test_its_files_are_arguments_of_its_recognizer_factory(self, name):
+    def test_its_family_has_a_module(self, name):
+        from modelship.infer.sherpa_onnx.stt_infer import _FAMILIES
+
+        assert _ASR[name].family in _FAMILIES
+
+    def test_a_nemo_transducer_bundle_has_the_files_its_factory_takes(self):
         sherpa_onnx = pytest.importorskip("sherpa_onnx")
-        entry = _ASR[name]
-        factory = getattr(sherpa_onnx.OfflineRecognizer, f"from_{entry.family}")
-        parameters = inspect.signature(factory).parameters
-        assert set(entry.files) <= set(parameters), name
-        assert "model_type" in parameters
+        parameters = inspect.signature(sherpa_onnx.OfflineRecognizer.from_transducer).parameters
+        files = {"encoder", "decoder", "joiner", "tokens"}
+        assert files | {"model_type", "decoding_method", "provider", "num_threads"} <= set(parameters)
+        for name, entry in _ASR.items():
+            if entry.family == "nemo_transducer":
+                assert set(entry.files) == files, name
 
     @pytest.mark.parametrize("name", sorted(_ASR))
     def test_it_is_a_transcription_model_with_nonempty_paths(self, name):
