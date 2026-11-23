@@ -70,6 +70,7 @@ class TestSchema:
         [
             {"max_output_tokens": 0},
             {"output_modalities": ["video"]},
+            {"output_modalities": []},
             {"voice": "af_heart"},
             {"turn_detection": None},
             {"reasoning": {"effort": "huge"}},

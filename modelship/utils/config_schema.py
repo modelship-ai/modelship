@@ -539,7 +539,7 @@ class SessionDefaults(_StrictModel):
     own shape; a client's `session.update` overrides any of them."""
 
     instructions: str | None = None
-    output_modalities: list[Literal["text", "audio"]] | None = None
+    output_modalities: Annotated[list[Literal["text", "audio"]], Field(min_length=1)] | None = None
     max_output_tokens: Annotated[int, Field(ge=1)] | Literal["inf"] | None = None
     reasoning: SessionReasoning | None = None
 

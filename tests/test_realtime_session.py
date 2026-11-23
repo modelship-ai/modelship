@@ -607,6 +607,20 @@ class TestResponses:
             error = ws.receive_json()["error"]
         assert (error["code"], error["param"]) == ("unsupported_value", "response.output_modalities")
 
+    @pytest.mark.parametrize(
+        ("event", "param"),
+        [
+            ({"type": "response.create", "response": {"output_modalities": []}}, "response.output_modalities"),
+            ({"type": "session.update", "session": {"output_modalities": []}}, "session.output_modalities"),
+        ],
+    )
+    def test_no_output_modality_is_refused(self, event, param):
+        with self._session(_Llm()) as ws:
+            _open(ws)
+            ws.send_json(event)
+            error = ws.receive_json()["error"]
+        assert (error["code"], error["param"]) == ("invalid_value", param)
+
     def test_an_llm_that_stopped_serving_refuses_the_response(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
             _open(ws)

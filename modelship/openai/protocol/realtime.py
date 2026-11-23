@@ -9,6 +9,7 @@ from modelship.utils import random_uuid
 
 SessionType = Literal["realtime", "transcription"]
 Modality = Literal["text", "audio"]
+Modalities = Annotated[list[Modality], Field(min_length=1)]
 MaxOutputTokens = Annotated[int, Field(ge=1)] | Literal["inf"]
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
 ResponseStatus = Literal["in_progress", "completed", "cancelled", "incomplete", "failed"]
@@ -92,7 +93,7 @@ class RealtimeSession(BaseModel):
     id: str
     model: str
     instructions: str | None = None
-    output_modalities: list[Modality] | None = None
+    output_modalities: Modalities | None = None
     max_output_tokens: MaxOutputTokens | None = None
     reasoning: RealtimeReasoning | None = None
 
@@ -104,7 +105,7 @@ class SessionFields(BaseModel):
 
     type: SessionType | None = None
     instructions: str | None = None
-    output_modalities: list[Modality] | None = None
+    output_modalities: Modalities | None = None
     max_output_tokens: MaxOutputTokens | None = None
     reasoning: RealtimeReasoning | None = None
 
@@ -120,7 +121,7 @@ class ResponseParams(BaseModel):
     instructions: str | None = None
     max_output_tokens: MaxOutputTokens | None = None
     metadata: dict[str, str] | None = None
-    output_modalities: list[Modality] | None = None
+    output_modalities: Modalities | None = None
     reasoning: RealtimeReasoning | None = None
 
 
