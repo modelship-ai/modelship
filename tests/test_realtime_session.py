@@ -266,11 +266,21 @@ class TestEvents:
         assert error["message"] == "input_audio_buffer.append is not supported yet."
         assert still_open["type"] == "session.updated"
 
-    @pytest.mark.parametrize("kind", ["conversation.item.create", "response.create", "response.cancel"])
-    def test_a_transcription_session_takes_no_conversation_or_response(self, kind):
+    @pytest.mark.parametrize(
+        "event",
+        [
+            {
+                "type": "conversation.item.create",
+                "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Hi"}]},
+            },
+            {"type": "response.create"},
+            {"type": "response.cancel"},
+        ],
+    )
+    def test_a_transcription_session_takes_no_conversation_or_response(self, event):
         with _client(_route(SCRIBE)).websocket_connect("/v1/realtime?model=scribe") as ws:
             _open(ws)
-            ws.send_json({"type": kind})
+            ws.send_json(event)
             error = ws.receive_json()["error"]
         assert error["code"] == "invalid_event"
 
@@ -334,19 +344,19 @@ class TestConversation:
     @pytest.mark.parametrize(
         ("item", "code", "param"),
         [
-            ({"type": "function_call", "name": "f"}, "unsupported_value", "item.type"),
+            ({"type": "function_call", "name": "f"}, "invalid_value", "item"),
             (
                 {"type": "message", "role": "user", "content": [{"type": "input_audio", "audio": ""}]},
-                "unsupported_value",
-                "item.content[0]",
+                "invalid_value",
+                "item.content[0].type",
             ),
             (
                 {"type": "message", "role": "user", "content": [{"type": "output_text", "text": "x"}]},
                 "invalid_value",
-                "item.content[0]",
+                "item.content[0].type",
             ),
-            ({"type": "message", "role": "tool", "content": []}, "invalid_value", "item.role"),
-            ({"type": "image"}, "invalid_value", "item.type"),
+            ({"type": "message", "role": "tool", "content": []}, "invalid_value", "item"),
+            ({"type": "image"}, "invalid_value", "item"),
             ("hi", "invalid_value", "item"),
         ],
     )
@@ -501,7 +511,7 @@ class TestResponses:
             ws.send_json({"type": "response.create", "response": {"input": [{"type": "message", "role": "dog"}]}})
             bad = ws.receive_json()["error"]
         assert (unknown["code"], unknown["param"]) == ("item_not_found", "response.input[0].id")
-        assert (bad["code"], bad["param"]) == ("invalid_value", "response.input[0].role")
+        assert (bad["code"], bad["param"]) == ("invalid_value", "response.input[0]")
 
     def test_one_response_at_a_time(self):
         llm = _Llm(_answer("Thinking", finish=None))

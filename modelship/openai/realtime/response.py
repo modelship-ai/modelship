@@ -10,6 +10,8 @@ from modelship.logging import get_logger
 from modelship.metrics import RequestTracker
 from modelship.openai.protocol import ErrorResponse
 from modelship.openai.protocol.realtime import (
+    AssistantMessage,
+    OutputText,
     RealtimeError,
     RealtimeResponse,
     ResponseStatus,
@@ -73,7 +75,7 @@ class ActiveResponse:
         self._conversation = conversation
         self._send = send
         # its message items by id; reasoning and tool calls have none
-        self._items: dict[str, dict[str, Any]] = {}
+        self._items: dict[str, AssistantMessage] = {}
         self._terminal: dict[str, Any] | None = None
         self._started = False
         self._cancelled = False
@@ -169,35 +171,28 @@ class ActiveResponse:
         item = self._items.get(item_id or "")
         if item is None:
             return
-        where = {"response_id": self.response.id, "item_id": item["id"], "output_index": self._index(item)}
+        where = {"response_id": self.response.id, "item_id": item.id, "output_index": self._index(item)}
         if kind in _PART_EVENTS:
             where["content_index"] = event["content_index"]
         if kind == "response.content_part.added":
-            item["content"].append({"type": "output_text", "text": ""})
+            item.content.append(OutputText(type="output_text", text=""))
             await self._send(server_event(kind, **where, part={"type": "text", "text": ""}))
         elif kind == "response.output_text.delta":
-            item["content"][-1]["text"] += event["delta"]
+            item.content[-1].text += event["delta"]
             await self._send(server_event(kind, **where, delta=event["delta"]))
         elif kind == "response.output_text.done":
             await self._send(server_event(kind, **where, text=event["text"]))
         elif kind == "response.content_part.done":
             await self._send(server_event(kind, **where, part={"type": "text", "text": event["part"]["text"]}))
         elif kind == "response.output_item.done":
-            item["status"] = event["item"]["status"]
+            item.status = event["item"]["status"]
             await self._item_done(item)
 
-    def _index(self, item: dict[str, Any]) -> int:
+    def _index(self, item: AssistantMessage) -> int:
         return next(i for i, other in enumerate(self.response.output) if other is item)
 
     async def _add_item(self, item_id: str) -> None:
-        item = {
-            "id": item_id,
-            "type": "message",
-            "object": "realtime.item",
-            "status": "in_progress",
-            "role": "assistant",
-            "content": [],
-        }
+        item = AssistantMessage(id=item_id, type="message", role="assistant", status="in_progress", content=[])
         self._items[item_id] = item
         self.response.output.append(item)
         await self._send(
@@ -209,20 +204,20 @@ class ActiveResponse:
             before = self._conversation.insert(item)
             await self._send(server_event("conversation.item.added", previous_item_id=before, item=item))
 
-    async def _item_done(self, item: dict[str, Any]) -> None:
+    async def _item_done(self, item: AssistantMessage) -> None:
         await self._send(
             server_event(
                 "response.output_item.done", response_id=self.response.id, output_index=self._index(item), item=item
             )
         )
-        if self._conversation is not None and self._conversation.get(item["id"]) is not None:
-            before = self._conversation.before(item["id"])
+        if self._conversation is not None and self._conversation.get(item.id) is not None:
+            before = self._conversation.before(item.id)
             await self._send(server_event("conversation.item.done", previous_item_id=before, item=item))
 
     async def _end(self, status: ResponseStatus, details: StatusDetails | None) -> None:
         for item in self.response.output:
-            if item["status"] == "in_progress":
-                item["status"] = "incomplete"
+            if item.status == "in_progress":
+                item.status = "incomplete"
                 await self._item_done(item)
         self.response.status = status
         self.response.status_details = details

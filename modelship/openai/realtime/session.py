@@ -4,7 +4,7 @@ as not supported yet."""
 
 import asyncio
 import json
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from typing import Any
 
 from fastapi import WebSocket
@@ -13,18 +13,26 @@ from starlette.websockets import WebSocketDisconnect
 
 from modelship.logging import get_logger
 from modelship.openai.protocol.realtime import (
+    CLIENT_EVENTS,
     SESSION_OBJECTS,
+    ClientEvent,
+    Item,
+    ItemCreate,
+    ItemDelete,
+    ItemReference,
+    ItemRetrieve,
     RealtimeError,
     RealtimeResponse,
     RealtimeSession,
-    ResponseParams,
-    SessionFields,
+    ResponseCancel,
+    ResponseCreate,
+    SessionUpdate,
     error_event,
     server_event,
     session_event,
 )
 from modelship.openai.protocol.responses.schemas import ResponsesRequest
-from modelship.openai.realtime.conversation import Conversation, as_input, new_item
+from modelship.openai.realtime.conversation import Conversation, as_input
 from modelship.openai.realtime.response import ActiveResponse, Respond
 from modelship.utils import random_uuid
 from modelship.utils.config_schema import PipelineConfig
@@ -35,6 +43,10 @@ logger = get_logger("realtime")
 _CLOSE_REFUSED = 1008
 _UPDATABLE = ("instructions", "output_modalities", "max_output_tokens", "reasoning")
 _REALTIME_ONLY = frozenset({"conversation.item.create", "response.create", "response.cancel"})
+# the union members pydantic names in a validation error's location
+_UNION_TAGS = frozenset({"user", "system", "assistant", "message", "item_reference"})
+
+Handler = Callable[[Any], Awaitable[RealtimeError | None]]
 
 
 def _refusal(
@@ -77,10 +89,40 @@ def _new_session(config: PipelineConfig) -> RealtimeSession:
     )
 
 
-def _invalid(prefix: str, error: ValidationError) -> RealtimeError:
+def _param(loc: tuple[int | str, ...]) -> str:
+    """A validation error's location as a param: `item.content[0].type`."""
+    parts: list[str] = []
+    for part in loc:
+        if isinstance(part, int) and parts:
+            parts[-1] += f"[{part}]"
+        elif part not in _UNION_TAGS:
+            parts.append(str(part))
+    return ".".join(parts)
+
+
+def _invalid(error: ValidationError) -> RealtimeError:
+    """The error for a client event that isn't valid."""
     problem = error.errors()[0]
-    param = ".".join([prefix, *(str(part) for part in problem["loc"])])
+    if not problem["loc"]:
+        if problem["type"] == "json_invalid":
+            return RealtimeError(message="The event is not valid JSON.", code="invalid_json")
+        if problem["type"] == "union_tag_invalid":
+            tag = problem.get("ctx", {}).get("tag")
+            return RealtimeError(message=f"{tag} is not supported yet.", code="unsupported_event")
+        return RealtimeError(message='An event is a JSON object with a "type".', code="invalid_event")
+    # the first part is the event's type
+    param = _param(problem["loc"][1:])
     return RealtimeError(message=f"{param}: {problem['msg']}", code="invalid_value", param=param)
+
+
+def _event_id(text: str) -> str | None:
+    """The `event_id` of an event that didn't validate, if it has one."""
+    try:
+        raw = json.loads(text)
+    except ValueError:
+        return None
+    found = raw.get("event_id") if isinstance(raw, dict) else None
+    return found if isinstance(found, str) else None
 
 
 def _audio_output(param: str) -> RealtimeError:
@@ -117,6 +159,14 @@ class Session:
         self.active: ActiveResponse | None = None
         self._sending = asyncio.Lock()
         self._closed = False
+        self._handlers: dict[str, Handler] = {
+            "session.update": self._session_update,
+            "conversation.item.create": self._item_create,
+            "conversation.item.retrieve": self._item_retrieve,
+            "conversation.item.delete": self._item_delete,
+            "response.create": self._response_create,
+            "response.cancel": self._response_cancel,
+        }
 
     async def run(self) -> None:
         logger.info("Realtime session %s opened on pipeline %s", self.state.id, self.config.name)
@@ -154,44 +204,22 @@ class Session:
 
     async def _handle(self, text: str) -> None:
         try:
-            event: Any = json.loads(text)
-        except json.JSONDecodeError:
-            await self.send(error_event(RealtimeError(message="The event is not valid JSON.", code="invalid_json")))
-            return
-        if not isinstance(event, dict) or not isinstance(event.get("type"), str):
-            error = RealtimeError(message='An event is a JSON object with a "type".', code="invalid_event")
-            await self.send(error_event(error))
-            return
-        kind = event["type"]
-        handler = self._handlers().get(kind)
-        if handler is None:
-            error = RealtimeError(message=f"{kind} is not supported yet.", code="unsupported_event")
-        elif kind in _REALTIME_ONLY and self.state.type != "realtime":
-            error = RealtimeError(message=f"A transcription session takes no {kind}.", code="invalid_event")
-        else:
-            error = await handler(event)
-        if error is not None:
-            error.event_id = event.get("event_id") if isinstance(event.get("event_id"), str) else None
-            await self.send(error_event(error))
-
-    def _handlers(self) -> dict[str, Callable[[dict], Any]]:
-        return {
-            "session.update": self._session_update,
-            "conversation.item.create": self._item_create,
-            "conversation.item.retrieve": self._item_retrieve,
-            "conversation.item.delete": self._item_delete,
-            "response.create": self._response_create,
-            "response.cancel": self._response_cancel,
-        }
-
-    async def _session_update(self, event: dict) -> RealtimeError | None:
-        fields = event.get("session")
-        if not isinstance(fields, dict):
-            return RealtimeError(message="session.update needs a session object.", param="session")
-        try:
-            update = SessionFields.model_validate(fields)
+            event: ClientEvent = CLIENT_EVENTS.validate_json(text)
         except ValidationError as e:
-            return _invalid("session", e)
+            error = _invalid(e)
+            error.event_id = _event_id(text)
+            await self.send(error_event(error))
+            return
+        if event.type in _REALTIME_ONLY and self.state.type != "realtime":
+            error = RealtimeError(message=f"A transcription session takes no {event.type}.", code="invalid_event")
+        else:
+            error = await self._handlers[event.type](event)
+        if error is not None:
+            error.event_id = event.event_id
+            await self.send(error_event(error))
+
+    async def _session_update(self, event: SessionUpdate) -> RealtimeError | None:
+        update = event.session
         if update.type is not None and update.type != self.state.type:
             return RealtimeError(
                 message=f"This session is a {self.state.type} session; its type can't change.",
@@ -208,69 +236,54 @@ class Session:
         await self.send(session_event("session.updated", self.state))
         return None
 
-    def _missing_item(self, item_id: Any, param: str) -> RealtimeError:
+    def _missing_item(self, item_id: str, param: str) -> RealtimeError:
         return RealtimeError(message=f"No item {item_id!r} in the conversation.", code="item_not_found", param=param)
 
-    async def _item_create(self, event: dict) -> RealtimeError | None:
-        item = new_item(event.get("item"))
-        if isinstance(item, RealtimeError):
-            return item
-        previous = event.get("previous_item_id")
+    async def _item_create(self, event: ItemCreate) -> RealtimeError | None:
+        item, previous = event.item, event.previous_item_id
         if previous is not None and previous != "root" and self.conversation.get(previous) is None:
             return self._missing_item(previous, "previous_item_id")
-        if self.conversation.get(item["id"]) is not None:
+        if self.conversation.get(item.id) is not None:
             return RealtimeError(
-                message=f"The conversation already has an item {item['id']!r}.", code="invalid_value", param="item.id"
+                message=f"The conversation already has an item {item.id!r}.", code="invalid_value", param="item.id"
             )
         before = self.conversation.insert(item, previous)
         await self.send(server_event("conversation.item.added", previous_item_id=before, item=item))
         await self.send(server_event("conversation.item.done", previous_item_id=before, item=item))
         return None
 
-    async def _item_retrieve(self, event: dict) -> RealtimeError | None:
-        item = self.conversation.get(event.get("item_id"))
+    async def _item_retrieve(self, event: ItemRetrieve) -> RealtimeError | None:
+        item = self.conversation.get(event.item_id)
         if item is None:
-            return self._missing_item(event.get("item_id"), "item_id")
+            return self._missing_item(event.item_id, "item_id")
         await self.send(server_event("conversation.item.retrieved", item=item))
         return None
 
-    async def _item_delete(self, event: dict) -> RealtimeError | None:
-        item_id = event.get("item_id")
-        if not self.conversation.delete(item_id):
-            return self._missing_item(item_id, "item_id")
-        await self.send(server_event("conversation.item.deleted", item_id=item_id))
+    async def _item_delete(self, event: ItemDelete) -> RealtimeError | None:
+        if not self.conversation.delete(event.item_id):
+            return self._missing_item(event.item_id, "item_id")
+        await self.send(server_event("conversation.item.deleted", item_id=event.item_id))
         return None
 
-    def _input(self, raw_items: list[dict]) -> list[dict] | RealtimeError:
-        """A response's own input items; an `item_reference` names an item of the conversation."""
+    def _input(self, given: list[Item | ItemReference]) -> list[Item] | RealtimeError:
+        """A response's own input items, each reference replaced by the conversation item it names."""
         items = []
-        for i, raw in enumerate(raw_items):
-            if raw.get("type") == "item_reference":
-                item = self.conversation.get(raw.get("id"))
-                if item is None:
-                    return self._missing_item(raw.get("id"), f"response.input[{i}].id")
-                items.append(item)
-                continue
-            item = new_item(raw)
-            if isinstance(item, RealtimeError):
-                item.param = f"response.input[{i}]{(item.param or 'item').removeprefix('item')}"
-                return item
+        for i, item in enumerate(given):
+            if isinstance(item, ItemReference):
+                found = self.conversation.get(item.id)
+                if found is None:
+                    return self._missing_item(item.id, f"response.input[{i}].id")
+                item = found
             items.append(item)
         return items
 
-    async def _response_create(self, event: dict) -> RealtimeError | None:
+    async def _response_create(self, event: ResponseCreate) -> RealtimeError | None:
         if self.active is not None and not self.active.done():
             return RealtimeError(
                 message="A response is in progress; wait for its response.done or cancel it.",
                 code="conversation_already_has_active_response",
             )
-        raw = event.get("response")
-        if raw is not None and not isinstance(raw, dict):
-            return RealtimeError(message="response.create's response is an object.", param="response")
-        try:
-            params = ResponseParams.model_validate(raw or {})
-        except ValidationError as e:
-            return _invalid("response", e)
+        params = event.response
         modalities = params.output_modalities or self.state.output_modalities or ["text"]
         if "audio" in modalities:
             return _audio_output("response.output_modalities")
@@ -307,10 +320,9 @@ class Session:
         self.active = ActiveResponse(response, llm, answer, conversation, self.send)
         return None
 
-    async def _response_cancel(self, event: dict) -> RealtimeError | None:
+    async def _response_cancel(self, event: ResponseCancel) -> RealtimeError | None:
         active = self.active
-        response_id = event.get("response_id")
-        if active is None or active.done() or response_id not in (None, active.response.id):
+        if active is None or active.done() or event.response_id not in (None, active.response.id):
             return RealtimeError(message="No response to cancel is in progress.", code="response_cancel_not_active")
         active.cancel()
         return None
