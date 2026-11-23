@@ -211,14 +211,20 @@ class TestParakeet:
 
     def test_long_audio_is_cut_at_silences_and_keeps_its_timeline(self, client, tmp_path):
         frames, rate = _speech_frames(client, "Open the garage door.")
-        # about 45 s: past the 30 s a piece may hold
-        audio = _wav((frames + _silence(2.0, rate)) * 12, rate)
+        clip = frames + _silence(2.0, rate)
+        seconds = len(clip) * 12 / 2 / rate
+        # past the 30 s a piece may hold
+        assert seconds > 35
         result = self._transcribe(
-            client, audio, tmp_path, response_format="verbose_json", timestamp_granularities=["word", "segment"]
+            client,
+            _wav(clip * 12, rate),
+            tmp_path,
+            response_format="verbose_json",
+            timestamp_granularities=["word", "segment"],
         )
         assert result.text.lower().count("garage") == 12, result.text
-        assert result.duration > 40
-        assert result.segments[-1].end > 40
+        assert result.duration == pytest.approx(seconds, abs=0.05)
+        assert result.segments[-1].end > 30
         assert result.words[0].start < result.words[-1].start
 
     def test_stream_sends_deltas_then_the_text(self, tmp_path, client):
