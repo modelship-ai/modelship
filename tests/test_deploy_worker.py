@@ -683,8 +683,8 @@ class TestRescaleApp:
         assert "ray_actor_options" in inspect.signature(ReplicaConfig.__init__).parameters
 
 
-VOICE = {"name": "voice", "type": "assistant", "stt": "a"}
-CHAT = {"name": "chat", "type": "assistant", "llm": "a"}
+VOICE = {"name": "voice", "type": "assistant", "assistant_config": {"stt": "a"}}
+CHAT = {"name": "chat", "type": "assistant", "assistant_config": {"llm": "a"}}
 
 
 def _pipeline_app(raw: dict, gateway: str = "gw") -> str:
@@ -726,7 +726,7 @@ class TestPipelines:
         _existing(cluster, A)
         cluster.serve.apps[_pipeline_app(VOICE)] = RUNNING
         cluster.serve.configs[_pipeline_app(VOICE)] = parse_pipeline(VOICE)
-        changed = {**VOICE, "session_defaults": {"instructions": "Be brief."}}
+        changed = {**VOICE, "assistant_config": {"stt": "a", "session_defaults": {"instructions": "Be brief."}}}
         outcome = _run(cluster, [], committed=[A], pipelines=[changed], committed_pipelines=[VOICE])
         assert outcome["state"] == "succeeded"
         assert ("submit", _pipeline_app(changed)) in cluster.serve.events

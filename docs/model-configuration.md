@@ -196,7 +196,7 @@ A request that fails or is cancelled after step 2 gets its scale-downs undone to
 
 > **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a conversation of text and of the client's spoken turns, which the pipeline's `stt` transcribes and its `llm` answers, in text or spoken by its `tts`, calling the client's functions. Server VAD finds each turn in the client's audio, or the client commits it itself, and the user can talk over a spoken answer.
 
-A pipeline is its own deployment that chains models the gateway already serves. Its `type` decides what it does and which endpoint serves it; every pipeline has a `name` and a `num_replicas`. Pipelines sit beside `models:` in the same file:
+A pipeline is its own deployment that chains models the gateway already serves. Its `type` decides what it does and which endpoint serves it. Every pipeline has a `name` and a `num_replicas`, and keeps its type's own settings in a `<type>_config` block, the way a model keeps its loader's in `<loader>_config`. Pipelines sit beside `models:` in the same file:
 
 ```yaml
 models:
@@ -208,9 +208,10 @@ models:
 pipelines:
   - name: "assistant"
     type: "assistant"
-    llm: "qwen"
-    session_defaults:
-      instructions: "You are a helpful home assistant."
+    assistant_config:
+      llm: "qwen"
+      session_defaults:
+        instructions: "You are a helpful home assistant."
 ```
 
 | Field | Type | Description |
@@ -218,8 +219,9 @@ pipelines:
 | `name` | string | Name clients pass to the pipeline's endpoint. No `#` |
 | `type` | string | Required. `assistant`: an OpenAI Realtime session (usecase `realtime`, served on `/v1/realtime?model=<name>`) |
 | `num_replicas` | int | Replicas of the pipeline's deployment. Default `1`. It reserves no CPU or GPU |
+| `assistant_config` | object | Required for `type: assistant`: the fields below |
 
-The fields below are an `assistant`'s. It runs an OpenAI Realtime session over speech to text, a chat model, and text to speech:
+An `assistant` runs an OpenAI Realtime session over speech to text, a chat model, and text to speech. Its `assistant_config`:
 
 | Field | Type | Description |
 |---|---|---|
@@ -277,8 +279,8 @@ From the command line, `--pipeline NAME` opens a pipeline the way `--model REF` 
 ```bash
 mship deploy --model lmstudio-community/Qwen3-8B-GGUF:'*Q4_K_M.gguf' \
                --model.name qwen --model.loader llama_server --model.usecase generate \
-             --pipeline assistant --pipeline.type assistant --pipeline.llm qwen \
-               --pipeline.session-defaults '{instructions: "You are a helpful home assistant."}'
+             --pipeline assistant --pipeline.type assistant --pipeline.assistant-config.llm qwen \
+               --pipeline.assistant-config.session-defaults '{instructions: "You are a helpful home assistant."}'
 ```
 
 A `--model.*` flag must follow its own `--model`, and a `--pipeline.*` flag its own `--pipeline`: one placed after the other kind is an error.

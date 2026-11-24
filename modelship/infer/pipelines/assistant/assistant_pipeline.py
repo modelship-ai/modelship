@@ -122,7 +122,7 @@ class AssistantPipeline(BasePipeline):
         self._channels: dict[str, RelayChannel] = {}
 
     async def start(self) -> None:
-        if self.config.stt is not None:
+        if self.config.assistant_config.stt is not None:
             from modelship.utils.downloads import locked_download
 
             path = await locked_download(silero_vad_source(), self.config.name)

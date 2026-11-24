@@ -23,14 +23,17 @@ OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 REALTIME = "ws://localhost:8000/modelship/v1/realtime"
 
 STT = MODEL_CONFIGS["stt-cpp-model"]
-VOICE = {"name": "voice", "type": "assistant", "stt": STT["name"], "session_defaults": {"instructions": "Be brief."}}
-GHOST = {"name": "ghost", "type": "assistant", "stt": "not-deployed"}
+VOICE = {
+    "name": "voice",
+    "type": "assistant",
+    "assistant_config": {"stt": STT["name"], "session_defaults": {"instructions": "Be brief."}},
+}
+GHOST = {"name": "ghost", "type": "assistant", "assistant_config": {"stt": "not-deployed"}}
 LLM = MODEL_CONFIGS["chat-llama-server-plain"]
 CHAT = {
     "name": "chat",
     "type": "assistant",
-    "llm": LLM["name"],
-    "session_defaults": {"instructions": "Answer in one short sentence."},
+    "assistant_config": {"llm": LLM["name"], "session_defaults": {"instructions": "Answer in one short sentence."}},
 }
 TTS = MODEL_CONFIGS["tts-model"]
 
@@ -274,10 +277,12 @@ def _words(text: str) -> list[str]:
 SPOKEN = {
     "name": "spoken",
     "type": "assistant",
-    "stt": STT["name"],
-    "llm": LLM["name"],
-    "tts": TTS["name"],
-    "session_defaults": {"instructions": "You are a voice assistant. Answer in plain sentences, without lists."},
+    "assistant_config": {
+        "stt": STT["name"],
+        "llm": LLM["name"],
+        "tts": TTS["name"],
+        "session_defaults": {"instructions": "You are a voice assistant. Answer in plain sentences, without lists."},
+    },
 }
 PCM_24K = {"format": {"type": "audio/pcm", "rate": 24000}}
 PCM_16K = {"format": {"type": "audio/pcm", "rate": 16000}, "voice": "am_michael", "speed": 1.2}

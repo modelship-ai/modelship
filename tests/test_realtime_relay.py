@@ -11,7 +11,8 @@ from modelship.infer.pipelines.relay import RealtimeClosed, RealtimeOpened, Real
 from modelship.openai import realtime_relay
 from modelship.openai.realtime_relay import serve_relay
 
-READY = {"voice": {"config": {"name": "voice", "type": "assistant", "stt": "w"}, "app": "gw.voice-p0", "ready": True}}
+VOICE = {"name": "voice", "type": "assistant", "assistant_config": {"stt": "w"}}
+READY = {"voice": {"config": VOICE, "app": "gw.voice-p0", "ready": True}}
 
 
 class _WebSocket:

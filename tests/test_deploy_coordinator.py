@@ -715,8 +715,8 @@ class TestRouting:
 
     async def test_a_gateway_routes_by_its_committed_pipelines(self, workers):
         coord = _ledger()
-        voice = {"name": "voice", "type": "assistant", "stt": "a"}
-        chat = {"name": "chat", "type": "assistant", "llm": "a"}
+        voice = {"name": "voice", "type": "assistant", "assistant_config": {"stt": "a"}}
+        chat = {"name": "chat", "type": "assistant", "assistant_config": {"llm": "a"}}
         commit_version(coord._store, "g", [_raw("a")], [voice, chat])
         pipelines = (await coord.routing_versions(["g"]))["g"]["pipelines"]
         assert pipelines == {
@@ -726,7 +726,7 @@ class TestRouting:
 
     async def test_a_switch_and_commit_carry_the_pipelines(self, workers):
         coord = _ledger()
-        voice = {"name": "voice", "type": "assistant", "stt": "b"}
+        voice = {"name": "voice", "type": "assistant", "assistant_config": {"stt": "b"}}
         receipt = await coord.submit(_request())
         await _settle()
         await coord.switch(receipt["id"], "g", [_raw("b")], [voice])

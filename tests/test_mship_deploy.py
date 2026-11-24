@@ -687,18 +687,18 @@ class TestSend:
         assert (request.mode, request.strategy, request.models) == ("reconcile", "blue_green", [])
 
     def test_pipelines_alone_are_sent_with_no_models(self, send):
-        send.run(["--pipeline", "assistant", "--pipeline.llm", "qwen"])
+        send.run(["--pipeline", "assistant", "--pipeline.assistant-config.llm", "qwen"])
         (request,) = send.submitted
         assert (request.mode, request.models) == ("additive", [])
-        assert request.pipelines == [{"name": "assistant", "llm": "qwen"}]
+        assert request.pipelines == [{"name": "assistant", "assistant_config": {"llm": "qwen"}}]
 
     def test_pipelines_alone_given_to_start_are_a_reconcile_not_a_bare_request(self, send):
-        send.run(["--pipeline", "assistant", "--pipeline.llm", "qwen"], command="start")
+        send.run(["--pipeline", "assistant", "--pipeline.assistant-config.llm", "qwen"], command="start")
         (request,) = send.submitted
         assert (request.mode, request.models, request.pipelines) == (
             "reconcile",
             [],
-            [{"name": "assistant", "llm": "qwen"}],
+            [{"name": "assistant", "assistant_config": {"llm": "qwen"}}],
         )
 
     def test_a_configs_pipelines_ride_the_request(self, send, tmp_path):
