@@ -83,6 +83,11 @@ class TurnDetector:
         self._scanned_ms = self._tried_ms = self._floor_ms = self.buffer.end_ms
         return found
 
+    @property
+    def task(self) -> asyncio.Task | None:
+        """The scan in flight, if any."""
+        return self._task if self._task is not None and not self._task.done() else None
+
     async def close(self) -> None:
         if self._task is not None:
             self._task.cancel()

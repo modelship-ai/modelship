@@ -66,6 +66,8 @@ class _Turns:
         self.refusals = 0
         # commit the buffer as the client does while the session sends speech_started
         self.commit_on_start = False
+        # set, an ending waits for it after taking its audio
+        self.sending: asyncio.Event | None = None
         self.detector = TurnDetector(
             self.buffer,
             settings or ServerVad(type="server_vad"),
@@ -86,8 +88,11 @@ class _Turns:
             self.refusals -= 1
             self.events.append(("refused", turn))
             return False
-        self.events.append(("ended", turn, start, end))
         self.buffer.take(start, end)
+        if self.sending is not None:
+            # the session sends its events after it takes the audio
+            await self.sending.wait()
+        self.events.append(("ended", turn, start, end))
         return True
 
     async def _failed(self) -> None:
@@ -218,6 +223,23 @@ class TestTurns:
         assert [event[0] for event in turns.events] == ["started"]
         assert turns.detector.turn is None
         assert turns.buffer.seconds == 0
+
+    @pytest.mark.asyncio
+    async def test_a_reset_lets_a_commit_under_way_finish(self):
+        # what turning server VAD off does: the scan isn't cancelled, so audio taken is committed
+        turns = _Turns()
+        turns.sending = asyncio.Event()
+        assert turns.buffer.append(_quiet(1) + _tone(1) + _quiet(1), RATE) is None
+        turns.detector.appended()
+        task = turns.detector.task
+        while turns.buffer.start_ms < 2500:
+            await asyncio.sleep(0)
+        turns.detector.reset()
+        turns.sending.set()
+        assert task is not None
+        await task
+        assert turns.turns() == [(700, 2500)]
+        assert turns.detector.turn is None
 
     @pytest.mark.asyncio
     async def test_a_scan_runs_on_the_settings_it_started_with(self):

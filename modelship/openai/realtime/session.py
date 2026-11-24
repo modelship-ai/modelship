@@ -289,6 +289,8 @@ class Session:
         self._replies: set[asyncio.Task] = set()
         # whether the client heard that a turn server VAD found waits for room in the transcription queue
         self._busy_reported = False
+        # scans still finishing after server VAD was turned off
+        self._retired_scans: set[asyncio.Task] = set()
         self._sending = asyncio.Lock()
         self._closed = False
         self._handlers: dict[str, Handler] = {
@@ -323,7 +325,7 @@ class Session:
             pass
         finally:
             self._closed = True
-            for task in (*self._transcriptions, *self._replies):
+            for task in (*self._transcriptions, *self._replies, *self._retired_scans):
                 task.cancel()
             if self.turns is not None:
                 await self.turns.close()
@@ -666,7 +668,11 @@ class Session:
         settings = self.state.audio.input.turn_detection
         if not isinstance(settings, ServerVad):
             if self.turns is not None:
-                await self.turns.close()
+                # not cancelled: a scan in flight stops at its next step, and a commit it began completes
+                self.turns.reset()
+                if (task := self.turns.task) is not None:
+                    self._retired_scans.add(task)
+                    task.add_done_callback(self._retired_scans.discard)
                 self.turns = None
             return
         if self.turns is not None:
