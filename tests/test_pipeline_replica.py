@@ -66,6 +66,17 @@ class TestRelayChannel:
 
         assert [frame async for frame in channel.frames(asyncio.ensure_future(session()))] == ["last"]
 
+    @pytest.mark.asyncio
+    async def test_a_session_that_failed_closes_the_websocket_as_an_error(self):
+        channel = RelayChannel()
+
+        async def session() -> None:
+            await channel.send("last")
+            raise RuntimeError("the session broke")
+
+        task = asyncio.ensure_future(session())
+        assert [frame async for frame in channel.frames(task)] == ["last", RealtimeClosed(1011)]
+
 
 class _Routes:
     def __init__(self, ready: bool = True) -> None:

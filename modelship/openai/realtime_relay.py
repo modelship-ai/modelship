@@ -13,6 +13,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from modelship.infer.base_pipeline import CLOSE_REFUSED
 from modelship.infer.pipelines.relay import (
+    CLOSE_FAILED,
     MAX_QUEUED_BYTES,
     RealtimeClosed,
     RealtimeFrame,
@@ -26,8 +27,6 @@ from modelship.utils.config_schema import ModelUsecase, parse_pipeline
 
 logger = get_logger("realtime")
 
-# RFC 6455 internal error: the pipeline's replica failed or lost the session
-CLOSE_FAILED = 1011
 # how long a session whose client left has to end before its stream is stopped
 _WIND_DOWN_S = 10.0
 

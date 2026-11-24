@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 # per session, the client frames a side holds before it stops taking more, so TCP slows the client down
 MAX_QUEUED_BYTES = 1024 * 1024
+# RFC 6455 internal error: the session or its replica failed
+CLOSE_FAILED = 1011
 
 
 @dataclass(frozen=True)

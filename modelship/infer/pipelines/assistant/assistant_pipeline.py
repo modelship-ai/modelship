@@ -12,6 +12,7 @@ from modelship.infer.pipelines.assistant.calls import PipelineCalls
 from modelship.infer.pipelines.assistant.model_calls import ModelCalls
 from modelship.infer.pipelines.assistant.session import refuse, serve_session
 from modelship.infer.pipelines.relay import (
+    CLOSE_FAILED,
     MAX_QUEUED_BYTES,
     RealtimeClosed,
     RealtimeFrame,
@@ -81,7 +82,8 @@ class RelayChannel:
             self._outbound.put_nowait(RealtimeClosed(code))
 
     async def frames(self, session: asyncio.Future) -> AsyncIterator[RealtimeFrame]:
-        """The session's frames until it closes the WebSocket or ends."""
+        """The session's frames until it closes the WebSocket or ends; a session that failed ends them with a
+        RealtimeClosed(CLOSE_FAILED)."""
         while True:
             taken = asyncio.ensure_future(self._outbound.get())
             try:
@@ -101,6 +103,8 @@ class RelayChannel:
                 yield frame
                 if isinstance(frame, RealtimeClosed):
                     return
+            if not session.cancelled() and session.exception() is not None:
+                yield RealtimeClosed(CLOSE_FAILED)
             return
 
 
