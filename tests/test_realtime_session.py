@@ -37,10 +37,16 @@ from modelship.openai.protocol.responses.schemas import ResponsesRequest
 from modelship.openai.protocol.responses.streaming import ResponsesStreamTranslator
 from modelship.openai.realtime import serve_session
 from modelship.openai.realtime.response import ActiveResponse
+from tests.test_realtime_turns import FakeVad
 
 ASSISTANT = {"name": "assistant", "stt": "whisper", "llm": "qwen", "session_defaults": {"instructions": "Be brief."}}
 SCRIBE = {"name": "scribe", "stt": "whisper"}
 SPEAKER = {"name": "speaker", "stt": "whisper", "llm": "qwen", "tts": "kokoro"}
+# ASSISTANT with the client committing each turn
+MANUAL = {
+    **ASSISTANT,
+    "session_defaults": {"instructions": "Be brief.", "audio": {"input": {"turn_detection": None}}},
+}
 MODELS = ("whisper", "qwen", "kokoro")
 
 
@@ -185,8 +191,8 @@ class _Tts:
 
 
 class _Calls:
-    """`PipelineCalls` over a fake LLM, "qwen", a speech-to-text model, "whisper", answering *stt*, and a
-    text-to-speech model, "kokoro"."""
+    """`PipelineCalls` over a fake LLM, "qwen", a speech-to-text model, "whisper", answering *stt*, a
+    text-to-speech model, "kokoro", and the pipelines' audio apps, scanning with *vad*."""
 
     def __init__(
         self,
@@ -194,12 +200,17 @@ class _Calls:
         stt: SttCapabilities | Exception | None,
         transcriber: _Stt | None = None,
         speaker: _Tts | None = None,
+        vad: FakeVad | None = None,
     ):
         self.llm = llm
         self.stt = stt
         self.transcriber = transcriber
         self.speaker = speaker
+        self.vad = vad or FakeVad()
         self.asked: list[str] = []
+
+    async def scan(self, pipeline: str, audio: bytes, rate: int, threshold: float, silence_ms: int, session_id: str):
+        return await self.vad.scan(audio, rate, threshold, silence_ms)
 
     async def transcribe(self, model: str, audio: bytes, request: TranscriptionRequest, session_id: str):
         assert model == "whisper" and self.transcriber is not None
@@ -229,13 +240,14 @@ def _client(
     sessions: list | None = None,
     transcriber: _Stt | None = None,
     speaker: _Tts | None = None,
+    vad: FakeVad | None = None,
 ) -> TestClient:
     """A gateway app serving *pipelines*; each session's `_Calls` go into *sessions*."""
     app = FastAPI()
 
     @app.websocket("/v1/realtime")
     async def realtime(websocket: WebSocket):
-        calls = _Calls(llm, stt, transcriber, speaker)
+        calls = _Calls(llm, stt, transcriber, speaker, vad)
         if sessions is not None:
             sessions.append(calls)
         await serve_session(websocket, pipelines, list(known), set(serving), calls)
@@ -943,7 +955,7 @@ def _wav(audio: bytes) -> tuple[int, int]:
 
 
 class TestAudioInput:
-    def _session(self, stt: _Stt, llm: _Llm | None = None, pipeline: dict = ASSISTANT, caps=WHISPER):
+    def _session(self, stt: _Stt, llm: _Llm | None = None, pipeline: dict = MANUAL, caps=WHISPER):
         client = _client(_route(pipeline), llm=llm, stt=caps, transcriber=stt)
         return client.websocket_connect(f"/v1/realtime?model={pipeline['name']}")
 
@@ -1119,13 +1131,34 @@ class TestAudioInput:
             error = ws.receive_json()["error"]
         assert (error["code"], error["param"]) == ("invalid_value", "session.audio.input.format")
 
-    def test_turn_detection_is_not_supported_yet(self):
+    @pytest.mark.parametrize(
+        ("turn_detection", "code", "param"),
+        [
+            ({"type": "semantic_vad"}, "unsupported_value", "session.audio.input.turn_detection"),
+            (
+                {"type": "server_vad", "idle_timeout_ms": 5000},
+                "unsupported_value",
+                "session.audio.input.turn_detection.idle_timeout_ms",
+            ),
+            ({"type": "server_vad", "threshold": 2}, "invalid_value", "session.audio.input.turn_detection.threshold"),
+        ],
+    )
+    def test_turn_detection_it_cannot_do_is_refused(self, turn_detection, code, param):
         with self._session(_Stt()) as ws:
             _open(ws)
-            vad = {"turn_detection": {"type": "server_vad"}}
-            ws.send_json({"type": "session.update", "session": {"audio": {"input": vad}}})
+            audio = {"input": {"turn_detection": turn_detection}}
+            ws.send_json({"type": "session.update", "session": {"audio": audio}})
             error = ws.receive_json()["error"]
-        assert (error["code"], error["param"]) == ("unsupported_value", "session.audio.input.turn_detection")
+        assert (error["code"], error["param"]) == (code, param)
+
+    def test_server_vad_needs_an_stt_model(self):
+        with self._session(_Stt(), pipeline={"name": "chat", "llm": "qwen"}) as ws:
+            session = _open(ws)
+            audio = {"input": {"turn_detection": {"type": "server_vad"}}}
+            ws.send_json({"type": "session.update", "session": {"audio": audio}})
+            error = ws.receive_json()["error"]
+        assert session["audio"]["input"]["turn_detection"] is None
+        assert (error["code"], error["param"]) == ("invalid_value", "session.audio.input.turn_detection")
 
     def test_audio_inside_an_item_is_not_supported_yet(self):
         with self._session(_Stt()) as ws:
@@ -1407,6 +1440,231 @@ class TestAudioOutput:
             self._speaking(tts)
         assert tts.cancelled == 1
         assert llm.closed_early == [True]
+
+
+def _tone(seconds: float, rate: int = 24000) -> bytes:
+    count = int(seconds * rate)
+    return (np.sin(2 * np.pi * 440 * np.arange(count) / rate) * 8000).astype("<i2").tobytes()
+
+
+def _quiet(seconds: float, rate: int = 24000) -> bytes:
+    return bytes(int(seconds * rate) * 2)
+
+
+def _stream(ws, *parts: bytes, step: float = 0.1, rate: int = 24000) -> None:
+    """Appends *parts* in *step* seconds of audio each, as a client streaming its microphone does."""
+    audio = b"".join(parts)
+    size = int(step * rate) * 2
+    for start in range(0, len(audio), size):
+        _append(ws, audio[start : start + size])
+
+
+SERVER_VAD = {
+    "type": "server_vad",
+    "threshold": 0.5,
+    "prefix_padding_ms": 300,
+    "silence_duration_ms": 500,
+    "create_response": True,
+    "interrupt_response": True,
+    "idle_timeout_ms": None,
+}
+
+
+class TestServerVad:
+    def _session(self, stt: _Stt, llm: _Llm | None = None, pipeline: dict = ASSISTANT, vad: FakeVad | None = None):
+        client = _client(_route(pipeline), llm=llm, transcriber=stt, vad=vad)
+        return client.websocket_connect(f"/v1/realtime?model={pipeline['name']}")
+
+    def _settle(self, ws, llm: _Llm | None = None) -> None:
+        """Waits until the session has handled everything sent so far."""
+        ws.send_json({"type": "session.update", "session": {}})
+        _until(ws, "session.updated")
+        time.sleep(0.1)
+
+    def test_a_session_with_stt_detects_turns_by_default(self):
+        with self._session(_Stt()) as ws:
+            assistant = _open(ws)
+        with self._session(_Stt(), pipeline=SCRIBE) as ws:
+            scribe = _open(ws)
+        with self._session(_Stt(), pipeline={"name": "chat", "llm": "qwen"}) as ws:
+            chat = _open(ws)
+        assert assistant["audio"]["input"]["turn_detection"] == SERVER_VAD
+        assert scribe["audio"]["input"]["turn_detection"] == SERVER_VAD
+        assert chat["audio"]["input"]["turn_detection"] is None
+
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [
+            (None, None),
+            (
+                {"type": "server_vad", "silence_duration_ms": 800, "create_response": False},
+                {**SERVER_VAD, "silence_duration_ms": 800, "create_response": False},
+            ),
+        ],
+    )
+    def test_the_pipelines_defaults_set_the_turn_detection(self, given, expected):
+        pipeline = {**ASSISTANT, "session_defaults": {"audio": {"input": {"turn_detection": given}}}}
+        with self._session(_Stt(), pipeline=pipeline) as ws:
+            session = _open(ws)
+        assert session["audio"]["input"]["turn_detection"] == expected
+
+    def test_a_turn_is_found_committed_transcribed_and_answered(self):
+        stt, llm = _Stt("Lights on."), _Llm(_answer("Done."))
+        with self._session(stt, llm) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            events = _until(ws, "response.done")
+        kinds = [event["type"] for event in events]
+        assert kinds[:7] == [
+            "input_audio_buffer.speech_started",
+            "input_audio_buffer.speech_stopped",
+            "input_audio_buffer.committed",
+            "conversation.item.added",
+            "conversation.item.input_audio_transcription.completed",
+            "conversation.item.done",
+            "response.created",
+        ]
+        started, stopped, committed = events[:3]
+        assert (started["audio_start_ms"], stopped["audio_end_ms"]) == (700, 2500)
+        assert started["item_id"] == stopped["item_id"] == committed["item_id"]
+        assert _wav(stt.audio[0]) == (24000, round(1.8 * 24000))
+        assert events[-1]["response"]["status"] == "completed"
+        assert llm.requests[0].input[-1]["content"] == [{"type": "input_text", "text": "Lights on."}]
+
+    def test_turns_streamed_faster_than_real_time_are_each_found(self):
+        stt = _Stt("One.", "Two.")
+        with self._session(stt) as ws:
+            _open(ws)
+            ws.send_json(
+                {
+                    "type": "session.update",
+                    "session": {"audio": {"input": {"turn_detection": {**SERVER_VAD, "create_response": False}}}},
+                }
+            )
+            _until(ws, "session.updated")
+            _stream(ws, _quiet(1), _tone(1), _quiet(1), _tone(1), _quiet(1), step=5)
+            events = _until(ws, "conversation.item.done") + _until(ws, "conversation.item.done")
+        stops = [event["audio_end_ms"] for event in events if event["type"] == "input_audio_buffer.speech_stopped"]
+        assert stops == [2500, 4500]
+        transcripts = [e["transcript"] for e in events if e["type"].endswith("transcription.completed")]
+        assert transcripts == ["One.", "Two."]
+
+    def test_a_turn_that_says_nothing_gets_no_answer(self):
+        llm = _Llm(_answer("Hm?"))
+        with self._session(_Stt(""), llm) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            _until(ws, "conversation.item.done")
+            self._settle(ws)
+        assert llm.requests == []
+
+    def test_a_turn_that_ends_while_the_model_answers_gets_no_answer_of_its_own(self):
+        llm = _Llm(_answer("Let me think", finish=None))
+        stt = _Stt("Lights on.", "Thanks.")
+        with self._session(stt, llm) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            _until(ws, "response.output_text.delta")
+            _stream(ws, _tone(1), _quiet(1))
+            events = _until(ws, "conversation.item.done")
+            self._settle(ws)
+            assert "conversation.item.input_audio_transcription.completed" in [e["type"] for e in events]
+            ws.send_json({"type": "response.cancel"})
+            _until(ws, "response.done")
+        assert len(llm.requests) == 1
+
+    def test_without_create_response_turns_are_committed_but_not_answered(self):
+        llm = _Llm(_answer("Done."))
+        pipeline = {
+            **ASSISTANT,
+            "session_defaults": {
+                "audio": {"input": {"turn_detection": {"type": "server_vad", "create_response": False}}}
+            },
+        }
+        with self._session(_Stt("Lights on."), llm, pipeline=pipeline) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            _until(ws, "conversation.item.done")
+            self._settle(ws)
+        assert llm.requests == []
+
+    def test_a_commit_during_a_turn_ends_it(self):
+        stt = _Stt("Lights")
+        with self._session(stt) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1))
+            started = _until(ws, "input_audio_buffer.speech_started")[-1]
+            ws.send_json({"type": "input_audio_buffer.commit"})
+            stopped, committed = _until(ws, "input_audio_buffer.committed")[-2:]
+        assert stopped["type"] == "input_audio_buffer.speech_stopped"
+        assert stopped["item_id"] == committed["item_id"] == started["item_id"]
+
+    def test_clearing_drops_the_turn_in_progress(self):
+        stt = _Stt()
+        with self._session(stt) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1))
+            _until(ws, "input_audio_buffer.speech_started")
+            ws.send_json({"type": "input_audio_buffer.clear"})
+            _until(ws, "input_audio_buffer.cleared")
+            _stream(ws, _quiet(1))
+            self._settle(ws)
+        assert stt.requests == []
+
+    def test_turning_detection_off_leaves_the_turns_to_the_client(self):
+        stt = _Stt()
+        with self._session(stt) as ws:
+            _open(ws)
+            ws.send_json({"type": "session.update", "session": {"audio": {"input": {"turn_detection": None}}}})
+            updated = _until(ws, "session.updated")[-1]
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            self._settle(ws)
+        assert updated["session"]["audio"]["input"]["turn_detection"] is None
+        assert stt.requests == []
+
+    def test_a_scan_that_fails_is_reported_once_and_a_commit_still_works(self):
+        vad = FakeVad()
+        vad.failing = True
+        stt = _Stt("Lights on.")
+        with self._session(stt, vad=vad) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            error = ws.receive_json()
+            ws.send_json({"type": "input_audio_buffer.commit"})
+            events = _until(ws, "conversation.item.done")
+        assert error["error"]["code"] == "turn_detection_unavailable"
+        assert not [event for event in events if event["type"] == "error"]
+        assert [e["transcript"] for e in events if e["type"].endswith("transcription.completed")] == ["Lights on."]
+
+    def test_a_transcription_session_transcribes_its_turns_and_answers_none(self):
+        with self._session(_Stt("Note one."), pipeline=SCRIBE) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            events = _until(ws, "conversation.item.done")
+            self._settle(ws)
+        assert [e["transcript"] for e in events if e["type"].endswith("transcription.completed")] == ["Note one."]
+
+    def test_a_turn_found_while_the_transcription_queue_is_full_waits_for_room(self, monkeypatch):
+        # two 1.8 s turns don't fit a 3 s queue
+        monkeypatch.setattr("modelship.openai.realtime.session.MAX_SECONDS", 3.0)
+        stt = _Stt("One.", "Two.", delay=0.5)
+        pipeline = {**SCRIBE, "session_defaults": {"audio": {"input": {"turn_detection": {"type": "server_vad"}}}}}
+        with self._session(stt, pipeline=pipeline) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1), _tone(1), _quiet(1))
+            # the microphone keeps streaming while the first turn is transcribed
+            for _ in range(10):
+                _append(ws, _quiet(0.1))
+                time.sleep(0.1)
+            events = _until(ws, "conversation.item.done") + _until(ws, "conversation.item.done")
+        errors = [event["error"] for event in events if event["type"] == "error"]
+        assert [error["code"] for error in errors] == ["input_audio_transcription_busy"]
+        assert "kept and committed once there is room" in errors[0]["message"]
+        transcripts = [e["transcript"] for e in events if e["type"].endswith("transcription.completed")]
+        assert transcripts == ["One.", "Two."]
+        stops = [event["audio_end_ms"] for event in events if event["type"] == "input_audio_buffer.speech_stopped"]
+        assert stops == [2500, 4500]
+        assert _wav(stt.audio[1]) == (24000, round(1.8 * 24000))
 
 
 def test_g711_tables_match_audioop():

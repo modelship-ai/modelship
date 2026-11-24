@@ -900,6 +900,27 @@ class TestPipelines:
         assert await calls.stt_capabilities("nope") is None
 
     @pytest.mark.asyncio
+    async def test_a_realtime_session_scans_with_its_pipelines_audio_app(self, api):
+        calls = await self._realtime_calls(api, MagicMock())
+        app = MagicMock()
+        app.scan.remote = AsyncMock(return_value=[(120, None)])
+        with patch("modelship.openai.api.serve.get_app_handle", return_value=app) as get_app:
+            assert await calls.scan("voice", b"\x00\x00", 24000, 0.5, 500, "s1") == [(120, None)]
+            await calls.scan("voice", b"\x01\x00", 16000, 0.6, 800, "s1")
+            assert await calls.scan("assistant", b"", 24000, 0.5, 500, "s1") is None
+            assert await calls.scan("nope", b"", 24000, 0.5, 500, "s1") is None
+        get_app.assert_called_once_with("gw.voice-p0")
+        app.scan.remote.assert_awaited_with(b"\x01\x00", 16000, 0.6, 800)
+
+    @pytest.mark.asyncio
+    async def test_an_audio_app_not_ready_or_not_reachable_scans_nothing(self, api):
+        calls = await self._realtime_calls(api, MagicMock())
+        with patch("modelship.openai.api.serve.get_app_handle", side_effect=RuntimeError("no app yet")):
+            assert await calls.scan("voice", b"", 24000, 0.5, 500, "s1") is None
+        self._snapshot(api, ready=False)
+        assert await calls.scan("voice", b"", 24000, 0.5, 500, "s1") is None
+
+    @pytest.mark.asyncio
     async def test_a_realtime_session_transcribes_a_turn_with_the_connections_plumbing(self, api):
         calls = await self._realtime_calls(api, "registry")
         transcript = MagicMock()

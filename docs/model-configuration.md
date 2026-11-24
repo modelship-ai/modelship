@@ -194,7 +194,7 @@ A request that fails or is cancelled after step 2 gets its scale-downs undone to
 
 ## Pipelines (experimental)
 
-> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a conversation of text and of the client's spoken turns, which the pipeline's `stt` transcribes and its `llm` answers, in text or spoken by its `tts`, calling the client's functions. The client commits each turn itself; turn detection and interrupting a spoken answer arrive in later releases, and until then their events are answered with an `unsupported_event` error.
+> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a conversation of text and of the client's spoken turns, which the pipeline's `stt` transcribes and its `llm` answers, in text or spoken by its `tts`, calling the client's functions. Server VAD finds each turn in the client's audio, or the client commits it itself; interrupting a spoken answer arrives in a later release, and until then its events are answered with an `unsupported_event` error.
 
 A pipeline runs an OpenAI Realtime session over models the gateway already serves: speech to text, a chat model, and text to speech. Clients pick one with `/v1/realtime?model=<name>`. Pipelines sit beside `models:` in the same file:
 
@@ -221,7 +221,7 @@ pipelines:
 | `tts` | string | Name of the text-to-speech model that speaks the answer |
 | `session_defaults` | object | Defaults for OpenAI's Realtime session fields; a client's `session.update` overrides any of them |
 
-A pipeline needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (`[audio]`, the default for a pipeline with `tts`, or `[text]`, the default without one; `[audio]` needs a `tts`), `max_output_tokens` (an integer or `inf`) and `reasoning` (`{effort: low}`, from `minimal` to `xhigh`); more of OpenAI's session fields arrive as the pipeline learns to use them.
+A pipeline needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (`[audio]`, the default for a pipeline with `tts`, or `[text]`, the default without one; `[audio]` needs a `tts`), `max_output_tokens` (an integer or `inf`), `reasoning` (`{effort: low}`, from `minimal` to `xhigh`) and `audio.input.turn_detection` (`server_vad` with its settings, or `null` for turns the client commits; it needs an `stt`); more of OpenAI's session fields arrive as the pipeline learns to use them.
 
 A session on a pipeline with an `llm`:
 
@@ -236,9 +236,20 @@ A session on a pipeline with `stt` takes the client's audio:
 
 - The client sends `input_audio_buffer.append` events of base64 audio in the session's `audio.input.format`: `audio/pcm` (16-bit mono, at its `rate`, 24000 by default; any rate from 8000 to 48000, beyond OpenAI's spec), `audio/pcmu` or `audio/pcma` (G.711 at 8 kHz). A turn holds at most 120 s, and so do the turns waiting to be transcribed: a commit beyond that is refused with `input_audio_transcription_busy`.
 - `input_audio_buffer.commit` ends the turn (at least 100 ms of audio) and adds it to the conversation as a user message, and `input_audio_buffer.clear` drops it. The `stt` model transcribes one committed turn at a time, in order, and the session sends `conversation.item.input_audio_transcription.completed` with the transcript, or `.failed`. The audio itself isn't kept.
+- With `audio.input.turn_detection: {type: server_vad}`, the default, the session finds the turns itself, as described below. With `null`, the client commits each one.
 - `audio.input.transcription` takes `language` and `prompt` for the `stt` model; its `model` is ignored, since the pipeline names it. A model that detects the spoken language gets the language it found on the first turn for every later one.
 - A `response.create` waits for the turns committed before it to be transcribed, and the LLM sees each turn as its transcript. A turn that failed isn't sent.
 - A transcription session (a pipeline without `llm`) takes the same audio and sends the same transcripts, and has no responses.
+
+Server VAD finds each turn in the audio the client streams:
+
+- The pipeline's audio deployment scans the audio for speech with Silero, every 300 ms of audio the client sends, however fast it sends it. A turn starts at the first speech found, less `prefix_padding_ms` (300 by default), and the session sends `input_audio_buffer.speech_started` with its `audio_start_ms` and item id. It ends once the silence after the speech lasts `silence_duration_ms` (500 by default): the session sends `input_audio_buffer.speech_stopped` with its `audio_end_ms`, which includes that silence, and commits the turn as if the client had. `threshold` (0.5 by default) is how sure the detector must be that it hears speech. Times count the audio sent since the session opened.
+- With `create_response` (on by default), the turn is answered once it is transcribed, unless its transcript is empty or a response is already in progress. `interrupt_response` is accepted, but an answer isn't interrupted yet.
+- A turn that runs 30 s without a pause is committed there, and the speech after it starts a new turn. A commit during a turn ends it, and a clear drops it.
+- A turn found while the turns waiting to be transcribed already hold 120 s gets one `input_audio_transcription_busy` error; it and its audio are kept, and it is committed on a later scan once there is room.
+- `semantic_vad` and `idle_timeout_ms` are refused as not supported yet.
+- When the audio deployment can't be reached, the session sends one `turn_detection_unavailable` error and keeps the audio, up to the buffer's 120 s; once it answers again, the audio it missed is scanned too, and `input_audio_buffer.commit` still works meanwhile.
+- `scripts/realtime_mic.py` talks to a pipeline from a terminal: `uv run scripts/realtime_mic.py --pipeline <name>` streams the microphone and plays the answers. Use headphones, since the session doesn't yet tell its own voice from the user's.
 
 A session on a pipeline with `tts` speaks its answers:
 
@@ -261,7 +272,7 @@ A `--model.*` flag must follow its own `--model`, and a `--pipeline.*` flag its 
 
 A pipeline deploys with the models, through the same request:
 
-- A pipeline with `stt` gets an audio deployment, named `<gateway>.<pipeline>-p<fingerprint>`. It takes no CPU or GPU and runs on any node whose variant isn't `thin`. It comes up after every model of the request, and a change to `num_replicas` rescales it in place. A pipeline with only `llm` has no deployment.
+- A pipeline with `stt` gets an audio deployment, named `<gateway>.<pipeline>-p<fingerprint>`, which runs its server VAD. It takes no CPU or GPU and runs on any node whose variant isn't `thin`. It comes up after every model of the request, and a change to `num_replicas` rescales it in place. A pipeline with only `llm` has no deployment.
 - Every other change to a pipeline (its models, `session_defaults`) reaches the gateway with the new version, and nothing restarts.
 - `mship deploy` adds or replaces pipelines by name and leaves the others. `deploy --reconcile` and `mship start` remove the pipelines the request doesn't name.
 - A deploy never checks the models a pipeline names. A session on a pipeline whose model the gateway doesn't have, or doesn't serve yet, is refused with an error naming that model.

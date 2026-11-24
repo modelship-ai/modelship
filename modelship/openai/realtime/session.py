@@ -1,6 +1,7 @@
 """One `/v1/realtime` WebSocket session. The gateway owns the session; the pipeline names the models it runs
-over. So far a session holds a conversation of text and of the client's committed audio turns, which the pipeline's
-stt model transcribes, and answers it with the pipeline's LLM, in text or spoken by its tts model."""
+over. So far a session holds a conversation of text and of the client's audio turns, which the client commits or
+server VAD finds and the pipeline's stt model transcribes, and answers it with the pipeline's LLM, in text or
+spoken by its tts model."""
 
 import asyncio
 import base64
@@ -46,6 +47,8 @@ from modelship.openai.protocol.realtime import (
     ResponseAudioOutput,
     ResponseCancel,
     ResponseCreate,
+    SemanticVad,
+    ServerVad,
     SessionAudio,
     SessionUpdate,
     UserMessage,
@@ -53,6 +56,7 @@ from modelship.openai.protocol.realtime import (
     VoiceId,
     error_event,
     server_event,
+    server_vad,
     session_event,
 )
 from modelship.openai.protocol.responses.schemas import ResponsesRequest
@@ -69,6 +73,7 @@ from modelship.openai.realtime.calls import Answer, PipelineCalls
 from modelship.openai.realtime.conversation import Conversation, as_input
 from modelship.openai.realtime.response import ActiveResponse, NewSpeech
 from modelship.openai.realtime.speech import SendAudio, Speech
+from modelship.openai.realtime.turns import TurnDetector
 from modelship.utils import random_uuid
 from modelship.utils.config_schema import PipelineConfig
 
@@ -105,6 +110,8 @@ _UNION_TAGS = frozenset(
         "audio/pcma",
         "str",
         "VoiceId",
+        "server_vad",
+        "semantic_vad",
     }
 )
 # a spoken answer goes out in pieces of this much audio
@@ -142,13 +149,28 @@ def _refusal(
     return None
 
 
+def _turn_detection(config: PipelineConfig) -> ServerVad | None:
+    """A new session's turn detection: server VAD on a pipeline with stt, unless its defaults say otherwise."""
+    if config.stt is None:
+        return None
+    defaults = config.session_defaults
+    given = defaults.audio.input if defaults is not None and defaults.audio is not None else None
+    if given is None or "turn_detection" not in given.model_fields_set:
+        return server_vad()
+    if given.turn_detection is None:
+        return None
+    return ServerVad.model_validate(given.turn_detection.model_dump())
+
+
 def _new_session(config: PipelineConfig) -> RealtimeSession:
     kind = "realtime" if config.llm is not None else "transcription"
     defaults = config.session_defaults
-    fields = defaults.model_dump(exclude_none=True) if defaults is not None else {}
+    fields = defaults.model_dump(exclude_none=True, exclude={"audio"}) if defaults is not None else {}
+    audio = SessionAudio(input=AudioInput(turn_detection=_turn_detection(config)))
     if kind == "realtime":
         fields.setdefault("output_modalities", ["audio"] if config.tts is not None else ["text"])
-        fields["audio"] = SessionAudio(output=AudioOutput())
+        audio.output = AudioOutput()
+    fields["audio"] = audio
     return RealtimeSession(
         type=kind, object=SESSION_OBJECTS[kind], id=f"sess_{random_uuid()[:20]}", model=config.name, **fields
     )
@@ -261,6 +283,14 @@ class Session:
         self._transcriptions: set[asyncio.Task] = set()
         # the audio of the committed turns not transcribed yet
         self._queued_seconds = 0.0
+        # server VAD, while the session's turn detection is on
+        self.turns: TurnDetector | None = None
+        # automatic responses waiting for their turn's transcript
+        self._replies: set[asyncio.Task] = set()
+        # whether the client heard that a turn server VAD found waits for room in the transcription queue
+        self._busy_reported = False
+        # scans still finishing after server VAD was turned off
+        self._retired_scans: set[asyncio.Task] = set()
         self._sending = asyncio.Lock()
         self._closed = False
         self._handlers: dict[str, Handler] = {
@@ -277,6 +307,7 @@ class Session:
 
     async def run(self) -> None:
         logger.info("Realtime session %s opened on pipeline %s", self.state.id, self.config.name)
+        await self._detect_turns()
         await self.send(session_event("session.created", self.state))
         if self.state.type == "realtime":
             conversation = {"id": self.conversation.id, "object": "realtime.conversation"}
@@ -294,8 +325,10 @@ class Session:
             pass
         finally:
             self._closed = True
-            for task in self._transcriptions:
+            for task in (*self._transcriptions, *self._replies, *self._retired_scans):
                 task.cancel()
+            if self.turns is not None:
+                await self.turns.close()
             if self.active is not None:
                 await self.active.abandon()
         logger.info("Realtime session %s closed", self.state.id)
@@ -344,9 +377,10 @@ class Session:
             error = self._check_audio_input(audio_input)
             if error is not None:
                 return error
-            for name in ("format", "transcription"):
+            for name in ("format", "transcription", "turn_detection"):
                 if name in audio_input.model_fields_set:
                     setattr(self.state.audio.input, name, getattr(audio_input, name))
+            await self._detect_turns()
         audio_output = audio.output if audio is not None else None
         if audio_output is not None and self.state.audio.output is not None:
             for name in ("format", "voice", "speed"):
@@ -361,12 +395,25 @@ class Session:
         return None
 
     def _check_audio_input(self, given: AudioInput) -> RealtimeError | None:
-        if given.turn_detection is not None:
+        param = "session.audio.input.turn_detection"
+        detection = given.turn_detection
+        if isinstance(detection, SemanticVad):
             return RealtimeError(
-                message="Turn detection is not supported yet; commit each turn with input_audio_buffer.commit.",
-                code="unsupported_value",
-                param="session.audio.input.turn_detection",
+                message="semantic_vad is not supported yet; use server_vad.", code="unsupported_value", param=param
             )
+        if isinstance(detection, ServerVad):
+            if detection.idle_timeout_ms is not None:
+                return RealtimeError(
+                    message="idle_timeout_ms is not supported yet.",
+                    code="unsupported_value",
+                    param=f"{param}.idle_timeout_ms",
+                )
+            if self.config.stt is None:
+                return RealtimeError(
+                    message=f"Pipeline {self.config.name!r} has no stt model to take audio.",
+                    code="invalid_value",
+                    param=param,
+                )
         changes_format = "format" in given.model_fields_set and given.format != self.state.audio.input.format
         if changes_format and self.buffer.seconds:
             return RealtimeError(
@@ -557,7 +604,18 @@ class Session:
         problem = self.buffer.append(to_pcm16(audio, audio_format.type), rate)
         if problem is not None:
             return RealtimeError(message=problem, code="input_audio_buffer_full", param="audio")
+        if self.turns is not None:
+            self.turns.appended()
         return None
+
+    def _busy(self, seconds: float) -> RealtimeError | None:
+        if self._queued_seconds + seconds <= MAX_SECONDS:
+            return None
+        return RealtimeError(
+            message=f"The turns waiting to be transcribed hold {self._queued_seconds:.0f} s, and a session queues"
+            f" at most {MAX_SECONDS:.0f} s; commit again once they are transcribed.",
+            code="input_audio_transcription_busy",
+        )
 
     async def _audio_commit(self, event: AudioCommit) -> RealtimeError | None:
         if (error := self._no_stt()) is not None:
@@ -568,14 +626,22 @@ class Session:
                 f" {MIN_SECONDS * 1000:.0f} ms.",
                 code="input_audio_buffer_commit_empty",
             )
-        if self._queued_seconds + self.buffer.seconds > MAX_SECONDS:
-            return RealtimeError(
-                message=f"The turns waiting to be transcribed hold {self._queued_seconds:.0f} s, and a session queues"
-                f" at most {MAX_SECONDS:.0f} s; commit again once they are transcribed.",
-                code="input_audio_transcription_busy",
-            )
+        if (error := self._busy(self.buffer.seconds)) is not None:
+            return error
         wav, seconds = self.buffer.take()
+        turn = self.turns.reset() if self.turns is not None else None
+        if turn is not None:
+            # the client ended the turn server VAD had open
+            end = round(self.buffer.end_ms)
+            await self.send(server_event("input_audio_buffer.speech_stopped", audio_end_ms=end, item_id=turn))
+        await self._commit(wav, seconds, turn)
+        return None
+
+    async def _commit(self, wav: bytes, seconds: float, turn: str | None = None) -> tuple[UserMessage, asyncio.Task]:
+        """Adds a turn of the client's audio, as the user message *turn* names, and queues its transcription."""
         item = UserMessage(type="message", role="user", content=[InputAudio(type="input_audio")])
+        if turn is not None:
+            item.id = turn
         before = self.conversation.insert(item)
         await self.send(server_event("input_audio_buffer.committed", previous_item_id=before, item_id=item.id))
         await self.send(server_event("conversation.item.added", previous_item_id=before, item=item))
@@ -584,7 +650,7 @@ class Session:
         self._transcriptions.add(task)
         self._queued_seconds += seconds
         task.add_done_callback(lambda done: self._transcribed(done, seconds))
-        return None
+        return item, task
 
     def _transcribed(self, task: asyncio.Task, seconds: float) -> None:
         self._transcriptions.discard(task)
@@ -592,8 +658,87 @@ class Session:
 
     async def _audio_clear(self, event: AudioClear) -> RealtimeError | None:
         self.buffer.clear()
+        if self.turns is not None:
+            self.turns.reset()
         await self.send(server_event("input_audio_buffer.cleared"))
         return None
+
+    async def _detect_turns(self) -> None:
+        """Starts, retunes or stops server VAD, as the session's turn detection says."""
+        settings = self.state.audio.input.turn_detection
+        if not isinstance(settings, ServerVad):
+            if self.turns is not None:
+                # not cancelled: a scan in flight stops at its next step, and a commit it began completes
+                self.turns.reset()
+                if (task := self.turns.task) is not None:
+                    self._retired_scans.add(task)
+                    task.add_done_callback(self._retired_scans.discard)
+                self.turns = None
+            return
+        if self.turns is not None:
+            self.turns.settings = settings
+            return
+        self.turns = TurnDetector(
+            self.buffer, settings, self._scan, self._turn_started, self._turn_ended, self._scan_failed
+        )
+
+    async def _scan(
+        self, audio: bytes, rate: int, threshold: float, silence_duration_ms: int
+    ) -> list[tuple[int, int | None]] | None:
+        return await self.calls.scan(self.config.name, audio, rate, threshold, silence_duration_ms, self.state.id)
+
+    async def _turn_started(self, turn: str, audio_start_ms: int) -> None:
+        await self.send(server_event("input_audio_buffer.speech_started", audio_start_ms=audio_start_ms, item_id=turn))
+
+    async def _turn_ended(self, turn: str, audio_start_ms: int, audio_end_ms: int) -> bool:
+        """Commits the turn server VAD found; False while the transcription queue is full, which keeps the turn and
+        its audio for a later scan."""
+        if (error := self._busy((audio_end_ms - audio_start_ms) / 1000)) is not None:
+            if not self._busy_reported:
+                self._busy_reported = True
+                error.message = (
+                    f"The turns waiting to be transcribed hold {self._queued_seconds:.0f} s, and a session queues at"
+                    f" most {MAX_SECONDS:.0f} s; the turn just heard is kept and committed once there is room."
+                )
+                await self.send(error_event(error))
+            return False
+        self._busy_reported = False
+        # before any await, so a commit or clear from the client can't take the same audio
+        wav, seconds = self.buffer.take(audio_start_ms, audio_end_ms)
+        await self.send(server_event("input_audio_buffer.speech_stopped", audio_end_ms=audio_end_ms, item_id=turn))
+        settings = self.state.audio.input.turn_detection
+        answers = isinstance(settings, ServerVad) and settings.create_response and self.state.type == "realtime"
+        # a turn that ends while the model answers gets no answer of its own
+        responding = self.active is not None and not self.active.done()
+        item, transcribed = await self._commit(wav, seconds, turn)
+        if answers and not responding:
+            reply = asyncio.ensure_future(self._reply(item, transcribed))
+            self._replies.add(reply)
+            reply.add_done_callback(self._replies.discard)
+        return True
+
+    async def _reply(self, item: UserMessage, transcribed: asyncio.Task) -> None:
+        """Answers the turn *item* once it is transcribed, unless it said nothing or another answer began."""
+        await asyncio.wait([transcribed])
+        part = item.content[0]
+        said = isinstance(part, InputAudio) and bool((part.transcript or "").strip())
+        if not said or self.conversation.get(item.id) is None or (self.active is not None and not self.active.done()):
+            return
+        error = await self._response_create(ResponseCreate(type="response.create"))
+        if error is not None:
+            await self.send(error_event(error))
+
+    async def _scan_failed(self) -> None:
+        await self.send(
+            error_event(
+                RealtimeError(
+                    message=f"Pipeline {self.config.name!r} can't detect turns now: its audio app didn't answer."
+                    " Its audio stays buffered, and input_audio_buffer.commit still works.",
+                    type="server_error",
+                    code="turn_detection_unavailable",
+                )
+            )
+        )
 
     async def _transcribe(self, item: UserMessage, wav: bytes, seconds: float, previous: asyncio.Task | None) -> None:
         """Fills *item*'s transcript once the turn before it is done."""

@@ -75,11 +75,36 @@ class TestSchema:
             {"voice": "af_heart"},
             {"turn_detection": None},
             {"reasoning": {"effort": "huge"}},
+            {"audio": {"input": {"turn_detection": {"type": "semantic_vad"}}}},
+            {"audio": {"input": {"turn_detection": {"type": "server_vad", "idle_timeout_ms": 5000}}}},
+            {"audio": {"input": {"turn_detection": {"type": "server_vad", "threshold": 1.5}}}},
+            {"audio": {"input": {"format": {"type": "audio/pcm"}}}},
         ],
     )
     def test_session_defaults_reject_what_they_dont_hold(self, session_defaults):
         with pytest.raises(ValidationError):
-            PipelineConfig(name="assistant", llm="qwen", session_defaults=session_defaults)
+            PipelineConfig(name="assistant", stt="whisper", llm="qwen", session_defaults=session_defaults)
+
+    def test_turn_detection_defaults_take_server_vad_or_null(self):
+        tuned = {"type": "server_vad", "silence_duration_ms": 800, "create_response": False}
+        pipeline = PipelineConfig(
+            name="assistant", stt="whisper", session_defaults={"audio": {"input": {"turn_detection": tuned}}}
+        )
+        assert pipeline.session_defaults is not None and pipeline.session_defaults.audio is not None
+        given = pipeline.session_defaults.audio.input
+        assert given is not None and given.turn_detection is not None
+        assert (given.turn_detection.silence_duration_ms, given.turn_detection.threshold) == (800, 0.5)
+        manual = PipelineConfig(
+            name="assistant", stt="whisper", session_defaults={"audio": {"input": {"turn_detection": None}}}
+        )
+        assert manual.session_defaults is not None and manual.session_defaults.audio is not None
+        assert manual.session_defaults.audio.input is not None
+        assert "turn_detection" in manual.session_defaults.audio.input.model_fields_set
+
+    def test_turn_detection_needs_an_stt_model(self):
+        vad = {"audio": {"input": {"turn_detection": {"type": "server_vad"}}}}
+        with pytest.raises(ValidationError, match="turn_detection needs an stt model"):
+            PipelineConfig(name="assistant", llm="qwen", session_defaults=vad)
 
     def test_audio_output_needs_a_tts_model(self):
         with pytest.raises(ValidationError, match="asks for audio, but it names no tts model"):

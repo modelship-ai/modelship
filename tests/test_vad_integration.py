@@ -10,7 +10,15 @@ import soundfile as sf
 
 from modelship.utils.audio import StreamResampler
 from modelship.utils.sources import download_model_source, file
-from modelship.utils.vad import SAMPLE_RATE, SpeechStarted, SpeechStopped, Vad, VadSettings, silero_vad_source
+from modelship.utils.vad import (
+    SAMPLE_RATE,
+    SpeechStarted,
+    SpeechStopped,
+    Vad,
+    VadScanner,
+    VadSettings,
+    silero_vad_source,
+)
 
 _PHRASES = ("Turn on the kitchen lights.", "What is the weather tomorrow?", "Play some music.")
 
@@ -82,3 +90,22 @@ class TestSileroVad:
     def test_silence_alone_is_no_turn(self, silero):
         noise = np.random.default_rng(0).normal(0, 0.003, 5 * SAMPLE_RATE).astype(np.float32)
         assert self._events(silero, noise) == []
+        assert VadScanner(silero).scan(noise, 0.5, 500) == []
+
+    def test_a_scan_finds_each_phrase_and_leaves_open_the_one_its_window_cuts(self, silero, timeline):
+        audio, spans = timeline
+        scanner = VadScanner(silero)
+        found = scanner.scan(audio, 0.5, 500)
+        assert len(found) == len(_PHRASES)
+        for segment, (start, end) in zip(found, spans, strict=True):
+            assert segment.end_ms is not None
+            assert start - 0.2 <= segment.start_ms / 1000 <= start + 0.25
+            assert end - 0.2 <= segment.end_ms / 1000 <= end + 0.15
+        cut = scanner.scan(audio[: int((spans[-1][0] + 0.5) * SAMPLE_RATE)], 0.5, 500)
+        assert len(cut) == len(_PHRASES)
+        assert cut[-1].end_ms is None
+        # a window starting inside a phrase, as the next scan of a turn does
+        inside = scanner.scan(audio[int((spans[1][0] + 0.3) * SAMPLE_RATE) :], 0.5, 500)
+        assert inside[0].start_ms <= 100
+        # its detector, pooled and reset, answers the same again
+        assert scanner.scan(audio, 0.5, 500) == found

@@ -1,5 +1,5 @@
-"""Vad: OpenAI server_vad timing over a scripted detector, plus the stream
-resampler and PCM16 decoding it's fed through."""
+"""Vad: OpenAI server_vad timing over a scripted detector, the scanner's pooled
+detectors, plus the stream resampler and PCM16 decoding it's fed through."""
 
 import sys
 import types
@@ -8,7 +8,16 @@ import numpy as np
 import pytest
 
 from modelship.utils.audio import StreamResampler, from_pcm16
-from modelship.utils.vad import SAMPLE_RATE, SpeechStarted, SpeechStopped, Vad, VadSettings
+from modelship.utils.vad import (
+    MAX_SCAN_SECONDS,
+    SAMPLE_RATE,
+    ScanSegment,
+    SpeechStarted,
+    SpeechStopped,
+    Vad,
+    VadScanner,
+    VadSettings,
+)
 
 _WINDOW = 512
 
@@ -171,6 +180,92 @@ class TestStreamResampler:
         audio = np.ones(100, dtype=np.float32)
         assert StreamResampler(16000, 16000)(audio) is not None
         assert np.array_equal(StreamResampler(16000, 16000)(audio), audio)
+
+
+def _scanning_sherpa(made: list) -> types.ModuleType:
+    """Detectors that hear one closed segment from 0.5 s to 1 s and speech still going from 2 s, recording each one
+    made and every reset."""
+
+    class Config:
+        def __init__(self) -> None:
+            self.silero_vad = types.SimpleNamespace(window_size=_WINDOW)
+            self.sample_rate = 0
+            self.num_threads = 0
+
+    class Detector:
+        def __init__(self, config, buffer_size_in_seconds) -> None:
+            self.config = config
+            self.resets = 0
+            self.fed = 0
+            self.queue: list[_Segment] = []
+            made.append(self)
+
+        def reset(self) -> None:
+            self.resets += 1
+            self.fed = 0
+            self.queue = []
+
+        def accept_waveform(self, samples) -> None:
+            self.fed += len(samples)
+            if self.fed >= _s(1.5) and not self.queue:
+                self.queue.append(_Segment(_s(0.5), np.zeros(_s(0.5), dtype=np.float32)))
+
+        def is_speech_detected(self) -> bool:
+            return self.fed >= _s(2.25)
+
+        @property
+        def current_segment(self) -> _Segment:
+            return _Segment(_s(2), np.zeros(self.fed - _s(2), dtype=np.float32))
+
+        def empty(self) -> bool:
+            return not self.queue
+
+        @property
+        def front(self) -> _Segment:
+            return self.queue[0]
+
+        def pop(self) -> None:
+            self.queue.pop(0)
+
+    return types.SimpleNamespace(VadModelConfig=Config, VoiceActivityDetector=Detector)
+
+
+class TestVadScanner:
+    @pytest.fixture
+    def made(self, monkeypatch) -> list:
+        made: list = []
+        monkeypatch.setitem(sys.modules, "sherpa_onnx", _scanning_sherpa(made))
+        return made
+
+    def test_a_scan_gives_closed_segments_and_the_speech_still_going(self, made):
+        scanner = VadScanner("/models/silero.onnx")
+        audio = np.zeros(_s(3), dtype=np.float32)
+        assert scanner.scan(audio, 0.5, 500) == [ScanSegment(500, 1000), ScanSegment(2000, None)]
+        assert scanner.scan(audio[: _s(1.6)], 0.5, 500) == [ScanSegment(500, 1000)]
+        config = made[0].config.silero_vad
+        assert (config.threshold, config.min_silence_duration, config.min_speech_duration) == (0.5, 0.5, 0.25)
+
+    def test_a_detector_is_reset_and_reused_for_the_same_settings(self, made):
+        scanner = VadScanner("/models/silero.onnx")
+        audio = np.zeros(_s(1), dtype=np.float32)
+        for _ in range(3):
+            scanner.scan(audio, 0.5, 500)
+        scanner.scan(audio, 0.6, 500)
+        assert len(made) == 2
+        assert made[0].resets == 3
+        assert made[1].config.silero_vad.threshold == 0.6
+
+    def test_at_most_four_settings_keep_detectors(self, made):
+        scanner = VadScanner("/models/silero.onnx")
+        audio = np.zeros(_s(1), dtype=np.float32)
+        for silence in (100, 200, 300, 400, 500, 100):
+            scanner.scan(audio, 0.5, silence)
+        # the first settings' detector was dropped for the fifth, so the sixth scan makes it again
+        assert len(made) == 6
+
+    def test_a_window_over_its_limit_is_refused(self, made):
+        with pytest.raises(ValueError, match="at most"):
+            VadScanner("/models/silero.onnx").scan(np.zeros(_s(MAX_SCAN_SECONDS + 1), dtype=np.float32), 0.5, 500)
 
 
 def test_from_pcm16_scales_to_unit_range():

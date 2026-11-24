@@ -534,6 +534,26 @@ class SessionReasoning(_StrictModel):
     effort: Literal["minimal", "low", "medium", "high", "xhigh"] | None = None
 
 
+class SessionServerVad(_StrictModel):
+    """Server VAD, with OpenAI's defaults."""
+
+    type: Literal["server_vad"]
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    prefix_padding_ms: int = Field(default=300, ge=0, le=5000)
+    silence_duration_ms: int = Field(default=500, ge=0, le=10000)
+    create_response: bool = True
+    interrupt_response: bool = True
+
+
+class SessionAudioInput(_StrictModel):
+    # null: the client commits each turn; unset: server VAD with its defaults
+    turn_detection: SessionServerVad | None = None
+
+
+class SessionAudio(_StrictModel):
+    input: SessionAudioInput | None = None
+
+
 class SessionDefaults(_StrictModel):
     """A pipeline's defaults for the OpenAI Realtime session fields, in the session's
     own shape; a client's `session.update` overrides any of them."""
@@ -543,6 +563,7 @@ class SessionDefaults(_StrictModel):
     output_modalities: Annotated[list[Literal["text", "audio"]], Field(min_length=1, max_length=1)] | None = None
     max_output_tokens: Annotated[int, Field(ge=1)] | Literal["inf"] | None = None
     reasoning: SessionReasoning | None = None
+    audio: SessionAudio | None = None
 
 
 class PipelineConfig(_StrictModel):
@@ -577,6 +598,16 @@ class PipelineConfig(_StrictModel):
             raise ValueError(
                 f"pipeline {self.name!r}: session_defaults.output_modalities asks for audio, but it names no tts"
                 " model to speak with."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_turn_detection_has_stt(self):
+        defaults = self.session_defaults
+        given = defaults.audio.input if defaults is not None and defaults.audio is not None else None
+        if given is not None and given.turn_detection is not None and self.stt is None:
+            raise ValueError(
+                f"pipeline {self.name!r}: session_defaults.audio.input.turn_detection needs an stt model to take audio."
             )
         return self
 
