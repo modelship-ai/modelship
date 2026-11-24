@@ -104,6 +104,13 @@ class TestSileroVad:
         cut = scanner.scan(audio[: int((spans[-1][0] + 0.5) * SAMPLE_RATE)], 0.5, 500)
         assert len(cut) == len(_PHRASES)
         assert cut[-1].end_ms is None
+        # the speech goes on to the window's end
+        assert cut[-1].speech_end_ms / 1000 >= spans[-1][0] + 0.4
+        # 300 ms after a phrase, its segment is still open, and its speech ends where the phrase does
+        (start, end) = spans[1]
+        trailing = scanner.scan(audio[: int((end + 0.3) * SAMPLE_RATE)], 0.5, 500)
+        assert trailing[-1].end_ms is None
+        assert end - 0.25 <= trailing[-1].speech_end_ms / 1000 <= end + 0.15
         # a window starting inside a phrase, as the next scan of a turn does
         inside = scanner.scan(audio[int((spans[1][0] + 0.3) * SAMPLE_RATE) :], 0.5, 500)
         assert inside[0].start_ms <= 100

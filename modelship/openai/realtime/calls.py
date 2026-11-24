@@ -43,7 +43,8 @@ class PipelineCalls(Protocol):
 
     async def scan(
         self, pipeline: str, audio: bytes, rate: int, threshold: float, silence_duration_ms: int, session_id: str
-    ) -> list[tuple[int, int | None]] | None:
-        """The speech *pipeline*'s audio app finds in *audio* (16-bit mono PCM at *rate*), as (start, end) ms from
-        its start, the end None while the speech goes on; None while nothing serves the app."""
+    ) -> list[tuple[int, int | None, int]] | None:
+        """The speech *pipeline*'s audio app finds in *audio* (16-bit mono PCM at *rate*), as (start, end, speech
+        end) ms from its start, the end None while the speech may go on and the speech end where the speech heard in
+        it ends; None while nothing serves the app."""
         ...

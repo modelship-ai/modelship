@@ -40,7 +40,7 @@ class FakeVad:
         samples = np.frombuffer(audio, dtype="<i2")
         self.scans.append(len(samples) * 1000 // rate)
         frame = rate // 100
-        segments: list[tuple[int, int | None]] = []
+        segments: list[tuple[int, int | None, int]] = []
         start = last = None
         for index in range(0, len(samples) - frame + 1, frame):
             at = index * 1000 // rate
@@ -48,10 +48,10 @@ class FakeVad:
                 start = at if start is None else start
                 last = at + 10
             elif start is not None and last is not None and at + 10 - last >= silence_duration_ms:
-                segments.append((start, last))
+                segments.append((start, last, last))
                 start = None
-        if start is not None:
-            segments.append((start, None))
+        if start is not None and last is not None:
+            segments.append((start, None, last))
         return segments
 
 
@@ -68,6 +68,8 @@ class _Turns:
         self.commit_on_start = False
         # set, an ending waits for it after taking its audio
         self.sending: asyncio.Event | None = None
+        # the speech a turn needs before it starts, as while an answer plays
+        self.min_speech = 0
         self.detector = TurnDetector(
             self.buffer,
             settings or ServerVad(type="server_vad"),
@@ -75,6 +77,7 @@ class _Turns:
             self._started,
             self._ended,
             self._failed,
+            lambda: self.min_speech,
         )
 
     async def _started(self, turn: str, at: int) -> None:
@@ -272,6 +275,32 @@ class TestTurns:
         turns.buffer.clear()
         await turns.settle()
         assert turns.events == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("min_speech", "expected"), [(0, [(200, 1300), (1500, 3300)]), (500, [(1500, 3300)])])
+    async def test_speech_shorter_than_min_speech_starts_no_turn(self, min_speech, expected):
+        turns = _Turns()
+        turns.min_speech = min_speech
+        # a cough, then speech that lasts
+        await turns.feed(_quiet(0.5), _tone(0.3), _quiet(1), _tone(1), _quiet(1))
+        assert turns.turns() == expected
+
+    @pytest.mark.asyncio
+    async def test_speech_that_lasts_starts_its_turn_dated_back(self):
+        turns = _Turns()
+        turns.min_speech = 500
+        await turns.feed(_quiet(1), _tone(1), _quiet(1))
+        (started, ended) = turns.events
+        assert started[2] == 700
+        assert ended[2:] == (700, 2500)
+
+    @pytest.mark.asyncio
+    async def test_min_speech_longer_than_the_silence_still_starts_a_turn(self):
+        # each scan looks back far enough to see the whole of the speech
+        turns = _Turns()
+        turns.min_speech = 2000
+        await turns.feed(_quiet(1), _tone(3), _quiet(1))
+        assert turns.turns() == [(700, 4500)]
 
     @pytest.mark.asyncio
     async def test_closing_stops_the_scan_in_flight(self):

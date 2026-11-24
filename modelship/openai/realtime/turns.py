@@ -21,13 +21,16 @@ MAX_SCAN_MS = 30_000
 # a turn that runs this long without a pause ends here
 MAX_TURN_MS = 30_000
 
-# scans 16-bit PCM at a rate with a threshold and a silence duration: the speech in it as (start, end) ms from
-# its start, the end None while speech goes on; None while nothing serves the scan
-Scan = Callable[[bytes, int, float, int], Awaitable[list[tuple[int, int | None]] | None]]
+# scans 16-bit PCM at a rate with a threshold and a silence duration: the speech in it as (start, end, speech end)
+# ms from its start, the end None while speech may go on and the speech end where the speech heard in it ends; None
+# while nothing serves the scan
+Scan = Callable[[bytes, int, float, int], Awaitable[list[tuple[int, int | None, int]] | None]]
 Started = Callable[[str, int], Awaitable[None]]
 # True once it took the turn's audio out of the buffer; False leaves the turn open, to end on a later scan
 Ended = Callable[[str, int, int], Awaitable[bool]]
 Failed = Callable[[], Awaitable[None]]
+# how long speech must last, in ms, before it starts a turn now
+MinSpeech = Callable[[], int]
 
 
 class _StaleScanError(Exception):
@@ -37,7 +40,8 @@ class _StaleScanError(Exception):
 class TurnDetector:
     """Finds the turns in *buffer* with *scan*, as *settings* say. *started* gets each turn's item id and where it
     starts; *ended* gets its item id, start and end, and takes its audio out of the buffer or refuses it; *failed*
-    hears of each stretch of scans that fail, during which the buffer keeps all its audio."""
+    hears of each stretch of scans that fail, during which the buffer keeps all its audio. Speech shorter than
+    *min_speech* says starts no turn."""
 
     def __init__(
         self,
@@ -47,6 +51,7 @@ class TurnDetector:
         started: Started,
         ended: Ended,
         failed: Failed,
+        min_speech: MinSpeech = lambda: 0,
     ):
         self.buffer = buffer
         self.settings = settings
@@ -54,6 +59,7 @@ class TurnDetector:
         self._started = started
         self._ended = ended
         self._failed = failed
+        self._min_speech = min_speech
         # the end of the audio scanned so far
         self._scanned_ms = buffer.end_ms
         # where the last turn ended; no turn starts before it
@@ -114,7 +120,9 @@ class TurnDetector:
         self._scan_epoch = epoch = self._epoch
         rate = buffer.rate
         assert rate is not None
-        context = settings.silence_duration_ms + WARMUP_MS
+        min_speech = self._min_speech()
+        # the audio a scan looks back over: a whole silence, or speech too short to start a turn yet
+        context = max(settings.silence_duration_ms, min_speech) + WARMUP_MS
         end = buffer.end_ms
         # after failed scans, a short one finds out whether the audio app answers again
         probing = self._failing
@@ -138,8 +146,11 @@ class TurnDetector:
             # the next scans take the audio the failed ones missed, from where the last good scan stopped
             return
         self._scanned_ms = self._tried_ms = end
-        segments = [(start + begin, None if stop is None else start + stop) for begin, stop in found]
-        await self._apply(segments, end, settings)
+        segments = [
+            (start + begin, None if stop is None else start + stop, start + speech_end)
+            for begin, stop, speech_end in found
+        ]
+        await self._apply(segments, end, settings, min_speech)
         if self.turn is None:
             # keep what the next scan and a turn's prefix padding need
             buffer.drop_before(end - context - settings.prefix_padding_ms)
@@ -149,17 +160,26 @@ class TurnDetector:
         if self._epoch != self._scan_epoch:
             raise _StaleScanError
 
-    async def _apply(self, segments: list[tuple[float, float | None]], end: float, settings: ServerVad) -> None:
+    async def _apply(
+        self, segments: list[tuple[float, float | None, float]], end: float, settings: ServerVad, min_speech: int
+    ) -> None:
         heard = False
-        for begin, stop in segments:
+        for begin, stop, speech_end in segments:
             if stop is not None and stop <= self._floor_ms:
                 # a turn that ended already holds it
+                continue
+            if self.turn is None and speech_end - begin < min_speech:
+                if stop is None:
+                    # it may last long enough by the next scan
+                    break
+                # too short to start a turn, now or on a later scan
+                self._floor_ms = stop
                 continue
             heard = True
             if self.turn is None:
                 await self._start(max(self._floor_ms, self.buffer.start_ms, begin - settings.prefix_padding_ms))
             if stop is None:
-                self._speech_ms = end
+                self._speech_ms = speech_end
                 break
             self._speech_ms = stop
             if not await self._close(stop, stop + settings.silence_duration_ms):

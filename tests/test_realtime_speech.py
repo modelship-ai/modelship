@@ -1,5 +1,5 @@
-"""Speaking a realtime answer: the text cut into pieces as the LLM writes it, the pieces spoken one at a time, and the
-tts model's WAV turned into the client's output format."""
+"""Speaking a realtime answer: the text cut into pieces as the LLM writes it, the pieces spoken one at a time, what
+was said in how much audio, the client's playback, and the tts model's WAV turned into the client's output format."""
 
 import asyncio
 import io
@@ -11,6 +11,7 @@ import pytest
 
 from modelship.openai.protocol.realtime import RealtimeError
 from modelship.openai.realtime.audio import from_wav, read_wav, resample, to_pcm16
+from modelship.openai.realtime.playback import TAIL_SECONDS, Playback
 from modelship.openai.realtime.speech import FIRST_CHARS, MAX_CHARS, Chunker, Speech, speakable
 
 LONG_SENTENCE = (
@@ -169,10 +170,11 @@ class _Speaker:
 def _speech(speaker: _Speaker, step: int = 4) -> tuple[Speech, list[bytes]]:
     sent: list[bytes] = []
 
-    async def send(audio: bytes) -> None:
+    async def send(audio: bytes) -> bool:
         sent.append(audio)
+        return True
 
-    return Speech(speaker, lambda wav: from_wav(wav, "audio/pcm", 1000), send, step), sent
+    return Speech(speaker, lambda wav: from_wav(wav, "audio/pcm", 1000), send, step, 2000), sent
 
 
 class TestSpeech:
@@ -247,6 +249,93 @@ class TestSpeech:
         await speech.stop()
         assert speaker.cancelled
         assert sent == []
+
+
+TRAIN = "The train leaves at seven forty. You don't need to book a seat, but it's cheaper if you do."
+
+
+class TestSpoken:
+    async def _spoken(self, *writes: str):
+        # the fake speaker says 1 ms of audio a character
+        speech, _ = _speech(_Speaker())
+        for text in writes:
+            speech.write(text)
+        await speech.finish()
+        return speech.spoken
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("audio_end_ms", "heard"),
+        [
+            (0, ""),
+            (16, "The train leaves"),
+            (32, "The train leaves at seven forty."),
+            (61, "The train leaves at seven forty. You don't need to book a"),
+            (90, TRAIN),
+        ],
+    )
+    async def test_truncating_keeps_each_call_heard_and_the_cut_calls_words_in_proportion(self, audio_end_ms, heard):
+        spoken = await self._spoken(TRAIN)
+        assert spoken.ms == 90
+        assert spoken.truncate(audio_end_ms, TRAIN) == heard
+        assert spoken.ms == audio_end_ms
+
+    @pytest.mark.asyncio
+    async def test_the_transcript_keeps_its_markdown_and_spacing(self):
+        text = "**Sure**, the  kitchen lights are on.\n\nThe oven is hot."
+        spoken = await self._spoken(text[:20], text[20:])
+        assert spoken.truncate(spoken.ms - 1, text) == "**Sure**, the  kitchen lights are on.\n\nThe oven is"
+
+    @pytest.mark.asyncio
+    async def test_a_piece_with_nothing_to_say_is_kept_only_when_audio_after_it_was_heard(self):
+        text = "The kitchen lights are on now.\n---\n"
+        spoken = await self._spoken(text)
+        assert spoken.truncate(spoken.ms, text) == "The kitchen lights are on now."
+        # a table's rule: a piece of its own, with nothing to say
+        text = "| --- | --- | --- | --- |\nThe kitchen lights are on now."
+        spoken = await self._spoken(text)
+        assert spoken.truncate(0, text) == ""
+
+    @pytest.mark.asyncio
+    async def test_text_written_but_not_spoken_is_dropped(self):
+        speaker = _Speaker(hold=True)
+        speech, _ = _speech(speaker)
+        speech.write("The kitchen lights are on now. And the oven")
+        speaker.release.set()
+        await asyncio.sleep(0.01)
+        await speech.stop()
+        assert speech.spoken.truncate(speech.spoken.ms, "The kitchen lights are on now. And the oven") == (
+            "The kitchen lights are on now."
+        )
+
+
+class TestPlayback:
+    def test_audio_plays_for_its_length_after_the_audio_before_it(self):
+        now = [10.0]
+        playback = Playback(lambda: now[0])
+        assert not playback.playing()
+        # three half seconds sent at once play one after another
+        for _ in range(3):
+            playback.sent(0.5)
+        now[0] = 11.4 + TAIL_SECONDS
+        assert playback.playing()
+        now[0] = 11.5 + TAIL_SECONDS
+        assert not playback.playing()
+
+    def test_audio_sent_after_a_gap_plays_from_when_it_is_sent(self):
+        now = [10.0]
+        playback = Playback(lambda: now[0])
+        playback.sent(0.5)
+        now[0] = 20.0
+        playback.sent(0.5)
+        now[0] = 20.4 + TAIL_SECONDS
+        assert playback.playing()
+
+    def test_a_stop_ends_it(self):
+        playback = Playback(lambda: 10.0)
+        playback.sent(5)
+        playback.stop()
+        assert not playback.playing()
 
 
 def _tone(frequency: float, rate: int, seconds: float = 0.5) -> np.ndarray:

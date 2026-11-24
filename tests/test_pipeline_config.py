@@ -131,6 +131,19 @@ class TestSchema:
     def test_pipelines_default_to_none(self):
         assert ModelshipConfig(models=[]).pipelines == []
 
+    def test_a_pipeline_is_full_duplex_with_a_half_second_interruption_by_default(self):
+        pipeline = PipelineConfig(name="voice", stt="whisper")
+        assert (pipeline.duplex, pipeline.min_interruption_ms) == ("full", 500)
+        half = PipelineConfig(name="voice", stt="whisper", duplex="half", min_interruption_ms=0)
+        assert (half.duplex, half.min_interruption_ms) == ("half", 0)
+
+    @pytest.mark.parametrize(
+        "given", [{"duplex": "simplex"}, {"min_interruption_ms": -1}, {"min_interruption_ms": 5001}]
+    )
+    def test_echo_settings_out_of_range_are_rejected(self, given):
+        with pytest.raises(ValidationError):
+            PipelineConfig(name="voice", stt="whisper", **given)
+
 
 class TestPipelineFlags:
     def test_each_pipeline_gets_the_flags_that_follow_it(self):
@@ -289,7 +302,9 @@ class TestAudioAppName:
 
     def test_settings_outside_the_audio_app_keep_its_name(self):
         base = PipelineConfig(name="voice", stt="whisper")
-        changed = PipelineConfig(name="voice", stt="other", llm="qwen", num_replicas=3)
+        changed = PipelineConfig(
+            name="voice", stt="other", llm="qwen", num_replicas=3, duplex="half", min_interruption_ms=800
+        )
         assert base.deployment_name("g") == changed.deployment_name("g")
 
     def test_only_a_pipeline_with_stt_has_an_audio_app(self):

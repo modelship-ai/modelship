@@ -150,12 +150,20 @@ MAX_SCAN_SECONDS = 32
 _MAX_SETTINGS = 4
 
 
+# the pause that ends speech when a scan finds where the speech in an open segment ends
+_SPEECH_GAP_MS = 100
+# the audio before an open segment that pass starts on, for the detector to settle
+_SPEECH_LEAD_MS = 200
+
+
 @dataclass(frozen=True)
 class ScanSegment:
     start_ms: int
     # None: the speech runs on to the end of the window, or the silence after it is shorter than
     # silence_duration_ms
     end_ms: int | None
+    # where the speech heard in it ends: its end once closed, the window's end while speech goes on
+    speech_end_ms: int
 
 
 class VadScanner:
@@ -173,10 +181,25 @@ class VadScanner:
         """The speech in *samples*, in ms from their start."""
         if len(samples) > MAX_SCAN_SECONDS * SAMPLE_RATE:
             raise ValueError(f"a scan takes at most {MAX_SCAN_SECONDS} s of audio")
+        samples = np.asarray(samples, dtype=np.float32)
+        found = self._pass(samples, threshold, silence_duration_ms)
+        if found and found[-1].end_ms is None:
+            # how far the speech in the open segment goes, before its trailing silence
+            start = found[-1].start_ms
+            lead = max(0, start - _SPEECH_LEAD_MS)
+            tail = self._pass(samples[lead * SAMPLE_RATE // 1000 :], threshold, _SPEECH_GAP_MS)
+            if tail and tail[-1].end_ms is None:
+                speech_end = _ms(len(samples))
+            else:
+                speech_end = max([start, *(lead + segment.speech_end_ms for segment in tail)])
+            found[-1] = ScanSegment(start, None, speech_end)
+        return found
+
+    def _pass(self, samples: np.ndarray, threshold: float, silence_duration_ms: int) -> list[ScanSegment]:
         key = (threshold, silence_duration_ms)
         detector = self._take(key)
         try:
-            return self._run(detector, np.asarray(samples, dtype=np.float32))
+            return self._run(detector, samples)
         finally:
             self._give(key, detector)
 
@@ -216,8 +239,9 @@ class VadScanner:
         segments = []
         while not detector.empty():
             segment = detector.front
-            segments.append(ScanSegment(_ms(segment.start), _ms(segment.start + len(segment.samples))))
+            end = _ms(segment.start + len(segment.samples))
+            segments.append(ScanSegment(_ms(segment.start), end, end))
             detector.pop()
         if detector.is_speech_detected():
-            segments.append(ScanSegment(_ms(detector.current_segment.start), None))
+            segments.append(ScanSegment(_ms(detector.current_segment.start), None, _ms(len(samples))))
         return segments

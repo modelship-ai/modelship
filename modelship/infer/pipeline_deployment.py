@@ -26,10 +26,10 @@ class PipelineDeployment:
 
     async def scan(
         self, audio: bytes, rate: int, threshold: float, silence_duration_ms: int
-    ) -> list[tuple[int, int | None]]:
-        """The speech in *audio* (16-bit mono PCM at *rate*), as (start, end) in ms from its start; the end is
-        None for speech that runs on to its end, or whose trailing silence is shorter than
-        *silence_duration_ms*."""
+    ) -> list[tuple[int, int | None, int]]:
+        """The speech in *audio* (16-bit mono PCM at *rate*), as (start, end, speech end) in ms from its start; the
+        end is None for speech that runs on to its end, or whose trailing silence is shorter than
+        *silence_duration_ms*, and the speech end is where the speech heard in it ends."""
         import soxr
 
         from modelship.utils.audio import from_pcm16
@@ -38,4 +38,4 @@ class PipelineDeployment:
         if rate != SAMPLE_RATE:
             samples = soxr.resample(samples, rate, SAMPLE_RATE)
         found = await asyncio.to_thread(self.scanner.scan, samples, threshold, silence_duration_ms)
-        return [(segment.start_ms, segment.end_ms) for segment in found]
+        return [(segment.start_ms, segment.end_ms, segment.speech_end_ms) for segment in found]

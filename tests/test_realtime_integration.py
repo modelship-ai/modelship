@@ -234,6 +234,13 @@ def _speak_turn(ws, pcm: bytes, rate: int) -> list[dict]:
     return _until(ws, "conversation.item.done")
 
 
+def _append_all(ws, pcm: bytes, rate: int) -> None:
+    """Appends *pcm* in 100 ms pieces, as fast as the socket takes them."""
+    step = rate // 10 * 2
+    for start in range(0, len(pcm), step):
+        _send(ws, {"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm[start : start + step]).decode()})
+
+
 def _wav(pcm: bytes, rate: int) -> bytes:
     out = io.BytesIO()
     with wave.open(out, "wb") as wav:
@@ -383,3 +390,38 @@ class TestAudioOutput:
         assert session["audio"]["input"]["turn_detection"]["type"] == "server_vad"
         # each turn starts later on the session's timeline, its padding before its speech
         assert starts == sorted(starts) and starts[0] >= 200
+
+    def test_talking_over_the_answer_cuts_it_off_and_the_new_question_is_answered(self):
+        with connect(f"{REALTIME}?model=spoken", open_timeout=30) as ws:
+            _until(ws, "session.created")
+            _send(ws, {"type": "session.update", "session": {"instructions": "Answer in six full sentences."}})
+            _until(ws, "session.updated")
+            rate, question = _speech("Tell me about the moon.")
+            _append_all(ws, bytes(rate) + question + bytes(rate * 2), rate)
+            before = _until(ws, "response.output_audio.delta")
+            # the user talks over the answer
+            rate, interruption = _speech("Actually, what colour is the sky on a clear day?")
+            _append_all(ws, bytes(rate) + interruption + bytes(rate * 2), rate)
+            cut = _until(ws, "response.done")
+            answered = _until(ws, "response.done")
+            item_id = cut[-1]["response"]["output"][0]["id"]
+            received = b"".join(
+                base64.b64decode(e["delta"]) for e in before + cut if e["type"] == "response.output_audio.delta"
+            )
+            # the client played half of what it got, 16-bit at the session's 24 kHz
+            played_ms = len(received) // 2 * 1000 // 24000 // 2
+            truncate = {"item_id": item_id, "content_index": 0, "audio_end_ms": played_ms}
+            _send(ws, {"type": "conversation.item.truncate", **truncate})
+            truncated = _until(ws, "conversation.item.truncated")[-1]
+            _send(ws, {"type": "conversation.item.retrieve", "item_id": item_id})
+            kept = _until(ws, "conversation.item.retrieved")[-1]["item"]["content"][0]["transcript"]
+        kinds = [event["type"] for event in cut]
+        assert kinds.index("input_audio_buffer.speech_started") < kinds.index("response.done"), kinds
+        done = cut[-1]["response"]
+        assert (done["status"], done["status_details"]["reason"]) == ("cancelled", "turn_detected"), done
+        heard = next(e for e in answered if e["type"].endswith("transcription.completed"))["transcript"]
+        assert {"sky", "clear"} & set(_words(heard)), heard
+        assert answered[-1]["response"]["status"] == "completed", answered[-1]
+        assert truncated["audio_end_ms"] == played_ms
+        written = done["output"][0]["content"][0]["transcript"]
+        assert written.startswith(kept) and len(kept) < len(written), (kept, written)
