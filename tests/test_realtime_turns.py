@@ -1,6 +1,8 @@
 """Server VAD's turn finding: a session's audio scanned as it arrives, with a fake scan that hears speech wherever
 the audio is loud, and the turns it finds on the session's timeline."""
 
+import asyncio
+
 import numpy as np
 import pytest
 
@@ -27,8 +29,12 @@ class FakeVad:
     def __init__(self) -> None:
         self.failing = False
         self.scans: list[int] = []
+        # set, each scan waits for it, as for the audio app's answer
+        self.gate: asyncio.Event | None = None
 
     async def scan(self, audio: bytes, rate: int, threshold: float, silence_duration_ms: int):
+        if self.gate is not None:
+            await self.gate.wait()
         if self.failing:
             return None
         samples = np.frombuffer(audio, dtype="<i2")
@@ -56,6 +62,8 @@ class _Turns:
         self.buffer = InputAudioBuffer()
         self.vad = FakeVad()
         self.events: list[tuple] = []
+        # how many endings to refuse, as a full transcription queue does
+        self.refusals = 0
         self.detector = TurnDetector(
             self.buffer,
             settings or ServerVad(type="server_vad"),
@@ -68,9 +76,14 @@ class _Turns:
     async def _started(self, turn: str, at: int) -> None:
         self.events.append(("started", turn, at))
 
-    async def _ended(self, turn: str, start: int, end: int) -> None:
+    async def _ended(self, turn: str, start: int, end: int) -> bool:
+        if self.refusals:
+            self.refusals -= 1
+            self.events.append(("refused", turn))
+            return False
         self.events.append(("ended", turn, start, end))
         self.buffer.take(start, end)
+        return True
 
     async def _failed(self) -> None:
         self.events.append(("failed",))
@@ -170,17 +183,39 @@ class TestTurns:
         assert turns.buffer.end_ms == pytest.approx(10000)
 
     @pytest.mark.asyncio
-    async def test_failing_scans_are_reported_once_per_outage_and_the_buffer_stays_bounded(self):
+    async def test_failing_scans_are_reported_once_per_outage_and_keep_the_audio(self):
         turns = _Turns()
         turns.vad.failing = True
         await turns.feed(_quiet(5))
         assert turns.events == [("failed",)]
-        assert turns.buffer.seconds < 3
+        assert turns.buffer.seconds == pytest.approx(5)
         turns.vad.failing = False
         await turns.feed(_tone(1), _quiet(1))
         turns.vad.failing = True
         await turns.feed(_quiet(1))
         assert [event[0] for event in turns.events] == ["failed", "started", "ended", "failed"]
+
+    @pytest.mark.asyncio
+    async def test_a_scan_runs_on_the_settings_it_started_with(self):
+        turns = _Turns()
+        turns.vad.gate = asyncio.Event()
+        assert turns.buffer.append(_quiet(1) + _tone(1) + _quiet(1), RATE) is None
+        turns.detector.appended()
+        await asyncio.sleep(0)
+        # a session.update while the scan waits for the audio app
+        turns.detector.settings = ServerVad(type="server_vad", prefix_padding_ms=0, silence_duration_ms=200)
+        turns.vad.gate.set()
+        await turns.settle()
+        assert turns.turns()[0] == (700, 2500)
+
+    @pytest.mark.asyncio
+    async def test_a_refused_ending_keeps_the_turn_and_its_audio_and_ends_it_on_a_later_scan(self):
+        turns = _Turns()
+        turns.refusals = 2
+        await turns.feed(_quiet(1), _tone(1), _quiet(1.5))
+        assert [event[0] for event in turns.events] == ["started", "refused", "refused", "ended"]
+        started, *_, ended = turns.events
+        assert ended == ("ended", started[1], 700, 2500)
 
     @pytest.mark.asyncio
     async def test_a_scan_in_flight_over_reset_audio_changes_nothing(self):

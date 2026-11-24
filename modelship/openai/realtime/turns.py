@@ -25,14 +25,15 @@ MAX_TURN_MS = 30_000
 # its start, the end None while speech goes on; None while nothing serves the scan
 Scan = Callable[[bytes, int, float, int], Awaitable[list[tuple[int, int | None]] | None]]
 Started = Callable[[str, int], Awaitable[None]]
-Ended = Callable[[str, int, int], Awaitable[None]]
+# True once it took the turn's audio out of the buffer; False leaves the turn open, to end on a later scan
+Ended = Callable[[str, int, int], Awaitable[bool]]
 Failed = Callable[[], Awaitable[None]]
 
 
 class TurnDetector:
     """Finds the turns in *buffer* with *scan*, as *settings* say. *started* gets each turn's item id and where it
-    starts; *ended* gets its item id, start and end, and takes its audio out of the buffer; *failed* hears of each
-    stretch of scans that fail."""
+    starts; *ended* gets its item id, start and end, and takes its audio out of the buffer or refuses it; *failed*
+    hears of each stretch of scans that fail, during which the buffer keeps all its audio."""
 
     def __init__(
         self,
@@ -91,15 +92,14 @@ class TurnDetector:
         except Exception:
             logger.exception("Turn detection failed")
 
-    def _context_ms(self) -> int:
-        return self.settings.silence_duration_ms + WARMUP_MS
-
     async def _scan_once(self) -> None:
+        # one scan runs on the settings it started with
         settings, buffer, epoch = self.settings, self.buffer, self._epoch
         rate = buffer.rate
         assert rate is not None
+        context = settings.silence_duration_ms + WARMUP_MS
         end = buffer.end_ms
-        start = max(buffer.start_ms, min(self._scanned_ms - WARMUP_MS, end - self._context_ms()))
+        start = max(buffer.start_ms, min(self._scanned_ms - WARMUP_MS, end - context))
         end = min(end, start + MAX_SCAN_MS)
         try:
             found = await self._scan(buffer.pcm(start, end), rate, settings.threshold, settings.silence_duration_ms)
@@ -108,21 +108,20 @@ class TurnDetector:
             found = None
         if epoch != self._epoch:
             return
+        self._scanned_ms = end
         if found is None:
             if not self._failing:
                 self._failing = True
                 await self._failed()
-        else:
-            self._failing = False
-            segments = [(start + begin, None if stop is None else start + stop) for begin, stop in found]
-            await self._apply(segments, end)
-        self._scanned_ms = end
+            return
+        self._failing = False
+        segments = [(start + begin, None if stop is None else start + stop) for begin, stop in found]
+        await self._apply(segments, end, settings)
         if self.turn is None:
             # keep what the next scan and a turn's prefix padding need
-            buffer.drop_before(end - self._context_ms() - settings.prefix_padding_ms)
+            buffer.drop_before(end - context - settings.prefix_padding_ms)
 
-    async def _apply(self, segments: list[tuple[float, float | None]], end: float) -> None:
-        settings = self.settings
+    async def _apply(self, segments: list[tuple[float, float | None]], end: float, settings: ServerVad) -> None:
         heard = False
         for begin, stop in segments:
             if stop is not None and stop <= self._floor_ms:
@@ -135,31 +134,36 @@ class TurnDetector:
                 self._speech_ms = end
                 break
             self._speech_ms = stop
-            await self._close(stop, stop + settings.silence_duration_ms)
-        if self.turn is not None and not heard and end - self._speech_ms >= settings.silence_duration_ms:
-            # the turn's speech ended before this scan's audio
-            await self._close(self._speech_ms, self._speech_ms + settings.silence_duration_ms)
+            if not await self._close(stop, stop + settings.silence_duration_ms):
+                return
+        # the turn's speech ended before this scan's audio
+        ended_before = self.turn is not None and not heard and end - self._speech_ms >= settings.silence_duration_ms
+        if ended_before and not await self._close(self._speech_ms, self._speech_ms + settings.silence_duration_ms):
+            return
         if self.turn is not None and min(end, self.buffer.end_ms) - self.turn[1] >= MAX_TURN_MS:
             await self._end(self.turn[1] + MAX_TURN_MS)
 
-    async def _close(self, speech_end_ms: float, at_ms: float) -> None:
+    async def _close(self, speech_end_ms: float, at_ms: float) -> bool:
         """Ends the turn in progress at *at_ms*, its speech ending at *speech_end_ms*: in 30 s turns, when the
-        speech ran longer."""
+        speech ran longer. False when a turn was refused and stays open."""
         assert self.turn is not None
         while speech_end_ms > self.turn[1] + MAX_TURN_MS:
             cut = self.turn[1] + MAX_TURN_MS
-            await self._end(cut)
+            if not await self._end(cut):
+                return False
             await self._start(cut)
-        await self._end(min(at_ms, self.turn[1] + MAX_TURN_MS))
+        return await self._end(min(at_ms, self.turn[1] + MAX_TURN_MS))
 
     async def _start(self, at_ms: float) -> None:
         self.turn = (item_id(), at_ms)
         self._speech_ms = at_ms
         await self._started(self.turn[0], round(at_ms))
 
-    async def _end(self, at_ms: float) -> None:
+    async def _end(self, at_ms: float) -> bool:
         assert self.turn is not None
         turn_id, start = self.turn
+        if not await self._ended(turn_id, round(start), round(at_ms)):
+            return False
         self.turn = None
         self._floor_ms = at_ms
-        await self._ended(turn_id, round(start), round(at_ms))
+        return True

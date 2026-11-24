@@ -287,6 +287,8 @@ class Session:
         self.turns: TurnDetector | None = None
         # automatic responses waiting for their turn's transcript
         self._replies: set[asyncio.Task] = set()
+        # whether the client heard that a turn server VAD found waits for room in the transcription queue
+        self._busy_reported = False
         self._sending = asyncio.Lock()
         self._closed = False
         self._handlers: dict[str, Handler] = {
@@ -682,12 +684,21 @@ class Session:
     async def _turn_started(self, turn: str, audio_start_ms: int) -> None:
         await self.send(server_event("input_audio_buffer.speech_started", audio_start_ms=audio_start_ms, item_id=turn))
 
-    async def _turn_ended(self, turn: str, audio_start_ms: int, audio_end_ms: int) -> None:
+    async def _turn_ended(self, turn: str, audio_start_ms: int, audio_end_ms: int) -> bool:
+        """Commits the turn server VAD found; False while the transcription queue is full, which keeps the turn and
+        its audio for a later scan."""
+        if (error := self._busy((audio_end_ms - audio_start_ms) / 1000)) is not None:
+            if not self._busy_reported:
+                self._busy_reported = True
+                error.message = (
+                    f"The turns waiting to be transcribed hold {self._queued_seconds:.0f} s, and a session queues at"
+                    f" most {MAX_SECONDS:.0f} s; the turn just heard is kept and committed once there is room."
+                )
+                await self.send(error_event(error))
+            return False
+        self._busy_reported = False
         await self.send(server_event("input_audio_buffer.speech_stopped", audio_end_ms=audio_end_ms, item_id=turn))
         wav, seconds = self.buffer.take(audio_start_ms, audio_end_ms)
-        if (error := self._busy(seconds)) is not None:
-            await self.send(error_event(error))
-            return
         settings = self.state.audio.input.turn_detection
         answers = isinstance(settings, ServerVad) and settings.create_response and self.state.type == "realtime"
         # a turn that ends while the model answers gets no answer of its own
@@ -697,6 +708,7 @@ class Session:
             reply = asyncio.ensure_future(self._reply(item, transcribed))
             self._replies.add(reply)
             reply.add_done_callback(self._replies.discard)
+        return True
 
     async def _reply(self, item: UserMessage, transcribed: asyncio.Task) -> None:
         """Answers the turn *item* once it is transcribed, unless it said nothing or another answer began."""

@@ -1644,6 +1644,28 @@ class TestServerVad:
             self._settle(ws)
         assert [e["transcript"] for e in events if e["type"].endswith("transcription.completed")] == ["Note one."]
 
+    def test_a_turn_found_while_the_transcription_queue_is_full_waits_for_room(self, monkeypatch):
+        # two 1.8 s turns don't fit a 3 s queue
+        monkeypatch.setattr("modelship.openai.realtime.session.MAX_SECONDS", 3.0)
+        stt = _Stt("One.", "Two.", delay=0.5)
+        pipeline = {**SCRIBE, "session_defaults": {"audio": {"input": {"turn_detection": {"type": "server_vad"}}}}}
+        with self._session(stt, pipeline=pipeline) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1), _tone(1), _quiet(1))
+            # the microphone keeps streaming while the first turn is transcribed
+            for _ in range(10):
+                _append(ws, _quiet(0.1))
+                time.sleep(0.1)
+            events = _until(ws, "conversation.item.done") + _until(ws, "conversation.item.done")
+        errors = [event["error"] for event in events if event["type"] == "error"]
+        assert [error["code"] for error in errors] == ["input_audio_transcription_busy"]
+        assert "kept and committed once there is room" in errors[0]["message"]
+        transcripts = [e["transcript"] for e in events if e["type"].endswith("transcription.completed")]
+        assert transcripts == ["One.", "Two."]
+        stops = [event["audio_end_ms"] for event in events if event["type"] == "input_audio_buffer.speech_stopped"]
+        assert stops == [2500, 4500]
+        assert _wav(stt.audio[1]) == (24000, round(1.8 * 24000))
+
 
 def test_g711_tables_match_audioop():
     from modelship.openai.realtime.audio import to_pcm16
