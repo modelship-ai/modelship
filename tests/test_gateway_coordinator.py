@@ -587,7 +587,7 @@ class TestPipelines:
         cluster.configure(NEW)
         app = "gw.voice-p0123456789"
         cluster.apps[app] = _app()
-        pipelines = {"voice": {"config": {"name": "voice", "stt": "m"}, "app": app}}
+        pipelines = {"voice": {"config": {"name": "voice", "type": "assistant", "stt": "m"}, "app": app}}
         coord = _coordinator("gw")
         await _pass(coord)
         before = (await coord.get_routing("gw"))["generation"]
@@ -604,3 +604,20 @@ class TestPipelines:
         coord = _coordinator()
         await _pass(coord)
         assert "gw" in coord._routing
+
+    @pytest.mark.asyncio
+    async def test_a_switch_waits_for_the_pipelines_replicas_too(self, cluster):
+        app = "gw.voice-p0123456789"
+        cluster.apps["gw"] = _app(running=1)
+        cluster.running["gw"] = {"r1"}
+        cluster.apps[app] = _app(running=1)
+        cluster.running[app] = {"p1"}
+        seq = cluster.configure(NEW)
+        voice = {"config": {"name": "voice", "type": "assistant", "stt": "m"}, "app": app}
+        cluster.versions["gw"] = {**cluster.versions["gw"], "pipelines": {"voice": voice}}
+        coord = _coordinator("gw")
+        await _pass(coord)
+        await coord.wait_for_change("gw", 0, timeout=0.01, replica_id="r1", routing=seq)
+        assert not await coord.wait_switched("gw", seq, 0.05)
+        await coord.wait_for_change("gw", 0, timeout=0.01, replica_id="p1", routing=seq)
+        assert await coord.wait_switched("gw", seq, 0.05)

@@ -1,9 +1,10 @@
-"""How a session calls its pipeline's models. The gateway implements it (`api.py`), with the connection's headers,
-identity and disconnect registry bound, so a session never touches Ray."""
+"""How a session calls its pipeline's models. The pipeline replica implements it (`model_calls.py`), with the
+connection's headers, identity and disconnect registry bound, so a session never touches Ray."""
 
 from collections.abc import AsyncGenerator
 from typing import Any, Protocol
 
+from modelship.infer.pipelines.routes import ModelState
 from modelship.openai.protocol import (
     ErrorResponse,
     RawSpeechResponse,
@@ -21,6 +22,10 @@ Answer = AsyncGenerator[Any, None]
 
 
 class PipelineCalls(Protocol):
+    def model_state(self, model: str) -> ModelState:
+        """Whether *model* can be called now."""
+        ...
+
     def respond(self, model: str, request: ResponsesRequest, session_id: str) -> Answer | None:
         """Starts *model* answering *request* for session *session_id*; None while nothing serves *model*."""
         ...
@@ -44,7 +49,7 @@ class PipelineCalls(Protocol):
     async def scan(
         self, pipeline: str, audio: bytes, rate: int, threshold: float, silence_duration_ms: int, session_id: str
     ) -> list[tuple[int, int | None, int]] | None:
-        """The speech *pipeline*'s audio app finds in *audio* (16-bit mono PCM at *rate*), as (start, end, speech
-        end) ms from its start, the end None while the speech may go on and the speech end where the speech heard in
-        it ends; None while nothing serves the app."""
+        """The speech in *audio* (16-bit mono PCM at *rate*), as (start, end, speech end) ms from its start, the end
+        None while the speech may go on and the speech end where the speech heard in it ends; None when *pipeline*
+        has no speech detection."""
         ...

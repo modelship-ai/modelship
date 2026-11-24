@@ -12,9 +12,14 @@ from ray.serve.handle import DeploymentHandle
 from ray.serve.request_router import RequestRouter
 
 from modelship import metrics
-from modelship.deploy.actor_options import build_deployment_options
-from modelship.deploy.request_router import AffinityRouter
+from modelship.deploy.actor_options import (
+    PIPELINE_MAX_ONGOING_REQUESTS,
+    build_deployment_options,
+    build_pipeline_deployment_options,
+)
+from modelship.deploy.request_router import UNPIN_METHOD, AffinityRouter, StickyRouter
 from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.utils.config_schema import AssistantPipelineConfig
 
 APP = DeploymentID(name="gw.m-0123456789", app_name="gw.m-0123456789")
 
@@ -171,7 +176,116 @@ class TestRoutedCounter:
         assert recorder.tags == [{"model": "m", "choice": "no_key"}]
 
 
+PIPELINE_APP = DeploymentID(name="gw.voice-p0123456789", app_name="gw.voice-p0123456789")
+
+
+def _call(key: str = "", method: str = "realtime_event") -> PendingRequest:
+    return PendingRequest(
+        args=[],
+        kwargs={},
+        metadata=RequestMetadata(request_id="r", internal_request_id="r", session_id=key, call_method=method),
+    )
+
+
+def _pipeline_replicas(*names: str, node: str = "node-1") -> list[_Replica]:
+    return [_Replica(ReplicaID(unique_id=name, deployment_id=PIPELINE_APP), node_id=node) for name in names]
+
+
+async def _sticky(replicas: list[_Replica], **locality) -> StickyRouter:
+    router = StickyRouter(
+        deployment_id=PIPELINE_APP,
+        handle_source=DeploymentHandleSource.UNKNOWN,
+        use_replica_queue_len_cache=True,
+        **locality,
+    )
+    router.initialize_state()
+    router.update_replicas(replicas)
+    while any(router.replica_queue_len_cache.get(r.replica_id) is None for r in replicas):
+        await asyncio.sleep(0)
+    return router
+
+
+async def _pick(router: StickyRouter, request: PendingRequest) -> str:
+    [[replica]] = await router.choose_replicas(list(router.curr_replicas.values()), request)
+    return replica.replica_id.unique_id
+
+
+class TestStickyRouter:
+    @pytest.mark.asyncio
+    async def test_every_call_of_a_session_goes_to_the_replica_of_its_first(self):
+        router = await _sticky(_pipeline_replicas("a", "b", "c"))
+        first = await _pick(router, _call("s1", "realtime"))
+        router.replica_queue_len_cache.update(ReplicaID(unique_id=first, deployment_id=PIPELINE_APP), 50)
+        assert {await _pick(router, _call("s1")) for _ in range(10)} == {first}
+
+    @pytest.mark.asyncio
+    async def test_a_session_waits_for_its_busy_replica(self):
+        router = await _sticky(_pipeline_replicas("a", "b"))
+        await _pick(router, _call("s1", "realtime"))
+        request = _call("s1")
+        await _pick(router, request)
+        assert request.routing_context.should_backoff is True
+
+    @pytest.mark.asyncio
+    async def test_a_new_session_goes_to_a_replica_holding_the_fewest(self):
+        router = await _sticky(_pipeline_replicas("a", "b", "c"))
+        picks = [await _pick(router, _call(f"s{n}", "realtime")) for n in range(6)]
+        assert sorted(picks) == ["a", "a", "b", "b", "c", "c"]
+
+    @pytest.mark.asyncio
+    async def test_adding_replicas_moves_no_session(self):
+        router = await _sticky(_pipeline_replicas("a", "b"))
+        before = {n: await _pick(router, _call(f"s{n}", "realtime")) for n in range(4)}
+        router.update_replicas(_pipeline_replicas("a", "b", "c", "d"))
+        assert {n: await _pick(router, _call(f"s{n}")) for n in range(4)} == before
+
+    @pytest.mark.asyncio
+    async def test_a_session_whose_replica_is_gone_gets_another(self):
+        router = await _sticky(_pipeline_replicas("a", "b"))
+        first = await _pick(router, _call("s1", "realtime"))
+        router.update_replicas([r for r in _pipeline_replicas("a", "b") if r.replica_id.unique_id != first])
+        moved = await _pick(router, _call("s1"))
+        assert moved != first
+        assert await _pick(router, _call("s1")) == moved
+
+    @pytest.mark.asyncio
+    async def test_ending_a_session_unpins_it(self):
+        router = await _sticky(_pipeline_replicas("a", "b"))
+        first = await _pick(router, _call("s1", "realtime"))
+        replica = ReplicaID(unique_id=first, deployment_id=PIPELINE_APP)
+        router.on_request_routed(_call("s1"), replica, None)  # type: ignore[arg-type]
+        assert "s1" in router._pins
+        router.on_request_routed(_call("s1", UNPIN_METHOD), replica, None)  # type: ignore[arg-type]
+        assert "s1" not in router._pins
+
+    @pytest.mark.asyncio
+    async def test_a_first_call_prefers_a_replica_on_the_callers_node(self):
+        replicas = [*_pipeline_replicas("far1", "far2", node="node-2"), *_pipeline_replicas("near", node="node-1")]
+        router = await _sticky(replicas, self_node_id="node-1", prefer_local_node_routing=True)
+        assert {await _pick(router, _call(f"s{n}", "realtime")) for n in range(4)} == {"near"}
+
+    @pytest.mark.asyncio
+    async def test_a_call_without_a_session_goes_to_any_replica(self):
+        router = await _sticky(_pipeline_replicas("a", "b", "c"))
+        [group] = await router.choose_replicas(list(router.curr_replicas.values()), _call())
+        assert len({r.replica_id for r in group}) == 2
+        assert router._pins == {}
+
+    def test_a_pipelines_app_routes_with_it_from_the_class_serve_unpickles(self):
+        config = AssistantPipelineConfig(name="voice", type="assistant", stt="whisper")
+        options = build_pipeline_deployment_options(config, {})
+        assert options["max_ongoing_requests"] == PIPELINE_MAX_ONGOING_REQUESTS
+        router_class = cloudpickle.loads(options["request_router_config"].get_serialized_request_router_cls())
+        router = router_class(deployment_id=PIPELINE_APP, handle_source=DeploymentHandleSource.UNKNOWN)
+        router.initialize_state()
+        assert router._pins == {}
+
+
 class TestRayRouterApi:
+    def test_a_calls_method_name_reaches_the_request_metadata(self):
+        options = DynamicHandleOptions().copy_and_update(method_name=UNPIN_METHOD, session_id="s1")
+        assert get_request_metadata(create_init_handle_options(), options).call_method == UNPIN_METHOD
+
     def test_a_handles_session_id_reaches_the_request_metadata(self):
         assert "session_id" in inspect.signature(DeploymentHandle.options).parameters
         options = DynamicHandleOptions().copy_and_update(session_id="conversation-1", stream=True)

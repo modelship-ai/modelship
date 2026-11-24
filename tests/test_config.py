@@ -502,8 +502,9 @@ class TestModelshipModelConfig:
         )
         assert config.num_gpus == 2
 
-    def test_all_usecases_valid(self):
-        for usecase in ModelUsecase:
+    def test_all_model_usecases_valid(self):
+        # realtime is a pipeline's
+        for usecase in set(ModelUsecase) - {ModelUsecase.realtime}:
             config = ModelshipModelConfig(
                 name=f"test-{usecase.value}",
                 model="some-model",

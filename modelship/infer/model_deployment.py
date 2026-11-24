@@ -9,6 +9,7 @@ from ray import serve
 
 from modelship.deploy.deploy_leases import DeployLeaseError, wait_for_deploy_lease
 from modelship.infer.base_infer import BaseInfer
+from modelship.infer.deployment_base import DeploymentBase
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, RawRequestProxy
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
@@ -55,7 +56,7 @@ async def _report_load_failure(config: ModelshipModelConfig, reason: str, fatal:
 
 
 @serve.deployment
-class ModelDeployment:
+class ModelDeployment(DeploymentBase):
     async def __init__(self, config: ModelshipModelConfig):
         configure_logging()
         # MSHIP_GATEWAY_NAME is forwarded to this actor via runtime_env (see

@@ -18,7 +18,7 @@ from modelship.deploy.strategy import ServeApp
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
 from modelship.state.base import StateStoreUnavailableError
-from modelship.utils.config_schema import PipelineConfig
+from modelship.utils.config_schema import parse_pipeline
 
 # The plain class behind @ray.remote; its methods are ordinary coroutines.
 _Coord = deploy_coordinator.DeployCoordinator.__ray_metadata__.modified_class
@@ -715,17 +715,18 @@ class TestRouting:
 
     async def test_a_gateway_routes_by_its_committed_pipelines(self, workers):
         coord = _ledger()
-        voice, chat = {"name": "voice", "stt": "a"}, {"name": "chat", "llm": "a"}
+        voice = {"name": "voice", "type": "assistant", "stt": "a"}
+        chat = {"name": "chat", "type": "assistant", "llm": "a"}
         commit_version(coord._store, "g", [_raw("a")], [voice, chat])
         pipelines = (await coord.routing_versions(["g"]))["g"]["pipelines"]
         assert pipelines == {
-            "voice": {"config": voice, "app": PipelineConfig.model_validate(voice).deployment_name("g")},
-            "chat": {"config": chat, "app": None},
+            "voice": {"config": voice, "app": parse_pipeline(voice).deployment_name("g")},
+            "chat": {"config": chat, "app": parse_pipeline(chat).deployment_name("g")},
         }
 
     async def test_a_switch_and_commit_carry_the_pipelines(self, workers):
         coord = _ledger()
-        voice = {"name": "voice", "stt": "b"}
+        voice = {"name": "voice", "type": "assistant", "stt": "b"}
         receipt = await coord.submit(_request())
         await _settle()
         await coord.switch(receipt["id"], "g", [_raw("b")], [voice])

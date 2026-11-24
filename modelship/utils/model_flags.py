@@ -23,7 +23,7 @@ import yaml
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from modelship.utils.config_schema import ModelshipModelConfig, PipelineConfig
+from modelship.utils.config_schema import PIPELINE_TYPES, ModelshipModelConfig
 
 
 @dataclass(frozen=True)
@@ -107,7 +107,8 @@ class GroupKind:
     key: str
     metavar: str
     location: str  # the entries' list in a models.yaml
-    schema: type[BaseModel]
+    # an entry's schemas: a pipeline's, one per type
+    schemas: tuple[type[BaseModel], ...]
 
     @property
     def prefix(self) -> str:
@@ -118,13 +119,21 @@ class GroupKind:
         return f"{self.flag} {self.metavar}"
 
 
-MODEL = GroupKind("--model", "model", "model", "REF", "models", ModelshipModelConfig)
-PIPELINE = GroupKind("--pipeline", "pipeline", "name", "NAME", "pipelines", PipelineConfig)
+MODEL = GroupKind("--model", "model", "model", "REF", "models", (ModelshipModelConfig,))
+PIPELINE = GroupKind("--pipeline", "pipeline", "name", "NAME", "pipelines", PIPELINE_TYPES)
 KINDS = (MODEL, PIPELINE)
 
-GENERATED_ARGS: dict[GroupKind, tuple[ModelArg, ...]] = {
-    kind: tuple(_generate(kind.schema, kind.prefix, (kind.key,))) for kind in KINDS
-}
+
+def _kind_args(kind: GroupKind) -> tuple[ModelArg, ...]:
+    """The flags of every schema of *kind*; a key two schemas share gets one flag, the first's."""
+    found: dict[str, ModelArg] = {}
+    for schema in kind.schemas:
+        for arg in _generate(schema, kind.prefix, (kind.key,)):
+            found.setdefault(arg.option, arg)
+    return tuple(found.values())
+
+
+GENERATED_ARGS: dict[GroupKind, tuple[ModelArg, ...]] = {kind: _kind_args(kind) for kind in KINDS}
 GENERATED_MODEL_ARGS = GENERATED_ARGS[MODEL]
 GENERATED_PIPELINE_ARGS = GENERATED_ARGS[PIPELINE]
 _BY_OPTION = {arg.option: (kind, arg) for kind, args in GENERATED_ARGS.items() for arg in args}

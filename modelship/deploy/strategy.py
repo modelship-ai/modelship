@@ -1,4 +1,4 @@
-"""What Serve holds for the model apps and the pipelines' audio apps, and the submits that change it."""
+"""What Serve holds for the model apps and the pipelines' apps, and the submits that change it."""
 
 from typing import NamedTuple
 
@@ -33,7 +33,7 @@ class LiveApp(NamedTuple):
 
 
 def gateway_apps(apps, gateway_name: str) -> dict[str, str]:
-    """The gateway's model apps and pipeline audio apps among *apps*, each mapped to its model or pipeline name."""
+    """The gateway's model apps and pipeline apps among *apps*, each mapped to its model or pipeline name."""
     return {
         name: parsed[1]
         for name in apps
@@ -104,7 +104,7 @@ def submit_pipeline_app(
     serve_logging_config: LoggingConfig,
     env: dict[str, str] | None = None,
 ) -> None:
-    """Hand one pipeline's audio app to Serve and return."""
+    """Hand one pipeline's app to Serve and return."""
     app_name = pipeline.deployment_name(gateway_name)
     logger.info("Deploying pipeline: %s (deployment: %s)", pipeline.name, app_name)
     _run_pipeline(pipeline, app_name, build_pipeline_deployment_options(pipeline, env), serve_logging_config)

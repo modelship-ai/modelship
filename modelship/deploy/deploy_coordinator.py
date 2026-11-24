@@ -395,7 +395,7 @@ class DeployCoordinator:
         return version.number
 
     async def routing_versions(self, gateway_names: list[str]) -> dict[str, dict]:
-        """Each gateway's routing seq, model -> app table and pipelines (each its raw config and audio app); both
+        """Each gateway's routing seq, model -> app table and pipelines (each its raw config and app); both
         are empty without a committed version."""
         self._start_recovery()
         versions = {}

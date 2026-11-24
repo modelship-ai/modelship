@@ -1,4 +1,4 @@
-"""One realtime response: the pipeline's LLM answers through the gateway's Responses path, and the client gets its
+"""One realtime response: the pipeline's LLM answers through its loader's Responses path, and the client gets its
 answer as Realtime events, in text or spoken by the pipeline's tts model with the text as its transcript. Reasoning
 reaches neither the client nor the conversation."""
 
@@ -9,6 +9,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from modelship.infer.pipelines.assistant.calls import Answer
+from modelship.infer.pipelines.assistant.conversation import Conversation
+from modelship.infer.pipelines.assistant.speech import SendAudio, Speech
 from modelship.logging import get_logger
 from modelship.metrics import RequestTracker
 from modelship.openai.protocol import ErrorResponse
@@ -25,9 +28,6 @@ from modelship.openai.protocol.realtime import (
     response_event,
     server_event,
 )
-from modelship.openai.realtime.calls import Answer
-from modelship.openai.realtime.conversation import Conversation
-from modelship.openai.realtime.speech import SendAudio, Speech
 
 logger = get_logger("realtime")
 

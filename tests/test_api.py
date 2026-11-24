@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from modelship import metrics
+from modelship.infer.pipelines.relay import RealtimeOpening
 from modelship.metrics import RequestTracker
-from modelship.openai.api import ModelshipAPI
-from modelship.openai.protocol import SttCapabilities
+from modelship.openai.api import ModelshipAPI, _HandleLink
 from tests.conftest import build_gateway
 
 # Access the underlying class, bypassing the @serve.deployment wrapper.
@@ -806,8 +806,16 @@ class TestPipelines:
                     "models": {"qwen-a3f9k": "qwen"},
                     "expected": ["qwen"],
                     "pipelines": {
-                        "assistant": {"config": {"name": "assistant", "llm": "qwen"}, "app": None, "ready": True},
-                        "voice": {"config": {"name": "voice", "stt": "qwen"}, "app": "gw.voice-p0", "ready": ready},
+                        "assistant": {
+                            "config": {"name": "assistant", "type": "assistant", "llm": "qwen"},
+                            "app": "gw.assistant-p0",
+                            "ready": True,
+                        },
+                        "voice": {
+                            "config": {"name": "voice", "type": "assistant", "stt": "qwen"},
+                            "app": "gw.voice-p0",
+                            "ready": ready,
+                        },
                     },
                     "generation": 2,
                 }
@@ -827,193 +835,52 @@ class TestPipelines:
         self._snapshot(api)
         assert (await api.model_info("voice")).owned_by == "modelship-pipeline"
 
-    async def _realtime_calls(self, api, registry):
-        """The `PipelineCalls` a realtime session on the gateway gets, with the tables it was given."""
+    @pytest.mark.asyncio
+    async def test_a_realtime_session_is_relayed_with_the_connections_headers_and_identity(self, api):
         self._snapshot(api)
         websocket = MagicMock()
         websocket.headers = {"x-device": "kitchen"}
+        relay = AsyncMock()
         with (
-            patch("modelship.openai.api.realtime.serve_session") as serve_session,
+            patch.dict(_ModelshipAPI.realtime_ws.__globals__, {"serve_relay": relay}),
             patch.object(api, "_set_identity", return_value="caller") as set_identity,
-            patch.dict(_ModelshipAPI.realtime_ws.__globals__, {"get_disconnect_registry": lambda: registry}),
         ):
             await api.realtime_ws(websocket)
         set_identity.assert_called_once_with(websocket)
-        (sent, pipelines, known, serving, calls), _ = serve_session.await_args
-        assert sent is websocket
-        assert (pipelines, known, serving) == (api.pipelines, ["qwen"], {"qwen"})
-        return calls
+        (sent, pipelines, link, headers, identity), _ = relay.await_args
+        assert (sent, pipelines, headers, identity) == (websocket, api.pipelines, {"x-device": "kitchen"}, "caller")
+        assert link == api._pipeline_link
 
-    @staticmethod
-    def _stream(api, *events):
-        class _Stream:
-            cancelled = False
-
-            async def __aiter__(self):
-                for event in events:
-                    yield event
-                await asyncio.Event().wait()
-
-            def cancel(self):
-                self.cancelled = True
-
-        stream = _Stream()
-        handle = next(reversed(api.models["qwen"].values()))
-        handle.respond.options.return_value.remote.return_value = stream
-        return handle, stream
-
-    @pytest.mark.asyncio
-    async def test_a_realtime_session_calls_a_model_with_the_connections_plumbing(self, api):
-        registry = MagicMock()
-        registry.set.remote = AsyncMock()
-        calls = await self._realtime_calls(api, registry)
-        assert calls.respond("nope", MagicMock(), "s1") is None
-        handle, _ = self._stream(api, {"type": "response.created"})
-        request = MagicMock()
-        answer = calls.respond("qwen", request, "s1")
-        assert await answer.__anext__() == {"type": "response.created"}
-        handle.respond.options.assert_called_once_with(stream=True, session_id="s1")
-        (sent, headers, sent_registry, _req_id, identity), _ = handle.respond.options.return_value.remote.call_args
-        assert (sent, headers, sent_registry, identity) == (request, {"x-device": "kitchen"}, registry, "caller")
-        await answer.aclose()
-
-    @pytest.mark.asyncio
-    async def test_closing_a_realtime_answer_early_cancels_the_call_and_tells_the_replica(self, api):
-        registry = MagicMock()
-        registry.set.remote = AsyncMock()
-        calls = await self._realtime_calls(api, registry)
-        handle, stream = self._stream(api, {"type": "response.created"})
-        answer = calls.respond("qwen", MagicMock(), "s1")
-        await answer.__anext__()
-        await answer.aclose()
-        (_, _, _, req_id, _), _ = handle.respond.options.return_value.remote.call_args
-        assert stream.cancelled
-        registry.set.remote.assert_awaited_once_with(req_id)
-
-    @pytest.mark.asyncio
-    async def test_a_realtime_session_asks_a_model_what_it_can_do_as_speech_to_text(self, api):
-        calls = await self._realtime_calls(api, MagicMock())
-        whisper = SttCapabilities(streaming=False, reports_language=True)
-        handle = next(reversed(api.models["qwen"].values()))
-        handle.stt_capabilities.remote = AsyncMock(return_value=whisper)
-        assert await calls.stt_capabilities("qwen") == whisper
-        assert await calls.stt_capabilities("nope") is None
-
-    @pytest.mark.asyncio
-    async def test_a_realtime_session_scans_with_its_pipelines_audio_app(self, api):
-        calls = await self._realtime_calls(api, MagicMock())
-        app = MagicMock()
-        app.scan.remote = AsyncMock(return_value=[(120, None, 400)])
-        with patch("modelship.openai.api.serve.get_app_handle", return_value=app) as get_app:
-            assert await calls.scan("voice", b"\x00\x00", 24000, 0.5, 500, "s1") == [(120, None, 400)]
-            await calls.scan("voice", b"\x01\x00", 16000, 0.6, 800, "s1")
-            assert await calls.scan("assistant", b"", 24000, 0.5, 500, "s1") is None
-            assert await calls.scan("nope", b"", 24000, 0.5, 500, "s1") is None
+    def test_a_session_links_to_a_ready_pipelines_app(self, api):
+        self._snapshot(api)
+        with patch("modelship.openai.api.serve.get_app_handle", return_value=MagicMock()) as get_app:
+            assert api._pipeline_link("voice") is not None
+            assert api._pipeline_link("voice") is not None
+            assert api._pipeline_link("nope") is None
         get_app.assert_called_once_with("gw.voice-p0")
-        app.scan.remote.assert_awaited_with(b"\x01\x00", 16000, 0.6, 800)
 
-    @pytest.mark.asyncio
-    async def test_an_audio_app_not_ready_or_not_reachable_scans_nothing(self, api):
-        calls = await self._realtime_calls(api, MagicMock())
+    def test_a_pipeline_not_ready_or_not_reachable_has_no_link(self, api):
+        self._snapshot(api)
         with patch("modelship.openai.api.serve.get_app_handle", side_effect=RuntimeError("no app yet")):
-            assert await calls.scan("voice", b"", 24000, 0.5, 500, "s1") is None
+            assert api._pipeline_link("voice") is None
         self._snapshot(api, ready=False)
-        assert await calls.scan("voice", b"", 24000, 0.5, 500, "s1") is None
+        assert api._pipeline_link("voice") is None
 
     @pytest.mark.asyncio
-    async def test_a_realtime_session_transcribes_a_turn_with_the_connections_plumbing(self, api):
-        calls = await self._realtime_calls(api, "registry")
-        transcript = MagicMock()
-
-        class _One:
-            async def __aiter__(self):
-                yield transcript
-
-        handle = next(reversed(api.models["qwen"].values()))
-        handle.transcribe.options.return_value.remote.return_value = _One()
-        request = MagicMock()
-        assert await calls.transcribe("qwen", b"RIFF", request, "s1") is transcript
-        handle.transcribe.options.assert_called_once_with(stream=True, session_id="s1")
-        (audio, sent, headers, registry, _req_id, identity), _ = handle.transcribe.options.return_value.remote.call_args
-        assert (audio, sent, headers, registry, identity) == (
-            b"RIFF",
-            request,
-            {"x-device": "kitchen"},
-            "registry",
-            "caller",
-        )
-        assert await calls.transcribe("nope", b"RIFF", request, "s1") is None
-
-    @pytest.mark.asyncio
-    async def test_a_transcription_cancelled_mid_call_stops_the_model(self, api):
-        registry = MagicMock()
-        registry.set.remote = AsyncMock()
-        calls = await self._realtime_calls(api, registry)
-
-        class _Endless:
-            cancelled = False
-
-            async def __aiter__(self):
-                await asyncio.Event().wait()
-                yield None
-
-            def cancel(self):
-                self.cancelled = True
-
-        stream = _Endless()
-        handle = next(reversed(api.models["qwen"].values()))
-        handle.transcribe.options.return_value.remote.return_value = stream
-        task = asyncio.ensure_future(calls.transcribe("qwen", b"RIFF", MagicMock(), "s1"))
-        await asyncio.sleep(0)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        (_, _, _, _, req_id, _), _ = handle.transcribe.options.return_value.remote.call_args
-        assert stream.cancelled
-        registry.set.remote.assert_awaited_once_with(req_id)
-
-    @pytest.mark.asyncio
-    async def test_a_realtime_session_speaks_with_the_connections_plumbing(self, api):
-        calls = await self._realtime_calls(api, "registry")
-        speech = MagicMock()
-
-        class _One:
-            async def __aiter__(self):
-                yield speech
-
-        handle = next(reversed(api.models["qwen"].values()))
-        handle.speak.options.return_value.remote.return_value = _One()
-        request = MagicMock()
-        assert await calls.speak("qwen", request, "s1") is speech
-        handle.speak.options.assert_called_once_with(stream=True, session_id="s1")
-        (sent, headers, registry, _req_id, identity), _ = handle.speak.options.return_value.remote.call_args
-        assert (sent, headers, registry, identity) == (request, {"x-device": "kitchen"}, "registry", "caller")
-        assert await calls.speak("nope", request, "s1") is None
-
-    @pytest.mark.asyncio
-    async def test_speech_cancelled_mid_call_stops_the_model(self, api):
-        registry = MagicMock()
-        registry.set.remote = AsyncMock()
-        calls = await self._realtime_calls(api, registry)
-
-        class _Endless:
-            cancelled = False
-
-            async def __aiter__(self):
-                await asyncio.Event().wait()
-                yield None
-
-            def cancel(self):
-                self.cancelled = True
-
-        stream = _Endless()
-        handle = next(reversed(api.models["qwen"].values()))
-        handle.speak.options.return_value.remote.return_value = stream
-        task = asyncio.ensure_future(calls.speak("qwen", MagicMock(), "s1"))
-        await asyncio.sleep(0)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        (_, _, _, req_id, _), _ = handle.speak.options.return_value.remote.call_args
-        assert stream.cancelled
-        registry.set.remote.assert_awaited_once_with(req_id)
+    async def test_every_call_of_a_session_is_routed_on_its_key(self):
+        handle = MagicMock()
+        handle.realtime_event.options.return_value.remote = AsyncMock(return_value=True)
+        handle.realtime_close.options.return_value.remote = AsyncMock()
+        link = _HandleLink(handle)
+        opening = RealtimeOpening(key="k1")
+        stream = link.open(opening)
+        handle.realtime.options.assert_called_once_with(stream=True, session_id="k1")
+        handle.realtime.options.return_value.remote.assert_called_once_with(opening)
+        assert await link.send("k1", ["a", b"b"]) is True
+        handle.realtime_event.options.assert_called_once_with(session_id="k1")
+        handle.realtime_event.options.return_value.remote.assert_awaited_once_with("k1", ["a", b"b"])
+        await link.leave("k1")
+        handle.realtime_close.options.assert_called_once_with(session_id="k1")
+        handle.realtime_close.options.return_value.remote.assert_awaited_once_with("k1")
+        await link.stop()
+        stream.cancel.assert_called_once_with()  # type: ignore[attr-defined]

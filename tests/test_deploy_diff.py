@@ -5,7 +5,7 @@ from modelship.deploy.diff import Rescale, build_diff
 from modelship.deploy.ledger import DeployRequest
 from modelship.deploy.strategy import ServeApp, serve_scaling
 from modelship.infer.infer_config import ModelshipModelConfig
-from modelship.utils.config_schema import PipelineConfig
+from modelship.utils.config_schema import PipelineConfig, parse_pipeline
 
 
 def _raw(name: str, **overrides) -> dict:
@@ -203,13 +203,13 @@ class TestLines:
         assert _diff([C_AUTO], [C2], _held(C2)).lines()[0] == "2. rescale c: num_replicas 2 -> autoscaling_config 1..2"
 
 
-VOICE = {"name": "voice", "stt": "a"}
+VOICE = {"name": "voice", "type": "assistant", "stt": "a"}
 VOICE3 = {**VOICE, "num_replicas": 3}
-CHAT = {"name": "chat", "llm": "a"}
+CHAT = {"name": "chat", "type": "assistant", "llm": "a"}
 
 
 def _pipeline(raw: dict) -> PipelineConfig:
-    return PipelineConfig.model_validate(raw)
+    return parse_pipeline(raw)
 
 
 def _pipeline_app(raw: dict, gateway: str = "gw") -> str:
@@ -226,26 +226,27 @@ def _pdiff(models, pipelines, committed=None, committed_pipelines=None, apps=Non
 
 
 class TestPipelines:
-    def test_a_new_pipeline_with_stt_gets_an_audio_app_after_the_models(self):
+    def test_a_new_pipeline_gets_its_app_after_the_models(self):
         diff = _pdiff([A], [VOICE])
         assert diff.pipeline_actions == {"voice": "add"}
         assert diff.pipeline_deploys == [_pipeline(VOICE)]
         assert diff.pipelines == [VOICE]
         assert diff.lines() == ["4. add a", "6. add pipeline voice", "7. switch the gateway and commit"]
 
-    def test_a_pipeline_without_stt_has_no_app(self):
+    def test_a_pipeline_without_stt_has_an_app_too(self):
         diff = _pdiff([], [CHAT], [A], apps=_held(A))
         assert diff.pipeline_actions == {"chat": "add"}
-        assert diff.pipeline_deploys == []
+        assert diff.pipeline_deploys == [_pipeline(CHAT)]
         assert diff.commits
 
-    def test_a_change_outside_the_audio_app_only_updates_the_routing(self):
+    def test_a_changed_setting_replaces_the_app(self):
         changed = {**VOICE, "llm": "b"}
         diff = _pdiff([], [changed], [A], [VOICE], _held(A) | _held_pipeline(VOICE))
-        assert diff.pipeline_actions == {"voice": "update"}
-        assert (diff.pipeline_deploys, diff.retired) == ([], [])
+        assert diff.pipeline_actions == {"voice": "replace"}
+        assert (diff.pipeline_deploys, diff.retired) == ([_pipeline(changed)], [_pipeline_app(VOICE)])
         assert diff.commits
         assert diff.pipelines == [changed]
+        assert diff.lines()[0] == "6. replace pipeline voice: llm: None -> b"
 
     def test_an_unchanged_pipeline_is_kept_and_commits_nothing(self):
         diff = _pdiff([], [VOICE], [A], [VOICE], _held(A) | _held_pipeline(VOICE))
@@ -262,9 +263,9 @@ class TestPipelines:
         assert diff.pipeline_actions == {"voice": "redeploy"}
         assert diff.pipeline_deploys == [_pipeline(VOICE)]
 
-    def test_dropping_stt_retires_the_app(self):
+    def test_dropping_stt_replaces_the_app(self):
         diff = _pdiff([], [CHAT | {"name": "voice"}], [A], [VOICE], _held(A) | _held_pipeline(VOICE))
-        assert diff.pipeline_actions == {"voice": "update"}
+        assert diff.pipeline_actions == {"voice": "replace"}
         assert diff.retired == [_pipeline_app(VOICE)]
 
     def test_additive_keeps_the_pipelines_not_in_the_request(self):
@@ -290,8 +291,8 @@ class TestPipelines:
 
     def test_a_pipeline_may_not_take_a_committed_model_name(self):
         with pytest.raises(ValueError, match="pipeline 'a' has the name of a model"):
-            _pdiff([], [{"name": "a", "llm": "a"}], [A], apps=_held(A))
+            _pdiff([], [{"name": "a", "type": "assistant", "llm": "a"}], [A], apps=_held(A))
 
     def test_a_pipeline_naming_a_model_the_gateway_lacks_still_deploys(self):
-        diff = _pdiff([], [{"name": "voice", "stt": "missing"}], [A], apps=_held(A))
+        diff = _pdiff([], [{"name": "voice", "type": "assistant", "stt": "missing"}], [A], apps=_held(A))
         assert diff.pipeline_actions == {"voice": "add"}

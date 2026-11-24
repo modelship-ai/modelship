@@ -6,9 +6,9 @@ import asyncio
 import numpy as np
 import pytest
 
+from modelship.infer.pipelines.assistant.audio import InputAudioBuffer
+from modelship.infer.pipelines.assistant.turns import MAX_SCAN_MS, TurnDetector
 from modelship.openai.protocol.realtime import ServerVad
-from modelship.openai.realtime.audio import InputAudioBuffer
-from modelship.openai.realtime.turns import MAX_SCAN_MS, TurnDetector
 
 RATE = 24000
 
@@ -23,13 +23,14 @@ def _quiet(seconds: float) -> bytes:
 
 
 class FakeVad:
-    """Scans like the audio app, statelessly: speech wherever a 10 ms frame is loud, a segment closing once
-    *silence_duration_ms* of quiet follows it. Records each scan's length in ms; *failing* makes scans fail."""
+    """Scans like the pipeline's speech detection, statelessly: speech wherever a 10 ms frame is loud, a segment
+    closing once *silence_duration_ms* of quiet follows it. Records each scan's length in ms; *failing* makes scans
+    fail."""
 
     def __init__(self) -> None:
         self.failing = False
         self.scans: list[int] = []
-        # set, each scan waits for it, as for the audio app's answer
+        # set, each scan waits for it
         self.gate: asyncio.Event | None = None
 
     async def scan(self, audio: bytes, rate: int, threshold: float, silence_duration_ms: int):
@@ -251,7 +252,7 @@ class TestTurns:
         assert turns.buffer.append(_quiet(1) + _tone(1) + _quiet(1), RATE) is None
         turns.detector.appended()
         await asyncio.sleep(0)
-        # a session.update while the scan waits for the audio app
+        # a session.update while the scan runs
         turns.detector.settings = ServerVad(type="server_vad", prefix_padding_ms=0, silence_duration_ms=200)
         turns.vad.gate.set()
         await turns.settle()

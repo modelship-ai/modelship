@@ -9,7 +9,7 @@ from ray.serve.schema import ApplicationStatus
 from modelship.deploy.ledger import DeployRequest, merge, merge_pipelines, to_config
 from modelship.deploy.strategy import ServeApp, gateway_apps, serve_scaling
 from modelship.infer.infer_config import ModelshipModelConfig
-from modelship.utils.config_schema import PipelineConfig
+from modelship.utils.config_schema import PipelineConfig, parse_pipeline
 
 # Serve has stopped starting replicas for these; submitting again replaces the app.
 _NOT_LIVE = (ApplicationStatus.DEPLOY_FAILED, ApplicationStatus.DELETING)
@@ -41,9 +41,9 @@ class Diff:
     scale_ups: list[Rescale] = field(default_factory=list)
     # the apps of the replaced and the removed models and pipelines
     retired: list[str] = field(default_factory=list)
-    # add | replace | rescale | redeploy | update | remove | keep, for each pipeline the request decides on
+    # add | replace | rescale | redeploy | remove | keep, for each pipeline the request decides on
     pipeline_actions: dict[str, str] = field(default_factory=dict)
-    # pipelines whose audio app is submitted, after the models' steps
+    # pipelines whose app is submitted, after the models' steps
     pipeline_deploys: list[PipelineConfig] = field(default_factory=list)
     pipeline_rescales: list[Rescale] = field(default_factory=list)
     # the gateway's models after the request; None without a version
@@ -75,7 +75,7 @@ def build_diff(
     current = {c.name: c for c in committed_config.models}
     current_pipelines = {p.name: p for p in committed_config.pipelines}
     named = {c.deployment_name(gateway) for c in current.values()}
-    named |= {p.deployment_name(gateway) for p in current_pipelines.values() if p.has_audio_app()}
+    named |= {p.deployment_name(gateway) for p in current_pipelines.values()}
     diff = Diff(gateway, models=committed, pipelines=committed_pipelines)
     diff.leftovers = sorted(name for name in gateway_apps(apps, gateway) if name not in named)
     if diff.leftovers:
@@ -122,9 +122,7 @@ def build_diff(
     if request.mode == "reconcile":
         for name in others:
             diff.pipeline_actions[name] = "remove"
-            before = current_pipelines[name]
-            if before.has_audio_app():
-                diff.retired.append(before.deployment_name(gateway))
+            diff.retired.append(current_pipelines[name].deployment_name(gateway))
             diff.steps.append((_STOP if request.strategy == "stop_start" else _RETIRE, f"remove pipeline {name}"))
     elif others:
         diff.steps.append((0, f"keep pipelines, not in the request: {', '.join(others)}"))
@@ -142,30 +140,17 @@ def _decide_pipeline(
     before: PipelineConfig | None,
     apps: dict[str, ServeApp],
 ) -> None:
-    """Adds *pipeline*'s action to *diff*; *before* is the committed pipeline of its name. Only its audio app
-    is Serve's; the rest of it reaches the gateway with the routing version."""
+    """Adds *pipeline*'s action to *diff*; *before* is the committed pipeline of its name."""
     name = pipeline.name
-    app = pipeline.deployment_name(diff.gateway) if pipeline.has_audio_app() else None
-    old_app = before.deployment_name(diff.gateway) if before is not None and before.has_audio_app() else None
-    changed = before is None or before.model_dump(mode="json") != pipeline.model_dump(mode="json")
-    if old_app is not None and old_app != app:
-        diff.retired.append(old_app)
-    if app is None:
-        if before is None:
-            diff.pipeline_actions[name] = "add"
-            diff.steps.append((_PIPELINES, f"add pipeline {name}"))
-        elif changed:
-            diff.pipeline_actions[name] = "update"
-            diff.steps.append((_PIPELINES, f"update pipeline {name}: {', '.join(_config_changes(before, pipeline))}"))
-        else:
-            diff.pipeline_actions[name] = "keep"
-        return
-    if before is None or old_app is None:
+    app = pipeline.deployment_name(diff.gateway)
+    if before is None:
         diff.pipeline_actions[name] = "add"
         diff.pipeline_deploys.append(pipeline)
         diff.steps.append((_PIPELINES, f"add pipeline {name}"))
         return
+    old_app = before.deployment_name(diff.gateway)
     if old_app != app:
+        diff.retired.append(old_app)
         diff.pipeline_actions[name] = "replace"
         diff.pipeline_deploys.append(pipeline)
         diff.steps.append((_PIPELINES, f"replace pipeline {name}: {', '.join(_config_changes(before, pipeline))}"))
@@ -181,9 +166,6 @@ def _decide_pipeline(
         diff.pipeline_actions[name] = "rescale"
         diff.pipeline_rescales.append(Rescale(name, app, want, pipeline=True))
         diff.steps.append((_PIPELINES, f"rescale pipeline {name}: {_scaling_changes(held.scaling, want)}"))
-    elif changed:
-        diff.pipeline_actions[name] = "update"
-        diff.steps.append((_PIPELINES, f"update pipeline {name}: {', '.join(_config_changes(before, pipeline))}"))
     else:
         diff.pipeline_actions[name] = "keep"
 
@@ -240,7 +222,7 @@ def _deployed(models: list[dict], gateway_name: str) -> dict[str, tuple[str, dic
 
 def _pipelines(pipelines: list[dict]) -> dict[str, dict]:
     """Pipeline name -> its validated config."""
-    configs = [PipelineConfig.model_validate(raw) for raw in pipelines]
+    configs = [parse_pipeline(raw) for raw in pipelines]
     return {c.name: c.model_dump(mode="json") for c in configs}
 
 
