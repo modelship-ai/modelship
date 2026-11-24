@@ -2,23 +2,28 @@
 
 from typing import Any
 
-from modelship.openai.protocol.realtime import Item, UserMessage
+from modelship.openai.protocol.realtime import AssistantMessage, Item, UserMessage
 from modelship.utils import random_uuid
+
+# each audio part as the text part of its transcript
+_AS_TEXT = {"input_audio": "input_text", "output_audio": "output_text"}
 
 
 def _input_part(part: dict[str, Any]) -> dict[str, Any] | None:
-    if part["type"] != "input_audio":
+    kind = _AS_TEXT.get(part["type"])
+    if kind is None:
         return part
-    return {"type": "input_text", "text": part["transcript"]} if part["transcript"] else None
+    return {"type": kind, "text": part["transcript"]} if part["transcript"] else None
 
 
 def as_input(items: list[Item]) -> list[dict[str, Any]]:
-    """*items* as Responses input items: without the Realtime-only `id`, `object` and `status`. An audio turn
-    becomes its transcript; one with no transcript (failed, or still running) is left out."""
+    """*items* as Responses input items: without the Realtime-only `id`, `object` and `status`. Audio, the client's
+    or the answer's, becomes its transcript; a message left with no text (a turn that failed or is still being
+    transcribed) is left out."""
     found = []
     for item in items:
         dumped = item.model_dump(exclude={"id", "object", "status"})
-        if isinstance(item, UserMessage):
+        if isinstance(item, UserMessage | AssistantMessage):
             dumped["content"] = [part for part in map(_input_part, dumped["content"]) if part is not None]
             if not dumped["content"]:
                 continue

@@ -1,6 +1,6 @@
 """One `/v1/realtime` WebSocket session. The gateway owns the session; the pipeline names the models it runs
 over. So far a session holds a conversation of text and of the client's committed audio turns, which the pipeline's
-stt model transcribes, and answers it in text with the pipeline's LLM."""
+stt model transcribes, and answers it with the pipeline's LLM, in text or spoken by its tts model."""
 
 import asyncio
 import base64
@@ -15,6 +15,8 @@ from starlette.websockets import WebSocketDisconnect
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
+    RawSpeechResponse,
+    SpeechRequest,
     SttCapabilities,
     TranscriptionRequest,
     TranscriptionResponse,
@@ -26,7 +28,9 @@ from modelship.openai.protocol.realtime import (
     AudioAppend,
     AudioClear,
     AudioCommit,
+    AudioG711,
     AudioInput,
+    AudioOutput,
     AudioPcm,
     ClientEvent,
     InputAudio,
@@ -38,19 +42,33 @@ from modelship.openai.protocol.realtime import (
     RealtimeError,
     RealtimeResponse,
     RealtimeSession,
+    ResponseAudio,
+    ResponseAudioOutput,
     ResponseCancel,
     ResponseCreate,
+    SessionAudio,
     SessionUpdate,
     UserMessage,
+    Voice,
+    VoiceId,
     error_event,
     server_event,
     session_event,
 )
 from modelship.openai.protocol.responses.schemas import ResponsesRequest
-from modelship.openai.realtime.audio import G711_RATE, MAX_SECONDS, MIN_SECONDS, InputAudioBuffer, to_pcm16
+from modelship.openai.realtime.audio import (
+    G711_RATE,
+    MAX_SECONDS,
+    MIN_SECONDS,
+    InputAudioBuffer,
+    bytes_per_second,
+    from_wav,
+    to_pcm16,
+)
 from modelship.openai.realtime.calls import Answer, PipelineCalls
 from modelship.openai.realtime.conversation import Conversation, as_input
-from modelship.openai.realtime.response import ActiveResponse
+from modelship.openai.realtime.response import ActiveResponse, NewSpeech
+from modelship.openai.realtime.speech import SendAudio, Speech
 from modelship.utils import random_uuid
 from modelship.utils.config_schema import PipelineConfig
 
@@ -80,11 +98,17 @@ _UNION_TAGS = frozenset(
         "item_reference",
         "input_text",
         "input_audio",
+        "output_text",
+        "output_audio",
         "audio/pcm",
         "audio/pcmu",
         "audio/pcma",
+        "str",
+        "VoiceId",
     }
 )
+# a spoken answer goes out in pieces of this much audio
+_AUDIO_DELTA_SECONDS = 0.5
 
 Handler = Callable[[Any], Awaitable[RealtimeError | None]]
 
@@ -123,7 +147,8 @@ def _new_session(config: PipelineConfig) -> RealtimeSession:
     defaults = config.session_defaults
     fields = defaults.model_dump(exclude_none=True) if defaults is not None else {}
     if kind == "realtime":
-        fields.setdefault("output_modalities", ["text"])
+        fields.setdefault("output_modalities", ["audio"] if config.tts is not None else ["text"])
+        fields["audio"] = SessionAudio(output=AudioOutput())
     return RealtimeSession(
         type=kind, object=SESSION_OBJECTS[kind], id=f"sess_{random_uuid()[:20]}", model=config.name, **fields
     )
@@ -165,8 +190,8 @@ def _event_id(text: str) -> str | None:
     return found if isinstance(found, str) else None
 
 
-def _audio_output(param: str) -> RealtimeError:
-    return RealtimeError(message="Audio output is not supported yet.", code="unsupported_value", param=param)
+def _voice_name(voice: Voice | None) -> str | None:
+    return voice.id if isinstance(voice, VoiceId) else voice
 
 
 async def _stt_capabilities(config: PipelineConfig, calls: PipelineCalls) -> SttCapabilities | RealtimeError | None:
@@ -310,11 +335,11 @@ class Session:
                 code="invalid_value",
                 param="session.type",
             )
-        if update.output_modalities is not None and "audio" in update.output_modalities:
-            return _audio_output("session.output_modalities")
-        audio_input = (
-            update.audio.input if update.audio is not None and "input" in update.audio.model_fields_set else None
-        )
+        asks_audio = update.output_modalities is not None and "audio" in update.output_modalities
+        if asks_audio and (error := self._no_tts("session.output_modalities")) is not None:
+            return error
+        audio = update.audio
+        audio_input = audio.input if audio is not None and "input" in audio.model_fields_set else None
         if audio_input is not None:
             error = self._check_audio_input(audio_input)
             if error is not None:
@@ -322,6 +347,11 @@ class Session:
             for name in ("format", "transcription"):
                 if name in audio_input.model_fields_set:
                     setattr(self.state.audio.input, name, getattr(audio_input, name))
+        audio_output = audio.output if audio is not None else None
+        if audio_output is not None and self.state.audio.output is not None:
+            for name in ("format", "voice", "speed"):
+                if name in audio_output.model_fields_set:
+                    setattr(self.state.audio.output, name, getattr(audio_output, name))
         for name in _UPDATABLE:
             if name in update.model_fields_set:
                 setattr(self.state, name, getattr(update, name))
@@ -399,8 +429,8 @@ class Session:
             )
         params = event.response
         modalities = params.output_modalities or self.state.output_modalities or ["text"]
-        if "audio" in modalities:
-            return _audio_output("response.output_modalities")
+        if "audio" in modalities and (error := self._no_tts("response.output_modalities")) is not None:
+            return error
         if ignored := sorted(params.model_extra or {}):
             logger.debug("Realtime session %s: ignoring response fields not used yet: %s", self.state.id, ignored)
         items = self.conversation.items if params.input is None else self._input(params.input)
@@ -445,9 +475,60 @@ class Session:
             max_output_tokens=max_output_tokens,
             metadata=params.metadata,
         )
+        speech = None
+        if "audio" in modalities:
+            output = self.state.audio.output
+            assert output is not None
+            given = params.audio.output if params.audio is not None else None
+            audio_format = given.format if given is not None and given.format is not None else output.format
+            voice = given.voice if given is not None and given.voice is not None else output.voice
+            response.audio = ResponseAudio(output=ResponseAudioOutput(format=audio_format, voice=voice))
+            speech = self._speech(audio_format, voice, output.speed)
         conversation = self.conversation if in_conversation else None
-        self.active = ActiveResponse(response, llm, start, conversation, self.send)
+        self.active = ActiveResponse(response, llm, start, conversation, self.send, speech)
         return None
+
+    def _no_tts(self, param: str) -> RealtimeError | None:
+        if self.config.tts is not None:
+            return None
+        return RealtimeError(
+            message=f"Pipeline {self.config.name!r} has no tts model to speak with; ask for text output.",
+            code="invalid_value",
+            param=param,
+        )
+
+    def _speech(self, audio_format: AudioPcm | AudioG711, voice: Voice | None, speed: float) -> NewSpeech:
+        """A spoken answer's speech: the pipeline's tts model says it in *voice* at *speed*, sent as *audio_format*."""
+        tts = self.config.tts
+        assert tts is not None
+        kind = audio_format.type
+        rate = audio_format.rate if isinstance(audio_format, AudioPcm) else G711_RATE
+        step = int(bytes_per_second(kind, rate) * _AUDIO_DELTA_SECONDS) // 2 * 2
+        name = _voice_name(voice)
+
+        async def speak(text: str) -> bytes | RealtimeError:
+            request = SpeechRequest(input=text, model=tts, voice=name, speed=speed, response_format="wav")
+            try:
+                result = await self.calls.speak(tts, request, self.state.id)
+            except Exception:
+                logger.exception("Realtime session %s: speaking with %r failed", self.state.id, tts)
+                result = None
+            if isinstance(result, RawSpeechResponse):
+                return result.audio
+            if isinstance(result, ErrorResponse):
+                error = result.error
+                return RealtimeError(message=error.message, type=error.type, code=error.code)
+            return RealtimeError(
+                message=f"Pipeline model {tts!r} didn't speak the answer.", type="server_error", code="server_error"
+            )
+
+        def encode(wav: bytes) -> bytes:
+            return from_wav(wav, kind, rate)
+
+        def new(send: SendAudio) -> Speech:
+            return Speech(speak, encode, send, step)
+
+        return new
 
     async def _response_cancel(self, event: ResponseCancel) -> RealtimeError | None:
         active = self.active

@@ -190,7 +190,7 @@ See [Architecture](architecture.md) for the full request lifecycle and design.
 | `POST /v1/audio/speech` | Text-to-speech (SSE streaming or single-response) |
 | `POST /v1/images/generations` | Image generation |
 | `GET /v1/models` | List available models and [pipelines](model-configuration.md#pipelines-experimental) |
-| `WS /v1/realtime` | Realtime API on a pipeline. Experimental: text conversations, function tools and committed audio turns so far |
+| `WS /v1/realtime` | Realtime API on a pipeline. Experimental: text conversations, function tools, committed audio turns and spoken answers so far |
 
 ## Next steps
 

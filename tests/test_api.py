@@ -950,3 +950,49 @@ class TestPipelines:
         (_, _, _, _, req_id, _), _ = handle.transcribe.options.return_value.remote.call_args
         assert stream.cancelled
         registry.set.remote.assert_awaited_once_with(req_id)
+
+    @pytest.mark.asyncio
+    async def test_a_realtime_session_speaks_with_the_connections_plumbing(self, api):
+        calls = await self._realtime_calls(api, "registry")
+        speech = MagicMock()
+
+        class _One:
+            async def __aiter__(self):
+                yield speech
+
+        handle = next(reversed(api.models["qwen"].values()))
+        handle.speak.options.return_value.remote.return_value = _One()
+        request = MagicMock()
+        assert await calls.speak("qwen", request, "s1") is speech
+        handle.speak.options.assert_called_once_with(stream=True, session_id="s1")
+        (sent, headers, registry, _req_id, identity), _ = handle.speak.options.return_value.remote.call_args
+        assert (sent, headers, registry, identity) == (request, {"x-device": "kitchen"}, "registry", "caller")
+        assert await calls.speak("nope", request, "s1") is None
+
+    @pytest.mark.asyncio
+    async def test_speech_cancelled_mid_call_stops_the_model(self, api):
+        registry = MagicMock()
+        registry.set.remote = AsyncMock()
+        calls = await self._realtime_calls(api, registry)
+
+        class _Endless:
+            cancelled = False
+
+            async def __aiter__(self):
+                await asyncio.Event().wait()
+                yield None
+
+            def cancel(self):
+                self.cancelled = True
+
+        stream = _Endless()
+        handle = next(reversed(api.models["qwen"].values()))
+        handle.speak.options.return_value.remote.return_value = stream
+        task = asyncio.ensure_future(calls.speak("qwen", MagicMock(), "s1"))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        (_, _, _, req_id, _), _ = handle.speak.options.return_value.remote.call_args
+        assert stream.cancelled
+        registry.set.remote.assert_awaited_once_with(req_id)
