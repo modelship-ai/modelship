@@ -110,7 +110,8 @@ class TestStatusOverview:
 class TestPipelines:
     def test_a_pipeline_is_ready_once_its_app_can_serve(self):
         app = "gw.voice-p0123456789"
-        pipelines = {"voice": {"config": {"name": "voice", "type": "assistant", "stt": "m"}, "app": app}}
+        voice = {"name": "voice", "type": "assistant", "assistant_config": {"stt": "m"}}
+        pipelines = {"voice": {"config": voice, "app": app}}
         routing = compute_routing(
             "gw", {}, {"gw": _app(), app: _app(running=0, status=ApplicationStatus.DEPLOYING)}, pipelines
         )
@@ -121,7 +122,8 @@ class TestPipelines:
         assert routing.pipelines["voice"] == {**pipelines["voice"], "ready": True}
 
     def test_a_pipeline_whose_app_is_missing_is_not_ready(self):
-        pipelines = {"chat": {"config": {"name": "chat", "type": "assistant", "llm": "m"}, "app": "gw.chat-p0"}}
+        chat = {"name": "chat", "type": "assistant", "assistant_config": {"llm": "m"}}
+        pipelines = {"chat": {"config": chat, "app": "gw.chat-p0"}}
         routing = compute_routing("gw", {}, {"gw": _app()}, pipelines)
         assert routing is not None
         assert routing.pipelines["chat"]["ready"] is False

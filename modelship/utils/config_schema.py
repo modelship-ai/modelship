@@ -606,13 +606,9 @@ class PipelineConfig(_StrictModel):
         raise NotImplementedError
 
 
-class AssistantPipelineConfig(PipelineConfig):
-    """`type: assistant`, a `/v1/realtime` session over speech to text, an LLM and text to speech, each optional
-    but the first two not both."""
+class AssistantConfig(_StrictModel):
+    """An assistant's own settings, as a model's loader keeps its settings in `<loader>_config`."""
 
-    USECASE: ClassVar[ModelUsecase] = ModelUsecase.realtime
-
-    type: Literal["assistant"]
     # model names, from the gateway's models
     stt: str | None = None
     llm: str | None = None
@@ -624,34 +620,49 @@ class AssistantPipelineConfig(PipelineConfig):
     # while an answer plays, how long speech lasts before it starts a turn and cuts the answer off
     min_interruption_ms: int = Field(default=500, ge=0, le=5000)
 
+
+class AssistantPipelineConfig(PipelineConfig):
+    """`type: assistant`, a `/v1/realtime` session over speech to text, an LLM and text to speech, each optional
+    but the first two not both."""
+
+    USECASE: ClassVar[ModelUsecase] = ModelUsecase.realtime
+
+    type: Literal["assistant"]
+    assistant_config: AssistantConfig
+
     @model_validator(mode="after")
     def check_stt_or_llm(self):
-        if self.stt is None and self.llm is None:
-            raise ValueError(f"pipeline {self.name!r} names no stt and no llm model: set at least one.")
+        if self.assistant_config.stt is None and self.assistant_config.llm is None:
+            raise ValueError(
+                f"pipeline {self.name!r} names no stt and no llm model in assistant_config: set at least one."
+            )
         return self
 
     @model_validator(mode="after")
     def check_audio_output_has_tts(self):
-        modalities = self.session_defaults.output_modalities if self.session_defaults is not None else None
-        if modalities is not None and "audio" in modalities and self.tts is None:
+        assistant = self.assistant_config
+        modalities = assistant.session_defaults.output_modalities if assistant.session_defaults is not None else None
+        if modalities is not None and "audio" in modalities and assistant.tts is None:
             raise ValueError(
-                f"pipeline {self.name!r}: session_defaults.output_modalities asks for audio, but it names no tts"
-                " model to speak with."
+                f"pipeline {self.name!r}: assistant_config.session_defaults.output_modalities asks for audio, but it"
+                " names no tts model to speak with."
             )
         return self
 
     @model_validator(mode="after")
     def check_turn_detection_has_stt(self):
-        defaults = self.session_defaults
+        defaults = self.assistant_config.session_defaults
         given = defaults.audio.input if defaults is not None and defaults.audio is not None else None
-        if given is not None and given.turn_detection is not None and self.stt is None:
+        if given is not None and given.turn_detection is not None and self.assistant_config.stt is None:
             raise ValueError(
-                f"pipeline {self.name!r}: session_defaults.audio.input.turn_detection needs an stt model to take audio."
+                f"pipeline {self.name!r}: assistant_config.session_defaults.audio.input.turn_detection needs an stt"
+                " model to take audio."
             )
         return self
 
     def models(self) -> list[str]:
-        return [model for model in (self.stt, self.llm, self.tts) if model is not None]
+        assistant = self.assistant_config
+        return [model for model in (assistant.stt, assistant.llm, assistant.tts) if model is not None]
 
 
 # every pipeline type; `type` tells them apart once there is more than one

@@ -50,6 +50,7 @@ def _app(status=ApplicationStatus.RUNNING, running=1, deployed_at=0.0):
 
 OLD, NEW = _raw("a", num_cpus=1), _raw("a", num_cpus=2)
 LOADING = _app(ApplicationStatus.DEPLOYING, running=0, deployed_at=1)
+VOICE = {"name": "voice", "type": "assistant", "assistant_config": {"stt": "m"}}
 
 
 @pytest.fixture(autouse=True)
@@ -587,7 +588,7 @@ class TestPipelines:
         cluster.configure(NEW)
         app = "gw.voice-p0123456789"
         cluster.apps[app] = _app()
-        pipelines = {"voice": {"config": {"name": "voice", "type": "assistant", "stt": "m"}, "app": app}}
+        pipelines = {"voice": {"config": VOICE, "app": app}}
         coord = _coordinator("gw")
         await _pass(coord)
         before = (await coord.get_routing("gw"))["generation"]
@@ -613,7 +614,7 @@ class TestPipelines:
         cluster.apps[app] = _app(running=1)
         cluster.running[app] = {"p1"}
         seq = cluster.configure(NEW)
-        voice = {"config": {"name": "voice", "type": "assistant", "stt": "m"}, "app": app}
+        voice = {"config": VOICE, "app": app}
         cluster.versions["gw"] = {**cluster.versions["gw"], "pipelines": {"voice": voice}}
         coord = _coordinator("gw")
         await _pass(coord)

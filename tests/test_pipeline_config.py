@@ -22,9 +22,15 @@ from modelship.utils.model_flags import GENERATED_PIPELINE_ARGS, _block_model
 
 _QWEN = {"name": "qwen", "model": "org/qwen", "usecase": "generate", "loader": "vllm"}
 
+# what every pipeline type has at its top level
+_SHARED = {"name", "num_replicas"}
+
 
 def _assistant(**fields) -> AssistantPipelineConfig:
-    return AssistantPipelineConfig(type="assistant", **fields)
+    """An assistant from flat *fields*: the shared ones at the top, the rest in its assistant_config."""
+    top = {key: value for key, value in fields.items() if key in _SHARED}
+    own = {key: value for key, value in fields.items() if key not in _SHARED}
+    return AssistantPipelineConfig(type="assistant", assistant_config=own, **top)
 
 
 def _args(command="deploy", *argv):
@@ -40,17 +46,17 @@ def _error(capsys, *argv) -> str:
 
 class TestTypes:
     def test_an_assistant_serves_realtime(self):
-        pipeline = parse_pipeline({"name": "voice", "type": "assistant", "stt": "whisper"})
+        pipeline = parse_pipeline({"name": "voice", "type": "assistant", "assistant_config": {"stt": "whisper"}})
         assert isinstance(pipeline, AssistantPipelineConfig)
         assert pipeline.USECASE is ModelUsecase.realtime
 
     def test_a_pipeline_names_its_type(self):
         with pytest.raises(ValidationError, match="type"):
-            parse_pipeline({"name": "voice", "stt": "whisper"})
+            parse_pipeline({"name": "voice", "assistant_config": {"stt": "whisper"}})
 
     def test_an_unknown_type_is_rejected(self):
         with pytest.raises(ValidationError, match="type"):
-            parse_pipeline({"name": "voice", "type": "router", "stt": "whisper"})
+            parse_pipeline({"name": "voice", "type": "router", "assistant_config": {"stt": "whisper"}})
 
     def test_a_model_cannot_take_the_realtime_usecase(self):
         with pytest.raises(ValidationError, match="no loader serves usecase 'realtime'"):
@@ -62,9 +68,19 @@ class TestTypes:
 
 
 class TestAssistantSchema:
-    def test_a_pipeline_names_its_models(self):
+    def test_a_pipeline_names_its_models_in_its_assistant_config(self):
         pipeline = _assistant(name="assistant", stt="whisper", llm="qwen", tts="kokoro")
-        assert (pipeline.stt, pipeline.llm, pipeline.tts, pipeline.num_replicas) == ("whisper", "qwen", "kokoro", 1)
+        own = pipeline.assistant_config
+        assert (own.stt, own.llm, own.tts, pipeline.num_replicas) == ("whisper", "qwen", "kokoro", 1)
+
+    @pytest.mark.parametrize("key", ["stt", "llm", "tts", "session_defaults", "duplex", "min_interruption_ms"])
+    def test_the_assistants_settings_at_the_top_level_are_rejected(self, key):
+        with pytest.raises(ValidationError, match="Extra inputs"):
+            parse_pipeline({"name": "a", "type": "assistant", "assistant_config": {"llm": "qwen"}, key: "x"})
+
+    def test_an_assistant_needs_its_assistant_config(self):
+        with pytest.raises(ValidationError, match="assistant_config"):
+            parse_pipeline({"name": "a", "type": "assistant"})
 
     @pytest.mark.parametrize("models", [{"llm": "qwen"}, {"stt": "whisper"}])
     def test_stt_or_llm_alone_is_enough(self, models):
@@ -84,7 +100,7 @@ class TestAssistantSchema:
                 "max_output_tokens": "inf",
                 "reasoning": {"effort": "low"},
             },
-        ).session_defaults
+        ).assistant_config.session_defaults
         assert defaults is not None
         assert defaults.reasoning is not None
         assert (
@@ -119,16 +135,17 @@ class TestAssistantSchema:
         pipeline = _assistant(
             name="assistant", stt="whisper", session_defaults={"audio": {"input": {"turn_detection": tuned}}}
         )
-        assert pipeline.session_defaults is not None and pipeline.session_defaults.audio is not None
-        given = pipeline.session_defaults.audio.input
+        defaults = pipeline.assistant_config.session_defaults
+        assert defaults is not None and defaults.audio is not None
+        given = defaults.audio.input
         assert given is not None and given.turn_detection is not None
         assert (given.turn_detection.silence_duration_ms, given.turn_detection.threshold) == (800, 0.5)
         manual = _assistant(
             name="assistant", stt="whisper", session_defaults={"audio": {"input": {"turn_detection": None}}}
-        )
-        assert manual.session_defaults is not None and manual.session_defaults.audio is not None
-        assert manual.session_defaults.audio.input is not None
-        assert "turn_detection" in manual.session_defaults.audio.input.model_fields_set
+        ).assistant_config.session_defaults
+        assert manual is not None and manual.audio is not None
+        assert manual.audio.input is not None
+        assert "turn_detection" in manual.audio.input.model_fields_set
 
     def test_turn_detection_needs_an_stt_model(self):
         vad = {"audio": {"input": {"turn_detection": {"type": "server_vad"}}}}
@@ -140,14 +157,16 @@ class TestAssistantSchema:
             _assistant(name="assistant", llm="qwen", session_defaults={"output_modalities": ["audio"]})
         spoken = _assistant(
             name="assistant", llm="qwen", tts="kokoro", session_defaults={"output_modalities": ["audio"]}
-        )
-        assert spoken.session_defaults is not None
-        assert spoken.session_defaults.output_modalities == ["audio"]
+        ).assistant_config.session_defaults
+        assert spoken is not None
+        assert spoken.output_modalities == ["audio"]
 
     @pytest.mark.parametrize("extra", [{"num_gpus": 1}, {"num_cpus": 1}, {"vad": "silero"}])
     def test_unknown_keys_are_rejected(self, extra):
         with pytest.raises(ValidationError, match="Extra inputs"):
             _assistant(name="assistant", llm="qwen", **extra)
+        with pytest.raises(ValidationError, match="Extra inputs"):
+            parse_pipeline({"name": "a", "type": "assistant", "assistant_config": {"llm": "qwen"}, **extra})
 
     def test_a_name_with_a_hash_is_rejected(self):
         with pytest.raises(ValidationError, match="must not contain '#'"):
@@ -158,8 +177,8 @@ class TestAssistantSchema:
             ModelshipConfig(
                 models=[],
                 pipelines=[
-                    {"name": "assistant", "type": "assistant", "llm": "q"},
-                    {"name": "assistant", "type": "assistant", "stt": "w"},
+                    {"name": "assistant", "type": "assistant", "assistant_config": {"llm": "q"}},
+                    {"name": "assistant", "type": "assistant", "assistant_config": {"stt": "w"}},
                 ],
             )
 
@@ -167,9 +186,9 @@ class TestAssistantSchema:
         assert ModelshipConfig(models=[]).pipelines == []
 
     def test_a_pipeline_is_full_duplex_with_a_half_second_interruption_by_default(self):
-        pipeline = _assistant(name="voice", stt="whisper")
-        assert (pipeline.duplex, pipeline.min_interruption_ms) == ("full", 500)
-        half = _assistant(name="voice", stt="whisper", duplex="half", min_interruption_ms=0)
+        own = _assistant(name="voice", stt="whisper").assistant_config
+        assert (own.duplex, own.min_interruption_ms) == ("full", 500)
+        half = _assistant(name="voice", stt="whisper", duplex="half", min_interruption_ms=0).assistant_config
         assert (half.duplex, half.min_interruption_ms) == ("half", 0)
 
     @pytest.mark.parametrize(
@@ -184,13 +203,13 @@ class TestPipelineFlags:
     def test_each_pipeline_gets_the_flags_that_follow_it(self):
         args = _args(
             "deploy",
-            "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.llm", "qwen",
+            "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.assistant-config.llm", "qwen",
             "--pipeline.num-replicas", "2",
-            "--pipeline", "dictation", "--pipeline.type", "assistant", "--pipeline.stt", "whisper",
+            "--pipeline", "dictation", "--pipeline.type", "assistant", "--pipeline.assistant-config.stt", "whisper",
         )  # fmt: skip
         assert args.pipelines == [
-            {"name": "assistant", "type": "assistant", "llm": "qwen", "num_replicas": 2},
-            {"name": "dictation", "type": "assistant", "stt": "whisper"},
+            {"name": "assistant", "type": "assistant", "assistant_config": {"llm": "qwen"}, "num_replicas": 2},
+            {"name": "dictation", "type": "assistant", "assistant_config": {"stt": "whisper"}},
         ]
         assert args.models is None
 
@@ -198,42 +217,54 @@ class TestPipelineFlags:
         args = _args(
             "deploy",
             "--model", "org/qwen", "--model.loader", "vllm",
-            "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.llm", "qwen",
+            "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.assistant-config.llm", "qwen",
             "--model", "kokoro-en-v0_19", "--model.loader", "sherpa_onnx",
         )  # fmt: skip
         assert [m["name"] for m in args.models] == ["qwen", "kokoro-en-v0_19"]
-        assert args.pipelines == [{"name": "assistant", "type": "assistant", "llm": "qwen"}]
+        assert args.pipelines == [{"name": "assistant", "type": "assistant", "assistant_config": {"llm": "qwen"}}]
 
     def test_start_takes_pipelines_too(self):
-        args = _args("start", "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.llm", "qwen")
-        assert args.pipelines == [{"name": "assistant", "type": "assistant", "llm": "qwen"}]
+        args = _args(
+            "start",
+            "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.assistant-config.llm", "qwen",
+        )  # fmt: skip
+        assert args.pipelines == [{"name": "assistant", "type": "assistant", "assistant_config": {"llm": "qwen"}}]
 
     def test_a_block_flag_and_its_keys_merge(self):
         args = _args(
             "deploy",
-            "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.llm", "qwen",
-            "--pipeline.session-defaults.max-output-tokens", "256",
-            "--pipeline.session-defaults", "{instructions: Be brief., max_output_tokens: 1024}",
+            "--pipeline", "assistant", "--pipeline.type", "assistant",
+            "--pipeline.assistant-config", "{llm: qwen}",
+            "--pipeline.assistant-config.session-defaults.max-output-tokens", "256",
+            "--pipeline.assistant-config.session-defaults", "{instructions: Be brief., max_output_tokens: 1024}",
         )  # fmt: skip
-        assert args.pipelines[0]["session_defaults"] == {"instructions": "Be brief.", "max_output_tokens": 256}
+        assert args.pipelines[0]["assistant_config"] == {
+            "llm": "qwen",
+            "session_defaults": {"instructions": "Be brief.", "max_output_tokens": 256},
+        }
 
     def test_a_model_flag_after_a_pipeline_is_rejected(self, capsys):
         err = _error(capsys, "--model", "org/qwen", "--pipeline", "assistant", "--model.num-gpus", "1")
         assert "--model.num-gpus sets a key of a model, but follows --pipeline NAME" in err
 
     def test_a_pipeline_flag_after_a_model_is_rejected(self, capsys):
-        err = _error(capsys, "--pipeline", "assistant", "--model", "org/qwen", "--pipeline.llm", "qwen")
-        assert "--pipeline.llm sets a key of a pipeline, but follows --model REF" in err
+        err = _error(
+            capsys, "--pipeline", "assistant", "--model", "org/qwen", "--pipeline.assistant-config.llm", "qwen"
+        )
+        assert "--pipeline.assistant-config.llm sets a key of a pipeline, but follows --model REF" in err
 
     def test_a_pipeline_flag_before_any_pipeline_is_rejected(self, capsys):
-        assert "put it after one" in _error(capsys, "--pipeline.llm", "qwen")
+        assert "put it after one" in _error(capsys, "--pipeline.assistant-config.llm", "qwen")
 
-    def test_an_unknown_pipeline_flag_is_rejected(self, capsys):
-        err = _error(capsys, "--pipeline", "assistant", "--pipeline.vad", "silero")
-        assert "unrecognized pipeline flag --pipeline.vad" in err
+    @pytest.mark.parametrize("flag", ["--pipeline.vad", "--pipeline.llm"])
+    def test_an_unknown_pipeline_flag_is_rejected(self, capsys, flag):
+        err = _error(capsys, "--pipeline", "assistant", flag, "silero")
+        assert f"unrecognized pipeline flag {flag}" in err
 
     def test_pipelines_and_config_are_mutually_exclusive(self, capsys):
-        err = _error(capsys, "--config", "models.yaml", "--pipeline", "assistant", "--pipeline.llm", "qwen")
+        err = _error(
+            capsys, "--config", "models.yaml", "--pipeline", "assistant", "--pipeline.assistant-config.llm", "qwen"
+        )
         assert "--pipeline and --config are mutually exclusive" in err
 
     def test_cancel_takes_no_pipeline(self, capsys):
@@ -257,10 +288,10 @@ class TestConfigFile:
     def test_pipelines_are_read_beside_models(self):
         text = (
             "models:\n  - {name: qwen, model: org/qwen, usecase: generate, loader: vllm}\n"
-            "pipelines:\n  - {name: a, type: assistant, llm: qwen}\n"
+            "pipelines:\n  - {name: a, type: assistant, assistant_config: {llm: qwen}}\n"
         )
         assert parse_raw_models(text) == [_QWEN]
-        assert parse_raw_pipelines(text) == [{"name": "a", "type": "assistant", "llm": "qwen"}]
+        assert parse_raw_pipelines(text) == [{"name": "a", "type": "assistant", "assistant_config": {"llm": "qwen"}}]
 
     def test_an_unknown_top_level_key_is_rejected(self):
         with pytest.raises(ValueError, match="unknown top-level key 'pipeline'"):
@@ -280,20 +311,23 @@ class TestConfigFile:
         assert resolve_input_pipelines(_args("deploy", "--config", str(config))) is None
 
     def test_validate_takes_both(self):
-        config = validate_models([_QWEN], [{"name": "assistant", "type": "assistant", "llm": "qwen"}])
+        pipeline = {"name": "assistant", "type": "assistant", "assistant_config": {"llm": "qwen"}}
+        config = validate_models([_QWEN], [pipeline])
         assert [p.name for p in config.pipelines] == ["assistant"]
 
 
 class TestLauncherValidation:
     def test_a_cli_pipeline_alone_validates_and_asks_for_no_models(self):
-        args = _args("deploy", "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.llm", "qwen")
+        args = _args(
+            "deploy", "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.assistant-config.llm", "q"
+        )
         assert launcher._validate_config(args) is None
 
     def test_a_file_pipeline_validates_with_its_models(self, tmp_path):
         config = tmp_path / "models.yaml"
         config.write_text(
             "models:\n  - {name: qwen, model: org/qwen, usecase: generate, loader: vllm}\n"
-            "pipelines:\n  - {name: assistant, type: assistant, llm: qwen}\n"
+            "pipelines:\n  - {name: assistant, type: assistant, assistant_config: {llm: qwen}}\n"
         )
         validated = launcher._validate_config(_args("start", "--config", str(config)))
         assert validated is not None
@@ -303,7 +337,7 @@ class TestLauncherValidation:
         config = tmp_path / "models.yaml"
         config.write_text(
             "models:\n  - {name: qwen, model: org/qwen, usecase: generate, loader: vllm}\n"
-            "pipelines:\n  - {name: qwen, type: assistant, llm: qwen}\n"
+            "pipelines:\n  - {name: qwen, type: assistant, assistant_config: {llm: qwen}}\n"
         )
         with pytest.raises(SystemExit) as exc:
             launcher._validate_config(_args("start", "--config", str(config)))
@@ -313,18 +347,20 @@ class TestLauncherValidation:
     def test_an_invalid_cli_pipeline_names_its_flag(self, capsys):
         args = _args(
             "deploy",
-            "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.llm", "q",
-            "--pipeline.num-replicas", "0",
+            "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.assistant-config.llm", "q",
+            "--pipeline.assistant-config.min-interruption-ms", "-1",
         )  # fmt: skip
         with pytest.raises(SystemExit):
             launcher._validate_config(args)
         err = capsys.readouterr().err
-        assert "--pipeline.num-replicas" in err
+        assert "--pipeline.assistant-config.min-interruption-ms" in err
         assert "pipelines.0." not in err
 
     def test_a_cli_pipeline_without_a_type_names_the_flag(self, capsys):
         with pytest.raises(SystemExit):
-            launcher._validate_config(_args("deploy", "--pipeline", "assistant", "--pipeline.llm", "q"))
+            launcher._validate_config(
+                _args("deploy", "--pipeline", "assistant", "--pipeline.assistant-config.llm", "q")
+            )
         assert "--pipeline.type" in capsys.readouterr().err
 
     def test_models_alone_still_validate(self):

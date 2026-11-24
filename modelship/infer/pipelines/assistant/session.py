@@ -160,9 +160,9 @@ def _refusal(config: AssistantPipelineConfig, calls: PipelineCalls) -> RealtimeE
 
 def _turn_detection(config: AssistantPipelineConfig) -> ServerVad | None:
     """A new session's turn detection: server VAD on a pipeline with stt, unless its defaults say otherwise."""
-    if config.stt is None:
+    if config.assistant_config.stt is None:
         return None
-    defaults = config.session_defaults
+    defaults = config.assistant_config.session_defaults
     given = defaults.audio.input if defaults is not None and defaults.audio is not None else None
     if given is None or "turn_detection" not in given.model_fields_set:
         return server_vad()
@@ -172,12 +172,13 @@ def _turn_detection(config: AssistantPipelineConfig) -> ServerVad | None:
 
 
 def _new_session(config: AssistantPipelineConfig) -> RealtimeSession:
-    kind = "realtime" if config.llm is not None else "transcription"
-    defaults = config.session_defaults
+    assistant = config.assistant_config
+    kind = "realtime" if assistant.llm is not None else "transcription"
+    defaults = assistant.session_defaults
     fields = defaults.model_dump(exclude_none=True, exclude={"audio"}) if defaults is not None else {}
     audio = SessionAudio(input=AudioInput(turn_detection=_turn_detection(config)))
     if kind == "realtime":
-        fields.setdefault("output_modalities", ["audio"] if config.tts is not None else ["text"])
+        fields.setdefault("output_modalities", ["audio"] if assistant.tts is not None else ["text"])
         audio.output = AudioOutput()
     fields["audio"] = audio
     return RealtimeSession(
@@ -229,19 +230,20 @@ async def _stt_capabilities(
     config: AssistantPipelineConfig, calls: PipelineCalls
 ) -> SttCapabilities | RealtimeError | None:
     """What the pipeline's stt model can do, asked once for the session; None without one."""
-    if config.stt is None:
+    stt = config.assistant_config.stt
+    if stt is None:
         return None
     try:
-        found = await calls.stt_capabilities(config.stt)
+        found = await calls.stt_capabilities(stt)
     except Exception:
-        logger.exception("Pipeline %r: model %r didn't say what it can do", config.name, config.stt)
+        logger.exception("Pipeline %r: model %r didn't say what it can do", config.name, stt)
         return RealtimeError(
-            message=f"Pipeline {config.name!r} couldn't ask model {config.stt!r} what it can do.",
+            message=f"Pipeline {config.name!r} couldn't ask model {stt!r} what it can do.",
             code="model_not_ready",
         )
     if found is None:
         return RealtimeError(
-            message=f"Pipeline {config.name!r} uses model {config.stt!r} as stt, which doesn't transcribe.",
+            message=f"Pipeline {config.name!r} uses model {stt!r} as stt, which doesn't transcribe.",
             code="model_not_supported",
         )
     return found
@@ -280,6 +282,8 @@ class Session:
     ):
         self.channel = channel
         self.config = config
+        # the pipeline's assistant settings
+        self.assistant = config.assistant_config
         self.calls = calls
         # what the stt model can do, asked once at open; None without one
         self.stt = stt
@@ -418,7 +422,7 @@ class Session:
                     code="unsupported_value",
                     param=f"{param}.idle_timeout_ms",
                 )
-            if self.config.stt is None:
+            if self.assistant.stt is None:
                 return RealtimeError(
                     message=f"Pipeline {self.config.name!r} has no stt model to take audio.",
                     code="invalid_value",
@@ -533,7 +537,7 @@ class Session:
         items = self.conversation.items if params.input is None else self._input(params.input)
         if isinstance(items, RealtimeError):
             return items
-        llm = self.config.llm
+        llm = self.assistant.llm
         assert llm is not None
         max_output_tokens = params.max_output_tokens or self.state.max_output_tokens or "inf"
         reasoning = params.reasoning or self.state.reasoning
@@ -588,7 +592,7 @@ class Session:
         return None
 
     def _no_tts(self, param: str) -> RealtimeError | None:
-        if self.config.tts is not None:
+        if self.assistant.tts is not None:
             return None
         return RealtimeError(
             message=f"Pipeline {self.config.name!r} has no tts model to speak with; ask for text output.",
@@ -598,7 +602,7 @@ class Session:
 
     def _speech(self, audio_format: AudioPcm | AudioG711, voice: Voice | None, speed: float) -> NewSpeech:
         """A spoken answer's speech: the pipeline's tts model says it in *voice* at *speed*, sent as *audio_format*."""
-        tts = self.config.tts
+        tts = self.assistant.tts
         assert tts is not None
         kind = audio_format.type
         rate = audio_format.rate if isinstance(audio_format, AudioPcm) else G711_RATE
@@ -654,7 +658,7 @@ class Session:
         return None
 
     def _no_stt(self) -> RealtimeError | None:
-        if self.config.stt is not None:
+        if self.assistant.stt is not None:
             return None
         return RealtimeError(
             message=f"Pipeline {self.config.name!r} has no stt model to transcribe audio.", code="invalid_event"
@@ -671,7 +675,7 @@ class Session:
         audio_format = self.state.audio.input.format
         rate = audio_format.rate if isinstance(audio_format, AudioPcm) else G711_RATE
         pcm = to_pcm16(audio, audio_format.type)
-        if self.config.duplex == "half" and self.playback.playing():
+        if self.assistant.duplex == "half" and self.playback.playing():
             # the answer's echo: silence in its place keeps the timeline
             pcm = bytes(len(pcm))
         problem = self.buffer.append(pcm, rate)
@@ -763,8 +767,8 @@ class Session:
 
     def _min_speech(self) -> int:
         """The speech a turn needs before it starts now: more while an answer plays, which it would cut off."""
-        if self.config.duplex == "full" and self.playback.playing():
-            return self.config.min_interruption_ms
+        if self.assistant.duplex == "full" and self.playback.playing():
+            return self.assistant.min_interruption_ms
         return 0
 
     def _open_finder(self, rate: int, start_ms: float) -> SpeechFinder:
@@ -849,7 +853,7 @@ class Session:
         """Fills *item*'s transcript once the turn before it is done."""
         if previous is not None:
             await asyncio.wait([previous])
-        stt = self.config.stt
+        stt = self.assistant.stt
         assert stt is not None
         settings = self.state.audio.input.transcription
         language = (settings.language if settings is not None else None) or self.language

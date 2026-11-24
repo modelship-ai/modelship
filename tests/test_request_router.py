@@ -272,7 +272,7 @@ class TestStickyRouter:
         assert router._pins == {}
 
     def test_a_pipelines_app_routes_with_it_from_the_class_serve_unpickles(self):
-        config = AssistantPipelineConfig(name="voice", type="assistant", stt="whisper")
+        config = AssistantPipelineConfig(name="voice", type="assistant", assistant_config={"stt": "whisper"})
         options = build_pipeline_deployment_options(config, {})
         assert options["max_ongoing_requests"] == PIPELINE_MAX_ONGOING_REQUESTS
         router_class = cloudpickle.loads(options["request_router_config"].get_serialized_request_router_cls())

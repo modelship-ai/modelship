@@ -20,7 +20,7 @@ from modelship.infer.pipelines.routes import ModelRoutes
 from modelship.utils import downloads
 from modelship.utils.config_schema import AssistantPipelineConfig
 
-CHAT = AssistantPipelineConfig(name="chat", type="assistant", llm="qwen")
+CHAT = AssistantPipelineConfig(name="chat", type="assistant", assistant_config={"llm": "qwen"})
 
 
 async def _settle() -> None:
@@ -138,7 +138,7 @@ class TestAssistantPipeline:
 
         monkeypatch.setattr(downloads, "locked_download", download)
         monkeypatch.setattr(assistant_pipeline, "SileroModel", Silero)
-        voice = AssistantPipelineConfig(name="voice", type="assistant", stt="parakeet")
+        voice = AssistantPipelineConfig(name="voice", type="assistant", assistant_config={"stt": "parakeet"})
         pipeline = AssistantPipeline(voice, _Routes())  # type: ignore[arg-type]
         await pipeline.start()
         finder = pipeline._finder()

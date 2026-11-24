@@ -807,12 +807,12 @@ class TestPipelines:
                     "expected": ["qwen"],
                     "pipelines": {
                         "assistant": {
-                            "config": {"name": "assistant", "type": "assistant", "llm": "qwen"},
+                            "config": {"name": "assistant", "type": "assistant", "assistant_config": {"llm": "qwen"}},
                             "app": "gw.assistant-p0",
                             "ready": True,
                         },
                         "voice": {
-                            "config": {"name": "voice", "type": "assistant", "stt": "qwen"},
+                            "config": {"name": "voice", "type": "assistant", "assistant_config": {"stt": "qwen"}},
                             "app": "gw.voice-p0",
                             "ready": ready,
                         },

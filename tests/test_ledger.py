@@ -202,8 +202,8 @@ class TestLoadRawModels:
             load_raw_models(str(tmp_path / "missing.yaml"))
 
 
-VOICE = {"name": "voice", "type": "assistant", "stt": "a"}
-CHAT = {"name": "chat", "type": "assistant", "llm": "a"}
+VOICE = {"name": "voice", "type": "assistant", "assistant_config": {"stt": "a"}}
+CHAT = {"name": "chat", "type": "assistant", "assistant_config": {"llm": "a"}}
 
 
 class TestPipelines:
@@ -221,7 +221,7 @@ class TestPipelines:
         assert read_versions(store, "g")[0] == Version(3, [_model("a")], [])
 
     def test_additive_replaces_by_name_and_keeps_the_rest(self):
-        changed = {**VOICE, "llm": "a"}
+        changed = {**VOICE, "assistant_config": {"stt": "a", "llm": "a"}}
         assert merge_pipelines([VOICE, CHAT], [changed], "additive") == [CHAT, changed]
 
     def test_reconcile_replaces_the_set(self):

@@ -203,9 +203,9 @@ class TestLines:
         assert _diff([C_AUTO], [C2], _held(C2)).lines()[0] == "2. rescale c: num_replicas 2 -> autoscaling_config 1..2"
 
 
-VOICE = {"name": "voice", "type": "assistant", "stt": "a"}
+VOICE = {"name": "voice", "type": "assistant", "assistant_config": {"stt": "a"}}
 VOICE3 = {**VOICE, "num_replicas": 3}
-CHAT = {"name": "chat", "type": "assistant", "llm": "a"}
+CHAT = {"name": "chat", "type": "assistant", "assistant_config": {"llm": "a"}}
 
 
 def _pipeline(raw: dict) -> PipelineConfig:
@@ -240,13 +240,13 @@ class TestPipelines:
         assert diff.commits
 
     def test_a_changed_setting_replaces_the_app(self):
-        changed = {**VOICE, "llm": "b"}
+        changed = {**VOICE, "assistant_config": {"stt": "a", "llm": "b"}}
         diff = _pdiff([], [changed], [A], [VOICE], _held(A) | _held_pipeline(VOICE))
         assert diff.pipeline_actions == {"voice": "replace"}
         assert (diff.pipeline_deploys, diff.retired) == ([_pipeline(changed)], [_pipeline_app(VOICE)])
         assert diff.commits
         assert diff.pipelines == [changed]
-        assert diff.lines()[0] == "6. replace pipeline voice: llm: None -> b"
+        assert diff.lines()[0] == "6. replace pipeline voice: assistant_config.llm: None -> b"
 
     def test_an_unchanged_pipeline_is_kept_and_commits_nothing(self):
         diff = _pdiff([], [VOICE], [A], [VOICE], _held(A) | _held_pipeline(VOICE))
@@ -291,8 +291,8 @@ class TestPipelines:
 
     def test_a_pipeline_may_not_take_a_committed_model_name(self):
         with pytest.raises(ValueError, match="pipeline 'a' has the name of a model"):
-            _pdiff([], [{"name": "a", "type": "assistant", "llm": "a"}], [A], apps=_held(A))
+            _pdiff([], [{**CHAT, "name": "a"}], [A], apps=_held(A))
 
     def test_a_pipeline_naming_a_model_the_gateway_lacks_still_deploys(self):
-        diff = _pdiff([], [{"name": "voice", "type": "assistant", "stt": "missing"}], [A], apps=_held(A))
+        diff = _pdiff([], [{**VOICE, "assistant_config": {"stt": "missing"}}], [A], apps=_held(A))
         assert diff.pipeline_actions == {"voice": "add"}

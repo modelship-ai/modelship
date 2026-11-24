@@ -313,7 +313,10 @@ class _Link:
 
 
 def _route(raw: dict, ready: bool = True) -> dict:
-    return {raw["name"]: {"config": {"type": "assistant", **raw}, "app": "gw.x-p0123456789", "ready": ready}}
+    """The routing entry of an assistant *raw* describes flat: its name, and the rest its assistant_config."""
+    own = {key: value for key, value in raw.items() if key != "name"}
+    config = {"name": raw["name"], "type": "assistant", "assistant_config": own}
+    return {raw["name"]: {"config": config, "app": "gw.x-p0123456789", "ready": ready}}
 
 
 def _refused(client: TestClient, query: str) -> dict:
