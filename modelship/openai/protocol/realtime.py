@@ -9,7 +9,8 @@ from modelship.utils import random_uuid
 
 SessionType = Literal["realtime", "transcription"]
 Modality = Literal["text", "audio"]
-Modalities = Annotated[list[Modality], Field(min_length=1)]
+# ["text"] or ["audio"]: not both, which OpenAI's spec refuses
+Modalities = Annotated[list[Modality], Field(min_length=1, max_length=1)]
 MaxOutputTokens = Annotated[int, Field(ge=1)] | Literal["inf"]
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
 ResponseStatus = Literal["in_progress", "completed", "cancelled", "incomplete", "failed"]
@@ -50,6 +51,13 @@ class OutputText(BaseModel):
     text: str
 
 
+class OutputAudio(BaseModel):
+    """The assistant's spoken answer; the session keeps only its transcript."""
+
+    type: Literal["output_audio"]
+    transcript: str = ""
+
+
 class _Message(BaseModel):
     id: str = Field(default_factory=item_id)
     type: Literal["message"]
@@ -69,7 +77,7 @@ class SystemMessage(_Message):
 
 class AssistantMessage(_Message):
     role: Literal["assistant"]
-    content: list[OutputText]
+    content: list[Annotated[OutputText | OutputAudio, Field(discriminator="type")]]
 
 
 Message = Annotated[UserMessage | SystemMessage | AssistantMessage, Field(discriminator="role")]
@@ -179,10 +187,43 @@ class AudioInput(BaseModel):
     turn_detection: dict[str, Any] | None = None
 
 
+class VoiceId(BaseModel):
+    id: str
+
+
+Voice = str | VoiceId
+# OpenAI's range
+Speed = Annotated[float, Field(ge=0.25, le=1.5)]
+
+
+class AudioOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    format: AudioFormat = Field(default_factory=_pcm24k)
+    # None: the tts model's default voice
+    voice: Voice | None = None
+    speed: Speed = 1.0
+
+
 class SessionAudio(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     input: AudioInput = Field(default_factory=AudioInput)
+    # None in a transcription session
+    output: AudioOutput | None = None
+
+
+class ResponseAudioOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    format: AudioFormat | None = None
+    voice: Voice | None = None
+
+
+class ResponseAudio(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    output: ResponseAudioOutput | None = None
 
 
 class RealtimeSession(BaseModel):
@@ -225,6 +266,7 @@ class ResponseParams(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     conversation: Literal["auto", "none"] | None = None
+    audio: ResponseAudio | None = None
     input: list[InputItem] | None = None
     instructions: str | None = None
     max_output_tokens: MaxOutputTokens | None = None
@@ -320,6 +362,8 @@ class RealtimeResponse(BaseModel):
     # None for a response kept out of the conversation
     conversation_id: str | None = None
     output_modalities: list[Modality]
+    # the format and voice of a spoken response
+    audio: ResponseAudio | None = None
     max_output_tokens: MaxOutputTokens
     metadata: dict[str, str] | None = None
     usage: dict[str, Any] | None = None

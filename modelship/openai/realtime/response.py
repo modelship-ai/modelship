@@ -1,9 +1,12 @@
 """One realtime response: the pipeline's LLM answers through the gateway's Responses path, and the client gets its
-answer as Realtime events. Reasoning reaches neither the client nor the conversation."""
+answer as Realtime events, in text or spoken by the pipeline's tts model with the text as its transcript. Reasoning
+reaches neither the client nor the conversation."""
 
 import asyncio
+import base64
 import contextlib
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from modelship.logging import get_logger
@@ -12,6 +15,7 @@ from modelship.openai.protocol import ErrorResponse
 from modelship.openai.protocol.realtime import (
     AssistantMessage,
     FunctionCall,
+    OutputAudio,
     OutputText,
     RealtimeError,
     RealtimeResponse,
@@ -23,6 +27,7 @@ from modelship.openai.protocol.realtime import (
 )
 from modelship.openai.realtime.calls import Answer
 from modelship.openai.realtime.conversation import Conversation
+from modelship.openai.realtime.speech import SendAudio, Speech
 
 logger = get_logger("realtime")
 
@@ -59,20 +64,45 @@ def _usage(usage: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 Start = Callable[[], Awaitable[Answer | RealtimeError]]
+# a new spoken answer, sending its audio through the given function
+NewSpeech = Callable[[SendAudio], Speech]
+
+
+class _SpeechError(Exception):
+    def __init__(self, error: RealtimeError):
+        self.error = error
+
+
+@dataclass
+class _AudioPart:
+    """The spoken part of a message, while it is spoken."""
+
+    part: OutputAudio
+    where: dict[str, Any]
+    speech: Speech
+    transcript_done: bool = False
 
 
 class ActiveResponse:
     """A response in progress: the answer *start* gets from *model*, or the error it can't, sent through *send*. Its
-    output joins *conversation*, unless that is None."""
+    output joins *conversation*, unless that is None. With *speech*, each message is spoken as it is written."""
 
     def __init__(
-        self, response: RealtimeResponse, model: str, start: Start, conversation: Conversation | None, send: Send
+        self,
+        response: RealtimeResponse,
+        model: str,
+        start: Start,
+        conversation: Conversation | None,
+        send: Send,
+        speech: NewSpeech | None = None,
     ):
         self.response = response
         self._model = model
         self._start = start
         self._conversation = conversation
         self._send = send
+        self._new_speech = speech
+        self._audio: _AudioPart | None = None
         # its message items by id; reasoning and tool calls have none
         self._items: dict[str, AssistantMessage | FunctionCall] = {}
         self._terminal: dict[str, Any] | None = None
@@ -110,10 +140,14 @@ class ActiveResponse:
         except asyncio.CancelledError:
             tracker.finish("cancelled")
             if not self._cancelled:
+                if self._audio is not None:
+                    await self._audio.speech.stop()
                 raise
             self._finishing = True
             await self._end("cancelled", StatusDetails(type="cancelled", reason="client_cancelled"))
             return
+        except _SpeechError as failed:
+            failure = (failed.error, "tts_error")
         except Exception:
             logger.exception("Realtime response %s failed", self.response.id)
             failure = (_server_error(), "unhandled")
@@ -193,19 +227,70 @@ class ActiveResponse:
             return
         if kind in _PART_EVENTS:
             where["content_index"] = event["content_index"]
-        if kind == "response.content_part.added":
+        if kind == "response.output_item.done":
+            item.status = event["item"]["status"]
+            await self._item_done(item)
+        elif self._new_speech is not None:
+            await self._on_audio_event(kind, event, item, where)
+        elif kind == "response.content_part.added":
             item.content.append(OutputText(type="output_text", text=""))
             await self._send(server_event(kind, **where, part={"type": "text", "text": ""}))
         elif kind == "response.output_text.delta":
-            item.content[-1].text += event["delta"]
+            part = item.content[-1]
+            assert isinstance(part, OutputText)
+            part.text += event["delta"]
             await self._send(server_event(kind, **where, delta=event["delta"]))
         elif kind == "response.output_text.done":
             await self._send(server_event(kind, **where, text=event["text"]))
         elif kind == "response.content_part.done":
             await self._send(server_event(kind, **where, part={"type": "text", "text": event["part"]["text"]}))
-        elif kind == "response.output_item.done":
-            item.status = event["item"]["status"]
-            await self._item_done(item)
+
+    async def _on_audio_event(
+        self, kind: str | None, event: dict[str, Any], item: AssistantMessage, where: dict
+    ) -> None:
+        """A message part's events, for a spoken answer: the text goes out as its transcript and to the tts model."""
+        assert self._new_speech is not None
+        if kind == "response.content_part.added":
+            part = OutputAudio(type="output_audio")
+            item.content.append(part)
+            await self._send(server_event(kind, **where, part={"type": "audio", "transcript": ""}))
+
+            at = dict(where)
+
+            async def send_audio(audio: bytes) -> None:
+                delta = base64.b64encode(audio).decode()
+                await self._send(server_event("response.output_audio.delta", **at, delta=delta))
+
+            self._audio = _AudioPart(part, at, self._new_speech(send_audio))
+            return
+        audio = self._audio
+        if audio is None:
+            return
+        if kind == "response.output_text.delta":
+            audio.part.transcript += event["delta"]
+            await self._send(server_event("response.output_audio_transcript.delta", **where, delta=event["delta"]))
+            audio.speech.write(event["delta"])
+            if audio.speech.failure is not None:
+                raise _SpeechError(audio.speech.failure)
+        elif kind == "response.output_text.done":
+            audio.transcript_done = True
+            transcript = event["text"]
+            await self._send(server_event("response.output_audio_transcript.done", **where, transcript=transcript))
+        elif kind == "response.content_part.done":
+            failure = await audio.speech.finish()
+            if failure is not None:
+                raise _SpeechError(failure)
+            await self._close_audio(audio)
+
+    async def _close_audio(self, audio: _AudioPart) -> None:
+        """Ends the spoken part *audio*, spoken or not."""
+        self._audio = None
+        where, transcript = audio.where, audio.part.transcript
+        if not audio.transcript_done:
+            await self._send(server_event("response.output_audio_transcript.done", **where, transcript=transcript))
+        await self._send(server_event("response.output_audio.done", **where))
+        part = {"type": "audio", "transcript": transcript}
+        await self._send(server_event("response.content_part.done", **where, part=part))
 
     async def _on_call_event(self, kind: str | None, event: dict[str, Any], call: FunctionCall, where: dict) -> None:
         if kind == "response.function_call_arguments.delta":
@@ -247,6 +332,9 @@ class ActiveResponse:
             await self._send(server_event("conversation.item.done", previous_item_id=before, item=item))
 
     async def _end(self, status: ResponseStatus, details: StatusDetails | None) -> None:
+        if self._audio is not None:
+            await self._audio.speech.stop()
+            await self._close_audio(self._audio)
         for item in self.response.output:
             if item.status == "in_progress":
                 item.status = "incomplete"

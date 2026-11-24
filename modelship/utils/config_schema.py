@@ -539,15 +539,10 @@ class SessionDefaults(_StrictModel):
     own shape; a client's `session.update` overrides any of them."""
 
     instructions: str | None = None
-    output_modalities: Annotated[list[Literal["text", "audio"]], Field(min_length=1)] | None = None
+    # [text] or [audio]
+    output_modalities: Annotated[list[Literal["text", "audio"]], Field(min_length=1, max_length=1)] | None = None
     max_output_tokens: Annotated[int, Field(ge=1)] | Literal["inf"] | None = None
     reasoning: SessionReasoning | None = None
-
-    @model_validator(mode="after")
-    def check_text_output(self):
-        if self.output_modalities is not None and "audio" in self.output_modalities:
-            raise ValueError("output_modalities: audio output is not supported yet, set [text].")
-        return self
 
 
 class PipelineConfig(_StrictModel):
@@ -573,6 +568,16 @@ class PipelineConfig(_StrictModel):
     def check_stt_or_llm(self):
         if self.stt is None and self.llm is None:
             raise ValueError(f"pipeline {self.name!r} names no stt and no llm model: set at least one.")
+        return self
+
+    @model_validator(mode="after")
+    def check_audio_output_has_tts(self):
+        modalities = self.session_defaults.output_modalities if self.session_defaults is not None else None
+        if modalities is not None and "audio" in modalities and self.tts is None:
+            raise ValueError(
+                f"pipeline {self.name!r}: session_defaults.output_modalities asks for audio, but it names no tts"
+                " model to speak with."
+            )
         return self
 
     def has_audio_app(self) -> bool:

@@ -71,6 +71,7 @@ class TestSchema:
             {"max_output_tokens": 0},
             {"output_modalities": ["video"]},
             {"output_modalities": []},
+            {"output_modalities": ["text", "audio"]},
             {"voice": "af_heart"},
             {"turn_detection": None},
             {"reasoning": {"effort": "huge"}},
@@ -80,9 +81,14 @@ class TestSchema:
         with pytest.raises(ValidationError):
             PipelineConfig(name="assistant", llm="qwen", session_defaults=session_defaults)
 
-    def test_audio_output_is_not_supported_yet(self):
-        with pytest.raises(ValidationError, match="audio output is not supported yet"):
+    def test_audio_output_needs_a_tts_model(self):
+        with pytest.raises(ValidationError, match="asks for audio, but it names no tts model"):
             PipelineConfig(name="assistant", llm="qwen", session_defaults={"output_modalities": ["audio"]})
+        spoken = PipelineConfig(
+            name="assistant", llm="qwen", tts="kokoro", session_defaults={"output_modalities": ["audio"]}
+        )
+        assert spoken.session_defaults is not None
+        assert spoken.session_defaults.output_modalities == ["audio"]
 
     @pytest.mark.parametrize("extra", [{"num_gpus": 1}, {"num_cpus": 1}, {"vad": "silero"}])
     def test_unknown_keys_are_rejected(self, extra):

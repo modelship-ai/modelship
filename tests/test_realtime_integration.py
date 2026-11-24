@@ -1,10 +1,13 @@
 """Pipelines on a real cluster: deployed with their models, listed in /v1/models, opening a /v1/realtime session,
-a text conversation the pipeline's LLM answers, and a spoken turn its stt model transcribes.
-`test_realtime_session.py` and the deploy unit tests cover the same logic against fakes."""
+a text conversation the pipeline's LLM answers, a spoken turn its stt model transcribes, and spoken answers its tts
+model says. `test_realtime_session.py` and the deploy unit tests cover the same logic against fakes."""
 
 import base64
+import difflib
 import io
 import json
+import re
+import time
 import wave
 
 import httpx
@@ -12,6 +15,7 @@ import pytest
 import yaml
 from websockets.sync.client import connect
 
+from modelship.openai.realtime.audio import to_pcm16
 from modelship.utils.config_schema import PipelineConfig
 from tests.conftest import MODEL_CONFIGS, serve_apps
 
@@ -201,27 +205,143 @@ class TestAudioInput:
         model_deployer.deploy()
 
     def test_a_spoken_turn_is_streamed_committed_and_transcribed(self):
-        body = {
-            "model": TTS["name"],
-            "voice": "af_bella",
-            "input": "Turn on the kitchen lights.",
-            "response_format": "wav",
-        }
-        speech = httpx.post(f"{OPENAI_API_BASE}/audio/speech", json=body, timeout=120).content
-        with wave.open(io.BytesIO(speech)) as wav:
-            rate, pcm = wav.getframerate(), wav.readframes(wav.getnframes())
+        rate, pcm = _speech("Turn on the kitchen lights.")
         with connect(f"{REALTIME}?model=voice", open_timeout=30) as ws:
             _until(ws, "session.created")
             audio_format = {"type": "audio/pcm", "rate": rate}
             _send(ws, {"type": "session.update", "session": {"audio": {"input": {"format": audio_format}}}})
             _until(ws, "session.updated")
-            # 100 ms per append, as a client streaming its microphone does
-            step = rate // 10 * 2
-            for start in range(0, len(pcm), step):
-                chunk = base64.b64encode(pcm[start : start + step]).decode()
-                _send(ws, {"type": "input_audio_buffer.append", "audio": chunk})
-            _send(ws, {"type": "input_audio_buffer.commit"})
-            events = _until(ws, "conversation.item.done")
+            events = _speak_turn(ws, pcm, rate)
         done = [event for event in events if event["type"].startswith("conversation.item.input_audio_transcription")]
         assert [event["type"] for event in done] == ["conversation.item.input_audio_transcription.completed"], done
         assert "kitchen" in done[0]["transcript"].lower(), done[0]["transcript"]
+
+
+def _speech(text: str, voice: str = "af_bella") -> tuple[int, bytes]:
+    """Kokoro saying *text*: its rate and 16-bit PCM."""
+    body = {"model": TTS["name"], "voice": voice, "input": text, "response_format": "wav"}
+    speech = httpx.post(f"{OPENAI_API_BASE}/audio/speech", json=body, timeout=120).content
+    with wave.open(io.BytesIO(speech)) as wav:
+        return wav.getframerate(), wav.readframes(wav.getnframes())
+
+
+def _speak_turn(ws, pcm: bytes, rate: int) -> list[dict]:
+    """Streams *pcm* in 100 ms appends, as a client streaming its microphone does, and commits it."""
+    step = rate // 10 * 2
+    for start in range(0, len(pcm), step):
+        _send(ws, {"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm[start : start + step]).decode()})
+    _send(ws, {"type": "input_audio_buffer.commit"})
+    return _until(ws, "conversation.item.done")
+
+
+def _wav(pcm: bytes, rate: int) -> bytes:
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(pcm)
+    return out.getvalue()
+
+
+def _transcribe(wav: bytes) -> str:
+    response = httpx.post(
+        f"{OPENAI_API_BASE}/audio/transcriptions",
+        data={"model": STT["name"]},
+        files={"file": ("answer.wav", wav, "audio/wav")},
+        timeout=180,
+    )
+    response.raise_for_status()
+    return response.json()["text"]
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9']+", text.lower())
+
+
+SPOKEN = {
+    "name": "spoken",
+    "stt": STT["name"],
+    "llm": LLM["name"],
+    "tts": TTS["name"],
+    "session_defaults": {"instructions": "You are a voice assistant. Answer in plain sentences, without lists."},
+}
+PCM_24K = {"format": {"type": "audio/pcm", "rate": 24000}}
+PCM_16K = {"format": {"type": "audio/pcm", "rate": 16000}, "voice": "am_michael", "speed": 1.2}
+MU_LAW = {"format": {"type": "audio/pcmu"}, "voice": {"id": "bm_george"}}
+
+
+@pytest.mark.integration
+class TestAudioOutput:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer, tmp_path_factory):
+        config = tmp_path_factory.mktemp("realtime-spoken") / "models.yaml"
+        config.write_text(yaml.dump({"models": [STT, LLM, TTS], "pipelines": [SPOKEN]}))
+        model_deployer.run("--config", str(config), "--reconcile", log_name="realtime-spoken")
+        model_deployer.forget()
+        yield
+        model_deployer.deploy()
+
+    @pytest.mark.parametrize(
+        ("question", "voice", "instructions", "output"),
+        [
+            ("Hello!", "af_bella", "Answer with one short greeting.", PCM_24K),
+            ("What colour is the sky on a clear day?", "am_adam", "Answer in one short sentence.", PCM_16K),
+            (
+                "I'm cooking dinner for six people tonight, two of them are vegetarian, and I only have an hour,"
+                " so what could I make?",
+                "bf_emma",
+                "Answer in four or five full sentences.",
+                PCM_24K,
+            ),
+            (
+                "Tell me about the moon: how far away it is, why it has phases, and what the tides have to do with it.",
+                "af_bella",
+                "Answer in six full sentences.",
+                MU_LAW,
+            ),
+        ],
+        ids=["one-word-question", "short-question", "long-question", "long-answer-g711"],
+    )
+    def test_a_spoken_question_gets_a_spoken_answer_that_says_its_transcript(
+        self, question, voice, instructions, output
+    ):
+        rate, pcm = _speech(question, voice)
+        with connect(f"{REALTIME}?model=spoken", open_timeout=30) as ws:
+            session = _until(ws, "session.created")[-1]["session"]
+            audio = {"input": {"format": {"type": "audio/pcm", "rate": rate}}, "output": output}
+            _send(ws, {"type": "session.update", "session": {"audio": audio}})
+            _until(ws, "session.updated")
+            heard = [e for e in _speak_turn(ws, pcm, rate) if e["type"].endswith("transcription.completed")]
+            asked = time.monotonic()
+            _send(ws, {"type": "response.create", "response": {"instructions": instructions}})
+            events, arrived = [], []
+            while not events or events[-1]["type"] != "response.done":
+                events.append(json.loads(ws.recv(timeout=180)))
+                arrived.append(time.monotonic())
+        first_audio = next(i for i, e in enumerate(events) if e["type"] == "response.output_audio.delta")
+        print(f"\n{question[:30]!r}: first audio after {arrived[first_audio] - asked:.2f} s")
+        assert session["output_modalities"] == ["audio"]
+        assert heard and heard[0]["transcript"].strip(), heard
+        done = events[-1]["response"]
+        assert done["status"] == "completed", done
+        (part,) = done["output"][0]["content"]
+        transcript = part["transcript"]
+        deltas = "".join(e["delta"] for e in events if e["type"] == "response.output_audio_transcript.delta")
+        assert (part["type"], deltas) == ("output_audio", transcript)
+        spoken = b"".join(base64.b64decode(e["delta"]) for e in events if e["type"] == "response.output_audio.delta")
+        audio_format = output["format"]
+        if audio_format["type"] == "audio/pcmu":
+            spoken, out_rate = to_pcm16(spoken, "audio/pcmu"), 8000
+        else:
+            out_rate = audio_format["rate"]
+        seconds = len(spoken) / 2 / out_rate
+        # Kokoro speaks about 15 characters a second
+        assert len(transcript) / 40 < seconds < len(transcript) / 5 + 1, (seconds, transcript)
+        said = _transcribe(_wav(spoken, out_rate))
+        expected, got = _words(transcript), _words(said)
+        if len(expected) <= 3:
+            assert set(expected) & set(got), (transcript, said)
+        else:
+            similarity = difflib.SequenceMatcher(None, expected, got).ratio()
+            assert similarity > 0.6, (similarity, transcript, said)

@@ -275,9 +275,27 @@ class _PipelineCalls:
                 audio, request, self._headers, self._registry, req_id, self._identity
             ),
         )
+        return await self._answer(stream, req_id)
+
+    async def speak(
+        self, model: str, request: SpeechRequest, session_id: str
+    ) -> RawSpeechResponse | ErrorResponse | None:
+        handle = self._handle(model)
+        if handle is None:
+            return None
+        req_id = random_uuid()
+        stream = cast(
+            "DeploymentResponseGenerator[Any]",
+            handle.speak.options(stream=True, session_id=session_id).remote(
+                request, self._headers, self._registry, req_id, self._identity
+            ),
+        )
+        return await self._answer(stream, req_id)
+
+    async def _answer(self, stream: DeploymentResponseGenerator, req_id: str) -> Any:
+        """The one item a call that doesn't stream answers with; None for none."""
         finished = False
         try:
-            # a request that doesn't stream answers with one item
             results = [result async for result in stream]
             finished = True
         finally:

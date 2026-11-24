@@ -1,12 +1,15 @@
 """`/v1/realtime` sessions in the gateway: opening on a pipeline, session.update, the conversation's items, audio
-turns a fake speech-to-text model transcribes, and responses from a fake LLM that streams real Responses events."""
+turns a fake speech-to-text model transcribes, responses from a fake LLM that streams real Responses events, and the
+spoken answers a fake text-to-speech model says."""
 
 import asyncio
 import base64
 import io
+import time
 import warnings
 import wave
 
+import numpy as np
 import pytest
 from fastapi import FastAPI, WebSocket
 from starlette.testclient import TestClient
@@ -19,6 +22,8 @@ from modelship.openai.protocol import (
     DeltaMessage,
     DeltaToolCall,
     PromptTokenUsageInfo,
+    RawSpeechResponse,
+    SpeechRequest,
     SttCapabilities,
     TranscriptionRequest,
     TranscriptionResponse,
@@ -35,6 +40,8 @@ from modelship.openai.realtime.response import ActiveResponse
 
 ASSISTANT = {"name": "assistant", "stt": "whisper", "llm": "qwen", "session_defaults": {"instructions": "Be brief."}}
 SCRIBE = {"name": "scribe", "stt": "whisper"}
+SPEAKER = {"name": "speaker", "stt": "whisper", "llm": "qwen", "tts": "kokoro"}
+MODELS = ("whisper", "qwen", "kokoro")
 
 
 def _chunk(delta: DeltaMessage | None = None, *, finish_reason=None, usage=None) -> ChatCompletionStreamResponse:
@@ -132,18 +139,76 @@ class _Stt:
         return TranscriptionResponse(text=found, usage=TranscriptionUsageAudio(seconds=1.0))
 
 
-class _Calls:
-    """`PipelineCalls` over a fake LLM, "qwen", and a speech-to-text model, "whisper", answering *stt*."""
+TTS_RATE = 24000
 
-    def __init__(self, llm: _Llm | None, stt: SttCapabilities | Exception | None, transcriber: _Stt | None = None):
+
+def _spoken(text: str) -> bytes:
+    """The fake tts model's WAV for *text*: 10 ms of a tone per character, at 24 kHz."""
+    count = TTS_RATE // 100 * len(text)
+    tone = (np.sin(2 * np.pi * 440 * np.arange(count) / TTS_RATE) * 8000).astype("<i2")
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(TTS_RATE)
+        wav.writeframes(tone.tobytes())
+    return out.getvalue()
+
+
+class _Tts:
+    """The text-to-speech model "kokoro": speaks each text as `_spoken`, recording the requests. The first call takes
+    *delay* seconds, or never ends with *hold*; the call *fail* calls in answers with an error."""
+
+    def __init__(self, delay: float = 0.0, hold: bool = False, fail: int | None = None):
+        self.delay = delay
+        self.hold = hold
+        self.fail = fail
+        self.requests: list[SpeechRequest] = []
+        self.sessions: list[str] = []
+        self.cancelled = 0
+
+    async def speak(self, request: SpeechRequest, session_id: str):
+        self.requests.append(request)
+        self.sessions.append(session_id)
+        first = len(self.requests) == 1
+        try:
+            if first and self.hold:
+                await asyncio.Event().wait()
+            if first:
+                await asyncio.sleep(self.delay)
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+        if self.fail is not None and len(self.requests) > self.fail:
+            return create_error_response("The voice broke.", err_type="server_error")
+        return RawSpeechResponse(audio=_spoken(request.input))
+
+
+class _Calls:
+    """`PipelineCalls` over a fake LLM, "qwen", a speech-to-text model, "whisper", answering *stt*, and a
+    text-to-speech model, "kokoro"."""
+
+    def __init__(
+        self,
+        llm: _Llm | None,
+        stt: SttCapabilities | Exception | None,
+        transcriber: _Stt | None = None,
+        speaker: _Tts | None = None,
+    ):
         self.llm = llm
         self.stt = stt
         self.transcriber = transcriber
+        self.speaker = speaker
         self.asked: list[str] = []
 
     async def transcribe(self, model: str, audio: bytes, request: TranscriptionRequest, session_id: str):
         assert model == "whisper" and self.transcriber is not None
         return await self.transcriber.transcribe(audio, request)
+
+    async def speak(self, model: str, request: SpeechRequest, session_id: str):
+        if model != "kokoro" or self.speaker is None:
+            return None
+        return await self.speaker.speak(request, session_id)
 
     def respond(self, model: str, request: ResponsesRequest, session_id: str):
         return self.llm.respond(model, request, session_id) if self.llm is not None else None
@@ -157,19 +222,20 @@ class _Calls:
 
 def _client(
     pipelines: dict,
-    known=("whisper", "qwen"),
-    serving=("whisper", "qwen"),
+    known=MODELS,
+    serving=MODELS,
     llm: _Llm | None = None,
     stt: SttCapabilities | Exception | None = WHISPER,
     sessions: list | None = None,
     transcriber: _Stt | None = None,
+    speaker: _Tts | None = None,
 ) -> TestClient:
     """A gateway app serving *pipelines*; each session's `_Calls` go into *sessions*."""
     app = FastAPI()
 
     @app.websocket("/v1/realtime")
     async def realtime(websocket: WebSocket):
-        calls = _Calls(llm, stt, transcriber)
+        calls = _Calls(llm, stt, transcriber, speaker)
         if sessions is not None:
             sessions.append(calls)
         await serve_session(websocket, pipelines, list(known), set(serving), calls)
@@ -319,10 +385,11 @@ class TestSessionUpdate:
     def test_session_fields_not_used_yet_are_ignored(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
             _open(ws)
-            ws.send_json({"type": "session.update", "session": {"audio": {"output": {"voice": "marin"}}}})
+            ws.send_json({"type": "session.update", "session": {"tracing": "auto", "audio": {"noise": "near"}}})
             event = ws.receive_json()
         assert event["type"] == "session.updated"
-        assert "output" not in event["session"]["audio"]
+        assert "tracing" not in event["session"]
+        assert "noise" not in event["session"]["audio"]
 
     def test_the_session_type_cannot_change(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
@@ -339,12 +406,13 @@ class TestSessionUpdate:
         assert error["code"] == "invalid_value"
         assert error["param"].startswith("session.output_modalities")
 
-    def test_audio_output_is_not_supported_yet(self):
+    def test_audio_output_needs_a_tts_model(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
             _open(ws)
             ws.send_json({"type": "session.update", "session": {"output_modalities": ["audio"]}})
             error = ws.receive_json()["error"]
-        assert (error["code"], error["param"]) == ("unsupported_value", "session.output_modalities")
+        assert (error["code"], error["param"]) == ("invalid_value", "session.output_modalities")
+        assert error["message"] == "Pipeline 'assistant' has no tts model to speak with; ask for text output."
 
     def test_max_output_tokens_below_one_is_refused(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
@@ -705,21 +773,29 @@ class TestResponses:
         assert (done["status"], done["status_details"]["reason"]) == ("incomplete", "max_output_tokens")
         assert done["output"][0]["status"] == "incomplete"
 
-    def test_audio_output_is_not_supported_yet(self):
+    def test_audio_output_needs_a_tts_model(self):
         with self._session(_Llm()) as ws:
             _open(ws)
             ws.send_json({"type": "response.create", "response": {"output_modalities": ["audio"]}})
             error = ws.receive_json()["error"]
-        assert (error["code"], error["param"]) == ("unsupported_value", "response.output_modalities")
+        assert (error["code"], error["param"]) == ("invalid_value", "response.output_modalities")
 
     @pytest.mark.parametrize(
         ("event", "param"),
         [
             ({"type": "response.create", "response": {"output_modalities": []}}, "response.output_modalities"),
             ({"type": "session.update", "session": {"output_modalities": []}}, "session.output_modalities"),
+            (
+                {"type": "response.create", "response": {"output_modalities": ["text", "audio"]}},
+                "response.output_modalities",
+            ),
+            (
+                {"type": "session.update", "session": {"output_modalities": ["audio", "text"]}},
+                "session.output_modalities",
+            ),
         ],
     )
-    def test_no_output_modality_is_refused(self, event, param):
+    def test_anything_but_one_output_modality_is_refused(self, event, param):
         with self._session(_Llm()) as ws:
             _open(ws)
             ws.send_json(event)
@@ -1083,6 +1159,254 @@ class TestAudioInput:
                 _append(ws, _pcm(0.2))
                 transcripts.append(_commit(ws)[2]["transcript"])
         assert transcripts == ["Note one.", "Note two."]
+
+
+KITCHEN = ("The kitchen lights are on now. ", "The oven is preheating as well.")
+
+
+def _audio(events: list[dict]) -> bytes:
+    return b"".join(base64.b64decode(e["delta"]) for e in events if e["type"] == "response.output_audio.delta")
+
+
+def _types(events: list[dict]) -> list[str]:
+    """The event types, each run of deltas of one type as one."""
+    found: list[str] = []
+    for event in events:
+        if not (found and found[-1] == event["type"] and event["type"].endswith(".delta")):
+            found.append(event["type"])
+    return found
+
+
+class TestAudioOutput:
+    def _session(self, llm: _Llm, tts: _Tts, pipeline: dict = SPEAKER):
+        client = _client(_route(pipeline), llm=llm, speaker=tts)
+        return client.websocket_connect(f"/v1/realtime?model={pipeline['name']}")
+
+    def _answer(self, ws, response: dict | None = None) -> list[dict]:
+        _say(ws, "Is dinner ready?")
+        ws.send_json({"type": "response.create", **({"response": response} if response else {})})
+        return _until(ws, "response.done")
+
+    def test_a_pipeline_with_tts_speaks_by_default(self):
+        with self._session(_Llm(), _Tts()) as ws:
+            session = _open(ws)
+        assert session["output_modalities"] == ["audio"]
+        assert session["audio"]["output"] == {
+            "format": {"type": "audio/pcm", "rate": 24000},
+            "voice": None,
+            "speed": 1.0,
+        }
+
+    def test_a_pipeline_without_tts_answers_in_text_and_a_transcription_session_has_no_output(self):
+        with self._session(_Llm(), _Tts(), pipeline=ASSISTANT) as ws:
+            assistant = _open(ws)
+        with self._session(_Llm(), _Tts(), pipeline=SCRIBE) as ws:
+            scribe = _open(ws)
+        assert assistant["output_modalities"] == ["text"]
+        assert scribe["audio"]["output"] is None
+
+    def test_the_session_defaults_choose_text_on_a_pipeline_with_tts(self):
+        quiet = {**SPEAKER, "session_defaults": {"output_modalities": ["text"]}}
+        with self._session(_Llm(), _Tts(), pipeline=quiet) as ws:
+            assert _open(ws)["output_modalities"] == ["text"]
+
+    def test_the_answer_streams_as_its_transcript_and_its_audio(self):
+        llm, tts = _Llm(_answer(*KITCHEN)), _Tts()
+        with self._session(llm, tts) as ws:
+            session = _open(ws)
+            events = self._answer(ws)
+        types = [event["type"] for event in events]
+        # the audio goes out alongside the transcript, as each piece is spoken
+        assert [kind for kind in _types(events) if kind != "response.output_audio.delta"] == [
+            "response.created",
+            "response.output_item.added",
+            "conversation.item.added",
+            "response.content_part.added",
+            "response.output_audio_transcript.delta",
+            "response.output_audio_transcript.done",
+            "response.output_audio.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "conversation.item.done",
+            "response.done",
+        ]
+        deltas = [i for i, kind in enumerate(types) if kind == "response.output_audio.delta"]
+        assert types.index("response.content_part.added") < deltas[0]
+        assert deltas[-1] < types.index("response.output_audio.done")
+        text = "".join(KITCHEN)
+        transcript = "".join(e["delta"] for e in events if e["type"] == "response.output_audio_transcript.delta")
+        assert transcript == text
+        assert [request.input for request in tts.requests] == [KITCHEN[0].strip(), KITCHEN[1]]
+        assert [(r.voice, r.speed, r.response_format) for r in tts.requests] == [(None, 1.0, "wav")] * 2
+        assert tts.sessions == [session["id"]] * 2
+        # 10 ms per character, 16-bit at 24 kHz
+        assert len(_audio(events)) == sum(len(r.input) for r in tts.requests) * 240 * 2
+        # half a second per delta at most
+        sizes = [len(base64.b64decode(e["delta"])) for e in events if e["type"] == "response.output_audio.delta"]
+        assert max(sizes) <= 24000
+        assert not [event for event in events if "output_text" in event["type"]]
+        added = next(e for e in events if e["type"] == "response.content_part.added")
+        assert added["part"] == {"type": "audio", "transcript": ""}
+        done = events[-1]["response"]
+        assert done["status"] == "completed"
+        assert done["output_modalities"] == ["audio"]
+        assert done["audio"] == {"output": {"format": {"type": "audio/pcm", "rate": 24000}, "voice": None}}
+        assert done["output"][0]["content"] == [{"type": "output_audio", "transcript": text}]
+        part_done = next(e for e in events if e["type"] == "response.content_part.done")
+        assert part_done["part"] == {"type": "audio", "transcript": text}
+
+    def test_the_first_piece_is_spoken_alone_and_the_waiting_sentences_in_one_call(self):
+        words = ("Sure, I can help with that. ", "The kitchen lights are on. ", "The oven is hot. Dinner is at seven.")
+        tts = _Tts(delay=0.3)
+        with self._session(_Llm(_answer(*words)), tts) as ws:
+            _open(ws)
+            self._answer(ws)
+        assert [request.input for request in tts.requests] == [
+            "Sure, I can help with that.",
+            "The kitchen lights are on. The oven is hot. Dinner is at seven.",
+        ]
+
+    def test_markdown_is_spoken_without_its_symbols_and_kept_in_the_transcript(self):
+        tts = _Tts()
+        with self._session(_Llm(_answer("**Sure**, the `kitchen` lights are on.")), tts) as ws:
+            _open(ws)
+            events = self._answer(ws)
+        assert [request.input for request in tts.requests] == ["Sure, the kitchen lights are on."]
+        assert (
+            events[-1]["response"]["output"][0]["content"][0]["transcript"] == "**Sure**, the `kitchen` lights are on."
+        )
+
+    def test_the_next_response_sees_the_spoken_answer_as_text(self):
+        llm = _Llm(_answer(*KITCHEN), _answer("Yes."))
+        with self._session(llm, _Tts()) as ws:
+            _open(ws)
+            self._answer(ws)
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.done")
+        assert llm.requests[1].input[-1] == {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "".join(KITCHEN)}],
+        }
+
+    def test_the_sessions_voice_speed_and_format_reach_the_model_and_the_client(self):
+        tts = _Tts()
+        with self._session(_Llm(_answer(*KITCHEN)), tts) as ws:
+            _open(ws)
+            output = {"voice": {"id": "af_bella"}, "speed": 1.25, "format": {"type": "audio/pcmu"}}
+            ws.send_json({"type": "session.update", "session": {"audio": {"output": output}}})
+            updated = ws.receive_json()["session"]["audio"]["output"]
+            events = self._answer(ws)
+        assert updated == {"format": {"type": "audio/pcmu"}, "voice": {"id": "af_bella"}, "speed": 1.25}
+        assert [(r.voice, r.speed) for r in tts.requests] == [("af_bella", 1.25)] * 2
+        # G.711: one byte a sample at 8 kHz
+        assert len(_audio(events)) == sum(len(r.input) for r in tts.requests) * 80
+        assert events[-1]["response"]["audio"]["output"]["format"] == {"type": "audio/pcmu"}
+
+    def test_a_response_takes_its_own_voice_and_format_over_the_sessions(self):
+        tts = _Tts()
+        with self._session(_Llm(_answer(*KITCHEN)), tts) as ws:
+            _open(ws)
+            output = {"voice": "marin", "format": {"type": "audio/pcm", "rate": 16000}}
+            events = self._answer(ws, {"audio": {"output": output}})
+        assert [request.voice for request in tts.requests] == ["marin"] * 2
+        assert len(_audio(events)) == sum(len(r.input) for r in tts.requests) * 160 * 2
+        assert events[-1]["response"]["audio"]["output"] == output
+
+    def test_a_text_response_on_a_pipeline_with_tts_stays_text(self):
+        tts = _Tts()
+        with self._session(_Llm(_answer(*KITCHEN)), tts) as ws:
+            _open(ws)
+            events = self._answer(ws, {"output_modalities": ["text"]})
+        assert tts.requests == []
+        assert "response.output_text.delta" in _types(events)
+        assert not _audio(events)
+
+    @pytest.mark.parametrize(
+        "output",
+        [{"speed": 2.0}, {"speed": 0.1}, {"voice": 5}, {"format": {"type": "audio/pcm", "rate": 96000}}],
+    )
+    def test_an_output_setting_out_of_range_is_refused(self, output):
+        with self._session(_Llm(), _Tts()) as ws:
+            _open(ws)
+            ws.send_json({"type": "session.update", "session": {"audio": {"output": output}}})
+            error = ws.receive_json()["error"]
+        assert error["code"] == "invalid_value"
+        assert error["param"].startswith("session.audio.output.")
+
+    def test_a_failed_piece_fails_the_response_and_keeps_its_transcript(self):
+        llm, tts = _Llm(_answer(*KITCHEN)), _Tts(fail=0)
+        with self._session(llm, tts) as ws:
+            _open(ws)
+            events = self._answer(ws)
+        types = _types(events)
+        assert types[-6:] == [
+            "error",
+            "response.output_audio.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "conversation.item.done",
+            "response.done",
+        ]
+        assert "response.output_audio.delta" not in types
+        assert next(event for event in events if event["type"] == "error")["error"]["message"] == "The voice broke."
+        done = events[-1]["response"]
+        assert (done["status"], done["status_details"]["error"]["type"]) == ("failed", "server_error")
+        assert done["output"][0]["content"][0]["transcript"]
+        assert done["output"][0]["status"] == "incomplete"
+        assert len(tts.requests) == 1
+
+    def test_a_tts_model_that_stopped_serving_fails_the_response(self):
+        with _client(_route(SPEAKER), llm=_Llm(_answer(*KITCHEN))).websocket_connect(
+            "/v1/realtime?model=speaker"
+        ) as ws:
+            _open(ws)
+            events = self._answer(ws)
+        error = next(event for event in events if event["type"] == "error")["error"]
+        assert error["message"] == "Pipeline model 'kokoro' didn't speak the answer."
+        assert events[-1]["response"]["status"] == "failed"
+
+    def _speaking(self, tts: _Tts) -> None:
+        """Waits for the first call to *tts*."""
+        deadline = time.monotonic() + 5
+        while not tts.requests:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+
+    def test_cancelling_stops_the_answer_and_its_speech(self):
+        llm = _Llm(_answer("The kitchen lights are on now. And", finish=None), _answer("Ok."))
+        tts = _Tts(hold=True)
+        with self._session(llm, tts) as ws:
+            _open(ws)
+            _say(ws, "Is dinner ready?")
+            ws.send_json({"type": "response.create"})
+            self._speaking(tts)
+            ws.send_json({"type": "response.cancel"})
+            events = _until(ws, "response.done")
+        assert _types(events)[-6:] == [
+            "response.output_audio_transcript.done",
+            "response.output_audio.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "conversation.item.done",
+            "response.done",
+        ]
+        assert events[-1]["response"]["status"] == "cancelled"
+        assert tts.cancelled == 1
+        assert llm.closed_early == [True]
+        transcript = events[-1]["response"]["output"][0]["content"][0]["transcript"]
+        assert transcript == "The kitchen lights are on now. And"
+
+    def test_leaving_mid_answer_stops_its_speech(self):
+        llm = _Llm(_answer("The kitchen lights are on now. And", finish=None))
+        tts = _Tts(hold=True)
+        with self._session(llm, tts) as ws:
+            _open(ws)
+            _say(ws, "Is dinner ready?")
+            ws.send_json({"type": "response.create"})
+            self._speaking(tts)
+        assert tts.cancelled == 1
+        assert llm.closed_early == [True]
 
 
 def test_g711_tables_match_audioop():

@@ -6,6 +6,8 @@ from typing import Any, Protocol
 
 from modelship.openai.protocol import (
     ErrorResponse,
+    RawSpeechResponse,
+    SpeechRequest,
     SttCapabilities,
     TranscriptionRequest,
     TranscriptionResponse,
@@ -31,4 +33,10 @@ class PipelineCalls(Protocol):
         self, model: str, audio: bytes, request: TranscriptionRequest, session_id: str
     ) -> TranscriptionResponse | TranscriptionResponseVerbose | ErrorResponse | None:
         """*model*'s transcript of *audio* (a WAV), as *request* asks; None while nothing serves *model*."""
+        ...
+
+    async def speak(
+        self, model: str, request: SpeechRequest, session_id: str
+    ) -> RawSpeechResponse | ErrorResponse | None:
+        """*model* speaking *request*'s text, as a WAV; None while nothing serves *model*."""
         ...

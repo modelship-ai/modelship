@@ -194,7 +194,7 @@ A request that fails or is cancelled after step 2 gets its scale-downs undone to
 
 ## Pipelines (experimental)
 
-> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a conversation of text and of the client's spoken turns, which the pipeline's `stt` transcribes and its `llm` answers in text, calling the client's functions. The client commits each turn itself; turn detection and audio out arrive in later releases, and until then their events are answered with an `unsupported_event` error.
+> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a conversation of text and of the client's spoken turns, which the pipeline's `stt` transcribes and its `llm` answers, in text or spoken by its `tts`, calling the client's functions. The client commits each turn itself; turn detection and interrupting a spoken answer arrive in later releases, and until then their events are answered with an `unsupported_event` error.
 
 A pipeline runs an OpenAI Realtime session over models the gateway already serves: speech to text, a chat model, and text to speech. Clients pick one with `/v1/realtime?model=<name>`. Pipelines sit beside `models:` in the same file:
 
@@ -221,7 +221,7 @@ pipelines:
 | `tts` | string | Name of the text-to-speech model that speaks the answer |
 | `session_defaults` | object | Defaults for OpenAI's Realtime session fields; a client's `session.update` overrides any of them |
 
-A pipeline needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (only `[text]` for now), `max_output_tokens` (an integer or `inf`) and `reasoning` (`{effort: low}`, from `minimal` to `xhigh`); more of OpenAI's session fields arrive as the pipeline learns to use them.
+A pipeline needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (`[audio]`, the default for a pipeline with `tts`, or `[text]`, the default without one; `[audio]` needs a `tts`), `max_output_tokens` (an integer or `inf`) and `reasoning` (`{effort: low}`, from `minimal` to `xhigh`); more of OpenAI's session fields arrive as the pipeline learns to use them.
 
 A session on a pipeline with an `llm`:
 
@@ -239,6 +239,14 @@ A session on a pipeline with `stt` takes the client's audio:
 - `audio.input.transcription` takes `language` and `prompt` for the `stt` model; its `model` is ignored, since the pipeline names it. A model that detects the spoken language gets the language it found on the first turn for every later one.
 - A `response.create` waits for the turns committed before it to be transcribed, and the LLM sees each turn as its transcript. A turn that failed isn't sent.
 - A transcription session (a pipeline without `llm`) takes the same audio and sends the same transcripts, and has no responses.
+
+A session on a pipeline with `tts` speaks its answers:
+
+- A response whose `output_modalities` is `[audio]` sends the LLM's text as `response.output_audio_transcript.delta` events as it is written, and the `tts` model's speech as `response.output_audio.delta` events of base64 audio, up to half a second each. `response.done` comes after the last of the audio.
+- The `tts` model speaks the text a piece at a time while the LLM writes it. The first piece is short, so audio starts soon: it ends at the first sentence end or clause mark (`,` `;` `:` or a dash) once it has 20 characters, or at a word before 80. The pieces after it are whole sentences, cut at their last clause or word when longer than 200 characters, and the sentences waiting when the model is free go in one call. Markdown is left out of what is spoken, not of the transcript.
+- `audio.output` sets the `format` (`audio/pcm` at its `rate`, 24000 by default and any rate from 8000 to 48000, or G.711 `audio/pcmu` or `audio/pcma`), the `voice` (a name or `{id: ...}`, passed to the `tts` model; unset, the model's default) and the `speed` (0.25 to 1.5). A `response.create` can set its own `audio.output.format` and `voice`. The gateway resamples the model's speech and encodes G.711.
+- The answer stays in the conversation as an assistant message with an `output_audio` part that holds the transcript, which the LLM sees as text on the next response. The audio itself isn't kept.
+- A piece the `tts` model fails to speak fails the response with an `error` event; what was written so far stays in the transcript. `response.cancel` stops both the LLM and the speech.
 
 From the command line, `--pipeline NAME` opens a pipeline the way `--model REF` opens a model, on `mship start` and `mship deploy` alike, and its keys are `--pipeline.<key>` flags right after it:
 
