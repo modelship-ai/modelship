@@ -64,6 +64,8 @@ class _Turns:
         self.events: list[tuple] = []
         # how many endings to refuse, as a full transcription queue does
         self.refusals = 0
+        # commit the buffer as the client does while the session sends speech_started
+        self.commit_on_start = False
         self.detector = TurnDetector(
             self.buffer,
             settings or ServerVad(type="server_vad"),
@@ -75,6 +77,9 @@ class _Turns:
 
     async def _started(self, turn: str, at: int) -> None:
         self.events.append(("started", turn, at))
+        if self.commit_on_start:
+            self.buffer.take()
+            self.detector.reset()
 
     async def _ended(self, turn: str, start: int, end: int) -> bool:
         if self.refusals:
@@ -194,6 +199,25 @@ class TestTurns:
         turns.vad.failing = True
         await turns.feed(_quiet(1))
         assert [event[0] for event in turns.events] == ["failed", "started", "ended", "failed"]
+
+    @pytest.mark.asyncio
+    async def test_speech_during_an_outage_is_found_once_scans_answer_again(self):
+        turns = _Turns()
+        turns.vad.failing = True
+        await turns.feed(_quiet(1), _tone(1), _quiet(1))
+        turns.vad.failing = False
+        await turns.feed(_quiet(0.3))
+        assert [event[0] for event in turns.events] == ["failed", "started", "ended"]
+        assert turns.turns() == [(700, 2500)]
+
+    @pytest.mark.asyncio
+    async def test_a_commit_while_the_session_reports_a_turn_stops_the_scan(self):
+        turns = _Turns()
+        turns.commit_on_start = True
+        await turns.feed(_quiet(1), _tone(1), _quiet(1), step=None)
+        assert [event[0] for event in turns.events] == ["started"]
+        assert turns.detector.turn is None
+        assert turns.buffer.seconds == 0
 
     @pytest.mark.asyncio
     async def test_a_scan_runs_on_the_settings_it_started_with(self):

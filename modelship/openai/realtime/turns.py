@@ -30,6 +30,10 @@ Ended = Callable[[str, int, int], Awaitable[bool]]
 Failed = Callable[[], Awaitable[None]]
 
 
+class _StaleScanError(Exception):
+    """The buffer was committed or cleared during a scan."""
+
+
 class TurnDetector:
     """Finds the turns in *buffer* with *scan*, as *settings* say. *started* gets each turn's item id and where it
     starts; *ended* gets its item id, start and end, and takes its audio out of the buffer or refuses it; *failed*
@@ -59,8 +63,11 @@ class TurnDetector:
         # where speech was last heard in the turn in progress
         self._speech_ms = 0.0
         self._failing = False
+        # the end of the audio the last failed scan was sent
+        self._tried_ms = self._scanned_ms
         # bumped by `reset`, so a scan in flight over audio that is gone changes nothing
         self._epoch = 0
+        self._scan_epoch = 0
         self._task: asyncio.Task | None = None
 
     def appended(self) -> None:
@@ -73,7 +80,7 @@ class TurnDetector:
         found = self.turn[0] if self.turn is not None else None
         self.turn = None
         self._epoch += 1
-        self._scanned_ms = self._floor_ms = self.buffer.end_ms
+        self._scanned_ms = self._tried_ms = self._floor_ms = self.buffer.end_ms
         return found
 
     async def close(self) -> None:
@@ -83,23 +90,30 @@ class TurnDetector:
                 await self._task
 
     def _due(self) -> bool:
-        return self.buffer.end_ms - self._scanned_ms >= SCAN_STEP_MS
+        # while scans fail, a new one is tried with each step of new audio
+        since = self._tried_ms if self._failing else self._scanned_ms
+        return self.buffer.end_ms - since >= SCAN_STEP_MS
 
     async def _run(self) -> None:
         try:
             while self._due():
                 await self._scan_once()
+        except _StaleScanError:
+            pass
         except Exception:
             logger.exception("Turn detection failed")
 
     async def _scan_once(self) -> None:
         # one scan runs on the settings it started with
-        settings, buffer, epoch = self.settings, self.buffer, self._epoch
+        settings, buffer = self.settings, self.buffer
+        self._scan_epoch = epoch = self._epoch
         rate = buffer.rate
         assert rate is not None
         context = settings.silence_duration_ms + WARMUP_MS
         end = buffer.end_ms
-        start = max(buffer.start_ms, min(self._scanned_ms - WARMUP_MS, end - context))
+        # after failed scans, a short one finds out whether the audio app answers again
+        probing = self._failing
+        start = max(buffer.start_ms, end - context if probing else min(self._scanned_ms - WARMUP_MS, end - context))
         end = min(end, start + MAX_SCAN_MS)
         try:
             found = await self._scan(buffer.pcm(start, end), rate, settings.threshold, settings.silence_duration_ms)
@@ -108,18 +122,27 @@ class TurnDetector:
             found = None
         if epoch != self._epoch:
             return
-        self._scanned_ms = end
         if found is None:
+            self._tried_ms = end
             if not self._failing:
                 self._failing = True
                 await self._failed()
             return
         self._failing = False
+        if probing:
+            # the next scans take the audio the failed ones missed, from where the last good scan stopped
+            return
+        self._scanned_ms = self._tried_ms = end
         segments = [(start + begin, None if stop is None else start + stop) for begin, stop in found]
         await self._apply(segments, end, settings)
         if self.turn is None:
             # keep what the next scan and a turn's prefix padding need
             buffer.drop_before(end - context - settings.prefix_padding_ms)
+
+    def _check_current(self) -> None:
+        """Stops the scan when the buffer was committed or cleared while it waited on the session."""
+        if self._epoch != self._scan_epoch:
+            raise _StaleScanError
 
     async def _apply(self, segments: list[tuple[float, float | None]], end: float, settings: ServerVad) -> None:
         heard = False
@@ -155,15 +178,19 @@ class TurnDetector:
         return await self._end(min(at_ms, self.turn[1] + MAX_TURN_MS))
 
     async def _start(self, at_ms: float) -> None:
+        self._check_current()
         self.turn = (item_id(), at_ms)
         self._speech_ms = at_ms
         await self._started(self.turn[0], round(at_ms))
 
     async def _end(self, at_ms: float) -> bool:
+        self._check_current()
         assert self.turn is not None
         turn_id, start = self.turn
+        # the session takes the turn's audio before it awaits anything
         if not await self._ended(turn_id, round(start), round(at_ms)):
             return False
-        self.turn = None
-        self._floor_ms = at_ms
+        if self._epoch == self._scan_epoch:
+            self.turn = None
+            self._floor_ms = at_ms
         return True

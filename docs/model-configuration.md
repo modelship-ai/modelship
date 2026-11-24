@@ -248,7 +248,7 @@ Server VAD finds each turn in the audio the client streams:
 - A turn that runs 30 s without a pause is committed there, and the speech after it starts a new turn. A commit during a turn ends it, and a clear drops it.
 - A turn found while the turns waiting to be transcribed already hold 120 s gets one `input_audio_transcription_busy` error; it and its audio are kept, and it is committed on a later scan once there is room.
 - `semantic_vad` and `idle_timeout_ms` are refused as not supported yet.
-- When the audio deployment can't be reached, the session sends one `turn_detection_unavailable` error and keeps the audio, up to the buffer's 120 s; turns are found again once it answers, and `input_audio_buffer.commit` still works meanwhile.
+- When the audio deployment can't be reached, the session sends one `turn_detection_unavailable` error and keeps the audio, up to the buffer's 120 s; once it answers again, the audio it missed is scanned too, and `input_audio_buffer.commit` still works meanwhile.
 - `scripts/realtime_mic.py` talks to a pipeline from a terminal: `uv run scripts/realtime_mic.py --pipeline <name>` streams the microphone and plays the answers. Use headphones, since the session doesn't yet tell its own voice from the user's.
 
 A session on a pipeline with `tts` speaks its answers:

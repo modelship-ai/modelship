@@ -697,8 +697,9 @@ class Session:
                 await self.send(error_event(error))
             return False
         self._busy_reported = False
-        await self.send(server_event("input_audio_buffer.speech_stopped", audio_end_ms=audio_end_ms, item_id=turn))
+        # before any await, so a commit or clear from the client can't take the same audio
         wav, seconds = self.buffer.take(audio_start_ms, audio_end_ms)
+        await self.send(server_event("input_audio_buffer.speech_stopped", audio_end_ms=audio_end_ms, item_id=turn))
         settings = self.state.audio.input.turn_detection
         answers = isinstance(settings, ServerVad) and settings.create_response and self.state.type == "realtime"
         # a turn that ends while the model answers gets no answer of its own
