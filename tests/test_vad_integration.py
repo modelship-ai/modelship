@@ -116,9 +116,10 @@ class TestSileroVad:
             assert segment.end_ms is not None
             assert start - 0.2 <= segment.start_ms / 1000 <= start + 0.25
             assert end - 0.2 <= segment.end_ms / 1000 <= end + 0.15
-            # sherpa's turn: the prefix padding before the speech, the silence after it
+            # sherpa's turn: the prefix padding before the speech, the silence after it; sherpa's ends 2-4 windows
+            # later (76-108 ms measured)
             assert segment.start_ms - 300 == pytest.approx(stop.audio_start_ms, abs=100)
-            assert segment.end_ms + 500 == pytest.approx(stop.audio_end_ms, abs=100)
+            assert segment.end_ms + 500 == pytest.approx(stop.audio_end_ms, abs=150)
 
     def test_an_open_segments_speech_ends_where_its_phrase_does(self, silero, timeline):
         audio, spans = timeline
