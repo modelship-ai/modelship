@@ -141,8 +141,22 @@ class TestCheckHardware:
             gates.check_hardware("vulkan")
         driver.assert_not_called()
 
-    def test_metal_on_apple_silicon_passes(self):
-        with patch("platform.system", return_value="Darwin"), patch("platform.machine", return_value="arm64"):
+    @pytest.mark.parametrize("release", ["14.0", "15.7.1", "26.1"])
+    def test_metal_on_apple_silicon_passes(self, release):
+        with (
+            patch("platform.system", return_value="Darwin"),
+            patch("platform.machine", return_value="arm64"),
+            patch("platform.mac_ver", return_value=(release, ("", "", ""), "arm64")),
+        ):
+            gates.check_hardware("metal")
+
+    def test_metal_on_a_macos_older_than_its_wheels_is_refused(self):
+        with (
+            patch("platform.system", return_value="Darwin"),
+            patch("platform.machine", return_value="arm64"),
+            patch("platform.mac_ver", return_value=("13.6.4", ("", "", ""), "arm64")),
+            pytest.raises(gates.GateError, match="needs macOS 14 or later, found macOS 13.6.4"),
+        ):
             gates.check_hardware("metal")
 
     def test_the_toolchain_is_a_separate_check(self):
