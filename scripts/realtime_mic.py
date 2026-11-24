@@ -23,6 +23,7 @@ import threading
 
 import sounddevice as sd
 from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
 
 
 class Player:
@@ -143,8 +144,13 @@ async def main() -> None:
             try:
                 async for message in ws:
                     await _handle(ws, json.loads(message), player)
+                print("\n[session closed]", flush=True)
+            except ConnectionClosed as closed:
+                print(f"\n[session closed: {closed}]", flush=True)
             finally:
                 microphone.cancel()
+                with contextlib.suppress(asyncio.CancelledError, ConnectionClosed):
+                    await microphone
     finally:
         player.close()
 
