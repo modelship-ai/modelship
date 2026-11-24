@@ -132,6 +132,14 @@ class TestTranscribeOnce:
         assert result.text == "hello world"
 
     @pytest.mark.asyncio
+    async def test_segments_are_joined_with_one_space(self):
+        segments = [_Segment(" tomorrow morning"), _Segment("and whether"), _Segment(" "), _Segment(" I need a seat ")]
+        infer = _infer(_StubModel(segments))
+        result = await infer._transcribe_once(MINIMAL_WAV, _transcription_request(), translate=False, request_id="r1")
+        assert isinstance(result, TranscriptionResponse)
+        assert result.text == "tomorrow morning and whether I need a seat"
+
+    @pytest.mark.asyncio
     async def test_verbose_json_uses_explicit_language_without_detection(self):
         model = _StubModel([_Segment("hola")], detected=("en", 0.99))
         infer = _infer(model)

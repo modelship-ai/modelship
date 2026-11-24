@@ -154,7 +154,8 @@ class WhispercppInfer(BaseInfer):
         segments = await self.run_blocking(
             lambda stop: self.model.transcribe(samples, abort_callback=stop.is_set, **decode_kwargs)
         )
-        text = "".join(s.text for s in segments).strip()
+        # segments don't always start with a space; joined like the streamed transcript
+        text = " ".join(part for part in (s.text.strip() for s in segments) if part)
         logger.log(TRACE, "%s response: text=%r", request_id, text)
 
         verbose = request.response_format == "verbose_json"
