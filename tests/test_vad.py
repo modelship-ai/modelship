@@ -184,7 +184,8 @@ class TestStreamResampler:
 
 def _scanning_sherpa(made: list) -> types.ModuleType:
     """Detectors that hear one closed segment from 0.5 s to 1 s and speech still going from 2 s, recording each one
-    made and every reset."""
+    made and every reset. One with a 100 ms silence, as the pass over an open segment uses, hears speech from 0.2 s
+    to 0.7 s of its audio and nothing after."""
 
     class Config:
         def __init__(self) -> None:
@@ -205,13 +206,20 @@ def _scanning_sherpa(made: list) -> types.ModuleType:
             self.fed = 0
             self.queue = []
 
+        @property
+        def _short(self) -> bool:
+            return self.config.silero_vad.min_silence_duration == 0.1
+
         def accept_waveform(self, samples) -> None:
             self.fed += len(samples)
-            if self.fed >= _s(1.5) and not self.queue:
+            if self._short:
+                if self.fed >= _s(0.8) and not self.queue:
+                    self.queue.append(_Segment(_s(0.2), np.zeros(_s(0.5), dtype=np.float32)))
+            elif self.fed >= _s(1.5) and not self.queue:
                 self.queue.append(_Segment(_s(0.5), np.zeros(_s(0.5), dtype=np.float32)))
 
         def is_speech_detected(self) -> bool:
-            return self.fed >= _s(2.25)
+            return not self._short and self.fed >= _s(2.25)
 
         @property
         def current_segment(self) -> _Segment:
@@ -240,10 +248,12 @@ class TestVadScanner:
     def test_a_scan_gives_closed_segments_and_the_speech_still_going(self, made):
         scanner = VadScanner("/models/silero.onnx")
         audio = np.zeros(_s(3), dtype=np.float32)
-        assert scanner.scan(audio, 0.5, 500) == [ScanSegment(500, 1000), ScanSegment(2000, None)]
-        assert scanner.scan(audio[: _s(1.6)], 0.5, 500) == [ScanSegment(500, 1000)]
+        # the open segment's speech ends 0.7 s into the pass that starts 0.2 s before it
+        assert scanner.scan(audio, 0.5, 500) == [ScanSegment(500, 1000, 1000), ScanSegment(2000, None, 2500)]
+        assert scanner.scan(audio[: _s(1.6)], 0.5, 500) == [ScanSegment(500, 1000, 1000)]
         config = made[0].config.silero_vad
         assert (config.threshold, config.min_silence_duration, config.min_speech_duration) == (0.5, 0.5, 0.25)
+        assert [made_one.config.silero_vad.min_silence_duration for made_one in made] == [0.5, 0.1]
 
     def test_a_detector_is_reset_and_reused_for_the_same_settings(self, made):
         scanner = VadScanner("/models/silero.onnx")

@@ -194,7 +194,7 @@ A request that fails or is cancelled after step 2 gets its scale-downs undone to
 
 ## Pipelines (experimental)
 
-> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a conversation of text and of the client's spoken turns, which the pipeline's `stt` transcribes and its `llm` answers, in text or spoken by its `tts`, calling the client's functions. Server VAD finds each turn in the client's audio, or the client commits it itself; interrupting a spoken answer arrives in a later release, and until then its events are answered with an `unsupported_event` error.
+> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a conversation of text and of the client's spoken turns, which the pipeline's `stt` transcribes and its `llm` answers, in text or spoken by its `tts`, calling the client's functions. Server VAD finds each turn in the client's audio, or the client commits it itself, and the user can talk over a spoken answer.
 
 A pipeline runs an OpenAI Realtime session over models the gateway already serves: speech to text, a chat model, and text to speech. Clients pick one with `/v1/realtime?model=<name>`. Pipelines sit beside `models:` in the same file:
 
@@ -220,6 +220,8 @@ pipelines:
 | `llm` | string | Name of the chat model that answers |
 | `tts` | string | Name of the text-to-speech model that speaks the answer |
 | `session_defaults` | object | Defaults for OpenAI's Realtime session fields; a client's `session.update` overrides any of them |
+| `duplex` | string | `full` (default): the user can talk over an answer, for devices that cancel their own echo. `half`: the audio a session gets while its answer plays is dropped, so a speaker's echo is never heard as the user |
+| `min_interruption_ms` | int | While an answer plays, how long speech lasts before it starts a turn and cuts the answer off. Default `500`, at most `5000` |
 
 A pipeline needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (`[audio]`, the default for a pipeline with `tts`, or `[text]`, the default without one; `[audio]` needs a `tts`), `max_output_tokens` (an integer or `inf`), `reasoning` (`{effort: low}`, from `minimal` to `xhigh`) and `audio.input.turn_detection` (`server_vad` with its settings, or `null` for turns the client commits; it needs an `stt`); more of OpenAI's session fields arrive as the pipeline learns to use them.
 
@@ -244,12 +246,15 @@ A session on a pipeline with `stt` takes the client's audio:
 Server VAD finds each turn in the audio the client streams:
 
 - The pipeline's audio deployment scans the audio for speech with Silero, every 300 ms of audio the client sends, however fast it sends it. A turn starts at the first speech found, less `prefix_padding_ms` (300 by default), and the session sends `input_audio_buffer.speech_started` with its `audio_start_ms` and item id. It ends once the silence after the speech lasts `silence_duration_ms` (500 by default): the session sends `input_audio_buffer.speech_stopped` with its `audio_end_ms`, which includes that silence, and commits the turn as if the client had. `threshold` (0.5 by default) is how sure the detector must be that it hears speech. Times count the audio sent since the session opened.
-- With `create_response` (on by default), the turn is answered once it is transcribed, unless its transcript is empty or a response is already in progress. `interrupt_response` is accepted, but an answer isn't interrupted yet.
+- With `create_response` (on by default), the turn is answered once it is transcribed, unless its transcript is empty or a response is already in progress.
+- With `interrupt_response` (on by default), a turn that starts cancels the response in progress, with a `response.done` of status `cancelled` and reason `turn_detected`, and the turn is answered once it ends; a response kept out of the conversation (`conversation: "none"`) goes on. A turn ending while the user talks again isn't answered on its own: the next turn's answer covers it. Without `interrupt_response`, a turn ending during a response joins the conversation and gets no answer of its own.
+- While an answer plays, speech must last `min_interruption_ms` (500 by default) before it starts a turn, so a cough or a short noise doesn't cut the answer off; at other times a turn starts after 250 ms of speech. The session tells when the answer plays from the audio it sent, each piece playing for its length after the one before it, plus 300 ms of echo; `speech_started` and `response.cancel` end it, since the client stops playing then.
 - A turn that runs 30 s without a pause is committed there, and the speech after it starts a new turn. A commit during a turn ends it, and a clear drops it.
 - A turn found while the turns waiting to be transcribed already hold 120 s gets one `input_audio_transcription_busy` error; it and its audio are kept, and it is committed on a later scan once there is room.
 - `semantic_vad` and `idle_timeout_ms` are refused as not supported yet.
 - When the audio deployment can't be reached, the session sends one `turn_detection_unavailable` error and keeps the audio, up to the buffer's 120 s; once it answers again, the audio it missed is scanned too, and `input_audio_buffer.commit` still works meanwhile.
-- `scripts/realtime_mic.py` talks to a pipeline from a terminal: `uv run scripts/realtime_mic.py --pipeline <name>` streams the microphone and plays the answers. Use headphones, since the session doesn't yet tell its own voice from the user's.
+- With `duplex: half`, the audio appended while the answer plays is replaced by silence, for server VAD and commits alike, so the user can't talk over the answer: cancel it with `response.cancel` instead.
+- `scripts/realtime_mic.py` talks to a pipeline from a terminal: `uv run scripts/realtime_mic.py --pipeline <name>` streams the microphone and plays the answers. Talking over an answer stops it, and the script truncates it to what was played. It cancels no echo, so use headphones, or a pipeline with `duplex: half`.
 
 A session on a pipeline with `tts` speaks its answers:
 
@@ -257,7 +262,8 @@ A session on a pipeline with `tts` speaks its answers:
 - The `tts` model speaks the text a piece at a time while the LLM writes it. The first piece is short, so audio starts soon: it ends at the first sentence end or clause mark (`,` `;` `:` or a dash) once it has 20 characters, or at a word before 80. The pieces after it are whole sentences, cut at their last clause or word when longer than 200 characters, and the sentences waiting when the model is free go in one call. Markdown is left out of what is spoken, not of the transcript.
 - `audio.output` sets the `format` (`audio/pcm` at its `rate`, 24000 by default and any rate from 8000 to 48000, or G.711 `audio/pcmu` or `audio/pcma`), the `voice` (a name or `{id: ...}`, passed to the `tts` model; unset, the model's default) and the `speed` (0.25 to 1.5). A `response.create` can set its own `audio.output.format` and `voice`. The gateway resamples the model's speech and encodes G.711.
 - The answer stays in the conversation as an assistant message with an `output_audio` part that holds the transcript, which the LLM sees as text on the next response. The audio itself isn't kept.
-- A piece the `tts` model fails to speak fails the response with an `error` event; what was written so far stays in the transcript. `response.cancel` stops both the LLM and the speech.
+- A piece the `tts` model fails to speak fails the response with an `error` event; what was written so far stays in the transcript. `response.cancel` stops both the LLM and the speech, and no audio follows it.
+- An answer cut off keeps all the text the LLM wrote, since the session can't know how much the client played. `conversation.item.truncate` (the item, `content_index: 0`, and the `audio_end_ms` played) cuts its transcript to what was heard: each piece played in full, then the words of the piece it cuts in the share of its audio played, rounded down. The session answers `conversation.item.truncated`; an `audio_end_ms` past the audio, an item that isn't an assistant message, or a part without audio is an error. Truncating an answer still being spoken cancels its response first.
 
 From the command line, `--pipeline NAME` opens a pipeline the way `--model REF` opens a model, on `mship start` and `mship deploy` alike, and its keys are `--pipeline.<key>` flags right after it:
 
@@ -273,7 +279,7 @@ A `--model.*` flag must follow its own `--model`, and a `--pipeline.*` flag its 
 A pipeline deploys with the models, through the same request:
 
 - A pipeline with `stt` gets an audio deployment, named `<gateway>.<pipeline>-p<fingerprint>`, which runs its server VAD. It takes no CPU or GPU and runs on any node whose variant isn't `thin`. It comes up after every model of the request, and a change to `num_replicas` rescales it in place. A pipeline with only `llm` has no deployment.
-- Every other change to a pipeline (its models, `session_defaults`) reaches the gateway with the new version, and nothing restarts.
+- Every other change to a pipeline (its models, `session_defaults`, `duplex`, `min_interruption_ms`) reaches the gateway with the new version, and nothing restarts.
 - `mship deploy` adds or replaces pipelines by name and leaves the others. `deploy --reconcile` and `mship start` remove the pipelines the request doesn't name.
 - A deploy never checks the models a pipeline names. A session on a pipeline whose model the gateway doesn't have, or doesn't serve yet, is refused with an error naming that model.
 - A session on a pipeline with `stt` asks that model once, as it opens, what it can do as speech to text (whether it detects the spoken language), and keeps the answer for the session. A model that doesn't transcribe, or doesn't answer, refuses the session with an error naming it.

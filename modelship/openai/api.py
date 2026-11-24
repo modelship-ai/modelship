@@ -259,7 +259,7 @@ class _PipelineCalls:
 
     async def scan(
         self, pipeline: str, audio: bytes, rate: int, threshold: float, silence_duration_ms: int, session_id: str
-    ) -> list[tuple[int, int | None]] | None:
+    ) -> list[tuple[int, int | None, int]] | None:
         handle = self._audio_app(pipeline)
         if handle is None:
             return None

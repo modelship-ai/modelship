@@ -458,6 +458,7 @@ class TestEvents:
             },
             {"type": "response.create"},
             {"type": "response.cancel"},
+            {"type": "conversation.item.truncate", "item_id": "item_1", "content_index": 0, "audio_end_ms": 0},
         ],
     )
     def test_a_transcription_session_takes_no_conversation_or_response(self, event):
@@ -1558,10 +1559,12 @@ class TestServerVad:
             self._settle(ws)
         assert llm.requests == []
 
-    def test_a_turn_that_ends_while_the_model_answers_gets_no_answer_of_its_own(self):
+    def test_without_interrupt_response_a_turn_ending_while_the_model_answers_gets_no_answer_of_its_own(self):
         llm = _Llm(_answer("Let me think", finish=None))
         stt = _Stt("Lights on.", "Thanks.")
-        with self._session(stt, llm) as ws:
+        detection = {"type": "server_vad", "interrupt_response": False}
+        pipeline = {**ASSISTANT, "session_defaults": {"audio": {"input": {"turn_detection": detection}}}}
+        with self._session(stt, llm, pipeline=pipeline) as ws:
             _open(ws)
             _stream(ws, _quiet(1), _tone(1), _quiet(1))
             _until(ws, "response.output_text.delta")
@@ -1665,6 +1668,254 @@ class TestServerVad:
         stops = [event["audio_end_ms"] for event in events if event["type"] == "input_audio_buffer.speech_stopped"]
         assert stops == [2500, 4500]
         assert _wav(stt.audio[1]) == (24000, round(1.8 * 24000))
+
+
+# 620 characters: 6.2 s of the fake tts model's audio
+LONG_ANSWER = "The kitchen lights are on now. " * 20
+HALF = {**SPEAKER, "duplex": "half"}
+
+
+def _messages(request: ResponsesRequest) -> list[str]:
+    return [part["text"] for message in request.input for part in message["content"]]
+
+
+class TestBargeIn:
+    def _session(self, stt: _Stt, llm: _Llm, pipeline: dict = ASSISTANT, tts: _Tts | None = None):
+        client = _client(_route(pipeline), llm=llm, transcriber=stt, speaker=tts)
+        return client.websocket_connect(f"/v1/realtime?model={pipeline['name']}")
+
+    def _settle(self, ws) -> list[dict]:
+        """The events the session sends once it has handled everything sent so far."""
+        time.sleep(0.1)
+        ws.send_json({"type": "session.update", "session": {}})
+        return _until(ws, "session.updated")
+
+    def _spoken_answer(self, ws) -> None:
+        _say(ws, "Read me the news.")
+        ws.send_json({"type": "response.create"})
+        _until(ws, "response.done")
+
+    def test_talking_over_the_answer_cancels_it_and_the_new_turn_is_answered(self):
+        llm = _Llm(_answer("Let me think", finish=None), _answer("The kitchen it is."))
+        stt = _Stt("Lights on.", "In the kitchen.")
+        with self._session(stt, llm) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            _until(ws, "response.output_text.delta")
+            _stream(ws, _tone(1), _quiet(1))
+            cut = _until(ws, "response.done")
+            answered = _until(ws, "response.done")
+        kinds = [event["type"] for event in cut]
+        assert kinds.index("input_audio_buffer.speech_started") < kinds.index("response.done")
+        done = cut[-1]["response"]
+        assert (done["status"], done["status_details"]["reason"]) == ("cancelled", "turn_detected")
+        assert answered[-1]["response"]["status"] == "completed"
+        assert llm.closed_early == [True, False]
+        assert _messages(llm.requests[1]) == ["Lights on.", "Let me think", "In the kitchen."]
+
+    def test_an_answer_out_of_the_conversation_goes_on(self):
+        llm = _Llm(_answer("Thinking", finish=None))
+        with self._session(_Stt("Lights on."), llm) as ws:
+            _open(ws)
+            ws.send_json({"type": "response.create", "response": {"conversation": "none"}})
+            _until(ws, "response.output_text.delta")
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            heard = _until(ws, "conversation.item.done") + self._settle(ws)
+            ws.send_json({"type": "response.cancel"})
+            done = _until(ws, "response.done")[-1]["response"]
+        assert "response.done" not in [event["type"] for event in heard]
+        assert done["status_details"]["reason"] == "client_cancelled"
+        assert len(llm.requests) == 1
+
+    @pytest.mark.parametrize("second", ["and the oven too.", ""], ids=["goes-on", "says-nothing"])
+    def test_a_turn_the_user_talks_on_after_is_answered_with_the_next(self, second):
+        llm = _Llm(_answer("Both are on."))
+        stt = _Stt("Lights on", second, delay=0.2)
+        with self._session(stt, llm) as ws:
+            _open(ws)
+            # the pause ends the first turn, and the user talks again before it is transcribed
+            _stream(ws, _quiet(1), _tone(1), _quiet(0.6), _tone(1))
+            _until(ws, "conversation.item.input_audio_transcription.completed")
+            self._settle(ws)
+            unanswered = list(llm.requests)
+            _stream(ws, _quiet(1))
+            _until(ws, "response.done")
+        assert unanswered == []
+        assert len(llm.requests) == 1
+        assert _messages(llm.requests[0]) == (["Lights on", second] if second else ["Lights on"])
+
+    def test_while_an_answer_plays_a_short_sound_starts_no_turn(self):
+        llm = _Llm(_answer(LONG_ANSWER), _answer("Ok."))
+        stt = _Stt("Wait.")
+        with self._session(stt, llm, pipeline=SPEAKER, tts=_Tts()) as ws:
+            _open(ws)
+            self._spoken_answer(ws)
+            # a cough, then speech that lasts
+            _stream(ws, _quiet(0.5), _tone(0.3), _quiet(1))
+            coughed = self._settle(ws)
+            _stream(ws, _tone(1), _quiet(1))
+            spoke = _until(ws, "response.done")
+        assert "input_audio_buffer.speech_started" not in [event["type"] for event in coughed]
+        (started,) = [event for event in spoke if event["type"] == "input_audio_buffer.speech_started"]
+        # after the cough, with its padding
+        assert started["audio_start_ms"] == 1500
+        assert len(stt.requests) == 1
+
+    def test_in_half_duplex_what_it_hears_while_the_answer_plays_is_dropped(self):
+        stt = _Stt()
+        with self._session(stt, _Llm(_answer(LONG_ANSWER)), pipeline=HALF, tts=_Tts()) as ws:
+            _open(ws)
+            self._spoken_answer(ws)
+            _stream(ws, _tone(1), _quiet(1))
+            events = self._settle(ws)
+        assert "input_audio_buffer.speech_started" not in [event["type"] for event in events]
+        assert stt.requests == []
+
+    def test_in_half_duplex_a_commit_while_the_answer_plays_holds_silence(self):
+        manual = {**HALF, "session_defaults": {"audio": {"input": {"turn_detection": None}}}}
+        stt = _Stt("")
+        with self._session(stt, _Llm(_answer(LONG_ANSWER)), pipeline=manual, tts=_Tts()) as ws:
+            _open(ws)
+            self._spoken_answer(ws)
+            _append(ws, _tone(1))
+            _commit(ws)
+        with wave.open(io.BytesIO(stt.audio[0])) as wav:
+            assert wav.readframes(wav.getnframes()) == _quiet(1)
+
+    def test_in_half_duplex_the_user_is_heard_once_the_answer_is_cancelled(self):
+        llm = _Llm(_answer(LONG_ANSWER, finish=None), _answer("Ok."))
+        stt = _Stt("Stop.")
+        with self._session(stt, llm, pipeline=HALF, tts=_Tts()) as ws:
+            _open(ws)
+            _say(ws, "Read me the news.")
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.output_audio.delta")
+            ws.send_json({"type": "response.cancel"})
+            _until(ws, "response.done")
+            _stream(ws, _quiet(0.5), _tone(1), _quiet(1))
+            events = _until(ws, "conversation.item.done")
+        assert "input_audio_buffer.speech_started" in [event["type"] for event in events]
+        assert [e["transcript"] for e in events if e["type"].endswith("transcription.completed")] == ["Stop."]
+
+
+TRAIN = "The train leaves at seven forty. You don't need to book a seat, but it's cheaper if you do."
+
+
+def _truncate(item_id: str, audio_end_ms: int, content_index: int = 0) -> dict:
+    return {
+        "type": "conversation.item.truncate",
+        "item_id": item_id,
+        "content_index": content_index,
+        "audio_end_ms": audio_end_ms,
+    }
+
+
+class TestTruncate:
+    def _session(self, llm: _Llm, pipeline: dict = SPEAKER):
+        client = _client(_route(pipeline), llm=llm, speaker=_Tts())
+        return client.websocket_connect(f"/v1/realtime?model={pipeline['name']}")
+
+    def _spoken_answer(self, ws) -> str:
+        """The item id of a spoken answer of TRAIN: 320 ms for its first sentence, 580 ms for its second."""
+        _say(ws, "When is the train?")
+        ws.send_json({"type": "response.create"})
+        return _until(ws, "response.done")[-1]["response"]["output"][0]["id"]
+
+    @pytest.mark.parametrize(
+        ("audio_end_ms", "heard"),
+        [
+            (0, ""),
+            (320, "The train leaves at seven forty."),
+            # half of the second sentence's audio: half its words, rounded down
+            (610, "The train leaves at seven forty. You don't need to book a"),
+            (900, TRAIN),
+        ],
+    )
+    def test_truncating_keeps_the_words_heard(self, audio_end_ms, heard):
+        llm = _Llm(_answer(TRAIN), _answer("Ok."))
+        with self._session(llm) as ws:
+            _open(ws)
+            item_id = self._spoken_answer(ws)
+            ws.send_json(_truncate(item_id, audio_end_ms))
+            truncated = ws.receive_json()
+            ws.send_json({"type": "conversation.item.retrieve", "item_id": item_id})
+            retrieved = ws.receive_json()["item"]
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.done")
+        assert {key: value for key, value in truncated.items() if key != "event_id"} == {
+            "type": "conversation.item.truncated",
+            "item_id": item_id,
+            "content_index": 0,
+            "audio_end_ms": audio_end_ms,
+        }
+        assert retrieved["content"] == [{"type": "output_audio", "transcript": heard}]
+        expected = [{"type": "output_text", "text": heard}] if heard else None
+        answer = [item for item in llm.requests[1].input if item.get("role") == "assistant"]
+        assert (answer[0]["content"] if answer else None) == expected
+
+    def test_a_second_truncate_measures_against_the_first(self):
+        with self._session(_Llm(_answer(TRAIN))) as ws:
+            _open(ws)
+            item_id = self._spoken_answer(ws)
+            ws.send_json(_truncate(item_id, 610))
+            ws.receive_json()
+            ws.send_json(_truncate(item_id, 700))
+            error = ws.receive_json()["error"]
+            ws.send_json(_truncate(item_id, 320))
+            truncated = ws.receive_json()
+            ws.send_json({"type": "conversation.item.retrieve", "item_id": item_id})
+            retrieved = ws.receive_json()["item"]
+        assert (error["code"], error["param"]) == ("invalid_value", "audio_end_ms")
+        assert "at 610 ms" in error["message"]
+        assert truncated["type"] == "conversation.item.truncated"
+        assert retrieved["content"][0]["transcript"] == "The train leaves at seven forty."
+
+    @pytest.mark.parametrize(
+        ("target", "content_index", "audio_end_ms", "code", "param"),
+        [
+            ("missing", 0, 0, "item_not_found", "item_id"),
+            ("user", 0, 0, "invalid_value", "item_id"),
+            ("answer", 1, 0, "invalid_value", "content_index"),
+            ("answer", 0, 901, "invalid_value", "audio_end_ms"),
+            ("answer", 0, -1, "invalid_value", "audio_end_ms"),
+        ],
+    )
+    def test_a_truncate_it_cannot_do_is_refused(self, target, content_index, audio_end_ms, code, param):
+        with self._session(_Llm(_answer(TRAIN))) as ws:
+            _open(ws)
+            user = _say(ws, "Hello.")["item"]["id"]
+            answer = self._spoken_answer(ws)
+            item_id = {"missing": "item_missing", "user": user, "answer": answer}[target]
+            ws.send_json(_truncate(item_id, audio_end_ms, content_index))
+            error = ws.receive_json()["error"]
+        assert (error["code"], error["param"]) == (code, param)
+
+    def test_a_text_answer_holds_no_audio_to_truncate(self):
+        with self._session(_Llm(_answer(TRAIN)), pipeline=ASSISTANT) as ws:
+            _open(ws)
+            item_id = self._spoken_answer(ws)
+            ws.send_json(_truncate(item_id, 0))
+            error = ws.receive_json()["error"]
+        assert (error["code"], error["param"]) == ("invalid_value", "content_index")
+
+    def test_truncating_an_answer_still_spoken_cancels_it(self):
+        llm = _Llm(_answer("The kitchen lights are on now. And", finish=None))
+        with self._session(llm) as ws:
+            _open(ws)
+            _say(ws, "Are the lights on?")
+            ws.send_json({"type": "response.create"})
+            item_id = _until(ws, "response.output_audio.delta")[-1]["item_id"]
+            # a third of the first sentence's 300 ms
+            ws.send_json(_truncate(item_id, 100))
+            events = _until(ws, "conversation.item.truncated")
+            ws.send_json({"type": "conversation.item.retrieve", "item_id": item_id})
+            retrieved = ws.receive_json()["item"]
+        kinds = [event["type"] for event in events]
+        assert kinds.index("response.done") < kinds.index("conversation.item.truncated")
+        done = next(event for event in events if event["type"] == "response.done")["response"]
+        assert (done["status"], done["status_details"]["reason"]) == ("cancelled", "client_cancelled")
+        assert retrieved["content"][0]["transcript"] == "The kitchen"
+        assert llm.closed_early == [True]
 
 
 def test_g711_tables_match_audioop():

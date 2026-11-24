@@ -333,6 +333,14 @@ class ItemDelete(_ClientEvent):
     item_id: str
 
 
+class ItemTruncate(_ClientEvent):
+    type: Literal["conversation.item.truncate"]
+    item_id: str
+    content_index: int = Field(ge=0)
+    # how much of the part's audio the client played
+    audio_end_ms: int = Field(ge=0)
+
+
 class ResponseCreate(_ClientEvent):
     type: Literal["response.create"]
     response: ResponseParams = Field(default_factory=ResponseParams)
@@ -362,6 +370,7 @@ ClientEvent = (
     | ItemCreate
     | ItemRetrieve
     | ItemDelete
+    | ItemTruncate
     | ResponseCreate
     | ResponseCancel
     | AudioAppend
@@ -376,7 +385,7 @@ CLIENT_EVENTS: TypeAdapter[ClientEvent] = TypeAdapter(Annotated[ClientEvent, Fie
 
 class StatusDetails(BaseModel):
     type: Literal["completed", "cancelled", "incomplete", "failed"]
-    reason: Literal["client_cancelled", "max_output_tokens", "content_filter"] | None = None
+    reason: Literal["turn_detected", "client_cancelled", "max_output_tokens", "content_filter"] | None = None
     error: dict[str, str | None] | None = None
 
 

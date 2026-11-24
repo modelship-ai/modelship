@@ -7,7 +7,7 @@ import base64
 import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from modelship.logging import get_logger
 from modelship.metrics import RequestTracker
@@ -64,8 +64,9 @@ def _usage(usage: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 Start = Callable[[], Awaitable[Answer | RealtimeError]]
-# a new spoken answer, sending its audio through the given function
-NewSpeech = Callable[[SendAudio], Speech]
+# a new spoken answer for the message item named, sending its audio through the given function
+NewSpeech = Callable[[str, SendAudio], Speech]
+CancelReason = Literal["turn_detected", "client_cancelled"]
 
 
 class _SpeechError(Exception):
@@ -107,18 +108,30 @@ class ActiveResponse:
         self._items: dict[str, AssistantMessage | FunctionCall] = {}
         self._terminal: dict[str, Any] | None = None
         self._started = False
-        self._cancelled = False
+        self._cancelled: CancelReason | None = None
         self._finishing = False
         self.task = asyncio.ensure_future(self._run())
 
     def done(self) -> bool:
         return self.task.done()
 
-    def cancel(self) -> None:
-        """Ends the response early, with a `response.done` of status cancelled."""
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled is not None
+
+    @property
+    def in_conversation(self) -> bool:
+        """Whether its output joins the conversation."""
+        return self._conversation is not None
+
+    def has_item(self, item_id: str) -> bool:
+        return item_id in self._items
+
+    def cancel(self, reason: CancelReason = "client_cancelled") -> None:
+        """Ends the response early, with a `response.done` of status cancelled for *reason*."""
         if self._cancelled or self._finishing:
             return
-        self._cancelled = True
+        self._cancelled = reason
         # a task cancelled before its first step never runs `_run`, so it would send nothing
         if self._started:
             self.task.cancel()
@@ -144,7 +157,7 @@ class ActiveResponse:
                     await self._audio.speech.stop()
                 raise
             self._finishing = True
-            await self._end("cancelled", StatusDetails(type="cancelled", reason="client_cancelled"))
+            await self._end("cancelled", StatusDetails(type="cancelled", reason=self._cancelled))
             return
         except _SpeechError as failed:
             failure = (failed.error, "tts_error")
@@ -257,11 +270,15 @@ class ActiveResponse:
 
             at = dict(where)
 
-            async def send_audio(audio: bytes) -> None:
+            async def send_audio(audio: bytes) -> bool:
+                if self._cancelled:
+                    # the client stopped listening
+                    return False
                 delta = base64.b64encode(audio).decode()
                 await self._send(server_event("response.output_audio.delta", **at, delta=delta))
+                return True
 
-            self._audio = _AudioPart(part, at, self._new_speech(send_audio))
+            self._audio = _AudioPart(part, at, self._new_speech(item.id, send_audio))
             return
         audio = self._audio
         if audio is None:

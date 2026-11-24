@@ -903,9 +903,9 @@ class TestPipelines:
     async def test_a_realtime_session_scans_with_its_pipelines_audio_app(self, api):
         calls = await self._realtime_calls(api, MagicMock())
         app = MagicMock()
-        app.scan.remote = AsyncMock(return_value=[(120, None)])
+        app.scan.remote = AsyncMock(return_value=[(120, None, 400)])
         with patch("modelship.openai.api.serve.get_app_handle", return_value=app) as get_app:
-            assert await calls.scan("voice", b"\x00\x00", 24000, 0.5, 500, "s1") == [(120, None)]
+            assert await calls.scan("voice", b"\x00\x00", 24000, 0.5, 500, "s1") == [(120, None, 400)]
             await calls.scan("voice", b"\x01\x00", 16000, 0.6, 800, "s1")
             assert await calls.scan("assistant", b"", 24000, 0.5, 500, "s1") is None
             assert await calls.scan("nope", b"", 24000, 0.5, 500, "s1") is None

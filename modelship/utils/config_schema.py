@@ -577,6 +577,11 @@ class PipelineConfig(_StrictModel):
     llm: str | None = None
     tts: str | None = None
     session_defaults: SessionDefaults | None = None
+    # full: the user can talk over an answer, as on a device that cancels its own echo; half: the audio a session gets
+    # while its answer plays is dropped, so a speaker's echo is never heard as the user
+    duplex: Literal["full", "half"] = "full"
+    # while an answer plays, how long speech lasts before it starts a turn and cuts the answer off
+    min_interruption_ms: int = Field(default=500, ge=0, le=5000)
 
     @model_validator(mode="after")
     def check_name_has_no_hash(self):
