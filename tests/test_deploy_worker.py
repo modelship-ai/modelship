@@ -23,7 +23,7 @@ from modelship.deploy.ledger import DeployRequest, to_config
 from modelship.deploy.strategy import LiveApp, ServeApp, rescale_app, serve_apps, serve_scaling, submit_app
 from modelship.deploy.worker import DeployLedger, Run, roll_back
 from modelship.infer.infer_config import ModelshipModelConfig
-from modelship.utils.config_schema import PipelineConfig
+from modelship.utils.config_schema import PipelineConfig, parse_pipeline
 from modelship.utils.sources import LocalSource
 
 
@@ -683,12 +683,12 @@ class TestRescaleApp:
         assert "ray_actor_options" in inspect.signature(ReplicaConfig.__init__).parameters
 
 
-VOICE = {"name": "voice", "stt": "a"}
-CHAT = {"name": "chat", "llm": "a"}
+VOICE = {"name": "voice", "type": "assistant", "stt": "a"}
+CHAT = {"name": "chat", "type": "assistant", "llm": "a"}
 
 
 def _pipeline_app(raw: dict, gateway: str = "gw") -> str:
-    return PipelineConfig.model_validate(raw).deployment_name(gateway)
+    return parse_pipeline(raw).deployment_name(gateway)
 
 
 class TestPipelines:
@@ -704,11 +704,11 @@ class TestPipelines:
         assert outcome["models"] == {"a": "up", "pipeline voice": "up"}
         assert cluster.ledger.committed_pipelines == [VOICE]
 
-    def test_a_pipeline_without_audio_has_no_app_and_is_up_once_committed(self, cluster):
+    def test_a_pipeline_without_audio_gets_its_app_too(self, cluster):
         _existing(cluster, A)
         outcome = _run(cluster, [], committed=[A], pipelines=[CHAT])
         assert outcome["state"] == "succeeded"
-        assert ("submit", _pipeline_app(CHAT)) not in cluster.serve.events
+        assert ("submit", _pipeline_app(CHAT)) in cluster.serve.events
         assert outcome["models"] == {"pipeline chat": "up"}
         assert cluster.ledger.committed == [A]
         assert cluster.ledger.committed_pipelines == [CHAT]
@@ -722,21 +722,22 @@ class TestPipelines:
         assert _pipeline_app(VOICE) not in cluster.serve.apps
         assert cluster.ledger.commits == []
 
-    def test_a_routing_only_change_submits_nothing(self, cluster):
+    def test_a_changed_setting_replaces_the_app_and_deletes_the_old_one_after_the_commit(self, cluster):
         _existing(cluster, A)
         cluster.serve.apps[_pipeline_app(VOICE)] = RUNNING
-        cluster.serve.configs[_pipeline_app(VOICE)] = PipelineConfig.model_validate(VOICE)
+        cluster.serve.configs[_pipeline_app(VOICE)] = parse_pipeline(VOICE)
         changed = {**VOICE, "session_defaults": {"instructions": "Be brief."}}
         outcome = _run(cluster, [], committed=[A], pipelines=[changed], committed_pipelines=[VOICE])
         assert outcome["state"] == "succeeded"
-        assert [event for event in cluster.serve.events if event[0] == "submit"] == []
-        assert outcome["models"] == {"pipeline voice": "updated"}
+        assert ("submit", _pipeline_app(changed)) in cluster.serve.events
+        assert cluster.serve.events[-1] == ("delete", _pipeline_app(VOICE))
+        assert outcome["models"] == {"pipeline voice": "up"}
         assert cluster.ledger.committed_pipelines == [changed]
 
     def test_a_reconcile_without_the_pipeline_deletes_its_app_after_the_commit(self, cluster):
         _existing(cluster, A)
         cluster.serve.apps[_pipeline_app(VOICE)] = RUNNING
-        cluster.serve.configs[_pipeline_app(VOICE)] = PipelineConfig.model_validate(VOICE)
+        cluster.serve.configs[_pipeline_app(VOICE)] = parse_pipeline(VOICE)
         outcome = _run(cluster, [A], committed=[A], mode="reconcile", committed_pipelines=[VOICE])
         assert outcome["state"] == "succeeded"
         assert cluster.serve.events[-1] == ("delete", _pipeline_app(VOICE))

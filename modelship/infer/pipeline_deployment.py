@@ -1,41 +1,61 @@
-"""A pipeline's audio app: one Serve deployment for each pipeline that takes audio. Experimental.
+"""A pipeline's app: one Serve deployment per pipeline, which runs the pipeline's type and calls its gateway's models.
+Experimental.
 
-It keeps no session state. The gateway owns each `/v1/realtime` session and sends the app the audio to
-scan, so any replica serves any call.
+An assistant holds each `/v1/realtime` session in the replica that took it; the gateway relays the client's
+WebSocket to it, and `StickyRouter` keeps every call of a session on that replica.
 """
 
-import asyncio
+from collections.abc import AsyncIterator
 
 from ray import serve
 
+from modelship.infer.base_pipeline import BasePipeline
+from modelship.infer.deployment_base import DeploymentBase
+from modelship.infer.pipelines.relay import RealtimeFrame, RealtimeOpening
+from modelship.infer.pipelines.routes import ModelRoutes
 from modelship.logging import configure_logging, get_logger
-from modelship.utils.config_schema import PipelineConfig
-from modelship.utils.downloads import locked_download
-from modelship.utils.vad import SAMPLE_RATE, VadScanner, silero_vad_source
+from modelship.metrics import stamp_gateway
+from modelship.utils.config_schema import AssistantPipelineConfig, PipelineConfig, parse_pipeline_app_name
 
 logger = get_logger("pipeline")
 
 
+def load_pipeline(config: PipelineConfig, routes: ModelRoutes) -> BasePipeline:
+    """What runs *config*'s type."""
+    if isinstance(config, AssistantPipelineConfig):
+        from modelship.infer.pipelines.assistant.assistant_pipeline import AssistantPipeline
+
+        return AssistantPipeline(config, routes)
+    raise ValueError(f"pipeline {config.name!r}: no pipeline type {type(config).__name__}")
+
+
 @serve.deployment
-class PipelineDeployment:
+class PipelineDeployment(DeploymentBase):
     async def __init__(self, config: PipelineConfig):
         configure_logging()
         self.config = config
-        self.scanner = VadScanner(await locked_download(silero_vad_source(), config.name))
-        logger.info("Pipeline %s: audio app ready", config.name)
+        context = serve.get_replica_context()
+        parsed = parse_pipeline_app_name(context.app_name)
+        gateway = parsed[0] if parsed is not None else ""
+        stamp_gateway(gateway)
+        self.routes = ModelRoutes(gateway, context.replica_id.unique_id)
+        self.routes.start()
+        self.pipeline = load_pipeline(config, self.routes)
+        await self.pipeline.start()
+        logger.info("Pipeline %s: ready", config.name)
 
-    async def scan(
-        self, audio: bytes, rate: int, threshold: float, silence_duration_ms: int
-    ) -> list[tuple[int, int | None, int]]:
-        """The speech in *audio* (16-bit mono PCM at *rate*), as (start, end, speech end) in ms from its start; the
-        end is None for speech that runs on to its end, or whose trailing silence is shorter than
-        *silence_duration_ms*, and the speech end is where the speech heard in it ends."""
-        import soxr
+    async def __del__(self):
+        if routes := getattr(self, "routes", None):
+            await routes.close()
+        if pipeline := getattr(self, "pipeline", None):
+            await pipeline.shutdown()
 
-        from modelship.utils.audio import from_pcm16
+    async def realtime(self, opening: RealtimeOpening) -> AsyncIterator[RealtimeFrame]:
+        async for frame in self.pipeline.realtime(opening):
+            yield frame
 
-        samples = from_pcm16(audio)
-        if rate != SAMPLE_RATE:
-            samples = soxr.resample(samples, rate, SAMPLE_RATE)
-        found = await asyncio.to_thread(self.scanner.scan, samples, threshold, silence_duration_ms)
-        return [(segment.start_ms, segment.end_ms, segment.speech_end_ms) for segment in found]
+    async def realtime_event(self, key: str, frames: list[str | bytes]) -> bool:
+        return await self.pipeline.realtime_event(key, frames)
+
+    async def realtime_close(self, key: str) -> None:
+        await self.pipeline.realtime_close(key)

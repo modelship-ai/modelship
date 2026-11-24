@@ -5,9 +5,9 @@ RAY_AUTH_MODE at import, before resolve_ray_auth_env() runs.
 import hashlib
 import re
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, field_validator, model_validator
 
 from modelship.logging import get_logger
 
@@ -23,10 +23,8 @@ FINGERPRINT_LEN = 10
 
 # `{gateway}.{model}-{fingerprint}`; gateway names never contain '.'.
 _DEPLOYMENT_NAME_RE = re.compile(rf"([^.]+)\.(.+)-[0-9a-f]{{{FINGERPRINT_LEN}}}")
-# `{gateway}.{pipeline}-p{fingerprint}`, a pipeline's audio app; the `p` means neither pattern matches the other's names.
+# `{gateway}.{pipeline}-p{fingerprint}`, a pipeline's app; the `p` means neither pattern matches the other's names.
 _PIPELINE_APP_NAME_RE = re.compile(rf"([^.]+)\.(.+)-p[0-9a-f]{{{FINGERPRINT_LEN}}}")
-# The pipeline fields its audio app is built from.
-_PIPELINE_APP_FIELDS: set[str] = set()
 
 # Excluded from the fingerprint: `name` is already in the deployment name, and the
 # replica-count fields are applied to the app while it runs.
@@ -48,6 +46,8 @@ class ModelUsecase(StrEnum):
     translation = "translation"
     tts = "tts"
     image = "image"
+    # an assistant pipeline's; no loader serves it yet
+    realtime = "realtime"
 
 
 class ModelLoader(StrEnum):
@@ -377,6 +377,14 @@ class ModelshipModelConfig(_StrictModel):
         return self
 
     @model_validator(mode="after")
+    def check_usecase_has_a_loader(self):
+        if self.usecase is ModelUsecase.realtime:
+            raise ValueError(
+                f"model '{self.name}': no loader serves usecase 'realtime'; an assistant pipeline serves it."
+            )
+        return self
+
+    @model_validator(mode="after")
     def check_model_required(self):
         if not self.model:
             raise ValueError(f"`model:` is required for loader={self.loader!r}")
@@ -511,7 +519,7 @@ def parse_pipeline_app_name(app_name: str) -> tuple[str, str] | None:
 
 
 def parse_gateway_app_name(app_name: str) -> tuple[str, str] | None:
-    """(gateway, model or pipeline name) of a model app or a pipeline's audio app, else None."""
+    """(gateway, model or pipeline name) of a model app or a pipeline's app, else None."""
     return parse_deployment_name(app_name) or parse_pipeline_app_name(app_name)
 
 
@@ -567,11 +575,44 @@ class SessionDefaults(_StrictModel):
 
 
 class PipelineConfig(_StrictModel):
-    """A `/v1/realtime` pipeline: the models of the gateway it runs a session over.
-    Experimental."""
+    """What every pipeline type has: a pipeline is its own app, chaining models of its gateway. Experimental."""
+
+    # the usecase the type serves, as a model's `usecase`
+    USECASE: ClassVar[ModelUsecase]
 
     name: str
     num_replicas: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def check_name_has_no_hash(self):
+        # Serve rejects '#' in a deployment name, as for a model's.
+        if "#" in self.name:
+            raise ValueError(f"name {self.name!r} must not contain '#'")
+        return self
+
+    def fingerprint(self) -> str:
+        payload = self.model_dump_json(exclude={"name", "num_replicas"})
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:FINGERPRINT_LEN]
+
+    def deployment_name(self, gateway_name: str) -> str:
+        """Its app's name."""
+        return f"{gateway_name}.{self.name}-p{self.fingerprint()}"
+
+    def scaling(self) -> dict:
+        return {"num_replicas": self.num_replicas}
+
+    def models(self) -> list[str]:
+        """The names of the models it calls."""
+        raise NotImplementedError
+
+
+class AssistantPipelineConfig(PipelineConfig):
+    """`type: assistant`, a `/v1/realtime` session over speech to text, an LLM and text to speech, each optional
+    but the first two not both."""
+
+    USECASE: ClassVar[ModelUsecase] = ModelUsecase.realtime
+
+    type: Literal["assistant"]
     # model names, from the gateway's models
     stt: str | None = None
     llm: str | None = None
@@ -582,13 +623,6 @@ class PipelineConfig(_StrictModel):
     duplex: Literal["full", "half"] = "full"
     # while an answer plays, how long speech lasts before it starts a turn and cuts the answer off
     min_interruption_ms: int = Field(default=500, ge=0, le=5000)
-
-    @model_validator(mode="after")
-    def check_name_has_no_hash(self):
-        # Serve rejects '#' in a deployment name, as for a model's.
-        if "#" in self.name:
-            raise ValueError(f"name {self.name!r} must not contain '#'")
-        return self
 
     @model_validator(mode="after")
     def check_stt_or_llm(self):
@@ -616,25 +650,24 @@ class PipelineConfig(_StrictModel):
             )
         return self
 
-    def has_audio_app(self) -> bool:
-        """Whether the pipeline takes audio, and so runs an audio app."""
-        return self.stt is not None
+    def models(self) -> list[str]:
+        return [model for model in (self.stt, self.llm, self.tts) if model is not None]
 
-    def fingerprint(self) -> str:
-        payload = self.model_dump_json(include=_PIPELINE_APP_FIELDS)
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:FINGERPRINT_LEN]
 
-    def deployment_name(self, gateway_name: str) -> str:
-        """Its audio app's name."""
-        return f"{gateway_name}.{self.name}-p{self.fingerprint()}"
+# every pipeline type; `type` tells them apart once there is more than one
+AnyPipelineConfig = AssistantPipelineConfig
+PIPELINE_TYPES: tuple[type[PipelineConfig], ...] = (AssistantPipelineConfig,)
+_PIPELINE_ADAPTER: TypeAdapter[AnyPipelineConfig] = TypeAdapter(AnyPipelineConfig)
 
-    def scaling(self) -> dict:
-        return {"num_replicas": self.num_replicas}
+
+def parse_pipeline(raw: Any) -> PipelineConfig:
+    """The pipeline config of its type that *raw* describes."""
+    return _PIPELINE_ADAPTER.validate_python(raw)
 
 
 class ModelshipConfig(_StrictModel):
     models: list[ModelshipModelConfig]
-    pipelines: list[PipelineConfig] = Field(default_factory=list)
+    pipelines: list[AnyPipelineConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def check_unique_pipeline_names(self):

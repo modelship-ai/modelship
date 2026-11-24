@@ -15,23 +15,28 @@ import pytest
 import yaml
 from websockets.sync.client import connect
 
-from modelship.openai.realtime.audio import to_pcm16
-from modelship.utils.config_schema import PipelineConfig
+from modelship.infer.pipelines.assistant.audio import to_pcm16
+from modelship.utils.config_schema import parse_pipeline
 from tests.conftest import MODEL_CONFIGS, serve_apps
 
 OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 REALTIME = "ws://localhost:8000/modelship/v1/realtime"
 
 STT = MODEL_CONFIGS["stt-cpp-model"]
-VOICE = {"name": "voice", "stt": STT["name"], "session_defaults": {"instructions": "Be brief."}}
-GHOST = {"name": "ghost", "stt": "not-deployed"}
+VOICE = {"name": "voice", "type": "assistant", "stt": STT["name"], "session_defaults": {"instructions": "Be brief."}}
+GHOST = {"name": "ghost", "type": "assistant", "stt": "not-deployed"}
 LLM = MODEL_CONFIGS["chat-llama-server-plain"]
-CHAT = {"name": "chat", "llm": LLM["name"], "session_defaults": {"instructions": "Answer in one short sentence."}}
+CHAT = {
+    "name": "chat",
+    "type": "assistant",
+    "llm": LLM["name"],
+    "session_defaults": {"instructions": "Answer in one short sentence."},
+}
 TTS = MODEL_CONFIGS["tts-model"]
 
 
-def _audio_app(raw: dict) -> str:
-    return PipelineConfig.model_validate(raw).deployment_name("modelship")
+def _app(raw: dict) -> str:
+    return parse_pipeline(raw).deployment_name("modelship")
 
 
 def _listed() -> dict[str, str]:
@@ -55,10 +60,10 @@ class TestPipelines:
         yield
         model_deployer.deploy()
 
-    def test_each_pipeline_with_stt_has_its_audio_app(self):
+    def test_each_pipeline_has_its_app(self):
         apps = serve_apps()
-        assert apps[_audio_app(VOICE)]["status"] == "RUNNING"
-        assert apps[_audio_app(GHOST)]["status"] == "RUNNING"
+        assert apps[_app(VOICE)]["status"] == "RUNNING"
+        assert apps[_app(GHOST)]["status"] == "RUNNING"
 
     def test_models_lists_the_pipelines_beside_the_models(self):
         listed = _listed()
@@ -86,7 +91,7 @@ class TestPipelines:
 
     def test_a_reconcile_without_the_pipelines_removes_them(self, model_deployer):
         model_deployer.deploy(STT["name"])
-        assert _audio_app(VOICE) not in serve_apps()
+        assert _app(VOICE) not in serve_apps()
         assert "voice" not in _listed()
         assert _first_event("?model=voice")["error"]["code"] == "model_not_found"
 
@@ -268,6 +273,7 @@ def _words(text: str) -> list[str]:
 
 SPOKEN = {
     "name": "spoken",
+    "type": "assistant",
     "stt": STT["name"],
     "llm": LLM["name"],
     "tts": TTS["name"],

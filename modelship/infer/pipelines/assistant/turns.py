@@ -1,14 +1,14 @@
-"""Server VAD for a realtime session: the client's audio is scanned for speech as it arrives, by the pipeline's
-audio app, and each turn is found on the session's timeline. A turn starts at the first speech heard, less the
-prefix padding, and ends once the silence after it lasts `silence_duration_ms`."""
+"""Server VAD for a realtime session: the client's audio is scanned for speech as it arrives, and each turn is found
+on the session's timeline. A turn starts at the first speech heard, less the prefix padding, and ends once the
+silence after it lasts `silence_duration_ms`."""
 
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 
+from modelship.infer.pipelines.assistant.audio import InputAudioBuffer
 from modelship.logging import get_logger
 from modelship.openai.protocol.realtime import ServerVad, item_id
-from modelship.openai.realtime.audio import InputAudioBuffer
 
 logger = get_logger("realtime")
 
@@ -124,7 +124,7 @@ class TurnDetector:
         # the audio a scan looks back over: a whole silence, or speech too short to start a turn yet
         context = max(settings.silence_duration_ms, min_speech) + WARMUP_MS
         end = buffer.end_ms
-        # after failed scans, a short one finds out whether the audio app answers again
+        # after failed scans, a short one finds out whether scanning works again
         probing = self._failing
         start = max(buffer.start_ms, end - context if probing else min(self._scanned_ms - WARMUP_MS, end - context))
         end = min(end, start + MAX_SCAN_MS)

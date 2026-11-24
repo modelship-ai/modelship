@@ -5,7 +5,7 @@ from __future__ import annotations
 from ray.serve.config import RequestRouterConfig
 
 from modelship.deploy.capabilities import deployment_label_selector, runs_on_gpu
-from modelship.deploy.request_router import AffinityRouter
+from modelship.deploy.request_router import AffinityRouter, StickyRouter
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.state import state_store_env_var
@@ -122,13 +122,16 @@ def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] |
     return opts
 
 
-# The loader whose library a pipeline's audio app runs: Silero VAD comes with sherpa-onnx.
+# The loader whose library a pipeline's app runs: Silero VAD comes with sherpa-onnx.
 PIPELINE_AUDIO_LOADER = ModelLoader.sherpa_onnx.value
+# Serve's per-replica concurrency cap for a pipeline's app: an open session holds one call, and one more while the
+# gateway hands it the client's frames.
+PIPELINE_MAX_ONGOING_REQUESTS = 1000
 
 
 def build_pipeline_deployment_options(pipeline: PipelineConfig, env: dict[str, str] | None = None) -> dict:
-    """kwargs for a pipeline audio app's `Deployment.options(**...)`: no CPU or GPU, on a node whose variant
-    runs sherpa-onnx; *env* as for `build_deployment_options`."""
+    """kwargs for a pipeline app's `Deployment.options(**...)`: no CPU or GPU, on a node whose variant runs
+    sherpa-onnx, each session's calls on one replica; *env* as for `build_deployment_options`."""
     env_vars = build_cache_env_vars()
     env_vars.update(deploy_env_vars() if env is None else env)
     env_vars.update(cluster_env_vars() | state_store_env_var())
@@ -138,5 +141,7 @@ def build_pipeline_deployment_options(pipeline: PipelineConfig, env: dict[str, s
             "num_cpus": 0,
             "runtime_env": {"env_vars": env_vars},
             "label_selector": deployment_label_selector(PIPELINE_AUDIO_LOADER, 0, {}),
-        }
+        },
+        "max_ongoing_requests": PIPELINE_MAX_ONGOING_REQUESTS,
+        "request_router_config": RequestRouterConfig(request_router_class=StickyRouter),  # type: ignore[arg-type]
     }

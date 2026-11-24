@@ -73,7 +73,7 @@ class GatewayCoordinator:
         self._computed = asyncio.Event()
         # gateways whose replicas asked for a table; the rest are found through their apps
         self._watched: set[str] = set()
-        # gateway -> RUNNING replicas of its own app, as of the last pass
+        # gateway -> RUNNING replicas of its own app and of its pipelines' apps, as of the last pass
         self._replicas: dict[str, set[str]] = {}
         self._reports: dict[str, dict[str, tuple[int, int, float]]] = {}
         self._versions_unreachable = False
@@ -105,7 +105,9 @@ class GatewayCoordinator:
                 continue
             if (routing := compute_routing(gateway, version["apps"], apps, version.get("pipelines"))) is None:
                 continue
-            self._replicas[gateway] = running.get(gateway, set())
+            # pipeline replicas call the models too, so a switch waits for them as for the gateway's
+            callers = [gateway, *(pipeline["app"] for pipeline in routing.pipelines.values())]
+            self._replicas[gateway] = set().union(*(running.get(app, set()) for app in callers))
             self._publish(gateway, routing, version["seq"])
             current = self._generation[gateway]
             reports = self._fresh_reports(gateway)

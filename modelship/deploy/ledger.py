@@ -11,7 +11,7 @@ from modelship.deploy.config import validate_models
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.state import StateStore
-from modelship.utils.config_schema import PipelineConfig
+from modelship.utils.config_schema import parse_pipeline
 
 logger = get_logger("startup")
 
@@ -51,10 +51,10 @@ class Version:
         return {c.name: c.deployment_name(gateway_name) for c in configs}
 
 
-def pipeline_apps(pipelines: list[dict], gateway_name: str) -> dict[str, str | None]:
-    """Pipeline name -> its audio app; None for a pipeline without one."""
-    configs = [PipelineConfig.model_validate(raw) for raw in pipelines]
-    return {c.name: c.deployment_name(gateway_name) if c.has_audio_app() else None for c in configs}
+def pipeline_apps(pipelines: list[dict], gateway_name: str) -> dict[str, str]:
+    """Pipeline name -> its app."""
+    configs = [parse_pipeline(raw) for raw in pipelines]
+    return {c.name: c.deployment_name(gateway_name) for c in configs}
 
 
 def _version(data) -> Version | None:
@@ -140,8 +140,8 @@ def merge_pipelines(effective_raw: list[dict], input_raw: list[dict], mode: Depl
     replaces the set."""
     if mode == "reconcile":
         return list(input_raw)
-    names = {PipelineConfig.model_validate(raw).name for raw in input_raw}
-    kept = [raw for raw in effective_raw if PipelineConfig.model_validate(raw).name not in names]
+    names = {parse_pipeline(raw).name for raw in input_raw}
+    kept = [raw for raw in effective_raw if parse_pipeline(raw).name not in names]
     return kept + list(input_raw)
 
 

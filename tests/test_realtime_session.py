@@ -1,6 +1,6 @@
-"""`/v1/realtime` sessions in the gateway: opening on a pipeline, session.update, the conversation's items, audio
-turns a fake speech-to-text model transcribes, responses from a fake LLM that streams real Responses events, and the
-spoken answers a fake text-to-speech model says."""
+"""`/v1/realtime` sessions, through the gateway's relay to an assistant pipeline held in-process: opening on a
+pipeline, session.update, the conversation's items, audio turns a fake speech-to-text model transcribes, responses
+from a fake LLM that streams real Responses events, and the spoken answers a fake text-to-speech model says."""
 
 import asyncio
 import base64
@@ -15,6 +15,9 @@ from fastapi import FastAPI, WebSocket
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from modelship.infer.pipelines.assistant.assistant_pipeline import AssistantPipeline
+from modelship.infer.pipelines.assistant.response import ActiveResponse
+from modelship.infer.pipelines.relay import RealtimeOpening
 from modelship.openai.protocol import (
     ChatCompletionResponseStreamChoice,
     ChatCompletionStreamResponse,
@@ -35,8 +38,8 @@ from modelship.openai.protocol import (
 from modelship.openai.protocol.realtime import RealtimeResponse
 from modelship.openai.protocol.responses.schemas import ResponsesRequest
 from modelship.openai.protocol.responses.streaming import ResponsesStreamTranslator
-from modelship.openai.realtime import serve_session
-from modelship.openai.realtime.response import ActiveResponse
+from modelship.openai.realtime_relay import serve_relay
+from modelship.utils.config_schema import AssistantPipelineConfig, parse_pipeline
 from tests.test_realtime_turns import FakeVad
 
 ASSISTANT = {"name": "assistant", "stt": "whisper", "llm": "qwen", "session_defaults": {"instructions": "Be brief."}}
@@ -192,7 +195,8 @@ class _Tts:
 
 class _Calls:
     """`PipelineCalls` over a fake LLM, "qwen", a speech-to-text model, "whisper", answering *stt*, a
-    text-to-speech model, "kokoro", and the pipelines' audio apps, scanning with *vad*."""
+    text-to-speech model, "kokoro", and speech detection scanning with *vad*; the gateway has the models *known*,
+    and *serving* serve."""
 
     def __init__(
         self,
@@ -201,13 +205,22 @@ class _Calls:
         transcriber: _Stt | None = None,
         speaker: _Tts | None = None,
         vad: FakeVad | None = None,
+        known=MODELS,
+        serving=MODELS,
     ):
         self.llm = llm
         self.stt = stt
         self.transcriber = transcriber
         self.speaker = speaker
         self.vad = vad or FakeVad()
+        self.known = known
+        self.serving = serving
         self.asked: list[str] = []
+
+    def model_state(self, model: str):
+        if model not in self.known:
+            return "unknown"
+        return "serving" if model in self.serving else "starting"
 
     async def scan(self, pipeline: str, audio: bytes, rate: int, threshold: float, silence_ms: int, session_id: str):
         return await self.vad.scan(audio, rate, threshold, silence_ms)
@@ -242,21 +255,65 @@ def _client(
     speaker: _Tts | None = None,
     vad: FakeVad | None = None,
 ) -> TestClient:
-    """A gateway app serving *pipelines*; each session's `_Calls` go into *sessions*."""
+    """A gateway app relaying sessions on *pipelines* to the pipeline, held in-process; each session's `_Calls` go
+    into *sessions*."""
     app = FastAPI()
+
+    def link(name: str) -> _Link:
+        calls = _Calls(llm, stt, transcriber, speaker, vad, known, serving)
+        if sessions is not None:
+            sessions.append(calls)
+        config = parse_pipeline(pipelines[name]["config"])
+        assert isinstance(config, AssistantPipelineConfig)
+        return _Link(_Pipeline(config, calls))
 
     @app.websocket("/v1/realtime")
     async def realtime(websocket: WebSocket):
-        calls = _Calls(llm, stt, transcriber, speaker, vad)
-        if sessions is not None:
-            sessions.append(calls)
-        await serve_session(websocket, pipelines, list(known), set(serving), calls)
+        await serve_relay(websocket, pipelines, link, {}, "")
 
     return TestClient(app)
 
 
+class _Routes:
+    async def ready(self) -> bool:
+        return True
+
+
+class _Pipeline(AssistantPipeline):
+    """The assistant pipeline, calling *calls*."""
+
+    def __init__(self, config: AssistantPipelineConfig, calls: _Calls):
+        super().__init__(config, _Routes())  # type: ignore[arg-type]
+        self.calls = calls
+
+    def _calls(self, opening: RealtimeOpening):
+        return self.calls
+
+
+class _Link:
+    """The gateway's link to *pipeline*: a direct call where Ray would be."""
+
+    def __init__(self, pipeline: AssistantPipeline):
+        self.pipeline = pipeline
+        self.stream = None
+
+    def open(self, opening: RealtimeOpening):
+        self.stream = self.pipeline.realtime(opening)
+        return self.stream
+
+    async def send(self, key: str, frames: list) -> bool:
+        return await self.pipeline.realtime_event(key, frames)
+
+    async def leave(self, key: str) -> None:
+        await self.pipeline.realtime_close(key)
+
+    async def stop(self) -> None:
+        if self.stream is not None:
+            await self.stream.aclose()
+
+
 def _route(raw: dict, ready: bool = True) -> dict:
-    return {raw["name"]: {"config": raw, "app": "gw.x-p0123456789", "ready": ready}}
+    return {raw["name"]: {"config": {"type": "assistant", **raw}, "app": "gw.x-p0123456789", "ready": ready}}
 
 
 def _refused(client: TestClient, query: str) -> dict:
@@ -1649,7 +1706,7 @@ class TestServerVad:
 
     def test_a_turn_found_while_the_transcription_queue_is_full_waits_for_room(self, monkeypatch):
         # two 1.8 s turns don't fit a 3 s queue
-        monkeypatch.setattr("modelship.openai.realtime.session.MAX_SECONDS", 3.0)
+        monkeypatch.setattr("modelship.infer.pipelines.assistant.session.MAX_SECONDS", 3.0)
         stt = _Stt("One.", "Two.", delay=0.5)
         pipeline = {**SCRIBE, "session_defaults": {"audio": {"input": {"turn_detection": {"type": "server_vad"}}}}}
         with self._session(stt, pipeline=pipeline) as ws:
@@ -1921,7 +1978,7 @@ class TestTruncate:
 
 
 def test_g711_tables_match_audioop():
-    from modelship.openai.realtime.audio import to_pcm16
+    from modelship.infer.pipelines.assistant.audio import to_pcm16
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)

@@ -287,12 +287,8 @@ class Run:
             if action == "remove":
                 self._results[model] = "removed"
         for pipeline, action in diff.pipeline_actions.items():
-            key = _result_key(pipeline, True)
             if action == "remove":
-                self._results[key] = "removed"
-            # a pipeline without an audio app is up once the gateway routes by it
-            elif self._results.get(key) == "coming up":
-                self._results[key] = "up"
+                self._results[_result_key(pipeline, True)] = "removed"
         return diff
 
     def _diff(self) -> Diff:

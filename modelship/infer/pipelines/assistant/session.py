@@ -1,19 +1,33 @@
-"""One `/v1/realtime` WebSocket session. The gateway owns the session; the pipeline names the models it runs
-over. So far a session holds a conversation of text and of the client's audio turns, which the client commits or
-server VAD finds and the pipeline's stt model transcribes, and answers it with the pipeline's LLM, in text or
-spoken by its tts model. A turn server VAD finds cuts the answer off, and the client truncates a spoken answer to
-what it played."""
+"""One `/v1/realtime` session, held by an assistant pipeline's replica; the gateway relays the client's WebSocket
+to it as a `Channel`, and the pipeline names the models it runs over. A session holds a conversation of text and of
+the client's audio turns, which the client commits or server VAD finds and the pipeline's stt model transcribes,
+and answers it with the pipeline's LLM, in text or spoken by its tts model. A turn server VAD finds cuts the answer
+off, and the client truncates a spoken answer to what it played."""
 
 import asyncio
 import base64
 import json
-from collections.abc import Awaitable, Callable, Collection, Mapping
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol
 
-from fastapi import WebSocket
 from pydantic import BaseModel, ValidationError
-from starlette.websockets import WebSocketDisconnect
 
+from modelship.infer.base_pipeline import CLOSE_REFUSED
+from modelship.infer.pipelines.assistant.audio import (
+    G711_RATE,
+    MAX_SECONDS,
+    MIN_SECONDS,
+    InputAudioBuffer,
+    bytes_per_second,
+    from_wav,
+    to_pcm16,
+)
+from modelship.infer.pipelines.assistant.calls import Answer, PipelineCalls
+from modelship.infer.pipelines.assistant.conversation import Conversation, as_input
+from modelship.infer.pipelines.assistant.playback import Playback
+from modelship.infer.pipelines.assistant.response import ActiveResponse, NewSpeech
+from modelship.infer.pipelines.assistant.speech import SendAudio, Speech, Spoken
+from modelship.infer.pipelines.assistant.turns import TurnDetector
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
@@ -64,28 +78,11 @@ from modelship.openai.protocol.realtime import (
     session_event,
 )
 from modelship.openai.protocol.responses.schemas import ResponsesRequest
-from modelship.openai.realtime.audio import (
-    G711_RATE,
-    MAX_SECONDS,
-    MIN_SECONDS,
-    InputAudioBuffer,
-    bytes_per_second,
-    from_wav,
-    to_pcm16,
-)
-from modelship.openai.realtime.calls import Answer, PipelineCalls
-from modelship.openai.realtime.conversation import Conversation, as_input
-from modelship.openai.realtime.playback import Playback
-from modelship.openai.realtime.response import ActiveResponse, NewSpeech
-from modelship.openai.realtime.speech import SendAudio, Speech, Spoken
-from modelship.openai.realtime.turns import TurnDetector
 from modelship.utils import random_uuid
-from modelship.utils.config_schema import PipelineConfig
+from modelship.utils.config_schema import AssistantPipelineConfig
 
 logger = get_logger("realtime")
 
-# RFC 6455 policy violation: the session can't open as asked
-_CLOSE_REFUSED = 1008
 _UPDATABLE = (
     "instructions",
     "output_modalities",
@@ -127,36 +124,41 @@ _AUDIO_DELTA_SECONDS = 0.5
 Handler = Callable[[Any], Awaitable[RealtimeError | None]]
 
 
-def _refusal(
-    name: str | None, pipelines: Mapping[str, dict], known: Collection[str], serving: Collection[str]
-) -> RealtimeError | None:
-    """Why a session on pipeline *name* can't open, or None. *pipelines* is the gateway's pipeline table, *known*
-    its models and *serving* those it can route to now."""
-    if not name:
-        return RealtimeError(
-            message="Pass the pipeline to use as /v1/realtime?model=<name>.", code="missing_model", param="model"
-        )
-    route = pipelines.get(name)
-    if route is None:
-        return RealtimeError(message=f"No pipeline {name!r} on this gateway.", code="model_not_found", param="model")
-    config = PipelineConfig.model_validate(route["config"])
-    for model in filter(None, (config.stt, config.llm, config.tts)):
-        if model not in known:
-            logger.warning("Pipeline %r uses model %r, which this gateway doesn't have", name, model)
+class Channel(Protocol):
+    """The client's WebSocket, as the gateway relays it."""
+
+    async def receive(self) -> str | bytes | None:
+        """The client's next frame; None once the client has left."""
+        ...
+
+    async def send(self, text: str) -> None:
+        """Sends *text* to the client as a text frame."""
+        ...
+
+    async def close(self, code: int) -> None:
+        """Closes the client's WebSocket with *code*."""
+        ...
+
+
+def _refusal(config: AssistantPipelineConfig, calls: PipelineCalls) -> RealtimeError | None:
+    """Why a session on *config* can't open now, or None: each of its models has to be serving."""
+    for model in config.models():
+        state = calls.model_state(model)
+        if state == "unknown":
+            logger.warning("Pipeline %r uses model %r, which its gateway doesn't have", config.name, model)
             return RealtimeError(
-                message=f"Pipeline {name!r} uses model {model!r}, which this gateway doesn't have.",
+                message=f"Pipeline {config.name!r} uses model {model!r}, which this gateway doesn't have.",
                 code="model_not_found",
             )
-        if model not in serving:
+        if state == "starting":
             return RealtimeError(
-                message=f"Pipeline {name!r} uses model {model!r}, which isn't ready yet.", code="model_not_ready"
+                message=f"Pipeline {config.name!r} uses model {model!r}, which isn't ready yet.",
+                code="model_not_ready",
             )
-    if not route["ready"]:
-        return RealtimeError(message=f"Pipeline {name!r} isn't ready yet.", code="model_not_ready")
     return None
 
 
-def _turn_detection(config: PipelineConfig) -> ServerVad | None:
+def _turn_detection(config: AssistantPipelineConfig) -> ServerVad | None:
     """A new session's turn detection: server VAD on a pipeline with stt, unless its defaults say otherwise."""
     if config.stt is None:
         return None
@@ -169,7 +171,7 @@ def _turn_detection(config: PipelineConfig) -> ServerVad | None:
     return ServerVad.model_validate(given.turn_detection.model_dump())
 
 
-def _new_session(config: PipelineConfig) -> RealtimeSession:
+def _new_session(config: AssistantPipelineConfig) -> RealtimeSession:
     kind = "realtime" if config.llm is not None else "transcription"
     defaults = config.session_defaults
     fields = defaults.model_dump(exclude_none=True, exclude={"audio"}) if defaults is not None else {}
@@ -223,7 +225,9 @@ def _voice_name(voice: Voice | None) -> str | None:
     return voice.id if isinstance(voice, VoiceId) else voice
 
 
-async def _stt_capabilities(config: PipelineConfig, calls: PipelineCalls) -> SttCapabilities | RealtimeError | None:
+async def _stt_capabilities(
+    config: AssistantPipelineConfig, calls: PipelineCalls
+) -> SttCapabilities | RealtimeError | None:
     """What the pipeline's stt model can do, asked once for the session; None without one."""
     if config.stt is None:
         return None
@@ -243,38 +247,30 @@ async def _stt_capabilities(config: PipelineConfig, calls: PipelineCalls) -> Stt
     return found
 
 
-async def _refuse(websocket: WebSocket, error: RealtimeError) -> None:
-    await websocket.send_text(json.dumps(error_event(error)))
-    await websocket.close(code=_CLOSE_REFUSED)
+async def refuse(channel: Channel, error: RealtimeError) -> None:
+    """Tells the client why its session can't open, and closes its WebSocket."""
+    await channel.send(json.dumps(error_event(error)))
+    await channel.close(CLOSE_REFUSED)
 
 
-async def serve_session(
-    websocket: WebSocket,
-    pipelines: Mapping[str, dict],
-    known: Collection[str],
-    serving: Collection[str],
-    calls: PipelineCalls,
-) -> None:
-    """Runs one session until the client leaves. *pipelines* is the gateway's pipeline table, *known* its models,
-    *serving* those it can route to now, and *calls* how the session calls them."""
-    await websocket.accept()
-    name = websocket.query_params.get("model")
-    refusal = _refusal(name, pipelines, known, serving)
+async def serve_session(channel: Channel, config: AssistantPipelineConfig, calls: PipelineCalls) -> None:
+    """Runs one session on *config* until the client leaves; *calls* is how it calls the pipeline's models."""
+    refusal = _refusal(config, calls)
     if refusal is not None:
-        await _refuse(websocket, refusal)
+        await refuse(channel, refusal)
         return
-    assert name is not None
-    config = PipelineConfig.model_validate(pipelines[name]["config"])
     stt = await _stt_capabilities(config, calls)
     if isinstance(stt, RealtimeError):
-        await _refuse(websocket, stt)
+        await refuse(channel, stt)
         return
-    await Session(websocket, config, calls, stt).run()
+    await Session(channel, config, calls, stt).run()
 
 
 class Session:
-    def __init__(self, websocket: WebSocket, config: PipelineConfig, calls: PipelineCalls, stt: SttCapabilities | None):
-        self.websocket = websocket
+    def __init__(
+        self, channel: Channel, config: AssistantPipelineConfig, calls: PipelineCalls, stt: SttCapabilities | None
+    ):
+        self.channel = channel
         self.config = config
         self.calls = calls
         # what the stt model can do, asked once at open; None without one
@@ -327,16 +323,11 @@ class Session:
             conversation = {"id": self.conversation.id, "object": "realtime.conversation"}
             await self.send(server_event("conversation.created", conversation=conversation))
         try:
-            while True:
-                message = await self.websocket.receive()
-                if message["type"] == "websocket.disconnect":
-                    break
-                if message.get("text") is None:
+            while (message := await self.channel.receive()) is not None:
+                if isinstance(message, bytes):
                     await self.send(error_event(RealtimeError(message="Send events as JSON text frames.")))
                     continue
-                await self._handle(message["text"])
-        except WebSocketDisconnect:
-            pass
+                await self._handle(message)
         finally:
             self._closed = True
             for task in (*self._transcriptions, *self._replies, *self._retired_scans):
@@ -351,12 +342,8 @@ class Session:
         """Sends *event*, unless the client has left. A response sends from its own task."""
         text = json.dumps(event)
         async with self._sending:
-            if self._closed:
-                return
-            try:
-                await self.websocket.send_text(text)
-            except (WebSocketDisconnect, RuntimeError, OSError):
-                self._closed = True
+            if not self._closed:
+                await self.channel.send(text)
 
     async def _handle(self, text: str) -> None:
         try:
@@ -841,7 +828,7 @@ class Session:
         await self.send(
             error_event(
                 RealtimeError(
-                    message=f"Pipeline {self.config.name!r} can't detect turns now: its audio app didn't answer."
+                    message=f"Pipeline {self.config.name!r} can't detect turns now: its speech detection failed."
                     " Its audio stays buffered, and input_audio_buffer.commit still works.",
                     type="server_error",
                     code="turn_detection_unavailable",

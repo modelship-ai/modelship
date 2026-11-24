@@ -3,7 +3,7 @@ import contextlib
 import json
 import os
 import time
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncIterator, Callable
 from http import HTTPStatus
 from typing import Annotated, Any, cast
 
@@ -23,6 +23,7 @@ from starlette.websockets import WebSocketState
 
 from modelship.deploy import gateway_coordinator
 from modelship.infer.infer_config import get_disconnect_registry
+from modelship.infer.pipelines.relay import RealtimeFrame, RealtimeOpening
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
     GATEWAY_RECONCILES_TOTAL,
@@ -31,7 +32,6 @@ from modelship.metrics import (
     RequestTracker,
     stamp_gateway,
 )
-from modelship.openai import realtime
 from modelship.openai.auth import resolve_identity
 from modelship.openai.mcp import loop as mcp_loop
 from modelship.openai.protocol import (
@@ -51,7 +51,6 @@ from modelship.openai.protocol import (
     ResponseObject,
     ResponsesRequest,
     SpeechRequest,
-    SttCapabilities,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
@@ -69,6 +68,7 @@ from modelship.openai.protocol import (
 )
 from modelship.openai.protocol.responses.adapter import UnsupportedResponsesFeatureError
 from modelship.openai.protocol.responses.streaming import RESPONSE_FAILED_SSE_PREFIX
+from modelship.openai.realtime_relay import serve_relay
 from modelship.openai.state.responses import mcp_listings_in
 from modelship.openai.utils import affinity
 from modelship.openai.utils import responses as responses_utils
@@ -193,130 +193,30 @@ def _recorded(tracker: RequestTracker):
         raise
 
 
-async def _respond_stream(
-    handle: DeploymentHandle,
-    request: ResponsesRequest,
-    headers: dict[str, str],
-    registry: Any,
-    identity: str,
-    session_id: str,
-) -> AsyncGenerator[Any, None]:
-    """*handle*'s streamed answer to *request*, routed on *session_id*; a validation failure in the replica comes
-    back as an ErrorResponse. Closed early, it cancels the call and tells the replica through *registry*."""
-    req_id = random_uuid()
-    stream = cast(
-        "DeploymentResponseGenerator[Any]",
-        handle.respond.options(stream=True, session_id=session_id).remote(request, headers, registry, req_id, identity),
-    )
-    finished = False
-    try:
-        try:
-            async for event in stream:
-                yield event
-        except RayTaskError as exc:
-            cause = exc.cause if isinstance(exc.cause, BaseException) else None
-            if not isinstance(cause, ValueError):
-                raise
-            yield validation_error_from_cause(cause)
-        finished = True
-    finally:
-        if not finished:
-            await _stop_call(stream, registry, req_id)
+class _HandleLink:
+    """A realtime session's calls to its pipeline's app, every one routed on the session's key, so `StickyRouter`
+    keeps them on the replica that took the first."""
 
+    def __init__(self, handle: DeploymentHandle):
+        self._handle = handle
+        self._stream: DeploymentResponseGenerator | None = None
 
-async def _stop_call(stream: DeploymentResponseGenerator, registry: Any, req_id: str) -> None:
-    """Stops the model call behind *stream*, which its caller left early."""
-    # cancelling the task that awaits the stream doesn't reach the replica
-    stream.cancel()
-    try:
-        await registry.set.remote(req_id)
-    except RayActorError:
-        logger.warning("Disconnect registry unavailable; lost the cancel of %s", req_id)
-
-
-class _PipelineCalls:
-    """A realtime session's calls to its pipeline's models (`realtime.PipelineCalls`), with its connection's
-    headers, disconnect registry and identity. *models* is the gateway's live model → app → handle table, and
-    *audio_app* the handle of a pipeline's audio app, or None."""
-
-    def __init__(
-        self,
-        models: dict[str, dict[str, DeploymentHandle]],
-        headers: dict[str, str],
-        registry: Any,
-        identity: str,
-        audio_app: Callable[[str], DeploymentHandle | None],
-    ):
-        self._models = models
-        self._headers = headers
-        self._registry = registry
-        self._identity = identity
-        self._audio_app = audio_app
-
-    def _handle(self, model: str) -> DeploymentHandle | None:
-        handles = self._models.get(model)
-        return next(reversed(handles.values())) if handles else None
-
-    async def scan(
-        self, pipeline: str, audio: bytes, rate: int, threshold: float, silence_duration_ms: int, session_id: str
-    ) -> list[tuple[int, int | None, int]] | None:
-        handle = self._audio_app(pipeline)
-        if handle is None:
-            return None
-        return await handle.scan.remote(audio, rate, threshold, silence_duration_ms)
-
-    def respond(self, model: str, request: ResponsesRequest, session_id: str) -> realtime.Answer | None:
-        handle = self._handle(model)
-        if handle is None:
-            return None
-        return _respond_stream(handle, request, self._headers, self._registry, self._identity, session_id)
-
-    async def stt_capabilities(self, model: str) -> SttCapabilities | None:
-        handle = self._handle(model)
-        if handle is None:
-            return None
-        return await handle.stt_capabilities.remote()
-
-    async def transcribe(
-        self, model: str, audio: bytes, request: TranscriptionRequest, session_id: str
-    ) -> TranscriptionResponse | TranscriptionResponseVerbose | ErrorResponse | None:
-        handle = self._handle(model)
-        if handle is None:
-            return None
-        req_id = random_uuid()
-        stream = cast(
+    def open(self, opening: RealtimeOpening) -> AsyncIterator[RealtimeFrame]:
+        self._stream = cast(
             "DeploymentResponseGenerator[Any]",
-            handle.transcribe.options(stream=True, session_id=session_id).remote(
-                audio, request, self._headers, self._registry, req_id, self._identity
-            ),
+            self._handle.realtime.options(stream=True, session_id=opening.key).remote(opening),
         )
-        return await self._answer(stream, req_id)
+        return self._stream
 
-    async def speak(
-        self, model: str, request: SpeechRequest, session_id: str
-    ) -> RawSpeechResponse | ErrorResponse | None:
-        handle = self._handle(model)
-        if handle is None:
-            return None
-        req_id = random_uuid()
-        stream = cast(
-            "DeploymentResponseGenerator[Any]",
-            handle.speak.options(stream=True, session_id=session_id).remote(
-                request, self._headers, self._registry, req_id, self._identity
-            ),
-        )
-        return await self._answer(stream, req_id)
+    async def send(self, key: str, frames: list[str | bytes]) -> bool:
+        return await self._handle.realtime_event.options(session_id=key).remote(key, frames)
 
-    async def _answer(self, stream: DeploymentResponseGenerator, req_id: str) -> Any:
-        """The one item a call that doesn't stream answers with; None for none."""
-        finished = False
-        try:
-            results = [result async for result in stream]
-            finished = True
-        finally:
-            if not finished:
-                await _stop_call(stream, self._registry, req_id)
-        return results[0] if results else None
+    async def leave(self, key: str) -> None:
+        await self._handle.realtime_close.options(session_id=key).remote(key)
+
+    async def stop(self) -> None:
+        if self._stream is not None:
+            self._stream.cancel()
 
 
 @serve.deployment
@@ -332,10 +232,10 @@ class ModelshipAPI:
         self.models: dict[str, dict[str, DeploymentHandle]] = {}
         self.model_list: list[OpenAiModelCard] = []
         self.expected_models: list[str] = []
-        # pipeline name -> {"config": raw pipeline, "app": its audio app or None, "ready": whether it can serve}
+        # pipeline name -> {"config": raw pipeline, "app": its app, "ready": whether it can serve}
         self.pipelines: dict[str, dict] = {}
-        # audio app name -> its handle
-        self._audio_apps: dict[str, DeploymentHandle] = {}
+        # pipeline app name -> its handle
+        self._pipeline_apps: dict[str, DeploymentHandle] = {}
         self._started_at = time.time()
         self._gateway_name = gateway_name
         # /v1/responses conversation state. Construction is inert (no Ray call, no
@@ -683,7 +583,7 @@ class ModelshipAPI:
         raise HTTPException(status_code=HTTPStatus.NOT_FOUND.value, detail="model not found")
 
     def _pipeline_cards(self) -> list[OpenAiModelCard]:
-        """A card for each pipeline whose audio app can serve; clients pass its name to /v1/realtime."""
+        """A card for each pipeline whose app can serve; clients pass an assistant's name to /v1/realtime."""
         return [
             OpenAiModelCard(id=name, owned_by="modelship-pipeline")
             for name, pipeline in sorted(self.pipelines.items())
@@ -692,35 +592,30 @@ class ModelshipAPI:
 
     @app.websocket("/v1/realtime")
     async def realtime_ws(self, websocket: WebSocket):
-        """OpenAI Realtime over WebSocket, on a pipeline: `/v1/realtime?model=<pipeline>`. Experimental."""
+        """OpenAI Realtime over WebSocket, relayed to an assistant pipeline: `/v1/realtime?model=<pipeline>`.
+        Experimental."""
         self._ensure_watching()
-        calls = _PipelineCalls(
-            self.models,
-            dict(websocket.headers),
-            get_disconnect_registry(),
-            self._set_identity(websocket),
-            self._audio_app,
-        )
-        await realtime.serve_session(websocket, self.pipelines, self.expected_models, set(self.models), calls)
+        identity = self._set_identity(websocket)
+        await serve_relay(websocket, self.pipelines, self._pipeline_link, dict(websocket.headers), identity)
 
-    def _audio_app(self, pipeline: str) -> DeploymentHandle | None:
-        """The handle of *pipeline*'s audio app, while the routing table has it ready."""
+    def _pipeline_link(self, pipeline: str) -> _HandleLink | None:
+        """A session's link to *pipeline*'s app, while the routing table has it ready."""
         route = self.pipelines.get(pipeline)
         app_name = route["app"] if route is not None and route["ready"] else None
         if app_name is None:
             return None
-        handle = self._audio_apps.get(app_name)
+        handle = self._pipeline_apps.get(app_name)
         if handle is None:
             try:
                 handle = serve.get_app_handle(app_name)
             except Exception:
-                logger.warning("Pipeline %s: audio app %s isn't reachable yet", pipeline, app_name, exc_info=True)
+                logger.warning("Pipeline %s: app %s isn't reachable yet", pipeline, app_name, exc_info=True)
                 return None
             # one handle per app the table names now
             live = {route["app"] for route in self.pipelines.values()}
-            self._audio_apps = {name: kept for name, kept in self._audio_apps.items() if name in live}
-            self._audio_apps[app_name] = handle
-        return handle
+            self._pipeline_apps = {name: kept for name, kept in self._pipeline_apps.items() if name in live}
+            self._pipeline_apps[app_name] = handle
+        return _HandleLink(handle)
 
     @app.post("/v1/chat/completions")
     async def create_chat_completion(self, request: ChatCompletionRequest, raw_request: Request):

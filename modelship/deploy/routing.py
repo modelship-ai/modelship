@@ -16,7 +16,7 @@ class Routing:
     models: dict[str, str]
     # models the gateway reports ready only once they are in `models`
     expected: list[str]
-    # pipeline name -> {"config": raw pipeline, "app": its audio app or None, "ready": whether that app can serve}
+    # pipeline name -> {"config": raw pipeline, "app": its app, "ready": whether that app can serve}
     pipelines: dict[str, dict] = field(default_factory=dict)
 
 
@@ -66,12 +66,12 @@ def compute_routing(
     pipelines: Mapping[str, dict] | None = None,
 ) -> Routing | None:
     """Each model's app from *targets* (model -> app), while it can serve, and each of *pipelines* (name ->
-    {"config", "app"}) with whether its audio app can serve. None when *apps* lacks the gateway's own app."""
+    {"config", "app"}) with whether its app can serve. None when *apps* lacks the gateway's own app."""
     if gateway_name not in apps:
         return None
     models = {app: model for model, app in targets.items() if app in apps and can_serve(apps[app])}
     ready = {
-        name: {**pipeline, "ready": (app := pipeline["app"]) is None or (app in apps and can_serve(apps[app]))}
+        name: {**pipeline, "ready": (app := pipeline["app"]) in apps and can_serve(apps[app])}
         for name, pipeline in (pipelines or {}).items()
     }
     return Routing(models=models, expected=list(targets), pipelines=ready)

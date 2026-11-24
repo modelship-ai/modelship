@@ -15,7 +15,7 @@ from modelship.deploy.ledger import (
 )
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.state import MemoryStoreActor
-from modelship.utils.config_schema import PipelineConfig
+from modelship.utils.config_schema import parse_pipeline
 
 # The plain class behind @ray.remote — a real store with no cluster, the same
 # pattern test_state.py uses.
@@ -202,8 +202,8 @@ class TestLoadRawModels:
             load_raw_models(str(tmp_path / "missing.yaml"))
 
 
-VOICE = {"name": "voice", "stt": "a"}
-CHAT = {"name": "chat", "llm": "a"}
+VOICE = {"name": "voice", "type": "assistant", "stt": "a"}
+CHAT = {"name": "chat", "type": "assistant", "llm": "a"}
 
 
 class TestPipelines:
@@ -227,7 +227,8 @@ class TestPipelines:
     def test_reconcile_replaces_the_set(self):
         assert merge_pipelines([VOICE, CHAT], [CHAT], "reconcile") == [CHAT]
 
-    def test_only_a_pipeline_with_stt_has_an_app(self):
+    def test_every_pipeline_has_an_app(self):
         apps = pipeline_apps([VOICE, CHAT], "g")
-        assert apps["chat"] is None
-        assert apps["voice"] == PipelineConfig.model_validate(VOICE).deployment_name("g")
+        assert apps == {
+            name: parse_pipeline(raw).deployment_name("g") for name, raw in (("voice", VOICE), ("chat", CHAT))
+        }
