@@ -178,13 +178,40 @@ class AudioTranscription(BaseModel):
     prompt: str | None = None
 
 
+class ServerVad(BaseModel):
+    """Turns found by voice activity detection, with OpenAI's defaults."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["server_vad"]
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    prefix_padding_ms: int = Field(default=300, ge=0, le=5000)
+    silence_duration_ms: int = Field(default=500, ge=0, le=10000)
+    create_response: bool = True
+    interrupt_response: bool = True
+    idle_timeout_ms: int | None = None
+
+
+class SemanticVad(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["semantic_vad"]
+
+
+TurnDetection = Annotated[ServerVad | SemanticVad, Field(discriminator="type")]
+
+
+def server_vad() -> ServerVad:
+    return ServerVad(type="server_vad")
+
+
 class AudioInput(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     format: AudioFormat = Field(default_factory=_pcm24k)
     transcription: AudioTranscription | None = None
     # null: the client commits each turn
-    turn_detection: dict[str, Any] | None = None
+    turn_detection: TurnDetection | None = None
 
 
 class VoiceId(BaseModel):

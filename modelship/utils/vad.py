@@ -1,12 +1,15 @@
-"""Voice activity detection with Silero (through sherpa-onnx) over a stream of
-audio, timed the way OpenAI's Realtime `server_vad` reports it.
+"""Voice activity detection with Silero (through sherpa-onnx), timed the way OpenAI's
+Realtime `server_vad` reports it.
 
-One `Vad` per audio stream: it keeps state between `feed` calls. Audio is float32,
+One `Vad` per audio stream: it keeps state between `feed` calls. A `VadScanner` keeps
+none: each scan runs a reset detector over one window of audio. Audio is float32,
 mono, 16 kHz.
 """
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -139,3 +142,82 @@ class Vad:
         if keep_from > self._kept_from:
             self._kept = self._kept[keep_from - self._kept_from :]
             self._kept_from = keep_from
+
+
+# the longest window one scan takes
+MAX_SCAN_SECONDS = 32
+# the most distinct settings a scanner keeps detectors for
+_MAX_SETTINGS = 4
+
+
+@dataclass(frozen=True)
+class ScanSegment:
+    start_ms: int
+    # None: the speech runs on to the end of the window, or the silence after it is shorter than
+    # silence_duration_ms
+    end_ms: int | None
+
+
+class VadScanner:
+    """Finds the speech in windows of audio, one window at a time. Each scan resets a pooled detector, so any
+    scan can come from any stream and the scanner keeps no state between them. Thread-safe."""
+
+    def __init__(self, model_path: str, *, min_speech_ms: int = 250) -> None:
+        self._model_path = model_path
+        self._min_speech_ms = min_speech_ms
+        self._lock = threading.Lock()
+        # idle detectors by (threshold, silence_duration_ms), the least recently used first
+        self._idle: OrderedDict[tuple[float, int], list[Any]] = OrderedDict()
+
+    def scan(self, samples: np.ndarray, threshold: float, silence_duration_ms: int) -> list[ScanSegment]:
+        """The speech in *samples*, in ms from their start."""
+        if len(samples) > MAX_SCAN_SECONDS * SAMPLE_RATE:
+            raise ValueError(f"a scan takes at most {MAX_SCAN_SECONDS} s of audio")
+        key = (threshold, silence_duration_ms)
+        detector = self._take(key)
+        try:
+            return self._run(detector, np.asarray(samples, dtype=np.float32))
+        finally:
+            self._give(key, detector)
+
+    def _take(self, key: tuple[float, int]) -> Any:
+        with self._lock:
+            idle = self._idle.get(key)
+            if idle:
+                self._idle.move_to_end(key)
+                return idle.pop()
+        return self._detector(*key)
+
+    def _give(self, key: tuple[float, int], detector: Any) -> None:
+        with self._lock:
+            self._idle.setdefault(key, []).append(detector)
+            self._idle.move_to_end(key)
+            while len(self._idle) > _MAX_SETTINGS:
+                self._idle.popitem(last=False)
+
+    def _detector(self, threshold: float, silence_duration_ms: int) -> Any:
+        import sherpa_onnx
+
+        config = sherpa_onnx.VadModelConfig()
+        config.silero_vad.model = self._model_path
+        config.silero_vad.threshold = threshold
+        config.silero_vad.min_silence_duration = silence_duration_ms / 1000
+        config.silero_vad.min_speech_duration = self._min_speech_ms / 1000
+        config.silero_vad.max_speech_duration = MAX_SCAN_SECONDS
+        config.sample_rate = SAMPLE_RATE
+        config.num_threads = 1
+        return sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=MAX_SCAN_SECONDS + 1)
+
+    def _run(self, detector: Any, samples: np.ndarray) -> list[ScanSegment]:
+        detector.reset()
+        window = detector.config.silero_vad.window_size
+        for start in range(0, len(samples) - window + 1, window):
+            detector.accept_waveform(samples[start : start + window])
+        segments = []
+        while not detector.empty():
+            segment = detector.front
+            segments.append(ScanSegment(_ms(segment.start), _ms(segment.start + len(segment.samples))))
+            detector.pop()
+        if detector.is_speech_detected():
+            segments.append(ScanSegment(_ms(detector.current_segment.start), None))
+        return segments

@@ -119,16 +119,33 @@ def bytes_per_second(kind: str, pcm_rate: int) -> int:
     return G711_RATE if kind in _G711_CODES else pcm_rate * 2
 
 
+def wav(pcm16: bytes, rate: int) -> bytes:
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(rate)
+        wav_file.writeframes(pcm16)
+    return out.getvalue()
+
+
 class InputAudioBuffer:
-    """The audio of the turn the client hasn't committed, at one sample rate."""
+    """The client's audio not committed yet, at one sample rate, placed on the session's timeline: the ms of
+    audio the client has sent since the session opened."""
 
     def __init__(self) -> None:
         self._pcm = bytearray()
         self.rate: int | None = None
+        # where the buffer's first sample is on the timeline
+        self.start_ms = 0.0
 
     @property
     def seconds(self) -> float:
         return len(self._pcm) // 2 / self.rate if self.rate else 0.0
+
+    @property
+    def end_ms(self) -> float:
+        return self.start_ms + self.seconds * 1000
 
     def append(self, pcm16: bytes, rate: int) -> str | None:
         """Adds *pcm16* at *rate*; why it can't, or None."""
@@ -140,19 +157,33 @@ class InputAudioBuffer:
         self._pcm += pcm16
         return None
 
-    def clear(self) -> None:
-        self._pcm = bytearray()
+    def _offset(self, at_ms: float) -> int:
+        """The byte offset of *at_ms* in the buffer, clamped to it."""
+        if self.rate is None:
+            return 0
+        samples = round((at_ms - self.start_ms) * self.rate / 1000)
+        return min(max(samples, 0), len(self._pcm) // 2) * 2
 
-    def take(self) -> tuple[bytes, float]:
-        """The buffered turn as a WAV and its length in seconds; the buffer is then empty."""
+    def pcm(self, from_ms: float, to_ms: float) -> bytes:
+        """The audio from *from_ms* to *to_ms*, as much of it as the buffer holds."""
+        return bytes(self._pcm[self._offset(from_ms) : self._offset(to_ms)])
+
+    def drop_before(self, at_ms: float) -> None:
+        """Drops the audio before *at_ms*."""
+        cut = self._offset(at_ms)
+        if cut and self.rate is not None:
+            del self._pcm[:cut]
+            self.start_ms += cut // 2 * 1000 / self.rate
+
+    def clear(self) -> None:
+        self.drop_before(self.end_ms)
+
+    def take(self, from_ms: float | None = None, to_ms: float | None = None) -> tuple[bytes, float]:
+        """The audio from *from_ms* (the buffer's start by default) to *to_ms* (its end) as a WAV, and its length
+        in seconds; the buffer then starts at *to_ms*."""
         assert self.rate is not None
-        pcm = bytes(self._pcm[: len(self._pcm) // 2 * 2])
-        seconds = self.seconds
-        self.clear()
-        out = io.BytesIO()
-        with wave.open(out, "wb") as wav:
-            wav.setnchannels(1)
-            wav.setsampwidth(2)
-            wav.setframerate(self.rate)
-            wav.writeframes(pcm)
-        return out.getvalue(), seconds
+        start = self.start_ms if from_ms is None else from_ms
+        end = self.end_ms if to_ms is None else to_ms
+        pcm = self.pcm(start, end)
+        self.drop_before(end)
+        return wav(pcm, self.rate), len(pcm) // 2 / self.rate

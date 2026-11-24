@@ -208,8 +208,8 @@ class TestAudioInput:
         rate, pcm = _speech("Turn on the kitchen lights.")
         with connect(f"{REALTIME}?model=voice", open_timeout=30) as ws:
             _until(ws, "session.created")
-            audio_format = {"type": "audio/pcm", "rate": rate}
-            _send(ws, {"type": "session.update", "session": {"audio": {"input": {"format": audio_format}}}})
+            audio_input = {"format": {"type": "audio/pcm", "rate": rate}, "turn_detection": None}
+            _send(ws, {"type": "session.update", "session": {"audio": {"input": audio_input}}})
             _until(ws, "session.updated")
             events = _speak_turn(ws, pcm, rate)
         done = [event for event in events if event["type"].startswith("conversation.item.input_audio_transcription")]
@@ -309,7 +309,8 @@ class TestAudioOutput:
         rate, pcm = _speech(question, voice)
         with connect(f"{REALTIME}?model=spoken", open_timeout=30) as ws:
             session = _until(ws, "session.created")[-1]["session"]
-            audio = {"input": {"format": {"type": "audio/pcm", "rate": rate}}, "output": output}
+            audio_input = {"format": {"type": "audio/pcm", "rate": rate}, "turn_detection": None}
+            audio = {"input": audio_input, "output": output}
             _send(ws, {"type": "session.update", "session": {"audio": audio}})
             _until(ws, "session.updated")
             heard = [e for e in _speak_turn(ws, pcm, rate) if e["type"].endswith("transcription.completed")]
@@ -345,3 +346,40 @@ class TestAudioOutput:
         else:
             similarity = difflib.SequenceMatcher(None, expected, got).ratio()
             assert similarity > 0.6, (similarity, transcript, said)
+
+    def test_server_vad_finds_each_spoken_turn_and_answers_it(self):
+        questions = (
+            "Hello there.",
+            "What colour is the sky on a clear day?",
+            "I'm cooking dinner for six people tonight, two of them are vegetarian, so what could I make in an hour?",
+        )
+        with connect(f"{REALTIME}?model=spoken", open_timeout=30) as ws:
+            session = _until(ws, "session.created")[-1]["session"]
+            starts = []
+            for question in questions:
+                rate, pcm = _speech(question)
+                assert rate == 24000
+                # half a second before the speech and a second after it, as fast as the socket takes it
+                audio = bytes(rate) + pcm + bytes(rate * 2)
+                step = rate // 10 * 2
+                for start in range(0, len(audio), step):
+                    chunk = base64.b64encode(audio[start : start + step]).decode()
+                    _send(ws, {"type": "input_audio_buffer.append", "audio": chunk})
+                events = _until(ws, "response.done")
+                kinds = [event["type"] for event in events]
+                assert kinds.count("input_audio_buffer.speech_started") == 1, (question, kinds)
+                assert kinds.count("input_audio_buffer.speech_stopped") == 1, (question, kinds)
+                started = next(e for e in events if e["type"] == "input_audio_buffer.speech_started")
+                committed = next(e for e in events if e["type"] == "input_audio_buffer.committed")
+                assert committed["item_id"] == started["item_id"]
+                starts.append(started["audio_start_ms"])
+                heard = next(e for e in events if e["type"].endswith("transcription.completed"))["transcript"]
+                overlap = set(_words(question)) & set(_words(heard))
+                assert len(overlap) >= len(set(_words(question))) / 2, (question, heard)
+                done = events[-1]["response"]
+                assert done["status"] == "completed", done
+                assert done["output"][0]["content"][0]["transcript"].strip()
+                assert any(e["type"] == "response.output_audio.delta" for e in events)
+        assert session["audio"]["input"]["turn_detection"]["type"] == "server_vad"
+        # each turn starts later on the session's timeline, its padding before its speech
+        assert starts == sorted(starts) and starts[0] >= 200
