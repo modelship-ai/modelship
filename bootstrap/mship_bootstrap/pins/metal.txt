@@ -196,6 +196,9 @@ filelock==4.2.9 \
     #   python-discovery
     #   ray
     #   virtualenv
+flatbuffers==25.12.19 \
+    --hash=sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4
+    # via onnxruntime
 frozenlist==1.8.0 \
     --hash=sha256:0c18a16eab41e82c295618a77502e17b195883241c563b00f0aa5106fc4eaa0d \
     --hash=sha256:229bf37d2e4acdaf808fd3f06e854a4a7a3661e871b10dc1f8f1896a3b05f18b \
@@ -489,6 +492,7 @@ numpy==2.2.6 \
     #   librosa
     #   mship-engine
     #   numba
+    #   onnxruntime
     #   pandas
     #   pywhispercpp
     #   ray
@@ -496,6 +500,13 @@ numpy==2.2.6 \
     #   scipy
     #   soundfile
     #   soxr
+onnxruntime==1.32.0 \
+    --hash=sha256:64d394c69d561af3efd4d4f49dcac8f11d0ce135a20701c16d53b74056cd4cf8 \
+    --hash=sha256:99e1074c4b2197accd5073052a465361be17b89c093b8ffb6e6bd8f986c52df8 \
+    --hash=sha256:d52510bbbcc880c13b826f7d75cdf33ac5cf0bb864d960000fc29ce73f0cb83e \
+    --hash=sha256:e36c187006e7a7c8b8d6d57f1a209dd63f52430dca6c282b177718ad6b841054 \
+    --hash=sha256:efe7456952c243a05a53d5b8732953625144642c2f3989094277f6217f0c0c40
+    # via mship-engine
 opencensus==0.11.4 \
     --hash=sha256:a18487ce68bc19900336e0ff4655c5a116daf10c1b3685ece8d971bddad6a864 \
     --hash=sha256:cbef87d8b8773064ab60e5c2a1ced58bbaa38a6d052c41aec224958ce544eff2
@@ -536,6 +547,7 @@ packaging==26.3 \
     # via
     #   huggingface-hub
     #   lazy-loader
+    #   onnxruntime
     #   pooch
     #   ray
     #   virtualenv
@@ -626,6 +638,7 @@ protobuf==7.36.2 \
     #   googleapis-common-protos
     #   grpcio-reflection
     #   mship-engine
+    #   onnxruntime
     #   opentelemetry-proto
     #   proto-plus
     #   ray

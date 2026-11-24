@@ -24,9 +24,9 @@ class _Routes:
         return {"qwen": "serving", "loading": "starting"}.get(model, "unknown")
 
 
-def _calls(registry, scan=None) -> tuple[ModelCalls, MagicMock]:
+def _calls(registry) -> tuple[ModelCalls, MagicMock]:
     routes = _Routes()
-    return ModelCalls(routes, {"x-device": "kitchen"}, registry, "caller", scan), routes.qwen  # type: ignore[arg-type]
+    return ModelCalls(routes, {"x-device": "kitchen"}, registry, "caller"), routes.qwen  # type: ignore[arg-type]
 
 
 def _registry() -> MagicMock:
@@ -102,20 +102,6 @@ async def test_it_asks_a_model_what_it_can_do_as_speech_to_text():
     handle.stt_capabilities.remote = AsyncMock(return_value=whisper)
     assert await calls.stt_capabilities("qwen") == whisper
     assert await calls.stt_capabilities("nope") is None
-
-
-@pytest.mark.asyncio
-async def test_a_scan_runs_the_replicas_speech_detection():
-    scan = AsyncMock(return_value=[(120, None, 400)])
-    calls, _ = _calls(_registry(), scan)
-    assert await calls.scan("voice", b"\x00\x00", 24000, 0.5, 500, "s1") == [(120, None, 400)]
-    scan.assert_awaited_once_with(b"\x00\x00", 24000, 0.5, 500)
-
-
-@pytest.mark.asyncio
-async def test_a_pipeline_without_speech_detection_scans_nothing():
-    calls, _ = _calls(_registry())
-    assert await calls.scan("chat", b"", 24000, 0.5, 500, "s1") is None
 
 
 @pytest.mark.asyncio

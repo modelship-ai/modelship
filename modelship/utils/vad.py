@@ -1,15 +1,13 @@
-"""Voice activity detection with Silero (through sherpa-onnx), timed the way OpenAI's
-Realtime `server_vad` reports it.
+"""Voice activity detection with Silero.
 
-One `Vad` per audio stream: it keeps state between `feed` calls. A `VadScanner` keeps
-none: each scan runs a reset detector over one window of audio. Audio is float32,
-mono, 16 kHz.
+`Vad` runs sherpa-onnx's detector, one per audio stream, timed the way OpenAI's Realtime
+`server_vad` reports it; its audio is float32, mono, 16 kHz. `SileroModel` runs the same
+model on onnxruntime, one for every stream, and each `SpeechStream` keeps only the model's
+state and where its speech is.
 """
 
 from __future__ import annotations
 
-import threading
-from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -144,104 +142,103 @@ class Vad:
             self._kept_from = keep_from
 
 
-# the longest window one scan takes
-MAX_SCAN_SECONDS = 32
-# the most distinct settings a scanner keeps detectors for
-_MAX_SETTINGS = 4
+# Silero v5 at 16 kHz: windows of 512 samples, each run with the 64 samples before it
+WINDOW = 512
+CONTEXT = 64
+# Silero's recurrent state for one stream
+STATE_SHAPE = (2, 1, 128)
+# below the threshold less this, a window is silence; between the two, speech goes on but doesn't start
+HYSTERESIS = 0.15
+# speech that lasts this long opens a segment
+MIN_SPEECH_MS = 250
 
 
-# the pause that ends speech when a scan finds where the speech in an open segment ends
-_SPEECH_GAP_MS = 100
-# the audio before an open segment that pass starts on, for the detector to settle
-_SPEECH_LEAD_MS = 200
+class SileroModel:
+    """Silero VAD v5 on onnxruntime, one model for every stream. Thread-safe."""
+
+    def __init__(self, model_path: str) -> None:
+        import onnxruntime
+
+        options = onnxruntime.SessionOptions()
+        options.intra_op_num_threads = 1
+        options.inter_op_num_threads = 1
+        self._session = onnxruntime.InferenceSession(model_path, options, providers=["CPUExecutionProvider"])
+        self._rate = np.array(SAMPLE_RATE, dtype=np.int64)
+
+    def run(self, window: np.ndarray, state: np.ndarray) -> tuple[float, np.ndarray]:
+        """The speech probability of *window* (CONTEXT + WINDOW samples), and the state after it."""
+        probability, after = self._session.run(None, {"input": window[None], "state": state, "sr": self._rate})
+        return float(np.asarray(probability).item()), np.asarray(after)
 
 
 @dataclass(frozen=True)
-class ScanSegment:
-    start_ms: int
-    # None: the speech runs on to the end of the window, or the silence after it is shorter than
-    # silence_duration_ms
-    end_ms: int | None
-    # where the speech heard in it ends: its end once closed, the window's end while speech goes on
-    speech_end_ms: int
+class SpeechSegment:
+    start_ms: float
+    # None while the silence after its speech is shorter than the silence duration
+    end_ms: float | None
+    # where the speech heard in it ends: its end once closed
+    speech_end_ms: float
 
 
-class VadScanner:
-    """Finds the speech in windows of audio, one window at a time. Each scan resets a pooled detector, so any
-    scan can come from any stream and the scanner keeps no state between them. Thread-safe."""
+class SpeechStream:
+    """The speech in one stream of 16-bit mono PCM at *rate*, found as it arrives, on a timeline in ms that starts
+    at *start_ms*. A segment opens once speech lasts MIN_SPEECH_MS, dated back to where it started, and closes once
+    silence lasts the silence duration. One feed at a time."""
 
-    def __init__(self, model_path: str, *, min_speech_ms: int = 250) -> None:
-        self._model_path = model_path
-        self._min_speech_ms = min_speech_ms
-        self._lock = threading.Lock()
-        # idle detectors by (threshold, silence_duration_ms), the least recently used first
-        self._idle: OrderedDict[tuple[float, int], list[Any]] = OrderedDict()
+    def __init__(self, model: SileroModel, rate: int, start_ms: float) -> None:
+        from modelship.utils.audio import StreamResampler
 
-    def scan(self, samples: np.ndarray, threshold: float, silence_duration_ms: int) -> list[ScanSegment]:
-        """The speech in *samples*, in ms from their start."""
-        if len(samples) > MAX_SCAN_SECONDS * SAMPLE_RATE:
-            raise ValueError(f"a scan takes at most {MAX_SCAN_SECONDS} s of audio")
-        samples = np.asarray(samples, dtype=np.float32)
-        found = self._pass(samples, threshold, silence_duration_ms)
-        if found and found[-1].end_ms is None:
-            # how far the speech in the open segment goes, before its trailing silence
-            start = found[-1].start_ms
-            lead = max(0, start - _SPEECH_LEAD_MS)
-            tail = self._pass(samples[lead * SAMPLE_RATE // 1000 :], threshold, _SPEECH_GAP_MS)
-            if tail and tail[-1].end_ms is None:
-                speech_end = _ms(len(samples))
-            else:
-                speech_end = max([start, *(lead + segment.speech_end_ms for segment in tail)])
-            found[-1] = ScanSegment(start, None, speech_end)
+        self.rate = rate
+        self._model = model
+        self._resample = StreamResampler(rate, SAMPLE_RATE)
+        self._start_ms = start_ms
+        self._state = np.zeros(STATE_SHAPE, dtype=np.float32)
+        self._window = np.zeros(CONTEXT + WINDOW, dtype=np.float32)
+        self._unfed = np.empty(0, dtype=np.float32)
+        # samples run through the model
+        self._fed = 0
+        # where speech not long enough to open a segment yet started
+        self._speech: int | None = None
+        # the open segment's start, and where the silence in it started
+        self._open: int | None = None
+        self._silence: int | None = None
+
+    def feed(self, pcm16: bytes, threshold: float, silence_duration_ms: int) -> list[SpeechSegment]:
+        """The segments that closed in *pcm16*, then the one still open."""
+        from modelship.utils.audio import from_pcm16
+
+        self._unfed = np.concatenate([self._unfed, self._resample(from_pcm16(pcm16))])
+        quiet = max(threshold - HYSTERESIS, 0.01)
+        min_speech = MIN_SPEECH_MS * SAMPLE_RATE // 1000
+        min_silence = silence_duration_ms * SAMPLE_RATE // 1000
+        found: list[SpeechSegment] = []
+        count = len(self._unfed) // WINDOW
+        for index in range(count):
+            self._window[:CONTEXT] = self._window[-CONTEXT:]
+            self._window[CONTEXT:] = self._unfed[index * WINDOW : (index + 1) * WINDOW]
+            probability, self._state = self._model.run(self._window, self._state)
+            start, self._fed = self._fed, self._fed + WINDOW
+            if self._open is None:
+                if probability >= threshold and self._speech is None:
+                    self._speech = start
+                elif probability < quiet:
+                    self._speech = None
+                if self._speech is not None and self._fed - self._speech >= min_speech:
+                    self._open, self._speech, self._silence = self._speech, None, None
+                continue
+            if probability >= threshold:
+                self._silence = None
+            elif probability < quiet and self._silence is None:
+                self._silence = start
+            if self._silence is not None and self._fed - self._silence >= min_silence:
+                end = self._ms(self._silence)
+                found.append(SpeechSegment(self._ms(self._open), end, end))
+                self._open = self._silence = None
+        self._unfed = self._unfed[count * WINDOW :]
+        if self._open is not None:
+            speech_end = self._fed if self._silence is None else self._silence
+            found.append(SpeechSegment(self._ms(self._open), None, self._ms(speech_end)))
         return found
 
-    def _pass(self, samples: np.ndarray, threshold: float, silence_duration_ms: int) -> list[ScanSegment]:
-        key = (threshold, silence_duration_ms)
-        detector = self._take(key)
-        try:
-            return self._run(detector, samples)
-        finally:
-            self._give(key, detector)
-
-    def _take(self, key: tuple[float, int]) -> Any:
-        with self._lock:
-            idle = self._idle.get(key)
-            if idle:
-                self._idle.move_to_end(key)
-                return idle.pop()
-        return self._detector(*key)
-
-    def _give(self, key: tuple[float, int], detector: Any) -> None:
-        with self._lock:
-            self._idle.setdefault(key, []).append(detector)
-            self._idle.move_to_end(key)
-            while len(self._idle) > _MAX_SETTINGS:
-                self._idle.popitem(last=False)
-
-    def _detector(self, threshold: float, silence_duration_ms: int) -> Any:
-        import sherpa_onnx
-
-        config = sherpa_onnx.VadModelConfig()
-        config.silero_vad.model = self._model_path
-        config.silero_vad.threshold = threshold
-        config.silero_vad.min_silence_duration = silence_duration_ms / 1000
-        config.silero_vad.min_speech_duration = self._min_speech_ms / 1000
-        config.silero_vad.max_speech_duration = MAX_SCAN_SECONDS
-        config.sample_rate = SAMPLE_RATE
-        config.num_threads = 1
-        return sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=MAX_SCAN_SECONDS + 1)
-
-    def _run(self, detector: Any, samples: np.ndarray) -> list[ScanSegment]:
-        detector.reset()
-        window = detector.config.silero_vad.window_size
-        for start in range(0, len(samples) - window + 1, window):
-            detector.accept_waveform(samples[start : start + window])
-        segments = []
-        while not detector.empty():
-            segment = detector.front
-            end = _ms(segment.start + len(segment.samples))
-            segments.append(ScanSegment(_ms(segment.start), end, end))
-            detector.pop()
-        if detector.is_speech_detected():
-            segments.append(ScanSegment(_ms(detector.current_segment.start), None, _ms(len(samples))))
-        return segments
+    def _ms(self, samples: int) -> float:
+        return self._start_ms + samples * 1000 / SAMPLE_RATE

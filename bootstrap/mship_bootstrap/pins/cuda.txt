@@ -411,6 +411,9 @@ flashinfer-python==0.7.2.post1 \
     # via
     #   mship-engine
     #   vllm
+flatbuffers==25.12.19 \
+    --hash=sha256:7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4
+    # via onnxruntime
 frozenlist==1.8.0 \
     --hash=sha256:0c18a16eab41e82c295618a77502e17b195883241c563b00f0aa5106fc4eaa0d \
     --hash=sha256:229bf37d2e4acdaf808fd3f06e854a4a7a3661e871b10dc1f8f1896a3b05f18b \
@@ -896,6 +899,7 @@ numpy==2.2.6 \
     #   nccl-extensions
     #   nccl4py
     #   numba
+    #   onnxruntime
     #   opencv-python-headless
     #   pandas
     #   pywhispercpp
@@ -1064,6 +1068,13 @@ nvtx==0.2.15 \
     --hash=sha256:3ca8030a6d197952318013dd1c12c22da1d4b9feb76ba72e0fcd449961183c2c \
     --hash=sha256:70a1e768964e0520b68ccabc4df391cc227537c45936a7eba6507bc65e617e00
     # via vllm
+onnxruntime==1.32.0 \
+    --hash=sha256:64d394c69d561af3efd4d4f49dcac8f11d0ce135a20701c16d53b74056cd4cf8 \
+    --hash=sha256:99e1074c4b2197accd5073052a465361be17b89c093b8ffb6e6bd8f986c52df8 \
+    --hash=sha256:d52510bbbcc880c13b826f7d75cdf33ac5cf0bb864d960000fc29ce73f0cb83e \
+    --hash=sha256:e36c187006e7a7c8b8d6d57f1a209dd63f52430dca6c282b177718ad6b841054 \
+    --hash=sha256:efe7456952c243a05a53d5b8732953625144642c2f3989094277f6217f0c0c40
+    # via mship-engine
 openai==2.52.0 \
     --hash=sha256:7c736d592f81471ce1f734838390983c4d8c8aecff23dcd36e600a58e5032d9c \
     --hash=sha256:f97e231d9a8fa69ab55897df1080f02d99913fb0a30e3ee56ea16a1eb6c2d434
@@ -1199,6 +1210,7 @@ packaging==26.3 \
     #   lm-format-enforcer
     #   nccl-extensions
     #   nccl4py
+    #   onnxruntime
     #   pooch
     #   ray
     #   transformers
@@ -1309,6 +1321,7 @@ protobuf==7.36.2 \
     #   nvidia-cutlass-dsl-libs-core
     #   nvidia-cutlass-dsl-libs-cu12
     #   nvidia-cutlass-dsl-libs-cu13
+    #   onnxruntime
     #   opentelemetry-proto
     #   proto-plus
     #   ray

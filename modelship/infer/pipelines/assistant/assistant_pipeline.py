@@ -11,6 +11,7 @@ from modelship.infer.infer_config import get_disconnect_registry
 from modelship.infer.pipelines.assistant.calls import PipelineCalls
 from modelship.infer.pipelines.assistant.model_calls import ModelCalls
 from modelship.infer.pipelines.assistant.session import refuse, serve_session
+from modelship.infer.pipelines.assistant.turns import OpenFinder
 from modelship.infer.pipelines.relay import (
     CLOSE_FAILED,
     MAX_QUEUED_BYTES,
@@ -23,6 +24,7 @@ from modelship.infer.pipelines.routes import ModelRoutes
 from modelship.logging import get_logger
 from modelship.openai.protocol.realtime import RealtimeError
 from modelship.utils.config_schema import AssistantPipelineConfig
+from modelship.utils.vad import SileroModel, SpeechStream, silero_vad_source
 
 logger = get_logger("realtime")
 
@@ -114,32 +116,24 @@ class AssistantPipeline(BasePipeline):
     def __init__(self, config: AssistantPipelineConfig, routes: ModelRoutes):
         super().__init__(config)
         self.routes = routes
-        self._scanner = None
+        # Silero, shared by every session's server VAD; None without an stt
+        self._silero: SileroModel | None = None
         # session key -> its channel
         self._channels: dict[str, RelayChannel] = {}
 
     async def start(self) -> None:
         if self.config.stt is not None:
             from modelship.utils.downloads import locked_download
-            from modelship.utils.vad import VadScanner, silero_vad_source
 
-            self._scanner = VadScanner(await locked_download(silero_vad_source(), self.config.name))
+            path = await locked_download(silero_vad_source(), self.config.name)
+            self._silero = await asyncio.to_thread(SileroModel, path)
 
-    async def _scan(
-        self, audio: bytes, rate: int, threshold: float, silence_duration_ms: int
-    ) -> list[tuple[int, int | None, int]]:
-        """The speech in *audio* (16-bit mono PCM at *rate*), as (start, end, speech end) in ms from its start."""
-        import soxr
-
-        from modelship.utils.audio import from_pcm16
-        from modelship.utils.vad import SAMPLE_RATE
-
-        assert self._scanner is not None
-        samples = from_pcm16(audio)
-        if rate != SAMPLE_RATE:
-            samples = soxr.resample(samples, rate, SAMPLE_RATE)
-        found = await asyncio.to_thread(self._scanner.scan, samples, threshold, silence_duration_ms)
-        return [(segment.start_ms, segment.end_ms, segment.speech_end_ms) for segment in found]
+    def _finder(self) -> OpenFinder | None:
+        """How a session's server VAD opens its speech finder; None without speech detection."""
+        model = self._silero
+        if model is None:
+            return None
+        return lambda rate, start_ms: SpeechStream(model, rate, start_ms)
 
     async def realtime(self, opening: RealtimeOpening) -> AsyncIterator[RealtimeFrame]:
         channel = RelayChannel()
@@ -159,12 +153,11 @@ class AssistantPipeline(BasePipeline):
             error = RealtimeError(message=f"Pipeline {self.config.name!r} isn't ready yet.", code="model_not_ready")
             await refuse(channel, error)
             return
-        await serve_session(channel, self.config, self._calls(opening))
+        await serve_session(channel, self.config, self._calls(opening), self._finder())
 
     def _calls(self, opening: RealtimeOpening) -> PipelineCalls:
         """How the session *opening* opens calls the pipeline's models."""
-        scan = self._scan if self._scanner is not None else None
-        return ModelCalls(self.routes, opening.headers, get_disconnect_registry(), opening.identity, scan)
+        return ModelCalls(self.routes, opening.headers, get_disconnect_registry(), opening.identity)
 
     async def _wind_down(self, session: asyncio.Future) -> None:
         """Lets *session* finish once its client left, cancelling it after a while."""

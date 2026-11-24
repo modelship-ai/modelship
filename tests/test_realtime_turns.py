@@ -1,14 +1,16 @@
-"""Server VAD's turn finding: a session's audio scanned as it arrives, with a fake scan that hears speech wherever
+"""Server VAD's turn finding: a session's audio fed as it arrives to a fake speech finder that hears speech wherever
 the audio is loud, and the turns it finds on the session's timeline."""
 
 import asyncio
+import threading
 
 import numpy as np
 import pytest
 
 from modelship.infer.pipelines.assistant.audio import InputAudioBuffer
-from modelship.infer.pipelines.assistant.turns import MAX_SCAN_MS, TurnDetector
+from modelship.infer.pipelines.assistant.turns import TurnDetector
 from modelship.openai.protocol.realtime import ServerVad
+from modelship.utils.vad import SpeechSegment
 
 RATE = 24000
 
@@ -23,37 +25,53 @@ def _quiet(seconds: float) -> bytes:
 
 
 class FakeVad:
-    """Scans like the pipeline's speech detection, statelessly: speech wherever a 10 ms frame is loud, a segment
-    closing once *silence_duration_ms* of quiet follows it. Records each scan's length in ms; *failing* makes scans
-    fail."""
+    """Opens speech finders like the pipeline's: speech wherever a 10 ms frame is loud, a segment opening at its
+    first loud frame and closing once *silence_duration_ms* of quiet follows it. Records each finder's rate and
+    start, and the ms each feed is given; *failing* makes feeds fail, and *gate*, set, makes each feed wait for it."""
 
     def __init__(self) -> None:
         self.failing = False
-        self.scans: list[int] = []
-        # set, each scan waits for it
-        self.gate: asyncio.Event | None = None
+        self.opened: list[tuple[int, float]] = []
+        self.feeds: list[float] = []
+        self.gate: threading.Event | None = None
 
-    async def scan(self, audio: bytes, rate: int, threshold: float, silence_duration_ms: int):
-        if self.gate is not None:
-            await self.gate.wait()
-        if self.failing:
-            return None
-        samples = np.frombuffer(audio, dtype="<i2")
-        self.scans.append(len(samples) * 1000 // rate)
-        frame = rate // 100
-        segments: list[tuple[int, int | None, int]] = []
-        start = last = None
-        for index in range(0, len(samples) - frame + 1, frame):
-            at = index * 1000 // rate
-            if np.abs(samples[index : index + frame].astype(np.int32)).max() > 1000:
-                start = at if start is None else start
-                last = at + 10
-            elif start is not None and last is not None and at + 10 - last >= silence_duration_ms:
-                segments.append((start, last, last))
-                start = None
-        if start is not None and last is not None:
-            segments.append((start, None, last))
-        return segments
+    def open(self, rate: int, start_ms: float) -> "_FakeFinder":
+        self.opened.append((rate, start_ms))
+        return _FakeFinder(self, rate, start_ms)
+
+
+class _FakeFinder:
+    def __init__(self, vad: FakeVad, rate: int, start_ms: float) -> None:
+        self.vad = vad
+        self.rate = rate
+        # where the next frame starts
+        self._at = start_ms
+        self._unfed = b""
+        self._start: float | None = None
+        self._last = 0.0
+
+    def feed(self, pcm16: bytes, threshold: float, silence_duration_ms: int) -> list[SpeechSegment]:
+        if self.vad.gate is not None:
+            self.vad.gate.wait()
+        if self.vad.failing:
+            raise RuntimeError("the detector broke")
+        self.vad.feeds.append(len(pcm16) // 2 * 1000 / self.rate)
+        self._unfed += pcm16
+        frame = self.rate // 100 * 2
+        found = []
+        while len(self._unfed) >= frame:
+            samples = np.frombuffer(self._unfed[:frame], dtype="<i2")
+            self._unfed = self._unfed[frame:]
+            at, self._at = self._at, self._at + 10
+            if np.abs(samples.astype(np.int32)).max() > 1000:
+                self._start = at if self._start is None else self._start
+                self._last = at + 10
+            elif self._start is not None and self._at - self._last >= silence_duration_ms:
+                found.append(SpeechSegment(self._start, self._last, self._last))
+                self._start = None
+        if self._start is not None:
+            found.append(SpeechSegment(self._start, None, self._last))
+        return found
 
 
 class _Turns:
@@ -74,7 +92,7 @@ class _Turns:
         self.detector = TurnDetector(
             self.buffer,
             settings or ServerVad(type="server_vad"),
-            self.vad.scan,
+            self.vad.open,
             self._started,
             self._ended,
             self._failed,
@@ -181,23 +199,49 @@ class TestTurns:
         assert turns.detector.turn is None
 
     @pytest.mark.asyncio
-    async def test_no_audio_goes_unscanned_and_no_scan_passes_its_limit(self):
+    @pytest.mark.parametrize("step", [0.1, 0.02, None], ids=["live", "small-appends", "all-at-once"])
+    async def test_each_append_is_fed_once_to_one_finder(self, step):
         turns = _Turns()
-        await turns.feed(_quiet(70), step=None)
-        assert max(turns.vad.scans) <= MAX_SCAN_MS
-        assert len(turns.vad.scans) >= 3
-        assert turns.detector._scanned_ms == turns.buffer.end_ms
+        await turns.feed(_quiet(3), step=step)
+        assert sum(turns.vad.feeds) == pytest.approx(3000)
+        assert turns.vad.opened == [(RATE, 0.0)]
+        assert turns.detector._fed_ms == turns.buffer.end_ms
 
     @pytest.mark.asyncio
-    async def test_the_buffer_keeps_only_what_the_next_scan_needs_between_turns(self):
+    async def test_appends_during_a_feed_go_together_in_the_next(self):
+        turns = _Turns()
+        turns.vad.gate = threading.Event()
+        for _ in range(5):
+            assert turns.buffer.append(_quiet(0.1), RATE) is None
+            turns.detector.appended()
+            await asyncio.sleep(0.01)
+        turns.vad.gate.set()
+        await turns.settle()
+        assert turns.vad.feeds == [pytest.approx(100), pytest.approx(400)]
+
+    @pytest.mark.asyncio
+    async def test_the_buffer_keeps_only_what_a_turn_would_need_between_turns(self):
         turns = _Turns()
         await turns.feed(_quiet(10))
-        # the silence, the warm-up and the padding, and the audio not scanned yet
-        assert turns.buffer.seconds <= 0.5 + 1 + 0.3 + 0.3
+        # the lead for speech too short to open a segment yet, and the padding
+        assert turns.buffer.seconds <= 1 + 0.3 + 0.1
         assert turns.buffer.end_ms == pytest.approx(10000)
 
     @pytest.mark.asyncio
-    async def test_failing_scans_are_reported_once_per_outage_and_keep_the_audio(self):
+    async def test_a_commit_or_a_new_rate_opens_a_new_finder_where_the_buffer_ends(self):
+        turns = _Turns()
+        await turns.feed(_quiet(1))
+        turns.buffer.take()
+        turns.detector.reset()
+        await turns.feed(_quiet(1))
+        turns.buffer.take()
+        assert turns.buffer.append(bytes(1600 * 2), 16000) is None
+        turns.detector.appended()
+        await turns.settle()
+        assert turns.vad.opened == [(RATE, 0.0), (RATE, 1000.0), (16000, 2000.0)]
+
+    @pytest.mark.asyncio
+    async def test_failing_feeds_are_reported_once_per_outage_and_keep_the_audio(self):
         turns = _Turns()
         turns.vad.failing = True
         await turns.feed(_quiet(5))
@@ -210,7 +254,7 @@ class TestTurns:
         assert [event[0] for event in turns.events] == ["failed", "started", "ended", "failed"]
 
     @pytest.mark.asyncio
-    async def test_speech_during_an_outage_is_found_once_scans_answer_again(self):
+    async def test_speech_during_an_outage_is_found_once_feeds_work_again(self):
         turns = _Turns()
         turns.vad.failing = True
         await turns.feed(_quiet(1), _tone(1), _quiet(1))
@@ -218,9 +262,11 @@ class TestTurns:
         await turns.feed(_quiet(0.3))
         assert [event[0] for event in turns.events] == ["failed", "started", "ended"]
         assert turns.turns() == [(700, 2500)]
+        # a new finder took the audio from where the last good feed stopped
+        assert turns.vad.opened[-1] == (RATE, 0.0)
 
     @pytest.mark.asyncio
-    async def test_a_commit_while_the_session_reports_a_turn_stops_the_scan(self):
+    async def test_a_commit_while_the_session_reports_a_turn_stops_the_feed(self):
         turns = _Turns()
         turns.commit_on_start = True
         await turns.feed(_quiet(1), _tone(1), _quiet(1), step=None)
@@ -230,7 +276,7 @@ class TestTurns:
 
     @pytest.mark.asyncio
     async def test_a_reset_lets_a_commit_under_way_finish(self):
-        # what turning server VAD off does: the scan isn't cancelled, so audio taken is committed
+        # what turning server VAD off does: the feed isn't cancelled, so audio taken is committed
         turns = _Turns()
         turns.sending = asyncio.Event()
         assert turns.buffer.append(_quiet(1) + _tone(1) + _quiet(1), RATE) is None
@@ -246,20 +292,20 @@ class TestTurns:
         assert turns.detector.turn is None
 
     @pytest.mark.asyncio
-    async def test_a_scan_runs_on_the_settings_it_started_with(self):
+    async def test_a_feed_runs_on_the_settings_it_started_with(self):
         turns = _Turns()
-        turns.vad.gate = asyncio.Event()
+        turns.vad.gate = threading.Event()
         assert turns.buffer.append(_quiet(1) + _tone(1) + _quiet(1), RATE) is None
         turns.detector.appended()
         await asyncio.sleep(0)
-        # a session.update while the scan runs
+        # a session.update while the feed runs
         turns.detector.settings = ServerVad(type="server_vad", prefix_padding_ms=0, silence_duration_ms=200)
         turns.vad.gate.set()
         await turns.settle()
         assert turns.turns()[0] == (700, 2500)
 
     @pytest.mark.asyncio
-    async def test_a_refused_ending_keeps_the_turn_and_its_audio_and_ends_it_on_a_later_scan(self):
+    async def test_a_refused_ending_keeps_the_turn_and_its_audio_and_ends_it_on_a_later_feed(self):
         turns = _Turns()
         turns.refusals = 2
         await turns.feed(_quiet(1), _tone(1), _quiet(1.5))
@@ -268,7 +314,7 @@ class TestTurns:
         assert ended == ("ended", started[1], 700, 2500)
 
     @pytest.mark.asyncio
-    async def test_a_scan_in_flight_over_reset_audio_changes_nothing(self):
+    async def test_a_feed_in_flight_over_reset_audio_changes_nothing(self):
         turns = _Turns()
         assert turns.buffer.append(_quiet(1) + _tone(1), RATE) is None
         turns.detector.appended()
@@ -297,14 +343,14 @@ class TestTurns:
 
     @pytest.mark.asyncio
     async def test_min_speech_longer_than_the_silence_still_starts_a_turn(self):
-        # each scan looks back far enough to see the whole of the speech
+        # the open segment keeps its start while it waits to last long enough
         turns = _Turns()
         turns.min_speech = 2000
         await turns.feed(_quiet(1), _tone(3), _quiet(1))
         assert turns.turns() == [(700, 4500)]
 
     @pytest.mark.asyncio
-    async def test_closing_stops_the_scan_in_flight(self):
+    async def test_closing_stops_the_feed_in_flight(self):
         turns = _Turns()
         assert turns.buffer.append(_quiet(1), RATE) is None
         turns.detector.appended()
