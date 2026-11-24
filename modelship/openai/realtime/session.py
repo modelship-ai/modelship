@@ -784,6 +784,8 @@ class Session:
             active = self.active
             if active is not None and not active.done() and active.in_conversation:
                 active.cancel("turn_detected")
+                # the answer cut off is owed, even if this turn says nothing
+                self._reply_owed = True
 
     def _interrupts(self) -> bool:
         """Whether a turn server VAD finds cuts the answer off."""
@@ -808,8 +810,8 @@ class Session:
         await self.send(server_event("input_audio_buffer.speech_stopped", audio_end_ms=audio_end_ms, item_id=turn))
         settings = self.state.audio.input.turn_detection
         answers = isinstance(settings, ServerVad) and settings.create_response and self.state.type == "realtime"
-        # a turn that ends while the model answers gets no answer of its own
-        responding = self.active is not None and not self.active.done()
+        # a turn that ends while the model answers gets no answer of its own; one it cut off doesn't count
+        responding = self.active is not None and not self.active.done() and not self.active.cancelled
         item, transcribed = await self._commit(wav, seconds, turn)
         if answers and not responding:
             reply = asyncio.ensure_future(self._reply(item, transcribed))

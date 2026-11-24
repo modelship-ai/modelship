@@ -1695,9 +1695,10 @@ class TestBargeIn:
         ws.send_json({"type": "response.create"})
         _until(ws, "response.done")
 
-    def test_talking_over_the_answer_cancels_it_and_the_new_turn_is_answered(self):
+    @pytest.mark.parametrize("second", ["In the kitchen.", ""], ids=["says-something", "says-nothing"])
+    def test_talking_over_the_answer_cancels_it_and_the_new_turn_is_answered(self, second):
         llm = _Llm(_answer("Let me think", finish=None), _answer("The kitchen it is."))
-        stt = _Stt("Lights on.", "In the kitchen.")
+        stt = _Stt("Lights on.", second)
         with self._session(stt, llm) as ws:
             _open(ws)
             _stream(ws, _quiet(1), _tone(1), _quiet(1))
@@ -1711,7 +1712,8 @@ class TestBargeIn:
         assert (done["status"], done["status_details"]["reason"]) == ("cancelled", "turn_detected")
         assert answered[-1]["response"]["status"] == "completed"
         assert llm.closed_early == [True, False]
-        assert _messages(llm.requests[1]) == ["Lights on.", "Let me think", "In the kitchen."]
+        # a turn that says nothing is left out, and the answer it cut off is given again
+        assert _messages(llm.requests[1]) == ["Lights on.", "Let me think", *([second] if second else [])]
 
     def test_an_answer_out_of_the_conversation_goes_on(self):
         llm = _Llm(_answer("Thinking", finish=None))
