@@ -287,6 +287,16 @@ class TestSpoken:
         assert spoken.truncate(spoken.ms - 1, text) == "**Sure**, the  kitchen lights are on.\n\nThe oven is"
 
     @pytest.mark.asyncio
+    async def test_a_piece_with_nothing_to_say_is_kept_only_when_audio_after_it_was_heard(self):
+        text = "The kitchen lights are on now.\n---\n"
+        spoken = await self._spoken(text)
+        assert spoken.truncate(spoken.ms, text) == "The kitchen lights are on now."
+        # a table's rule: a piece of its own, with nothing to say
+        text = "| --- | --- | --- | --- |\nThe kitchen lights are on now."
+        spoken = await self._spoken(text)
+        assert spoken.truncate(0, text) == ""
+
+    @pytest.mark.asyncio
     async def test_text_written_but_not_spoken_is_dropped(self):
         speaker = _Speaker(hold=True)
         speech, _ = _speech(speaker)

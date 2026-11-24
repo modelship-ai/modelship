@@ -179,7 +179,7 @@ class TurnDetector:
             if self.turn is None:
                 await self._start(max(self._floor_ms, self.buffer.start_ms, begin - settings.prefix_padding_ms))
             if stop is None:
-                self._speech_ms = end
+                self._speech_ms = speech_end
                 break
             self._speech_ms = stop
             if not await self._close(stop, stop + settings.silence_duration_ms):

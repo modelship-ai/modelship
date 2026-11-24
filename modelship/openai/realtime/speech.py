@@ -185,9 +185,13 @@ class Spoken:
         self._limit_ms = min(self._limit_ms, audio_end_ms)
         start, start_ms = 0, 0.0
         for end, ms in self._calls:
-            if start_ms + ms <= audio_end_ms:
+            # a call that said nothing counts as heard only when audio after it was
+            heard = start_ms + ms <= audio_end_ms if ms else start_ms < audio_end_ms
+            if heard:
                 start, start_ms = int(end), start_ms + ms
                 continue
+            if not ms:
+                break
             words = list(_WORD.finditer(transcript, start, int(end)))
             kept = int(len(words) * (audio_end_ms - start_ms) / ms)
             return transcript[: words[kept - 1].end()] if kept else transcript[:start]
