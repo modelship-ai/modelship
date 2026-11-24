@@ -9,7 +9,8 @@ from modelship.utils import random_uuid
 
 SessionType = Literal["realtime", "transcription"]
 Modality = Literal["text", "audio"]
-Modalities = Annotated[list[Modality], Field(min_length=1)]
+# ["text"] or ["audio"]: not both, which OpenAI's spec refuses
+Modalities = Annotated[list[Modality], Field(min_length=1, max_length=1)]
 MaxOutputTokens = Annotated[int, Field(ge=1)] | Literal["inf"]
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
 ResponseStatus = Literal["in_progress", "completed", "cancelled", "incomplete", "failed"]

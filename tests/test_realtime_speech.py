@@ -194,6 +194,20 @@ class TestSpeech:
         assert max(len(chunk) for chunk in sent) == 4
 
     @pytest.mark.asyncio
+    async def test_cjk_pieces_are_joined_without_spaces(self):
+        speaker = _Speaker(hold=True)
+        speech, _ = _speech(speaker)
+        speech.write("今天的天气非常好，我们一起去公园散步吧。然后")
+        await asyncio.sleep(0)
+        speech.write("我们一起去吃一顿很好吃的晚饭吧。之后我们再一起回家去休息一下好吗？还有别的事情吗？")
+        speaker.release.set()
+        await speech.finish()
+        assert speaker.texts == [
+            "今天的天气非常好，我们一起去公园散步吧。",
+            "然后我们一起去吃一顿很好吃的晚饭吧。之后我们再一起回家去休息一下好吗？还有别的事情吗？",
+        ]
+
+    @pytest.mark.asyncio
     async def test_joined_pieces_stay_within_200_characters(self):
         speaker = _Speaker(hold=True)
         speech, _ = _speech(speaker)

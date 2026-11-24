@@ -785,9 +785,17 @@ class TestResponses:
         [
             ({"type": "response.create", "response": {"output_modalities": []}}, "response.output_modalities"),
             ({"type": "session.update", "session": {"output_modalities": []}}, "session.output_modalities"),
+            (
+                {"type": "response.create", "response": {"output_modalities": ["text", "audio"]}},
+                "response.output_modalities",
+            ),
+            (
+                {"type": "session.update", "session": {"output_modalities": ["audio", "text"]}},
+                "session.output_modalities",
+            ),
         ],
     )
-    def test_no_output_modality_is_refused(self, event, param):
+    def test_anything_but_one_output_modality_is_refused(self, event, param):
         with self._session(_Llm()) as ws:
             _open(ws)
             ws.send_json(event)

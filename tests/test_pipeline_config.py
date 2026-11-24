@@ -71,6 +71,7 @@ class TestSchema:
             {"max_output_tokens": 0},
             {"output_modalities": ["video"]},
             {"output_modalities": []},
+            {"output_modalities": ["text", "audio"]},
             {"voice": "af_heart"},
             {"turn_detection": None},
             {"reasoning": {"effort": "huge"}},

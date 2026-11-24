@@ -66,6 +66,13 @@ def _ends_sentence(text: str, period: int) -> bool:
     return not (len(word.replace(".", "")) <= 3 and (len(word) == 1 or "." in word))
 
 
+def _separator(piece: str) -> str:
+    """What goes between *piece* and the piece after it: nothing after a mark the text runs on from unspaced."""
+    end = piece.rstrip("".join(_CLOSERS))[-1:]
+    unspaced = end in _CJK_SENTENCE_ENDS or end in _CJK_CLAUSE_MARKS or end == _EM_DASH
+    return "" if unspaced else " "
+
+
 class Chunker:
     """Cuts streamed text into pieces to speak: the first short, at a sentence or clause, the rest at sentences."""
 
@@ -196,8 +203,12 @@ class Speech:
     def _take(self, first: bool) -> str:
         text = self._pieces.pop(0)
         if not first:
-            while self._pieces and len(text) + 1 + len(self._pieces[0]) <= MAX_CHARS:
-                text += " " + self._pieces.pop(0)
+            while self._pieces:
+                joined = text + _separator(text) + self._pieces[0]
+                if len(joined) > MAX_CHARS:
+                    break
+                text = joined
+                self._pieces.pop(0)
         return text
 
     async def _run(self) -> None:
