@@ -1,7 +1,7 @@
 """`PipelineCalls` in a pipeline replica: a session's calls to its pipeline's models through their Serve handles,
-with the client's headers, identity and the disconnect registry bound, and speech detection run in the replica."""
+with the client's headers, identity and the disconnect registry bound."""
 
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from typing import Any, cast
 
 from ray.exceptions import RayActorError, RayTaskError
@@ -24,9 +24,6 @@ from modelship.openai.protocol.responses.schemas import ResponsesRequest
 from modelship.utils import random_uuid
 
 logger = get_logger("realtime")
-
-# (audio, rate, threshold, silence_duration_ms) -> (start, end, speech end) per segment
-Scan = Callable[[bytes, int, float, int], Awaitable[list[tuple[int, int | None, int]]]]
 
 
 async def _respond_stream(
@@ -71,25 +68,16 @@ async def _stop_call(stream: DeploymentResponseGenerator, registry: Any, req_id:
 
 
 class ModelCalls:
-    """A session's `PipelineCalls`. *routes* is the replica's model table, and *scan* its speech detection, or None
-    for a pipeline without one."""
+    """A session's `PipelineCalls`. *routes* is the replica's model table."""
 
-    def __init__(self, routes: ModelRoutes, headers: dict[str, str], registry: Any, identity: str, scan: Scan | None):
+    def __init__(self, routes: ModelRoutes, headers: dict[str, str], registry: Any, identity: str):
         self._routes = routes
         self._headers = headers
         self._registry = registry
         self._identity = identity
-        self._scan = scan
 
     def model_state(self, model: str) -> ModelState:
         return self._routes.state(model)
-
-    async def scan(
-        self, pipeline: str, audio: bytes, rate: int, threshold: float, silence_duration_ms: int, session_id: str
-    ) -> list[tuple[int, int | None, int]] | None:
-        if self._scan is None:
-            return None
-        return await self._scan(audio, rate, threshold, silence_duration_ms)
 
     def respond(self, model: str, request: ResponsesRequest, session_id: str) -> Answer | None:
         handle = self._routes.handle(model)

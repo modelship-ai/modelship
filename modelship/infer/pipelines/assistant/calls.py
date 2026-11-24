@@ -45,11 +45,3 @@ class PipelineCalls(Protocol):
     ) -> RawSpeechResponse | ErrorResponse | None:
         """*model* speaking *request*'s text, as a WAV; None while nothing serves *model*."""
         ...
-
-    async def scan(
-        self, pipeline: str, audio: bytes, rate: int, threshold: float, silence_duration_ms: int, session_id: str
-    ) -> list[tuple[int, int | None, int]] | None:
-        """The speech in *audio* (16-bit mono PCM at *rate*), as (start, end, speech end) ms from its start, the end
-        None while the speech may go on and the speech end where the speech heard in it ends; None when *pipeline*
-        has no speech detection."""
-        ...

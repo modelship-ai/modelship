@@ -195,7 +195,7 @@ class _Tts:
 
 class _Calls:
     """`PipelineCalls` over a fake LLM, "qwen", a speech-to-text model, "whisper", answering *stt*, a
-    text-to-speech model, "kokoro", and speech detection scanning with *vad*; the gateway has the models *known*,
+    text-to-speech model, "kokoro", and speech detection with *vad*; the gateway has the models *known*,
     and *serving* serve."""
 
     def __init__(
@@ -221,9 +221,6 @@ class _Calls:
         if model not in self.known:
             return "unknown"
         return "serving" if model in self.serving else "starting"
-
-    async def scan(self, pipeline: str, audio: bytes, rate: int, threshold: float, silence_ms: int, session_id: str):
-        return await self.vad.scan(audio, rate, threshold, silence_ms)
 
     async def transcribe(self, model: str, audio: bytes, request: TranscriptionRequest, session_id: str):
         assert model == "whisper" and self.transcriber is not None
@@ -280,7 +277,7 @@ class _Routes:
 
 
 class _Pipeline(AssistantPipeline):
-    """The assistant pipeline, calling *calls*."""
+    """The assistant pipeline, calling *calls* and finding speech with their *vad*."""
 
     def __init__(self, config: AssistantPipelineConfig, calls: _Calls):
         super().__init__(config, _Routes())  # type: ignore[arg-type]
@@ -288,6 +285,9 @@ class _Pipeline(AssistantPipeline):
 
     def _calls(self, opening: RealtimeOpening):
         return self.calls
+
+    def _finder(self):
+        return self.calls.vad.open
 
 
 class _Link:
@@ -1682,7 +1682,7 @@ class TestServerVad:
         assert updated["session"]["audio"]["input"]["turn_detection"] is None
         assert stt.requests == []
 
-    def test_a_scan_that_fails_is_reported_once_and_a_commit_still_works(self):
+    def test_speech_detection_that_fails_is_reported_once_and_a_commit_still_works(self):
         vad = FakeVad()
         vad.failing = True
         stt = _Stt("Lights on.")

@@ -27,7 +27,7 @@ from modelship.infer.pipelines.assistant.conversation import Conversation, as_in
 from modelship.infer.pipelines.assistant.playback import Playback
 from modelship.infer.pipelines.assistant.response import ActiveResponse, NewSpeech
 from modelship.infer.pipelines.assistant.speech import SendAudio, Speech, Spoken
-from modelship.infer.pipelines.assistant.turns import TurnDetector
+from modelship.infer.pipelines.assistant.turns import OpenFinder, SpeechFinder, TurnDetector
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
@@ -253,8 +253,11 @@ async def refuse(channel: Channel, error: RealtimeError) -> None:
     await channel.close(CLOSE_REFUSED)
 
 
-async def serve_session(channel: Channel, config: AssistantPipelineConfig, calls: PipelineCalls) -> None:
-    """Runs one session on *config* until the client leaves; *calls* is how it calls the pipeline's models."""
+async def serve_session(
+    channel: Channel, config: AssistantPipelineConfig, calls: PipelineCalls, finder: OpenFinder | None = None
+) -> None:
+    """Runs one session on *config* until the client leaves; *calls* is how it calls the pipeline's models, and
+    *finder* how server VAD finds speech, None without speech detection."""
     refusal = _refusal(config, calls)
     if refusal is not None:
         await refuse(channel, refusal)
@@ -263,18 +266,24 @@ async def serve_session(channel: Channel, config: AssistantPipelineConfig, calls
     if isinstance(stt, RealtimeError):
         await refuse(channel, stt)
         return
-    await Session(channel, config, calls, stt).run()
+    await Session(channel, config, calls, stt, finder).run()
 
 
 class Session:
     def __init__(
-        self, channel: Channel, config: AssistantPipelineConfig, calls: PipelineCalls, stt: SttCapabilities | None
+        self,
+        channel: Channel,
+        config: AssistantPipelineConfig,
+        calls: PipelineCalls,
+        stt: SttCapabilities | None,
+        finder: OpenFinder | None = None,
     ):
         self.channel = channel
         self.config = config
         self.calls = calls
         # what the stt model can do, asked once at open; None without one
         self.stt = stt
+        self._finder = finder
         self.state = _new_session(config)
         self.conversation = Conversation()
         self.active: ActiveResponse | None = None
@@ -294,8 +303,8 @@ class Session:
         self._busy_reported = False
         # a turn server VAD found went unanswered because the user talked again
         self._reply_owed = False
-        # scans still finishing after server VAD was turned off
-        self._retired_scans: set[asyncio.Task] = set()
+        # feeds still finishing after server VAD was turned off
+        self._retired_feeds: set[asyncio.Task] = set()
         # the client playing the session's spoken answers
         self.playback = Playback()
         # what each spoken message said, by item id
@@ -330,7 +339,7 @@ class Session:
                 await self._handle(message)
         finally:
             self._closed = True
-            for task in (*self._transcriptions, *self._replies, *self._retired_scans):
+            for task in (*self._transcriptions, *self._replies, *self._retired_feeds):
                 task.cancel()
             if self.turns is not None:
                 await self.turns.close()
@@ -732,11 +741,11 @@ class Session:
         settings = self.state.audio.input.turn_detection
         if not isinstance(settings, ServerVad):
             if self.turns is not None:
-                # not cancelled: a scan in flight stops at its next step, and a commit it began completes
+                # not cancelled: a feed in flight stops at its next step, and a commit it began completes
                 self.turns.reset()
                 if (task := self.turns.task) is not None:
-                    self._retired_scans.add(task)
-                    task.add_done_callback(self._retired_scans.discard)
+                    self._retired_feeds.add(task)
+                    task.add_done_callback(self._retired_feeds.discard)
                 self.turns = None
             return
         if self.turns is not None:
@@ -745,10 +754,10 @@ class Session:
         self.turns = TurnDetector(
             self.buffer,
             settings,
-            self._scan,
+            self._open_finder,
             self._turn_started,
             self._turn_ended,
-            self._scan_failed,
+            self._detection_failed,
             self._min_speech,
         )
 
@@ -758,10 +767,10 @@ class Session:
             return self.config.min_interruption_ms
         return 0
 
-    async def _scan(
-        self, audio: bytes, rate: int, threshold: float, silence_duration_ms: int
-    ) -> list[tuple[int, int | None, int]] | None:
-        return await self.calls.scan(self.config.name, audio, rate, threshold, silence_duration_ms, self.state.id)
+    def _open_finder(self, rate: int, start_ms: float) -> SpeechFinder:
+        if self._finder is None:
+            raise RuntimeError(f"pipeline {self.config.name!r} has no speech detection")
+        return self._finder(rate, start_ms)
 
     async def _turn_started(self, turn: str, audio_start_ms: int) -> None:
         await self.send(server_event("input_audio_buffer.speech_started", audio_start_ms=audio_start_ms, item_id=turn))
@@ -781,7 +790,7 @@ class Session:
 
     async def _turn_ended(self, turn: str, audio_start_ms: int, audio_end_ms: int) -> bool:
         """Commits the turn server VAD found; False while the transcription queue is full, which keeps the turn and
-        its audio for a later scan."""
+        its audio for a later feed."""
         if (error := self._busy((audio_end_ms - audio_start_ms) / 1000)) is not None:
             if not self._busy_reported:
                 self._busy_reported = True
@@ -824,7 +833,7 @@ class Session:
         if error is not None:
             await self.send(error_event(error))
 
-    async def _scan_failed(self) -> None:
+    async def _detection_failed(self) -> None:
         await self.send(
             error_event(
                 RealtimeError(

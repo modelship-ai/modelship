@@ -11,7 +11,7 @@ uv tool install mship       # or: pipx install mship / pip install mship
 | `mship bootstrap --cuda` | NVIDIA GPU node (vLLM, Diffusers, llama.cpp and stable-diffusion.cpp on the GPU) |
 | `mship bootstrap --cpu` | CPU node (vLLM CPU, llama.cpp, whisper.cpp, sherpa-onnx, stable-diffusion.cpp) |
 | `mship bootstrap --vulkan` | AMD or Intel GPU node, Linux only (everything `--cpu` runs, plus llama.cpp and stable-diffusion.cpp on the GPU) |
-| `mship bootstrap --metal` | Apple Silicon (llama.cpp, stable-diffusion.cpp and whisper.cpp on the GPU) |
+| `mship bootstrap --metal` | Apple Silicon on macOS 14 or later (llama.cpp, stable-diffusion.cpp and whisper.cpp on the GPU) |
 | `mship bootstrap --thin` | Coordinator/head only — serves nothing itself |
 
 Which loaders each variant runs, and on which device: [Architecture](index.md#architecture).

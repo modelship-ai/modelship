@@ -77,14 +77,26 @@ def _nvidia_driver() -> tuple[int, int] | None:
         nvml.nvmlShutdown()
 
 
+# the oldest macOS every --metal wheel installs on: onnxruntime's are macosx_14_0_arm64
+METAL_MIN_MACOS = 14
+
+
 def check_hardware(required: str | None) -> None:
     if required == "cuda":
         _check_nvidia_driver()
-    elif required == "metal" and (platform.system(), platform.machine()) != ("Darwin", "arm64"):
+    elif required == "metal":
+        _check_apple_silicon()
+
+
+def _check_apple_silicon() -> None:
+    if (platform.system(), platform.machine()) != ("Darwin", "arm64"):
         raise GateError(
             f"error: --metal needs Apple Silicon, found {platform.system()}/{platform.machine()}.\n"
             "Use --cuda for an NVIDIA host or --cpu for a CPU-only node."
         )
+    release = platform.mac_ver()[0]
+    if release and int(release.split(".")[0]) < METAL_MIN_MACOS:
+        raise GateError(f"error: --metal needs macOS {METAL_MIN_MACOS} or later, found macOS {release}.")
 
 
 def _check_nvidia_driver() -> None:

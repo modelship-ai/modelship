@@ -17,6 +17,7 @@ from modelship.infer.pipelines.assistant import assistant_pipeline
 from modelship.infer.pipelines.assistant.assistant_pipeline import AssistantPipeline, RelayChannel
 from modelship.infer.pipelines.relay import RealtimeClosed, RealtimeOpened, RealtimeOpening
 from modelship.infer.pipelines.routes import ModelRoutes
+from modelship.utils import downloads
 from modelship.utils.config_schema import AssistantPipelineConfig
 
 CHAT = AssistantPipelineConfig(name="chat", type="assistant", llm="qwen")
@@ -104,8 +105,8 @@ class TestAssistantPipeline:
     async def test_a_session_runs_on_its_channel_until_its_client_leaves(self, monkeypatch):
         served: list = []
 
-        async def serve(channel, config, calls) -> None:
-            served.append(calls)
+        async def serve(channel, config, calls, finder) -> None:
+            served.append((calls, finder))
             await channel.send(await channel.receive())
             await channel.receive()
 
@@ -119,8 +120,33 @@ class TestAssistantPipeline:
         await pipeline.realtime_close("k1")
         assert [frame async for frame in stream] == []
         assert await pipeline.realtime_event("k1", ["late"]) is False
-        assert served[0]._headers == {"x-device": "kitchen"}
-        assert served[0]._scan is None
+        calls, finder = served[0]
+        assert calls._headers == {"x-device": "kitchen"}
+        # a pipeline without an stt has no speech detection
+        assert finder is None
+
+    @pytest.mark.asyncio
+    async def test_one_silero_model_serves_every_sessions_speech_finder(self, monkeypatch):
+        loaded: list[str] = []
+
+        async def download(source, name) -> str:
+            return "/models/silero.onnx"
+
+        class Silero:
+            def __init__(self, path: str) -> None:
+                loaded.append(path)
+
+        monkeypatch.setattr(downloads, "locked_download", download)
+        monkeypatch.setattr(assistant_pipeline, "SileroModel", Silero)
+        voice = AssistantPipelineConfig(name="voice", type="assistant", stt="parakeet")
+        pipeline = AssistantPipeline(voice, _Routes())  # type: ignore[arg-type]
+        await pipeline.start()
+        finder = pipeline._finder()
+        assert finder is not None
+        first, second = finder(24000, 0.0), finder(8000, 500.0)
+        assert loaded == ["/models/silero.onnx"]
+        assert first._model is second._model
+        assert (first.rate, second.rate) == (24000, 8000)
 
     def test_an_assistant_config_loads_the_assistant(self):
         assert isinstance(load_pipeline(CHAT, MagicMock()), AssistantPipeline)
