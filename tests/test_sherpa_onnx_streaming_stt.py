@@ -222,6 +222,30 @@ class TestStreamDecoder:
             time.sleep(0.01)
         assert decoder.streams == 0
 
+    def test_a_close_fails_the_push_waiting_on_it_and_a_later_push_gets_its_own_stream(self):
+        decoder, recognizer = _decoder()
+        recognizer.hold = threading.Event()
+        decoder.submit("s0:t1", _audio(100), RATE, None, False)
+        time.sleep(0.05)
+        waiting = decoder.submit("s1:t1", _audio(300), RATE, None, False)
+        decoder.close("s1:t1")
+        later = decoder.submit("s1:t1", _audio(100), RATE, None, False)
+        recognizer.hold.set()
+        with pytest.raises(KeyError, match="was closed"):
+            waiting.result(timeout=5)
+        assert (later.result(timeout=5).text, later.result().audio_ms) == ("w0", 100.0)
+
+    def test_stopping_fails_the_jobs_queued_with_the_stop(self):
+        decoder, recognizer = _decoder()
+        recognizer.hold = threading.Event()
+        decoder.submit("s0:t1", _audio(100), RATE, None, False)
+        time.sleep(0.05)
+        queued = decoder.submit("s1:t1", _audio(100), RATE, None, False)
+        decoder.stop()
+        recognizer.hold.set()
+        with pytest.raises(RuntimeError, match="shut down"):
+            queued.result(timeout=5)
+
     def test_stopping_fails_the_jobs_waiting(self):
         decoder, recognizer = _decoder()
         recognizer.hold = threading.Event()
@@ -350,7 +374,11 @@ class TestFileTranscription:
 class TestWords:
     def test_a_word_ends_where_the_next_token_starts(self):
         found = nemo_streaming_transducer.words([" Al", "les", " gut", "."], [0.1, 0.3, 0.5, 0.8], 1.0)
-        assert [(w.word, w.start, w.end) for w in found] == [("Alles", 1.1, 1.5), ("gut.", 1.5, 1.8)]
+        assert [(w.word, w.start, w.end) for w in found] == [("Alles", 1.1, 1.5), ("gut.", 1.5, 1.88)]
+
+    def test_a_last_word_of_one_token_lasts_a_frame(self):
+        [word] = nemo_streaming_transducer.words([" Ja"], [0.4], 0.0)
+        assert (word.start, word.end) == (0.4, 0.48)
 
 
 class TestRegistry:

@@ -26,12 +26,16 @@ def recognizer(entry: AsrEntry, bundle_dir: str, threads: int, provider: str) ->
     )
 
 
+# an encoder frame: 8x subsampled 10 ms features; a token spans at least one
+FRAME_S = 0.08
+
+
 def words(tokens: list[str], timestamps: list[float], offset: float) -> list[TranscriptionWord]:
     """Words from SentencePiece tokens, *offset* seconds into the audio: a token that starts with a space starts a
-    word, any other extends the last. A word ends where the next token starts, the last one where it starts."""
+    word, any other extends the last. A word ends where the next token starts, the last one a frame after it starts."""
     found: list[TranscriptionWord] = []
     for index, (token, start) in enumerate(zip(tokens, timestamps, strict=False)):
-        end = timestamps[index + 1] if index + 1 < len(timestamps) else start
+        end = timestamps[index + 1] if index + 1 < len(timestamps) else start + FRAME_S
         if token.startswith((" ", "▁")) or not found:
             text = token.strip(" ▁")
             if text:

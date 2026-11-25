@@ -145,12 +145,15 @@ class StreamDecoder:
         while True:
             try:
                 taken = self._take()
-            except _StoppedError:
-                self._fail_all(RuntimeError("the speech-to-text model shut down"))
+            except _StoppedError as stopped:
+                error = RuntimeError("the speech-to-text model shut down")
+                for job in stopped.queued:
+                    _settle(job.future, error=error)
+                self._fail_all(error)
                 return
             for item in taken:
                 if isinstance(item, _Close):
-                    self._streams.pop(item.key, None)
+                    self._close(item.key)
                 else:
                     self._apply(item)
             try:
@@ -170,8 +173,14 @@ class StreamDecoder:
             while True:
                 taken.append(self._jobs.get_nowait())
         if None in taken:
-            raise _StoppedError
+            raise _StoppedError([item for item in taken if isinstance(item, _Job)])
         return [item for item in taken if item is not None]
+
+    def _close(self, key: str) -> None:
+        """Drops stream *key*; the jobs waiting on it fail."""
+        self._streams.pop(key, None)
+        for job in self._pending.pop(key, []):
+            _settle(job.future, error=KeyError(f"stream {key!r} was closed"))
 
     def _apply(self, job: _Job) -> None:
         stream = self._streams.get(job.key)
@@ -262,7 +271,10 @@ class StreamDecoder:
 
 
 class _StoppedError(Exception):
-    pass
+    def __init__(self, queued: list[_Job]):
+        super().__init__("stopped")
+        # the jobs taken with the stop
+        self.queued = queued
 
 
 def _settle(future: concurrent.futures.Future, result: Any = None, error: Exception | None = None) -> None:
