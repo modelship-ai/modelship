@@ -8,17 +8,18 @@ from ray.serve._private.common import DeploymentHandleSource, DeploymentID, Repl
 from ray.serve._private.default_impl import create_init_handle_options, get_request_metadata
 from ray.serve._private.handle_options import DynamicHandleOptions
 from ray.serve._private.request_router.common import PendingRequest, RequestRoutingContext
+from ray.serve._private.router import AsyncioRouter
 from ray.serve.handle import DeploymentHandle
 from ray.serve.request_router import RequestRouter
+from ray.serve.schema import LoggingConfig
 
 from modelship import metrics
-from modelship.deploy.actor_options import (
-    PIPELINE_MAX_ONGOING_REQUESTS,
-    build_deployment_options,
-    build_pipeline_deployment_options,
-)
-from modelship.deploy.request_router import UNPIN_METHOD, AffinityRouter, StickyRouter
+from modelship.deploy import strategy
+from modelship.deploy.actor_options import PIPELINE_MAX_ONGOING_REQUESTS, build_pipeline_deployment_options
+from modelship.deploy.request_router import AffinityRouter, Routing, StickyRouter
 from modelship.infer.infer_config import ModelshipModelConfig
+from modelship.infer.model_deployment import ModelDeployment
+from modelship.infer.pipeline_deployment import PipelineDeployment
 from modelship.utils.config_schema import AssistantPipelineConfig
 
 APP = DeploymentID(name="gw.m-0123456789", app_name="gw.m-0123456789")
@@ -166,7 +167,7 @@ class TestRoutedCounter:
         recorder = _Recorder()
         monkeypatch.setattr(metrics, "AFFINITY_ROUTED_TOTAL", recorder)
         config = ModelshipModelConfig(name="m", model="some-model", usecase="generate", loader="vllm")
-        router_config = build_deployment_options(config)["request_router_config"]
+        router_config = ModelDeployment.func_or_class.routing(config).config()
         router_class = cloudpickle.loads(router_config.get_serialized_request_router_cls())
         router = router_class(deployment_id=APP, handle_source=DeploymentHandleSource.UNKNOWN)
         router.initialize_state()
@@ -177,6 +178,8 @@ class TestRoutedCounter:
 
 
 PIPELINE_APP = DeploymentID(name="gw.voice-p0123456789", app_name="gw.voice-p0123456789")
+PIPELINE = AssistantPipelineConfig(name="voice", type="assistant", assistant_config={"stt": "whisper"})
+MODEL = ModelshipModelConfig(name="m", model="some-model", usecase="generate", loader="vllm")
 
 
 def _call(key: str = "", method: str = "realtime_event") -> PendingRequest:
@@ -198,7 +201,7 @@ async def _sticky(replicas: list[_Replica], **locality) -> StickyRouter:
         use_replica_queue_len_cache=True,
         **locality,
     )
-    router.initialize_state()
+    router.initialize_state(**PipelineDeployment.func_or_class.routing(PIPELINE).config().request_router_kwargs)
     router.update_replicas(replicas)
     while any(router.replica_queue_len_cache.get(r.replica_id) is None for r in replicas):
         await asyncio.sleep(0)
@@ -255,8 +258,32 @@ class TestStickyRouter:
         replica = ReplicaID(unique_id=first, deployment_id=PIPELINE_APP)
         router.on_request_routed(_call("s1"), replica, None)  # type: ignore[arg-type]
         assert "s1" in router._pins
-        router.on_request_routed(_call("s1", UNPIN_METHOD), replica, None)  # type: ignore[arg-type]
+        router.on_request_routed(_call("s1", "realtime_close"), replica, None)  # type: ignore[arg-type]
         assert "s1" not in router._pins
+
+    @pytest.mark.asyncio
+    async def test_an_unpinning_call_goes_to_its_sessions_replica(self):
+        router = await _sticky(_pipeline_replicas("a", "b", "c"))
+        first = await _pick(router, _call("s1", "realtime"))
+        router.replica_queue_len_cache.update(ReplicaID(unique_id=first, deployment_id=PIPELINE_APP), 50)
+        assert {await _pick(router, _call("s1", "realtime_close")) for _ in range(10)} == {first}
+
+    @pytest.mark.asyncio
+    async def test_an_unpinning_call_of_an_unpinned_session_pins_nothing(self):
+        router = await _sticky(_pipeline_replicas("a", "b", "c"))
+        [group] = await router.choose_replicas(list(router.curr_replicas.values()), _call("s1", "realtime_close"))
+        assert len({r.replica_id for r in group}) == 2
+        assert router._pins == {}
+
+    @pytest.mark.asyncio
+    async def test_a_call_to_another_method_goes_to_any_replica_and_pins_nothing(self):
+        router = await _sticky(_pipeline_replicas("a", "b", "c"))
+        await _pick(router, _call("s1", "realtime"))
+        [group] = await router.choose_replicas(list(router.curr_replicas.values()), _call("s1", "stt_capabilities"))
+        assert len({r.replica_id for r in group}) == 2
+        [other] = await router.choose_replicas(list(router.curr_replicas.values()), _call("s2", "stt_capabilities"))
+        assert len(other) == 2
+        assert list(router._pins) == ["s1"]
 
     @pytest.mark.asyncio
     async def test_a_first_call_prefers_a_replica_on_the_callers_node(self):
@@ -272,19 +299,64 @@ class TestStickyRouter:
         assert router._pins == {}
 
     def test_a_pipelines_app_routes_with_it_from_the_class_serve_unpickles(self):
-        config = AssistantPipelineConfig(name="voice", type="assistant", assistant_config={"stt": "whisper"})
-        options = build_pipeline_deployment_options(config, {})
-        assert options["max_ongoing_requests"] == PIPELINE_MAX_ONGOING_REQUESTS
-        router_class = cloudpickle.loads(options["request_router_config"].get_serialized_request_router_cls())
+        assert build_pipeline_deployment_options(PIPELINE, {})["max_ongoing_requests"] == PIPELINE_MAX_ONGOING_REQUESTS
+        router_config = PipelineDeployment.func_or_class.routing(PIPELINE).config()
+        router_class = cloudpickle.loads(router_config.get_serialized_request_router_cls())
         router = router_class(deployment_id=PIPELINE_APP, handle_source=DeploymentHandleSource.UNKNOWN)
-        router.initialize_state()
-        assert router._pins == {}
+        router.initialize_state(**router_config.request_router_kwargs)
+        assert router._pin_methods == {"realtime", "realtime_event"}
+        assert router._unpin_methods == {"realtime_close"}
+
+
+class TestDeploymentRouting:
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            {"model": "kokoro-en-v0_19", "usecase": "tts", "loader": "sherpa_onnx"},
+            {"model": "some-model", "usecase": "generate", "loader": "llama_server"},
+            {"model": "some-model", "usecase": "transcription", "loader": "whispercpp"},
+            {"model": "some-model", "usecase": "embed", "loader": "vllm"},
+            {
+                "model": "some-model",
+                "usecase": "generate",
+                "loader": "vllm",
+                "num_gpus": 2,
+                "vllm_engine_kwargs": {"tensor_parallel_size": 2},
+            },
+        ],
+    )
+    def test_a_model_routes_with_the_affinity_router(self, fields):
+        config = ModelshipModelConfig(name="test-model", **fields)
+        router_config = ModelDeployment.func_or_class.routing(config).config()
+        assert router_config.request_router_class == "modelship.deploy.request_router.AffinityRouter"
+        assert router_config.request_router_kwargs == {}
+
+    def test_a_pipeline_routes_with_the_sticky_router(self):
+        assert PipelineDeployment.func_or_class.routing(PIPELINE) == Routing(
+            StickyRouter, pins=("realtime", "realtime_event"), unpins=("realtime_close",)
+        )
+
+    def test_each_app_is_submitted_with_its_deployments_routing(self, monkeypatch):
+        submitted = []
+        monkeypatch.setattr(strategy.serve, "run_many", lambda targets, **_: submitted.extend(targets))
+        strategy._run(MODEL, "gw.m-0123456789", {}, LoggingConfig())
+        strategy._run_pipeline(PIPELINE, "gw.voice-p0123456789", {}, LoggingConfig())
+
+        routers = [t.target._bound_deployment._deployment_config.request_router_config for t in submitted]
+        assert routers == [
+            ModelDeployment.func_or_class.routing(MODEL).config(),
+            PipelineDeployment.func_or_class.routing(PIPELINE).config(),
+        ]
 
 
 class TestRayRouterApi:
     def test_a_calls_method_name_reaches_the_request_metadata(self):
-        options = DynamicHandleOptions().copy_and_update(method_name=UNPIN_METHOD, session_id="s1")
-        assert get_request_metadata(create_init_handle_options(), options).call_method == UNPIN_METHOD
+        options = DynamicHandleOptions().copy_and_update(method_name="realtime_close", session_id="s1")
+        assert get_request_metadata(create_init_handle_options(), options).call_method == "realtime_close"
+
+    def test_a_routers_kwargs_reach_its_initialize_state(self):
+        source = inspect.getsource(AsyncioRouter.request_router.fget)  # type: ignore[attr-defined]
+        assert "initialize_state(**(self._request_router_kwargs))" in source
 
     def test_a_handles_session_id_reaches_the_request_metadata(self):
         assert "session_id" in inspect.signature(DeploymentHandle.options).parameters

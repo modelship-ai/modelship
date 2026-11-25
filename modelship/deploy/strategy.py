@@ -143,6 +143,7 @@ def _run(
         name=deployment_name,
         max_constructor_retry_count=1,
         logging_config=serve_logging_config,
+        request_router_config=ModelDeployment.func_or_class.routing(config).config(),
         **scaling_opts,
         **deploy_opts,
     )
@@ -166,6 +167,7 @@ def _run_pipeline(
         name=app_name,
         max_constructor_retry_count=1,
         logging_config=serve_logging_config,
+        request_router_config=PipelineDeployment.func_or_class.routing(pipeline).config(),
         num_replicas=pipeline.num_replicas,
         **deploy_opts,
     )

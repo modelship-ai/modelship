@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from ray.serve.config import RequestRouterConfig
-
 from modelship.deploy.capabilities import deployment_label_selector, runs_on_gpu
-from modelship.deploy.request_router import AffinityRouter, StickyRouter
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig
 from modelship.logging import get_logger
 from modelship.state import state_store_env_var
@@ -118,7 +115,6 @@ def build_deployment_options(config: ModelshipModelConfig, env: dict[str, str] |
 
     if max_ongoing is not None:
         opts["max_ongoing_requests"] = max_ongoing
-    opts["request_router_config"] = RequestRouterConfig(request_router_class=AffinityRouter)  # type: ignore[arg-type]
     return opts
 
 
@@ -131,7 +127,7 @@ PIPELINE_MAX_ONGOING_REQUESTS = 1000
 
 def build_pipeline_deployment_options(pipeline: PipelineConfig, env: dict[str, str] | None = None) -> dict:
     """kwargs for a pipeline app's `Deployment.options(**...)`: no CPU or GPU, on a node whose variant runs
-    sherpa-onnx, each session's calls on one replica; *env* as for `build_deployment_options`."""
+    sherpa-onnx; *env* as for `build_deployment_options`."""
     env_vars = build_cache_env_vars()
     env_vars.update(deploy_env_vars() if env is None else env)
     env_vars.update(cluster_env_vars() | state_store_env_var())
@@ -143,5 +139,4 @@ def build_pipeline_deployment_options(pipeline: PipelineConfig, env: dict[str, s
             "label_selector": deployment_label_selector(PIPELINE_AUDIO_LOADER, 0, {}),
         },
         "max_ongoing_requests": PIPELINE_MAX_ONGOING_REQUESTS,
-        "request_router_config": RequestRouterConfig(request_router_class=StickyRouter),  # type: ignore[arg-type]
     }

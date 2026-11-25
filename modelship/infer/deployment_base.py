@@ -4,6 +4,7 @@ them. Each one refuses here; `ModelDeployment` and `PipelineDeployment` serve th
 from collections.abc import AsyncIterator
 from typing import Any
 
+from modelship.deploy.request_router import AffinityRouter, Routing
 from modelship.infer.base_infer import _NOT_SUPPORTED
 from modelship.infer.base_pipeline import refused_realtime
 from modelship.infer.pipelines.relay import RealtimeFrame, RealtimeOpening
@@ -13,6 +14,11 @@ from modelship.openai.protocol import SttCapabilities
 class DeploymentBase:
     # the model's or the pipeline's config
     config: Any
+
+    @classmethod
+    def routing(cls, config: Any) -> Routing:
+        """The request router of *config*'s app."""
+        return Routing(AffinityRouter)
 
     async def generate(self, request, request_headers, disconnect_registry, request_id=None, identity=None):
         yield _NOT_SUPPORTED

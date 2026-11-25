@@ -1,8 +1,10 @@
 import hashlib
 import random
 from collections import Counter
+from dataclasses import dataclass
 
 from ray.serve._private.replica_result import ReplicaResult
+from ray.serve.config import RequestRouterConfig
 from ray.serve.request_router import LocalityMixin, PendingRequest, ReplicaID, RequestRouter, RunningReplica
 
 from modelship import metrics
@@ -53,16 +55,16 @@ class AffinityRouter(LocalityMixin, RequestRouter):
         return [[self.curr_replicas[i] for i in random.sample(ids, min(2, len(ids)))]]
 
 
-# the call that ends a session, and its pin
-UNPIN_METHOD = "realtime_close"
-
-
 class StickyRouter(LocalityMixin, RequestRouter):
-    """Every call with a session id goes to the replica its session's first call went to, never another while that
-    replica runs, waiting while it is busy. The first call picks the replica holding the fewest sessions, on the
-    caller's node when one is there; a session whose replica is gone gets a new one, and `UNPIN_METHOD` unpins it."""
+    """A call to one of the *pins* methods with a session id goes to the replica its session's first such call went
+    to, never another while that replica runs, waiting while it is busy. The first call picks the replica holding the
+    fewest sessions, on the caller's node when one is there; a session whose replica is gone gets a new one. A call to
+    one of the *unpins* methods goes to its session's replica when it has one, and unpins it. Every other call goes to
+    any replica, on the caller's node when one is there."""
 
-    def initialize_state(self) -> None:
+    def initialize_state(self, pins: list[str] | None = None, unpins: list[str] | None = None) -> None:
+        self._pin_methods = frozenset(pins or ())
+        self._unpin_methods = frozenset(unpins or ())
         # session id -> its replica
         self._pins: dict[str, ReplicaID] = {}
 
@@ -72,13 +74,16 @@ class StickyRouter(LocalityMixin, RequestRouter):
         if pending_request is not None:
             pending_request.routing_context.should_backoff = True
         key = pending_request.metadata.session_id if pending_request is not None else ""
-        if not key or not candidate_replicas:
-            ids = list(self.apply_locality_routing(pending_request))
-            return [[self.curr_replicas[i] for i in random.sample(ids, min(2, len(ids)))]]
+        method = pending_request.metadata.call_method if pending_request is not None else ""
+        follows = method in self._pin_methods or method in self._unpin_methods
+        if not key or not follows or not candidate_replicas:
+            return self._two_random(pending_request)
         pinned = self._pins.get(key)
         for replica in candidate_replicas:
             if replica.replica_id == pinned:
                 return [[replica]]
+        if method not in self._pin_methods:
+            return self._two_random(pending_request)
         local = self.apply_locality_routing(pending_request)
         pool = [r for r in candidate_replicas if r.replica_id in local] or candidate_replicas
         held = Counter(self._pins.values())
@@ -88,5 +93,23 @@ class StickyRouter(LocalityMixin, RequestRouter):
         return [[choice]]
 
     def on_request_routed(self, pending_request: PendingRequest, replica_id: ReplicaID, result: ReplicaResult) -> None:
-        if pending_request.metadata.call_method == UNPIN_METHOD:
+        if pending_request.metadata.call_method in self._unpin_methods:
             self._pins.pop(pending_request.metadata.session_id, None)
+
+    def _two_random(self, pending_request: PendingRequest | None) -> list[list[RunningReplica]]:
+        ids = list(self.apply_locality_routing(pending_request))
+        return [[self.curr_replicas[i] for i in random.sample(ids, min(2, len(ids)))]]
+
+
+@dataclass(frozen=True)
+class Routing:
+    """The request router a deployment's app takes, and for `StickyRouter` the methods that pin a session and the
+    ones that unpin it."""
+
+    router: type[RequestRouter]
+    pins: tuple[str, ...] = ()
+    unpins: tuple[str, ...] = ()
+
+    def config(self) -> RequestRouterConfig:
+        kwargs = {"pins": list(self.pins), "unpins": list(self.unpins)} if self.pins or self.unpins else {}
+        return RequestRouterConfig(request_router_class=self.router, request_router_kwargs=kwargs)  # type: ignore[arg-type]

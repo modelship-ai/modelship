@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 
 from ray import serve
 
+from modelship.deploy.request_router import Routing, StickyRouter
 from modelship.infer.base_pipeline import BasePipeline
 from modelship.infer.deployment_base import DeploymentBase
 from modelship.infer.pipelines.relay import RealtimeFrame, RealtimeOpening
@@ -31,6 +32,10 @@ def load_pipeline(config: PipelineConfig, routes: ModelRoutes) -> BasePipeline:
 
 @serve.deployment
 class PipelineDeployment(DeploymentBase):
+    @classmethod
+    def routing(cls, config: PipelineConfig) -> Routing:
+        return Routing(StickyRouter, pins=("realtime", "realtime_event"), unpins=("realtime_close",))
+
     async def __init__(self, config: PipelineConfig):
         configure_logging()
         self.config = config
