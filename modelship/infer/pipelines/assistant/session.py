@@ -227,13 +227,13 @@ def _invalid(error: ValidationError, accepted: list[str]) -> RealtimeError:
     return RealtimeError(message=f"{param}: {problem['msg']}", code="invalid_value", param=param)
 
 
-def _event_id(text: str) -> str | None:
-    """The `event_id` of an event that didn't validate, if it has one."""
+def _raw_field(text: str, name: str) -> str | None:
+    """Field *name* of an event that didn't validate, if it is a string."""
     try:
         raw = json.loads(text)
     except ValueError:
         return None
-    found = raw.get("event_id") if isinstance(raw, dict) else None
+    found = raw.get(name) if isinstance(raw, dict) else None
     return found if isinstance(found, str) else None
 
 
@@ -373,8 +373,13 @@ class Session:
         try:
             event: ClientEvent = CLIENT_EVENTS.validate_json(text)
         except ValidationError as e:
-            error = _invalid(e, self._event_types())
-            error.event_id = _event_id(text)
+            accepted = self._event_types()
+            kind = _raw_field(text, "type")
+            # a type the session doesn't take is the error, whatever else is wrong with the event
+            error = (
+                _invalid_type(kind, accepted) if kind is not None and kind not in accepted else _invalid(e, accepted)
+            )
+            error.event_id = _raw_field(text, "event_id")
             await self.send(error_event(error))
             return
         accepted = self._event_types()

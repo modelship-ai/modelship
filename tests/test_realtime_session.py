@@ -1270,11 +1270,15 @@ class TestAudioInput:
             _open(ws)
             _append(ws, _pcm(0.2))
             ws.send_json({"type": "input_audio_buffer.commit"})
+            # malformed too: the type is still what it reports
+            ws.send_json({"type": "input_audio_buffer.append", "event_id": "e3"})
             append = ws.receive_json()["error"]
             commit = ws.receive_json()["error"]
+            malformed = ws.receive_json()["error"]
             ws.send_json({"type": "input_audio_buffer.clear"})
             cleared = ws.receive_json()
         assert (append["code"], append["param"]) == (commit["code"], commit["param"]) == ("invalid_value", "type")
+        assert (malformed["code"], malformed["param"], malformed["event_id"]) == ("invalid_value", "type", "e3")
         assert append["message"].startswith("Invalid value: 'input_audio_buffer.append'.")
         assert "'input_audio_buffer.append'" not in append["message"].split("Supported values are:")[1]
         assert cleared["type"] == "input_audio_buffer.cleared"
