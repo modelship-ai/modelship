@@ -28,15 +28,24 @@ class SherpaOnnxRegistryEntry(NamedTuple):
     voice_names: tuple[str, ...]
 
 
+class StreamFeed(NamedTuple):
+    """The zeros a streaming bundle's stream takes, measured: before the first audio, or it drops the first words,
+    and after the last, or it drops the last one."""
+
+    lead_ms: int
+    tail_ms: int
+
+
 class AsrEntry(NamedTuple):
-    """An offline speech-to-text bundle. `family` names its module in `family/`; `files` maps the files that
-    family reads to paths relative to the bundle root."""
+    """A speech-to-text bundle. `family` names its module in `family/`; `files` maps the files that family reads to
+    paths relative to the bundle root. `stream` is set on a streaming bundle, None on an offline one."""
 
     tarball_url: str
     sha256: str
     family: str
     usecase: str
     files: dict[str, str]
+    stream: StreamFeed | None = None
 
 
 # copies of k2-fsa/sherpa-onnx's tts-models and asr-models assets; a file name ends in its sha256 prefix
@@ -153,7 +162,31 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry | AsrEntry] = {
             "tokens": "tokens.txt",
         },
     ),
+    # NVIDIA's nemotron-3.5-asr-streaming-0.6b (OpenMDW-1.1), 160 ms chunks: 35 languages, punctuated; takes a
+    # language per stream ("auto" by default) and reports none
+    "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11": AsrEntry(
+        tarball_url=(
+            f"{_BUNDLES}/asr/nemotron/"
+            "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11-a81909a1.tar.bz2"
+        ),
+        sha256="a81909a1780d84cff16d73c15e13e67d9d81d8839faf14870d507d8499f7a61a",
+        family="nemo_streaming_transducer",
+        usecase="transcription",
+        files={
+            "encoder": "encoder.int8.onnx",
+            "decoder": "decoder.int8.onnx",
+            "joiner": "joiner.int8.onnx",
+            "tokens": "tokens.txt",
+        },
+        stream=StreamFeed(lead_ms=500, tail_ms=320),
+    ),
 }
+
+
+def is_streaming(model: str) -> bool:
+    """Whether *model* names a streaming speech-to-text bundle."""
+    entry = REGISTRY.get(registry_name(model))
+    return isinstance(entry, AsrEntry) and entry.stream is not None
 
 
 def registry_names() -> tuple[str, ...]:

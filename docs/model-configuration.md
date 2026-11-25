@@ -699,7 +699,7 @@ See `config/examples/whispercpp.yaml` for every `model:` form and a Metal exampl
 
 ## sherpa_onnx Loader
 
-Runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Python bindings: text to speech with Kokoro, and offline speech to text with Parakeet. CPU only — never touches CUDA or CoreML, so `num_gpus` is ignored entirely (any value accepted at config time, forced to `0` at deploy with a warning if nonzero) and reserves no GPU capacity another deploy could use.
+Runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Python bindings: text to speech with Kokoro, offline speech to text with Parakeet, and streaming speech to text with Nemotron. CPU only — never touches CUDA or CoreML, so `num_gpus` is ignored entirely (any value accepted at config time, forced to `0` at deploy with a warning if nonzero) and reserves no GPU capacity another deploy could use.
 
 `model:` is not an HF repo or path — it's a name from a curated built-in registry (or a local directory whose basename matches one). Each name maps to a tarball with a pinned sha256 in modelship's own [`model-bundles`](https://github.com/modelship-ai/model-bundles) releases (unmodified copies of the sherpa-onnx project's files), downloaded and cached under `<cache_root>/sherpa_onnx/<name>-<sha256 prefix>/` on first use.
 
@@ -708,6 +708,7 @@ Runs [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) in-process via its Pyt
 | `kokoro-en-v0_19` | `tts` | 11 speakers. English only. Includes `af_bella` |
 | `kokoro-multi-lang-v1_0` | `tts` | 54 speakers. English, Mandarin, Japanese, and more. Includes `af_bella` and `af_heart` |
 | `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8` | `transcription` | NVIDIA's Parakeet TDT 0.6b v3 (CC-BY-4.0): 25 European languages, punctuated, with word timestamps. About 30× faster than real time on 2 threads |
+| `sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11` | `transcription` | NVIDIA's Nemotron 3.5 ASR streaming 0.6b, 160 ms chunks (OpenMDW-1.1): streaming, 35 languages, punctuated, with word timestamps. About 3.5× faster than real time on 2 threads, so 2 CPUs keep up with about 7 streams at once; ~0.9 GiB loaded, ~21 MiB per open stream |
 
 `usecase` must be the one the name's row gives.
 
@@ -734,16 +735,28 @@ models:
       default_voice: "af_heart"
 ```
 
-A speech-to-text model serves `/v1/audio/transcriptions` in every `response_format` and with `stream`:
+A speech-to-text model serves `/v1/audio/transcriptions` in every `response_format` and with `stream`. `verbose_json` has a segment per sentence, and word timestamps when `timestamp_granularities` includes `word`; it reports `language` as the request's, or `unknown`. A request's `prompt` is accepted and ignored.
 
-- It finds the language itself and takes none: a request's `language` and `prompt` are accepted and ignored. `verbose_json` reports `language` as the request's, or `unknown`.
-- `verbose_json` has a segment per sentence, and word timestamps when `timestamp_granularities` includes `word`.
+Parakeet, offline:
+
+- It finds the language itself and takes none: a request's `language` is accepted and ignored.
 - Audio longer than 30 s is cut at its pauses into pieces of at most 30 s, found with [Silero VAD](https://github.com/snakers4/silero-vad), which the model downloads beside its bundle. With `stream`, each piece is a `transcript.text.delta`.
+
+Nemotron, streaming:
+
+- A request's `language` (`en`, `de`, …) is passed to the model; without one it detects the language, punctuating less. It reports none.
+- The whole file goes through one stream, however long. With `stream`, a `transcript.text.delta` follows each second of audio whose text grew.
 
 ```yaml
 models:
   - name: "parakeet"
     model: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+    usecase: "transcription"
+    loader: "sherpa_onnx"
+    num_cpus: 2
+
+  - name: "nemotron"
+    model: "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11"
     usecase: "transcription"
     loader: "sherpa_onnx"
     num_cpus: 2
