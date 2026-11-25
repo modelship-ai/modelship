@@ -55,9 +55,11 @@ vLLM's automatic prefix caching shares KV-cache blocks across every request on a
 
 ### Conversation-affinity routing
 
-Every model deployment routes with `AffinityRouter` (`modelship/deploy/request_router.py`), which runs in each gateway replica. A chat or Responses request carries a key: a hash of the caller's identity, the request's `prompt_cache_key` and the conversation's start, every message up to and including the first user message (after `instructions` on Responses). A conversation's turns share it, and so do a response's MCP rounds and a stored conversation's continuations, so they go to the replica whose prefix cache most likely still holds the earlier turns.
+Every model deployment but a `transcription` one routes with `AffinityRouter` (`modelship/deploy/request_router.py`), which runs in each gateway replica. A chat or Responses request carries a key: a hash of the caller's identity, the request's `prompt_cache_key` and the conversation's start, every message up to and including the first user message (after `instructions` on Responses). A conversation's turns share it, and so do a response's MCP rounds and a stored conversation's continuations, so they go to the replica whose prefix cache most likely still holds the earlier turns.
 
 The router ranks a model's replicas by a hash of the key and each replica's id, so every gateway replica ranks a key alike, and a replica added or removed moves only its own share of keys. It takes the first replica in that order that has at most 1.25 × the replicas' mean in-flight requests + 2, and Ray Serve still skips a replica at `max_ongoing_requests`. A request with no key (embeddings, audio, images) goes to the less busy of two random replicas, like Ray Serve's default router.
+
+A `transcription` model routes with `StickyRouter` instead: a streamed transcription keeps its decoder state in the replica that opened it, so `transcribe_push` pins its key to that replica, `transcribe_finish` and `transcribe_close` go there and unpin it, and every other call, a whole-file `transcribe` included, goes to any replica.
 
 ## Responses API (`/v1/responses`)
 

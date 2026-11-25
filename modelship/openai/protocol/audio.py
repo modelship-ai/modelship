@@ -23,6 +23,23 @@ class SttCapabilities(OpenAIBaseModel):
     reports_language: bool
 
 
+class SttStreamOptions(OpenAIBaseModel):
+    """What a streamed transcription opens with; the replica reads it when a push opens the stream."""
+
+    # ISO-639-1; None detects it
+    language: str | None = None
+
+
+class SttStreamText(OpenAIBaseModel):
+    """A streamed transcription's text so far, or its final text."""
+
+    text: str
+    # the spoken language, when the model reports one
+    language: str | None = None
+    # audio the stream has taken since it opened
+    audio_ms: float
+
+
 class TranscriptionUsageAudio(OpenAIBaseModel):
     type: Literal["duration"] = "duration"
     seconds: float

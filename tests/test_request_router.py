@@ -17,6 +17,7 @@ from modelship import metrics
 from modelship.deploy import strategy
 from modelship.deploy.actor_options import PIPELINE_MAX_ONGOING_REQUESTS, build_pipeline_deployment_options
 from modelship.deploy.request_router import AffinityRouter, Routing, StickyRouter
+from modelship.infer.deployment_base import DeploymentBase
 from modelship.infer.infer_config import ModelshipModelConfig
 from modelship.infer.model_deployment import ModelDeployment
 from modelship.infer.pipeline_deployment import PipelineDeployment
@@ -180,6 +181,7 @@ class TestRoutedCounter:
 PIPELINE_APP = DeploymentID(name="gw.voice-p0123456789", app_name="gw.voice-p0123456789")
 PIPELINE = AssistantPipelineConfig(name="voice", type="assistant", assistant_config={"stt": "whisper"})
 MODEL = ModelshipModelConfig(name="m", model="some-model", usecase="generate", loader="vllm")
+STT = ModelshipModelConfig(name="parakeet", model="some-model", usecase="transcription", loader="whispercpp")
 
 
 def _call(key: str = "", method: str = "realtime_event") -> PendingRequest:
@@ -194,14 +196,15 @@ def _pipeline_replicas(*names: str, node: str = "node-1") -> list[_Replica]:
     return [_Replica(ReplicaID(unique_id=name, deployment_id=PIPELINE_APP), node_id=node) for name in names]
 
 
-async def _sticky(replicas: list[_Replica], **locality) -> StickyRouter:
+async def _sticky(replicas: list[_Replica], routing: Routing | None = None, **locality) -> StickyRouter:
     router = StickyRouter(
         deployment_id=PIPELINE_APP,
         handle_source=DeploymentHandleSource.UNKNOWN,
         use_replica_queue_len_cache=True,
         **locality,
     )
-    router.initialize_state(**PipelineDeployment.func_or_class.routing(PIPELINE).config().request_router_kwargs)
+    routing = routing or PipelineDeployment.func_or_class.routing(PIPELINE)
+    router.initialize_state(**routing.config().request_router_kwargs)
     router.update_replicas(replicas)
     while any(router.replica_queue_len_cache.get(r.replica_id) is None for r in replicas):
         await asyncio.sleep(0)
@@ -308,13 +311,38 @@ class TestStickyRouter:
         assert router._unpin_methods == {"realtime_close"}
 
 
+class TestStreamedTranscriptionRouting:
+    @pytest.mark.asyncio
+    async def test_a_turns_pushes_and_finish_go_to_the_replica_of_its_first_push(self):
+        router = await _sticky(_pipeline_replicas("a", "b", "c"), ModelDeployment.func_or_class.routing(STT))
+        first = await _pick(router, _call("s1:t1", "transcribe_push"))
+        router.replica_queue_len_cache.update(ReplicaID(unique_id=first, deployment_id=PIPELINE_APP), 50)
+        assert {await _pick(router, _call("s1:t1", "transcribe_push")) for _ in range(5)} == {first}
+        assert await _pick(router, _call("s1:t1", "transcribe_finish")) == first
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["transcribe_finish", "transcribe_close"])
+    async def test_ending_a_turn_unpins_it(self, method):
+        router = await _sticky(_pipeline_replicas("a", "b"), ModelDeployment.func_or_class.routing(STT))
+        first = await _pick(router, _call("s1:t1", "transcribe_push"))
+        router.on_request_routed(_call("s1:t1", method), ReplicaID(unique_id=first, deployment_id=PIPELINE_APP), None)  # type: ignore[arg-type]
+        assert router._pins == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["transcribe", "stt_capabilities", "transcribe_finish"])
+    async def test_a_call_that_opens_no_stream_pins_nothing(self, method):
+        router = await _sticky(_pipeline_replicas("a", "b", "c"), ModelDeployment.func_or_class.routing(STT))
+        [group] = await router.choose_replicas(list(router.curr_replicas.values()), _call("s1", method))
+        assert len({r.replica_id for r in group}) == 2
+        assert router._pins == {}
+
+
 class TestDeploymentRouting:
     @pytest.mark.parametrize(
         "fields",
         [
             {"model": "kokoro-en-v0_19", "usecase": "tts", "loader": "sherpa_onnx"},
             {"model": "some-model", "usecase": "generate", "loader": "llama_server"},
-            {"model": "some-model", "usecase": "transcription", "loader": "whispercpp"},
             {"model": "some-model", "usecase": "embed", "loader": "vllm"},
             {
                 "model": "some-model",
@@ -331,10 +359,27 @@ class TestDeploymentRouting:
         assert router_config.request_router_class == "modelship.deploy.request_router.AffinityRouter"
         assert router_config.request_router_kwargs == {}
 
+    @pytest.mark.parametrize("loader", ["whispercpp", "sherpa_onnx", "vllm"])
+    def test_a_transcription_model_pins_its_streamed_transcriptions(self, loader):
+        assert ModelDeployment.func_or_class.routing(STT) == ModelDeployment.func_or_class.routing(
+            STT.model_copy(update={"loader": loader})
+        )
+        assert ModelDeployment.func_or_class.routing(STT) == Routing(
+            StickyRouter, pins=("transcribe_push",), unpins=("transcribe_finish", "transcribe_close")
+        )
+
     def test_a_pipeline_routes_with_the_sticky_router(self):
         assert PipelineDeployment.func_or_class.routing(PIPELINE) == Routing(
             StickyRouter, pins=("realtime", "realtime_event"), unpins=("realtime_close",)
         )
+
+    @pytest.mark.parametrize(
+        ("deployment", "config"), [(ModelDeployment, STT), (ModelDeployment, MODEL), (PipelineDeployment, PIPELINE)]
+    )
+    def test_every_method_a_routing_names_is_a_handle_method(self, deployment, config):
+        routing = deployment.func_or_class.routing(config)
+        for method in (*routing.pins, *routing.unpins):
+            assert callable(getattr(DeploymentBase, method))
 
     def test_each_app_is_submitted_with_its_deployments_routing(self, monkeypatch):
         submitted = []
