@@ -365,6 +365,8 @@ class Session:
                 await self._handle(message)
         finally:
             self._closed = True
+            # a closed session waits in reference cycles for the cyclic GC; its audio goes now
+            self.buffer.clear()
             for task in (expiry, *self._transcriptions, *self._replies, *self._retired_feeds):
                 task.cancel()
             if self.turns is not None:

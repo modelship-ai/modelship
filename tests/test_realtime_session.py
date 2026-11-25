@@ -4,6 +4,7 @@ from a fake LLM that streams real Responses events, and the spoken answers a fak
 
 import asyncio
 import base64
+import gc
 import io
 import time
 import warnings
@@ -17,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from modelship.infer.pipelines.assistant.assistant_pipeline import AssistantPipeline
 from modelship.infer.pipelines.assistant.response import ActiveResponse
+from modelship.infer.pipelines.assistant.session import Session
 from modelship.infer.pipelines.relay import RealtimeOpening
 from modelship.openai.protocol import (
     ChatCompletionResponseStreamChoice,
@@ -1212,6 +1214,22 @@ class TestAudioInput:
             error = ws.receive_json()["error"]
         assert (error["type"], error["code"], error["param"]) == ("invalid_request_error", None, "audio")
         assert error["message"] == "The input audio buffer holds at most 0.032 MB of PCM; commit or clear it."
+
+    def test_a_closed_session_lets_go_of_its_audio_before_the_cyclic_gc_runs(self):
+        gc.collect()
+        gc.disable()
+        try:
+            with self._session(_Stt()) as ws:
+                _open(ws)
+                _append(ws, _pcm(1))
+                ws.send_json({"type": "conversation.item.retrieve", "item_id": "nope"})
+                ws.receive_json()
+            time.sleep(0.2)
+            closed = [o for o in gc.get_objects() if isinstance(o, Session) and o._closed]
+        finally:
+            gc.enable()
+        assert closed
+        assert all(session.buffer.seconds == 0 for session in closed)
 
     def test_a_commit_is_taken_while_turns_wait_for_transcription(self):
         stt = _Stt("One.", "Two.", delay=0.5)
