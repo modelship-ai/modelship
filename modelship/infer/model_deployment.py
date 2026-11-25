@@ -12,6 +12,7 @@ from modelship.deploy.request_router import AffinityRouter, Routing, StickyRoute
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.deployment_base import DeploymentBase
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, RawRequestProxy
+from modelship.infer.sherpa_onnx.registry import is_streaming
 from modelship.logging import configure_logging, get_logger
 from modelship.metrics import (
     EMBEDDING_DURATION_SECONDS,
@@ -112,6 +113,10 @@ class ModelDeployment(DeploymentBase):
                 from modelship.infer.sherpa_onnx.tts_infer import SherpaOnnxTtsInfer
 
                 self.infer = SherpaOnnxTtsInfer(config)
+            elif config.loader == ModelLoader.sherpa_onnx and is_streaming(config.model or ""):
+                from modelship.infer.sherpa_onnx.streaming_stt_infer import SherpaOnnxStreamingSttInfer
+
+                self.infer = SherpaOnnxStreamingSttInfer(config)
             elif config.loader == ModelLoader.sherpa_onnx:
                 from modelship.infer.sherpa_onnx.stt_infer import SherpaOnnxSttInfer
 

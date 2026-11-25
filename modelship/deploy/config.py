@@ -102,6 +102,7 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
     """
     # Deferred: pulls huggingface_hub.
     from modelship.infer.sherpa_onnx.bundle import bundle_source
+    from modelship.infer.sherpa_onnx.registry import is_streaming
     from modelship.utils.sources import check_model_source
     from modelship.utils.vad import silero_vad_source
 
@@ -111,7 +112,7 @@ def resolve_all_model_sources(yml_conf: ModelshipConfig) -> None:
             logger.info("Checking sherpa_onnx bundle for '%s': %s", cfg.name, cfg.model)
             cfg._pinned_source = bundle_source(cfg.model)
             logger.info("Checked '%s' (%s)", cfg.name, _pin_label(cfg._pinned_source))
-            if cfg.usecase != ModelUsecase.tts:
+            if cfg.usecase != ModelUsecase.tts and not is_streaming(cfg.model):
                 cfg._pinned_vad = silero_vad_source()
             continue
         trust_remote_code = bool(cfg.vllm_engine_kwargs and cfg.vllm_engine_kwargs.trust_remote_code)

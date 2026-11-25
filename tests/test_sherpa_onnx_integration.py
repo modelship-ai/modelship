@@ -3,6 +3,7 @@ binding and a real downloaded kokoro bundle. `test_sherpa_onnx_infer.py` covers
 the same logic against a stub."""
 
 import io
+import itertools
 import json
 import wave
 
@@ -11,6 +12,7 @@ import pytest
 
 import openai
 from modelship.infer.sherpa_onnx.registry import REGISTRY
+from tests.conftest import run_on_cluster, serve_apps
 
 OPENAI_API_BASE = "http://localhost:8000/modelship/v1"
 _VOICE_NAMES = REGISTRY["kokoro-en-v0_19"].voice_names
@@ -242,3 +244,82 @@ class TestParakeet:
         assert events[0]["type"] == "transcript.text.delta"
         assert events[-1]["type"] == "transcript.text.done"
         assert "window" in events[-1]["text"].lower()
+
+
+_PUSH_TURN = """
+import json, pathlib
+from ray import serve
+from modelship.openai.protocol import SttStreamOptions
+
+handle = serve.get_app_handle({app!r})
+pcm = pathlib.Path({pcm!r}).read_bytes()
+key, options = "it-session:t1", SttStreamOptions(language="en")
+step = {rate} * 2 // 10
+partials = []
+for at in range(0, len(pcm), step):
+    pushed = handle.transcribe_push.options(session_id=key).remote(key, pcm[at : at + step], {rate}, options).result()
+    partials.append(pushed.text)
+done = handle.transcribe_finish.options(session_id=key).remote(key, b"", {rate}, options).result()
+print(json.dumps({{"partials": partials, "text": done.text, "audio_ms": done.audio_ms}}))
+"""
+
+
+@pytest.mark.integration
+@pytest.mark.sherpa_onnx
+class TestNemotron:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer):
+        model_deployer.deploy("tts-model", "stt-nemotron")
+
+    def _transcribe(self, client, audio: bytes, tmp_path, **fields):
+        path = tmp_path / "speech.wav"
+        path.write_bytes(audio)
+        with open(path, "rb") as f:
+            return client.audio.transcriptions.create(model="stt-nemotron", file=f, **fields)
+
+    def test_speech_round_trips_through_nemotron(self, client, tmp_path):
+        frames, rate = _speech_frames(client, "Please turn on the kitchen lights.")
+        text = self._transcribe(client, _wav(frames, rate), tmp_path, language="en").text.lower()
+        assert "kitchen" in text and "lights" in text, text
+
+    def test_a_long_file_goes_through_one_stream_and_keeps_its_timeline(self, client, tmp_path):
+        frames, rate = _speech_frames(client, "Open the garage door.")
+        clip = frames + _silence(2.0, rate)
+        seconds = len(clip) * 12 / 2 / rate
+        assert seconds > 35
+        result = self._transcribe(
+            client, _wav(clip * 12, rate), tmp_path, response_format="verbose_json", timestamp_granularities=["word"]
+        )
+        assert result.text.lower().count("garage") == 12, result.text
+        assert result.duration == pytest.approx(seconds, abs=0.05)
+        assert result.words[-1].start > 30
+
+    def test_stream_sends_deltas_as_it_decodes_then_the_text(self, client, tmp_path):
+        frames, rate = _speech_frames(client, "Close the window and lock the front door before you leave.")
+        path = tmp_path / "speech.wav"
+        path.write_bytes(_wav(frames, rate))
+        with open(path, "rb") as f:
+            response = httpx.post(
+                f"{OPENAI_API_BASE}/audio/transcriptions",
+                files={"file": ("speech.wav", f, "audio/wav")},
+                data={"model": "stt-nemotron", "stream": "true"},
+                timeout=120,
+            )
+        events = _sse_events(response.text)
+        deltas = [e["delta"] for e in events if e["type"] == "transcript.text.delta"]
+        assert len(deltas) > 1, events
+        assert events[-1] == {"type": "transcript.text.done", "text": "".join(deltas)}
+        assert "window" in events[-1]["text"].lower() and "door" in events[-1]["text"].lower()
+
+    def test_a_turns_pushes_return_its_text_so_far_and_finish_its_last_word(self, client, tmp_path):
+        frames, rate = _speech_frames(client, "What is the weather like in Paris tomorrow?")
+        [app] = [name for name in serve_apps() if name.startswith("modelship.stt-nemotron-")]
+        pcm = tmp_path / "turn.pcm"
+        pcm.write_bytes(frames)
+        code = _PUSH_TURN.format(app=app, pcm=str(pcm), rate=rate)
+        turn = json.loads(run_on_cluster(code).strip().splitlines()[-1])
+        partials = [p for p in turn["partials"] if p]
+        assert partials, turn
+        assert all(later.startswith(earlier) for earlier, later in itertools.pairwise(partials))
+        assert "paris" in turn["text"].lower() and "tomorrow" in turn["text"].lower(), turn
+        assert turn["audio_ms"] == pytest.approx(len(frames) / 2 / rate * 1000, abs=1)

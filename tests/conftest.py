@@ -353,6 +353,13 @@ MODEL_CONFIGS: dict[str, dict] = {
         "loader": "sherpa_onnx",
         "num_cpus": 2,
     },
+    "stt-nemotron": {
+        "name": "stt-nemotron",
+        "model": "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-160ms-int8-2026-06-11",
+        "usecase": "transcription",
+        "loader": "sherpa_onnx",
+        "num_cpus": 2,
+    },
     "tts-model": {
         "name": "tts-model",
         "model": "kokoro-en-v0_19",

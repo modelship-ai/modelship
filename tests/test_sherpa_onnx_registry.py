@@ -63,19 +63,25 @@ class TestAsrEntries:
         assert _ASR
 
     @pytest.mark.parametrize("name", sorted(_ASR))
-    def test_its_family_has_a_module(self, name):
-        from modelship.infer.sherpa_onnx.stt_infer import _FAMILIES
+    def test_its_family_has_a_module_in_its_loader(self, name):
+        from modelship.infer.sherpa_onnx import streaming_stt_infer, stt_infer
 
-        assert _ASR[name].family in _FAMILIES
+        loader = streaming_stt_infer if _ASR[name].stream is not None else stt_infer
+        assert _ASR[name].family in loader._FAMILIES
 
-    def test_a_nemo_transducer_bundle_has_the_files_its_factory_takes(self):
+    @pytest.mark.parametrize(
+        ("family", "factory"),
+        [("nemo_transducer", "OfflineRecognizer"), ("nemo_streaming_transducer", "OnlineRecognizer")],
+    )
+    def test_a_transducer_bundle_has_the_files_its_factory_takes(self, family, factory):
         sherpa_onnx = pytest.importorskip("sherpa_onnx")
-        parameters = inspect.signature(sherpa_onnx.OfflineRecognizer.from_transducer).parameters
+        parameters = inspect.signature(getattr(sherpa_onnx, factory).from_transducer).parameters
         files = {"encoder", "decoder", "joiner", "tokens"}
-        assert files | {"model_type", "decoding_method", "provider", "num_threads"} <= set(parameters)
-        for name, entry in _ASR.items():
-            if entry.family == "nemo_transducer":
-                assert set(entry.files) == files, name
+        assert files | {"decoding_method", "provider", "num_threads"} <= set(parameters)
+        entries = [(name, entry) for name, entry in _ASR.items() if entry.family == family]
+        assert entries
+        for name, entry in entries:
+            assert set(entry.files) == files, name
 
     @pytest.mark.parametrize("name", sorted(_ASR))
     def test_it_is_a_transcription_model_with_nonempty_paths(self, name):
