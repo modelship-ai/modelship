@@ -14,7 +14,7 @@ CLOSE_REFUSED = 1008
 
 async def refused_realtime(name: str) -> AsyncIterator[RealtimeFrame]:
     """The stream of a `/v1/realtime` session on something that doesn't hold one."""
-    error = RealtimeError(message=f"{name!r} doesn't serve /v1/realtime.", code="model_not_supported", param="model")
+    error = RealtimeError(message=f"{name!r} doesn't serve /v1/realtime.", code="invalid_value", param="model")
     yield json.dumps(error_event(error))
     yield RealtimeClosed(CLOSE_REFUSED)
 

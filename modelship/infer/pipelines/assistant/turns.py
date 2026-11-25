@@ -33,8 +33,7 @@ class SpeechFinder(Protocol):
 # opens a finder on 16-bit PCM at a rate, its timeline starting at a ms
 OpenFinder = Callable[[int, float], SpeechFinder]
 Started = Callable[[str, int], Awaitable[None]]
-# True once it took the turn's audio out of the buffer; False leaves the turn open, to end on a later feed
-Ended = Callable[[str, int, int], Awaitable[bool]]
+Ended = Callable[[str, int, int], Awaitable[None]]
 Failed = Callable[[], Awaitable[None]]
 # how long speech must last, in ms, before it starts a turn now
 MinSpeech = Callable[[], int]
@@ -47,7 +46,7 @@ class _StaleFeedError(Exception):
 class TurnDetector:
     """Finds the turns in *buffer* with the speech finders *open_finder* opens, as *settings* say. *started* gets
     each turn's item id and where it starts; *ended* gets its item id, start and end, and takes its audio out of the
-    buffer or refuses it; *failed* hears of each stretch of feeds that fail, during which the buffer keeps all its
+    buffer; *failed* hears of each stretch of feeds that fail, during which the buffer keeps all its
     audio. Speech shorter than *min_speech* says starts no turn."""
 
     def __init__(
@@ -186,25 +185,23 @@ class TurnDetector:
                 self._speech_ms = speech_end
                 break
             self._speech_ms = stop
-            if not await self._close(stop, stop + settings.silence_duration_ms):
-                return
+            await self._close(stop, stop + settings.silence_duration_ms)
         # the turn's speech ended before this feed's audio
         ended_before = self.turn is not None and not heard and end - self._speech_ms >= settings.silence_duration_ms
-        if ended_before and not await self._close(self._speech_ms, self._speech_ms + settings.silence_duration_ms):
-            return
+        if ended_before:
+            await self._close(self._speech_ms, self._speech_ms + settings.silence_duration_ms)
         if self.turn is not None and min(end, self.buffer.end_ms) - self.turn[1] >= MAX_TURN_MS:
             await self._end(self.turn[1] + MAX_TURN_MS)
 
-    async def _close(self, speech_end_ms: float, at_ms: float) -> bool:
+    async def _close(self, speech_end_ms: float, at_ms: float) -> None:
         """Ends the turn in progress at *at_ms*, its speech ending at *speech_end_ms*: in 30 s turns, when the
-        speech ran longer. False when a turn was refused and stays open."""
+        speech ran longer."""
         assert self.turn is not None
         while speech_end_ms > self.turn[1] + MAX_TURN_MS:
             cut = self.turn[1] + MAX_TURN_MS
-            if not await self._end(cut):
-                return False
+            await self._end(cut)
             await self._start(cut)
-        return await self._end(min(at_ms, self.turn[1] + MAX_TURN_MS))
+        await self._end(min(at_ms, self.turn[1] + MAX_TURN_MS))
 
     async def _start(self, at_ms: float) -> None:
         self._check_current()
@@ -212,14 +209,12 @@ class TurnDetector:
         self._speech_ms = at_ms
         await self._started(self.turn[0], round(at_ms))
 
-    async def _end(self, at_ms: float) -> bool:
+    async def _end(self, at_ms: float) -> None:
         self._check_current()
         assert self.turn is not None
         turn_id, start = self.turn
         # the session takes the turn's audio before it awaits anything
-        if not await self._ended(turn_id, round(start), round(at_ms)):
-            return False
+        await self._ended(turn_id, round(start), round(at_ms))
         if self._epoch == self._feed_epoch:
             self.turn = None
             self._floor_ms = at_ms
-        return True

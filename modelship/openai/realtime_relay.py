@@ -55,17 +55,19 @@ def _refusal(name: str | None, pipelines: Mapping[str, dict]) -> RealtimeError |
     """Why the client can't open a session on pipeline *name*, or None; *pipelines* is the gateway's table."""
     if not name:
         return RealtimeError(
-            message="Pass the pipeline to use as /v1/realtime?model=<name>.", code="missing_model", param="model"
+            message="Pass the pipeline to use as /v1/realtime?model=<name>.",
+            code="missing_required_parameter",
+            param="model",
         )
     route = pipelines.get(name)
     if route is None:
         return RealtimeError(message=f"No pipeline {name!r} on this gateway.", code="model_not_found", param="model")
     if parse_pipeline(route["config"]).USECASE is not ModelUsecase.realtime:
         return RealtimeError(
-            message=f"Pipeline {name!r} doesn't serve /v1/realtime.", code="model_not_supported", param="model"
+            message=f"Pipeline {name!r} doesn't serve /v1/realtime.", code="invalid_value", param="model"
         )
     if not route["ready"]:
-        return RealtimeError(message=f"Pipeline {name!r} isn't ready yet.", code="model_not_ready")
+        return RealtimeError(message=f"Pipeline {name!r} isn't ready yet.", type="server_error")
     return None
 
 
@@ -90,7 +92,7 @@ async def serve_relay(
     if refusal is None and name is not None:
         found = link(name)
         if found is None:
-            refusal = RealtimeError(message=f"Pipeline {name!r} isn't ready yet.", code="model_not_ready")
+            refusal = RealtimeError(message=f"Pipeline {name!r} isn't ready yet.", type="server_error")
     if refusal is not None:
         await _refuse(websocket, refusal)
         return

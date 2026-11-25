@@ -150,7 +150,7 @@ class AssistantPipeline(BasePipeline):
 
     async def _serve(self, channel: RelayChannel, opening: RealtimeOpening) -> None:
         if not await self.routes.ready():
-            error = RealtimeError(message=f"Pipeline {self.config.name!r} isn't ready yet.", code="model_not_ready")
+            error = RealtimeError(message=f"Pipeline {self.config.name!r} isn't ready yet.", type="server_error")
             await refuse(channel, error)
             return
         await serve_session(channel, self.config, self._calls(opening), self._finder())

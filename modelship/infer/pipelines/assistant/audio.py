@@ -8,9 +8,10 @@ import wave
 
 import numpy as np
 
-# OpenAI's limit for a commit, and the most audio one turn may hold
+# OpenAI's least audio for a commit
 MIN_SECONDS = 0.1
-MAX_SECONDS = 120.0
+# the most audio the input audio buffer holds: ~170 MB of 24 kHz PCM
+MAX_SECONDS = 3600.0
 G711_RATE = 8000
 
 
@@ -152,7 +153,7 @@ class InputAudioBuffer:
         if self.rate is not None and self._pcm and rate != self.rate:
             return "The audio format changed with audio in the buffer; clear it first."
         if (len(self._pcm) + len(pcm16)) // 2 / rate > MAX_SECONDS:
-            return f"The input audio buffer holds at most {MAX_SECONDS:.0f} s; commit or clear it."
+            return f"The input audio buffer holds at most {MAX_SECONDS / 60:.0f} min; commit or clear it."
         self.rate = rate
         self._pcm += pcm16
         return None

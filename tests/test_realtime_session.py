@@ -387,7 +387,8 @@ class TestOpening:
         assert (session["type"], session["object"]) == ("transcription", "realtime.transcription_session")
 
     def test_without_a_model_it_is_refused(self):
-        assert _refused(_client(_route(ASSISTANT)), "")["code"] == "missing_model"
+        error = _refused(_client(_route(ASSISTANT)), "")
+        assert (error["code"], error["param"]) == ("missing_required_parameter", "model")
 
     def test_an_unknown_pipeline_is_refused(self):
         error = _refused(_client(_route(ASSISTANT)), "?model=nope")
@@ -401,12 +402,17 @@ class TestOpening:
 
     def test_a_pipeline_whose_model_is_not_serving_yet_is_refused(self):
         error = _refused(_client(_route(ASSISTANT), serving=("whisper",)), "?model=assistant")
-        assert error["code"] == "model_not_ready"
+        assert (error["type"], error["code"]) == ("server_error", None)
         assert "'qwen', which isn't ready yet" in error["message"]
 
     def test_a_pipeline_whose_audio_app_is_not_ready_is_refused(self):
         error = _refused(_client(_route(ASSISTANT, ready=False)), "?model=assistant")
-        assert error == {**error, "code": "model_not_ready", "message": "Pipeline 'assistant' isn't ready yet."}
+        assert error == {
+            **error,
+            "type": "server_error",
+            "code": None,
+            "message": "Pipeline 'assistant' isn't ready yet.",
+        }
 
 
 class TestSttCapabilities:
@@ -431,14 +437,15 @@ class TestSttCapabilities:
 
     def test_an_stt_model_that_does_not_transcribe_refuses_the_session(self):
         error = _refused(_client(_route(ASSISTANT), stt=None), "?model=assistant")
-        assert error["code"] == "model_not_supported"
+        assert (error["code"], error["param"]) == ("invalid_value", "model")
         assert "uses model 'whisper' as stt, which doesn't transcribe" in error["message"]
 
     def test_an_stt_model_that_fails_to_answer_refuses_the_session(self):
         error = _refused(_client(_route(ASSISTANT), stt=RuntimeError("replica died")), "?model=assistant")
         assert error == {
             **error,
-            "code": "model_not_ready",
+            "type": "server_error",
+            "code": None,
             "message": "Pipeline 'assistant' couldn't ask model 'whisper' what it can do.",
         }
 
@@ -498,15 +505,23 @@ class TestSessionUpdate:
 
 
 class TestEvents:
-    def test_audio_output_events_are_not_supported_yet_and_the_session_stays_open(self):
+    def test_an_event_type_it_does_not_take_is_an_invalid_value_and_the_session_stays_open(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
             _open(ws)
             ws.send_json({"type": "output_audio_buffer.clear", "event_id": "e2"})
             error = ws.receive_json()["error"]
             ws.send_json({"type": "session.update", "session": {}})
             still_open = ws.receive_json()
-        assert (error["code"], error["event_id"]) == ("unsupported_event", "e2")
-        assert error["message"] == "output_audio_buffer.clear is not supported yet."
+        assert (error["type"], error["code"], error["param"], error["event_id"]) == (
+            "invalid_request_error",
+            "invalid_value",
+            "type",
+            "e2",
+        )
+        assert error["message"].startswith(
+            "Invalid value: 'output_audio_buffer.clear'. Supported values are: 'session.update', "
+        )
+        assert "'input_audio_buffer.append'" in error["message"]
         assert still_open["type"] == "session.updated"
 
     @pytest.mark.parametrize(
@@ -526,15 +541,24 @@ class TestEvents:
             _open(ws)
             ws.send_json(event)
             error = ws.receive_json()["error"]
-        assert error["code"] == "invalid_event"
+        assert (error["code"], error["param"]) == ("invalid_value", "type")
+        assert f"'{event['type']}'" not in error["message"].split("Supported values are:")[1]
 
-    @pytest.mark.parametrize("frame", ["not json", "[1, 2]", '{"no": "type"}'])
-    def test_a_malformed_event_is_an_error(self, frame):
+    @pytest.mark.parametrize(
+        ("frame", "code", "param"),
+        [
+            ("not json", None, None),
+            ("[1, 2]", None, None),
+            ('{"no": "type"}', "missing_required_parameter", "type"),
+            ('{"type": "input_audio_buffer.append"}', "missing_required_parameter", "audio"),
+        ],
+    )
+    def test_a_malformed_event_is_an_error(self, frame, code, param):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
             _open(ws)
             ws.send_text(frame)
-            event = ws.receive_json()
-        assert event["type"] == "error"
+            error = ws.receive_json()["error"]
+        assert (error["type"], error["code"], error["param"]) == ("invalid_request_error", code, param)
 
     def test_a_binary_frame_is_an_error(self):
         with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
@@ -588,12 +612,12 @@ class TestConversation:
     @pytest.mark.parametrize(
         ("item", "code", "param"),
         [
-            ({"type": "function_call", "name": "f"}, "invalid_value", "item.arguments"),
-            ({"type": "function_call_output", "output": "on"}, "invalid_value", "item.call_id"),
+            ({"type": "function_call", "name": "f"}, "missing_required_parameter", "item.arguments"),
+            ({"type": "function_call_output", "output": "on"}, "missing_required_parameter", "item.call_id"),
             ({"type": "mcp_call", "name": "f"}, "invalid_value", "item"),
             (
                 {"type": "message", "role": "user", "content": [{"type": "input_audio", "audio": ""}]},
-                "unsupported_value",
+                "invalid_value",
                 "item.content[0]",
             ),
             (
@@ -882,7 +906,12 @@ class TestResponses:
             events = _until(ws, "response.done")
         assert [event["type"] for event in events] == ["response.created", "error", "response.done"]
         error = events[1]["error"]
-        assert error == {**error, "code": "model_not_ready", "message": "Pipeline model 'qwen' isn't ready."}
+        assert error == {
+            **error,
+            "type": "server_error",
+            "code": None,
+            "message": "Pipeline model 'qwen' isn't ready.",
+        }
         assert events[-1]["response"]["status"] == "failed"
 
 
@@ -1149,30 +1178,29 @@ class TestAudioInput:
         ws.send_json({"type": "session.update", "session": {"audio": {"input": {"format": {"type": "audio/pcmu"}}}}})
         ws.receive_json()
 
-    def test_the_buffer_holds_at_most_120_seconds(self):
+    def test_the_buffer_refuses_audio_past_its_cap(self, monkeypatch):
+        monkeypatch.setattr("modelship.infer.pipelines.assistant.audio.MAX_SECONDS", 2.0)
         with self._session(_Stt()) as ws:
             _open(ws)
             self._g711(ws)
-            _append(ws, b"\xff" * 8000 * 121)
+            _append(ws, b"\xff" * 8000 * 3)
             error = ws.receive_json()["error"]
-        assert error["code"] == "input_audio_buffer_full"
+        assert (error["type"], error["code"], error["param"]) == ("invalid_request_error", None, "audio")
 
-    def test_the_turns_waiting_for_transcription_hold_at_most_120_seconds(self):
+    def test_a_commit_is_taken_while_turns_wait_for_transcription(self):
         stt = _Stt("One.", "Two.", delay=0.5)
         with self._session(stt) as ws:
             _open(ws)
             self._g711(ws)
-            _append(ws, b"\xff" * 8000 * 70)
+            _append(ws, b"\xff" * 8000)
             ws.send_json({"type": "input_audio_buffer.commit"})
             _until(ws, "conversation.item.added")
-            _append(ws, b"\xff" * 8000 * 70)
+            _append(ws, b"\xff" * 8000)
             ws.send_json({"type": "input_audio_buffer.commit"})
-            error = ws.receive_json()["error"]
-            _until(ws, "conversation.item.done")
-            ws.send_json({"type": "input_audio_buffer.commit"})
-            later = _until(ws, "conversation.item.done")
-        assert error["code"] == "input_audio_transcription_busy"
-        assert later[0]["type"] == "input_audio_buffer.committed"
+            second = ws.receive_json()
+            done = [_until(ws, "conversation.item.done")[-1] for _ in range(2)]
+        assert second["type"] == "input_audio_buffer.committed"
+        assert [event["item"]["content"][0]["transcript"] for event in done] == ["One.", "Two."]
 
     def test_a_pcm_rate_outside_8_to_48_khz_is_refused(self):
         with self._session(_Stt()) as ws:
@@ -1195,10 +1223,10 @@ class TestAudioInput:
     @pytest.mark.parametrize(
         ("turn_detection", "code", "param"),
         [
-            ({"type": "semantic_vad"}, "unsupported_value", "session.audio.input.turn_detection"),
+            ({"type": "semantic_vad"}, "invalid_value", "session.audio.input.turn_detection"),
             (
                 {"type": "server_vad", "idle_timeout_ms": 5000},
-                "unsupported_value",
+                "invalid_value",
                 "session.audio.input.turn_detection.idle_timeout_ms",
             ),
             ({"type": "server_vad", "threshold": 2}, "invalid_value", "session.audio.input.turn_detection.threshold"),
@@ -1227,7 +1255,7 @@ class TestAudioInput:
             item = {"type": "message", "role": "user", "content": [{"type": "input_audio", "transcript": "hi"}]}
             ws.send_json({"type": "conversation.item.create", "item": item})
             error = ws.receive_json()["error"]
-        assert (error["code"], error["param"]) == ("unsupported_value", "item.content[0]")
+        assert (error["code"], error["param"]) == ("invalid_value", "item.content[0]")
 
     @pytest.mark.parametrize("audio", ["not base64!", "é"])
     def test_audio_that_is_not_base64_is_refused(self, audio):
@@ -1241,8 +1269,19 @@ class TestAudioInput:
         with self._session(_Stt(), pipeline={"name": "chat", "llm": "qwen"}) as ws:
             _open(ws)
             _append(ws, _pcm(0.2))
-            error = ws.receive_json()["error"]
-        assert error["code"] == "invalid_event"
+            ws.send_json({"type": "input_audio_buffer.commit"})
+            # malformed too: the type is still what it reports
+            ws.send_json({"type": "input_audio_buffer.append", "event_id": "e3"})
+            append = ws.receive_json()["error"]
+            commit = ws.receive_json()["error"]
+            malformed = ws.receive_json()["error"]
+            ws.send_json({"type": "input_audio_buffer.clear"})
+            cleared = ws.receive_json()
+        assert (append["code"], append["param"]) == (commit["code"], commit["param"]) == ("invalid_value", "type")
+        assert (malformed["code"], malformed["param"], malformed["event_id"]) == ("invalid_value", "type", "e3")
+        assert append["message"].startswith("Invalid value: 'input_audio_buffer.append'.")
+        assert "'input_audio_buffer.append'" not in append["message"].split("Supported values are:")[1]
+        assert cleared["type"] == "input_audio_buffer.cleared"
 
     def test_a_transcription_session_transcribes_its_turns(self):
         stt = _Stt("Note one.", "Note two.")
@@ -1695,7 +1734,7 @@ class TestServerVad:
             error = ws.receive_json()
             ws.send_json({"type": "input_audio_buffer.commit"})
             events = _until(ws, "conversation.item.done")
-        assert error["error"]["code"] == "turn_detection_unavailable"
+        assert (error["error"]["type"], error["error"]["code"]) == ("server_error", "server_error")
         assert not [event for event in events if event["type"] == "error"]
         assert [e["transcript"] for e in events if e["type"].endswith("transcription.completed")] == ["Lights on."]
 
@@ -1707,22 +1746,14 @@ class TestServerVad:
             self._settle(ws)
         assert [e["transcript"] for e in events if e["type"].endswith("transcription.completed")] == ["Note one."]
 
-    def test_a_turn_found_while_the_transcription_queue_is_full_waits_for_room(self, monkeypatch):
-        # two 1.8 s turns don't fit a 3 s queue
-        monkeypatch.setattr("modelship.infer.pipelines.assistant.session.MAX_SECONDS", 3.0)
+    def test_a_turn_found_while_another_is_transcribed_is_committed(self):
         stt = _Stt("One.", "Two.", delay=0.5)
         pipeline = {**SCRIBE, "session_defaults": {"audio": {"input": {"turn_detection": {"type": "server_vad"}}}}}
         with self._session(stt, pipeline=pipeline) as ws:
             _open(ws)
             _stream(ws, _quiet(1), _tone(1), _quiet(1), _tone(1), _quiet(1))
-            # the microphone keeps streaming while the first turn is transcribed
-            for _ in range(10):
-                _append(ws, _quiet(0.1))
-                time.sleep(0.1)
             events = _until(ws, "conversation.item.done") + _until(ws, "conversation.item.done")
-        errors = [event["error"] for event in events if event["type"] == "error"]
-        assert [error["code"] for error in errors] == ["input_audio_transcription_busy"]
-        assert "kept and committed once there is room" in errors[0]["message"]
+        assert not [event for event in events if event["type"] == "error"]
         transcripts = [e["transcript"] for e in events if e["type"].endswith("transcription.completed")]
         assert transcripts == ["One.", "Two."]
         stops = [event["audio_end_ms"] for event in events if event["type"] == "input_audio_buffer.speech_stopped"]
