@@ -15,15 +15,12 @@ import pytest
 
 from modelship.deploy import config as deploy_config
 from modelship.infer.infer_config import ModelshipConfig, ModelshipModelConfig
-from modelship.infer.sherpa_onnx import streaming_stt_infer
+from modelship.infer.sherpa_onnx import stream_decoder, streaming_stt_infer
 from modelship.infer.sherpa_onnx.bundle import bundle_paths
 from modelship.infer.sherpa_onnx.family import nemo_streaming_transducer
 from modelship.infer.sherpa_onnx.registry import REGISTRY, StreamFeed, is_streaming
-from modelship.infer.sherpa_onnx.streaming_stt_infer import (
-    SherpaOnnxStreamingSttInfer,
-    StreamDecoder,
-    quiet_tail_ms,
-)
+from modelship.infer.sherpa_onnx.stream_decoder import StreamDecoder, quiet_tail_ms
+from modelship.infer.sherpa_onnx.streaming_stt_infer import SherpaOnnxStreamingSttInfer
 from modelship.infer.sherpa_onnx.stt_infer import SherpaOnnxSttInfer
 from modelship.openai.protocol import (
     ErrorResponse,
@@ -213,8 +210,8 @@ class TestStreamDecoder:
         assert _wait(decoder, "s2:t1", _audio(100)).text == "w0"
 
     def test_a_stream_no_job_reached_for_idle_s_is_dropped(self, monkeypatch):
-        monkeypatch.setattr(streaming_stt_infer, "IDLE_S", 0.05)
-        monkeypatch.setattr(streaming_stt_infer, "SWEEP_S", 0.02)
+        monkeypatch.setattr(stream_decoder, "IDLE_S", 0.05)
+        monkeypatch.setattr(stream_decoder, "SWEEP_S", 0.02)
         decoder, _ = _decoder()
         _wait(decoder, "s1:t1", _audio(100))
         deadline = time.monotonic() + 5
