@@ -260,6 +260,8 @@ class RealtimeSession(BaseModel):
     object: str
     id: str
     model: str
+    # when the session reaches its maximum duration, in seconds since the epoch
+    expires_at: int | None = None
     instructions: str | None = None
     output_modalities: Modalities | None = None
     max_output_tokens: MaxOutputTokens | None = None

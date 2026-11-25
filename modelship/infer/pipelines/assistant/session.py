@@ -7,6 +7,7 @@ off, and the client truncates a spoken answer to what it played."""
 import asyncio
 import base64
 import json
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
@@ -120,6 +121,10 @@ _UNION_TAGS = frozenset(
 )
 # a spoken answer goes out in pieces of this much audio
 _AUDIO_DELTA_SECONDS = 0.5
+# OpenAI's maximum duration of a session
+MAX_SESSION_S = 3600
+# RFC 6455 normal closure: the session reached its maximum duration
+CLOSE_EXPIRED = 1000
 
 Handler = Callable[[Any], Awaitable[RealtimeError | None]]
 
@@ -181,7 +186,12 @@ def _new_session(config: AssistantPipelineConfig) -> RealtimeSession:
         audio.output = AudioOutput()
     fields["audio"] = audio
     return RealtimeSession(
-        type=kind, object=SESSION_OBJECTS[kind], id=f"sess_{random_uuid()[:20]}", model=config.name, **fields
+        type=kind,
+        object=SESSION_OBJECTS[kind],
+        id=f"sess_{random_uuid()[:20]}",
+        model=config.name,
+        expires_at=int(time.time() + MAX_SESSION_S),
+        **fields,
     )
 
 
@@ -346,6 +356,7 @@ class Session:
         if self.state.type == "realtime":
             conversation = {"id": self.conversation.id, "object": "realtime.conversation"}
             await self.send(server_event("conversation.created", conversation=conversation))
+        expiry = asyncio.ensure_future(self._expire())
         try:
             while (message := await self.channel.receive()) is not None:
                 if isinstance(message, bytes):
@@ -354,13 +365,25 @@ class Session:
                 await self._handle(message)
         finally:
             self._closed = True
-            for task in (*self._transcriptions, *self._replies, *self._retired_feeds):
+            # a closed session waits in reference cycles for the cyclic GC; its audio goes now
+            self.buffer.clear()
+            for task in (expiry, *self._transcriptions, *self._replies, *self._retired_feeds):
                 task.cancel()
             if self.turns is not None:
                 await self.turns.close()
             if self.active is not None:
                 await self.active.abandon()
         logger.info("Realtime session %s closed", self.state.id)
+
+    async def _expire(self) -> None:
+        """Ends the session once it reaches its maximum duration, as OpenAI does."""
+        await asyncio.sleep(MAX_SESSION_S)
+        logger.info("Realtime session %s reached its maximum duration", self.state.id)
+        error = RealtimeError(
+            message=f"Your session hit the maximum duration of {MAX_SESSION_S / 60:g} minutes.", code="session_expired"
+        )
+        await self.send(error_event(error))
+        await self.channel.close(CLOSE_EXPIRED)
 
     async def send(self, event: dict) -> None:
         """Sends *event*, unless the client has left. A response sends from its own task."""
