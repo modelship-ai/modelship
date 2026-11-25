@@ -15,6 +15,8 @@ from modelship.openai.protocol import (
     RawSpeechResponse,
     SpeechRequest,
     SttCapabilities,
+    SttStreamOptions,
+    SttStreamText,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
@@ -105,6 +107,31 @@ class ModelCalls:
             ),
         )
         return await self._answer(stream, req_id)
+
+    # a stream's calls carry its key as their session_id, which pins the stream to the replica holding it
+
+    async def transcribe_push(
+        self, model: str, key: str, pcm: bytes, rate: int, options: SttStreamOptions
+    ) -> SttStreamText | ErrorResponse | None:
+        handle = self._routes.handle(model)
+        if handle is None:
+            return None
+        call = handle.transcribe_push.options(session_id=key)
+        return await call.remote(key, pcm, rate, options, random_uuid(), self._identity)
+
+    async def transcribe_finish(
+        self, model: str, key: str, pcm: bytes, rate: int, options: SttStreamOptions
+    ) -> SttStreamText | ErrorResponse | None:
+        handle = self._routes.handle(model)
+        if handle is None:
+            return None
+        call = handle.transcribe_finish.options(session_id=key)
+        return await call.remote(key, pcm, rate, options, random_uuid(), self._identity)
+
+    async def transcribe_close(self, model: str, key: str) -> None:
+        handle = self._routes.handle(model)
+        if handle is not None:
+            await handle.transcribe_close.options(session_id=key).remote(key)
 
     async def speak(
         self, model: str, request: SpeechRequest, session_id: str

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from modelship.infer.pipelines.assistant.audio import InputAudioBuffer
-from modelship.infer.pipelines.assistant.turns import TurnDetector
+from modelship.infer.pipelines.assistant.turns import MAX_TURN_MS, TurnDetector
 from modelship.openai.protocol.realtime import ServerVad
 from modelship.utils.vad import SpeechSegment
 
@@ -77,7 +77,7 @@ class _FakeFinder:
 class _Turns:
     """A detector over a fresh buffer, recording what it reports."""
 
-    def __init__(self, settings: ServerVad | None = None) -> None:
+    def __init__(self, settings: ServerVad | None = None, max_turn_ms: int | None = MAX_TURN_MS) -> None:
         self.buffer = InputAudioBuffer()
         self.vad = FakeVad()
         self.events: list[tuple] = []
@@ -95,6 +95,7 @@ class _Turns:
             self._ended,
             self._failed,
             lambda: self.min_speech,
+            max_turn_ms=max_turn_ms,
         )
 
     async def _started(self, turn: str, at: int) -> None:
@@ -172,6 +173,13 @@ class TestTurns:
         turns = _Turns()
         await turns.feed(_quiet(0.5), _tone(31), _quiet(1), step=None)
         assert turns.turns() == [(200, 30200), (30200, 32000)]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("step", [0.1, None], ids=["live", "all-at-once"])
+    async def test_without_a_longest_turn_a_turn_ends_only_at_a_pause(self, step):
+        turns = _Turns(max_turn_ms=None)
+        await turns.feed(_quiet(0.5), _tone(31), _quiet(1), step=step)
+        assert turns.turns() == [(200, 32000)]
 
     @pytest.mark.asyncio
     async def test_speech_still_going_leaves_the_turn_open(self):

@@ -436,3 +436,61 @@ class TestAudioOutput:
         assert truncated["audio_end_ms"] == played_ms
         written = done["output"][0]["content"][0]["transcript"]
         assert written.startswith(kept) and len(kept) < len(written), (kept, written)
+
+
+NEMOTRON = MODEL_CONFIGS["stt-nemotron"]
+STREAMER = {"name": "streamer", "type": "assistant", "assistant_config": {"stt": NEMOTRON["name"]}}
+DELTA = "conversation.item.input_audio_transcription.delta"
+COMPLETED = "conversation.item.input_audio_transcription.completed"
+
+
+@pytest.mark.integration
+@pytest.mark.sherpa_onnx
+class TestStreamingSpeechToText:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer, tmp_path_factory):
+        config = tmp_path_factory.mktemp("realtime-streaming") / "models.yaml"
+        config.write_text(yaml.dump({"models": [NEMOTRON, TTS], "pipelines": [STREAMER]}))
+        model_deployer.run("--config", str(config), "--reconcile", log_name="realtime-streaming")
+        model_deployer.forget()
+        yield
+        model_deployer.deploy()
+
+    def _retrieve(self, ws, item_id: str) -> str:
+        _send(ws, {"type": "conversation.item.retrieve", "item_id": item_id})
+        return _until(ws, "conversation.item.retrieved")[-1]["item"]["content"][0]["transcript"]
+
+    def test_a_committed_buffer_streams_to_the_model_and_its_transcript_is_kept(self):
+        rate, pcm = _speech("Turn on the kitchen lights.")
+        with connect(f"{REALTIME}?model=streamer", open_timeout=30) as ws:
+            _until(ws, "session.created")
+            audio_input = {"format": {"type": "audio/pcm", "rate": rate}, "turn_detection": None}
+            _send(ws, {"type": "session.update", "session": {"audio": {"input": audio_input}}})
+            _until(ws, "session.updated")
+            events = _speak_turn(ws, pcm, rate)
+            [completed] = [event for event in events if event["type"] == COMPLETED]
+            kept = self._retrieve(ws, completed["item_id"])
+        assert DELTA not in [event["type"] for event in events]
+        assert {"kitchen", "lights"} <= set(_words(completed["transcript"])), completed["transcript"]
+        assert kept == completed["transcript"]
+
+    def test_a_server_vad_turn_streams_its_text_as_deltas(self):
+        rate, pcm = _speech("Please turn on the kitchen lights and close the blinds.")
+        with connect(f"{REALTIME}?model=streamer", open_timeout=30) as ws:
+            _until(ws, "session.created")
+            audio_input = {"format": {"type": "audio/pcm", "rate": rate}}
+            _send(ws, {"type": "session.update", "session": {"audio": {"input": audio_input}}})
+            _until(ws, "session.updated")
+            _append_all(ws, bytes(rate * 2) + pcm + bytes(rate * 2), rate)
+            events = _until(ws, COMPLETED)
+            kept = self._retrieve(ws, events[-1]["item_id"])
+        turn = next(event["item_id"] for event in events if event["type"] == "input_audio_buffer.speech_started")
+        deltas = [event for event in events if event["type"] == DELTA]
+        assert deltas, [event["type"] for event in events]
+        assert {event["item_id"] for event in deltas} == {turn}
+        heard = events[-1]["transcript"]
+        assert {"kitchen", "blinds"} <= set(_words(heard)), heard
+        # what streamed is how the final transcript starts
+        streamed = _words("".join(event["delta"] for event in deltas))
+        assert streamed == _words(heard)[: len(streamed)], (streamed, heard)
+        assert kept == heard

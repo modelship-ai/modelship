@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modelship.infer.pipelines.assistant.model_calls import ModelCalls
-from modelship.openai.protocol import SttCapabilities
+from modelship.openai.protocol import SttCapabilities, SttStreamOptions, SttStreamText
 
 
 class _Routes:
@@ -161,3 +161,28 @@ async def test_speech_cancelled_mid_call_stops_the_model():
     (_, _, _, req_id, _), _ = handle.speak.options.return_value.remote.call_args
     assert stream.cancelled
     registry.set.remote.assert_awaited_once_with(req_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["transcribe_push", "transcribe_finish"])
+async def test_a_streams_audio_goes_to_the_replica_its_key_pins(method):
+    calls, handle = _calls(_registry())
+    text = SttStreamText(text="hi", audio_ms=160.0)
+    call = getattr(handle, method)
+    call.options.return_value.remote = AsyncMock(return_value=text)
+    options = SttStreamOptions(language="de")
+    assert await getattr(calls, method)("nope", "s1:t1", b"\0\0", 24000, options) is None
+    assert await getattr(calls, method)("qwen", "s1:t1", b"\0\0", 24000, options) == text
+    call.options.assert_called_once_with(session_id="s1:t1")
+    (key, pcm, rate, sent, _req_id, identity), _ = call.options.return_value.remote.call_args
+    assert (key, pcm, rate, sent, identity) == ("s1:t1", b"\0\0", 24000, options, "caller")
+
+
+@pytest.mark.asyncio
+async def test_closing_a_stream_goes_to_the_replica_its_key_pins():
+    calls, handle = _calls(_registry())
+    handle.transcribe_close.options.return_value.remote = AsyncMock(return_value=None)
+    await calls.transcribe_close("nope", "s1:t1")
+    await calls.transcribe_close("qwen", "s1:t1")
+    handle.transcribe_close.options.assert_called_once_with(session_id="s1:t1")
+    handle.transcribe_close.options.return_value.remote.assert_awaited_once_with("s1:t1")

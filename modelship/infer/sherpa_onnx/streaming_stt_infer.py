@@ -67,7 +67,7 @@ class SherpaOnnxStreamingSttInfer(SherpaOnnxInfer):
         self.decoder = StreamDecoder(recognizer, self.feed, self.model_config.name)
 
     async def stt_capabilities(self) -> SttCapabilities:
-        return SttCapabilities(streaming=True, reports_language=False)
+        return SttCapabilities(streaming=True, reports_language=False, chunk_ms=self.feed.chunk_ms)
 
     async def _run(self, key: str, samples: np.ndarray, rate: int, language: str | None, finish: bool) -> StreamResult:
         assert self.decoder is not None
