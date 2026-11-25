@@ -44,6 +44,8 @@ class _StreamStt:
         self.delay = delay
         self.fail_push: int | None = None
         self.lose = False
+        # finishes never answer
+        self.hang_finish = False
         self.calls: list[tuple[str, str, int]] = []
         self.options: dict[str, object] = {}
         self._streams: dict[str, list] = {}
@@ -75,6 +77,8 @@ class _StreamStt:
 
     async def finish(self, key: str, pcm: bytes, rate: int, options):
         words, held = await self._take("finish", key, pcm, options)
+        if self.hang_finish:
+            await asyncio.Event().wait()
         del self._streams[key]
         return SttStreamText(text=" ".join(words), audio_ms=held / 2 / rate * 1000)
 
@@ -220,6 +224,32 @@ class TestServerVad:
         # the stream is the turn's, from its start
         assert {key for _, key, _ in stt.ops("push", "finish")} == {stt.calls[0][1]}
         assert stt.calls[0][1].endswith(f":{turn}")
+
+    def test_a_turns_stream_gets_its_audio_and_none_after_it(self):
+        stt = _StreamStt("one", "two")
+        with _session(stt) as ws:
+            _open(ws)
+            # faster than real time, the next turn arrives before server VAD ends the first
+            _stream(ws, _quiet(1), _tone(1), _quiet(1), _tone(1), _quiet(1), step=1.0)
+            events = _until(ws, "conversation.item.done") + _until(ws, "conversation.item.done")
+        starts = {e["item_id"]: e["audio_start_ms"] for e in events if e["type"] == "input_audio_buffer.speech_started"}
+        ends = {e["item_id"]: e["audio_end_ms"] for e in events if e["type"] == "input_audio_buffer.speech_stopped"}
+        assert len(starts) == 2
+        for turn, start in starts.items():
+            sent = sum(size for _, key, size in stt.ops("push", "finish") if key.endswith(f":{turn}"))
+            assert sent == (ends[turn] - start) * RATE * 2 // 1000, turn
+
+    def test_a_session_that_ends_while_a_stream_finishes_closes_it(self):
+        stt = _StreamStt("never")
+        stt.hang_finish = True
+        with _session(stt, SCRIBE_MANUAL) as ws:
+            _open(ws)
+            _append(ws, _pcm(0.5))
+            ws.send_json({"type": "input_audio_buffer.commit"})
+            _until(ws, "conversation.item.added")
+            assert _eventually(lambda: bool(stt.ops("finish")))
+        key = stt.ops("finish")[0][1]
+        assert _eventually(lambda: ("close", key, 0) in stt.calls)
 
     def test_a_streamed_turn_is_not_cut_at_30_seconds(self):
         stt = _StreamStt("a long story")

@@ -379,8 +379,12 @@ class Session:
             # a closed session waits in reference cycles for the cyclic GC; its audio goes now
             self.buffer.clear()
             self._drop_stream()
-            for task in (expiry, *self._transcriptions, *self._replies, *self._retired_feeds):
+            transcriptions = set(self._transcriptions)
+            for task in (expiry, *transcriptions, *self._replies, *self._retired_feeds):
                 task.cancel()
+            if transcriptions:
+                # a cancelled streamed transcription closes its stream as it ends
+                await asyncio.wait(transcriptions, timeout=_STREAM_CLOSE_S)
             if self._closing:
                 await asyncio.wait(self._closing, timeout=_STREAM_CLOSE_S)
             if self.turns is not None:
@@ -817,16 +821,29 @@ class Session:
         key = f"{self.state.id}:{turn or f'buffer_{random_uuid()[:12]}'}"
         options = SttStreamOptions(language=language)
         chunk = self.stt.chunk_ms or 0
-        deltas = delta if turn is not None else None
-        return TurnStream(self.calls, stt, key, self.buffer, start_ms, chunk, options, self._stt_lane, deltas)
+        turns = self.turns
+        if turn is None or turns is None:
+            return TurnStream(self.calls, stt, key, self.buffer, start_ms, chunk, options, self._stt_lane)
+        # audio server VAD hasn't heard yet may be past the turn's end
+        return TurnStream(
+            self.calls, stt, key, self.buffer, start_ms, chunk, options, self._stt_lane, delta, lambda: turns.heard_ms
+        )
 
     def _drop_stream(self) -> None:
         """Closes the stream of the audio that won't be committed."""
         stream, self._stream = self._stream, None
         if stream is not None:
-            task = asyncio.ensure_future(stream.close())
-            self._closing.add(task)
-            task.add_done_callback(self._closing.discard)
+            self._close_later(stream)
+
+    def _close_later(self, stream: TurnStream) -> None:
+        task = asyncio.ensure_future(stream.close())
+        self._closing.add(task)
+        task.add_done_callback(self._closing.discard)
+
+    def _heard(self) -> None:
+        """Server VAD heard more audio: the turn's stream may push it."""
+        if self._stream is not None:
+            self._stream.feed()
 
     async def _detect_turns(self) -> None:
         """Starts, retunes or stops server VAD, as the session's turn detection says."""
@@ -857,6 +874,7 @@ class Session:
             self._min_speech,
             # a streamed turn costs its model no more as it grows
             max_turn_ms=None if self._streams() else MAX_TURN_MS,
+            progressed=self._heard,
         )
 
     def _min_speech(self) -> int:
@@ -983,9 +1001,14 @@ class Session:
         self, item: UserMessage, audio: Streamed, seconds: float, previous: asyncio.Task | None
     ) -> None:
         """Fills *item*'s transcript by finishing its stream, once the turn before it is done."""
-        if previous is not None:
-            await asyncio.wait([previous])
-        result = await audio.stream.finish(audio.rest)
+        try:
+            if previous is not None:
+                await asyncio.wait([previous])
+            result = await audio.stream.finish(audio.rest)
+        except asyncio.CancelledError:
+            # the session closed before the stream finished
+            self._close_later(audio.stream)
+            raise
         if isinstance(result, SttStreamText):
             if self.language is None and self.stt is not None and self.stt.reports_language and result.language:
                 self.language = result.language

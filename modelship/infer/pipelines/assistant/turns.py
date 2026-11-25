@@ -49,7 +49,7 @@ class TurnDetector:
     each turn's item id and where it starts; *ended* gets its item id, start and end, and takes its audio out of the
     buffer; *failed* hears of each stretch of feeds that fail, during which the buffer keeps all its
     audio. Speech shorter than *min_speech* says starts no turn. A turn without a pause is cut at *max_turn_ms*, or
-    never with None."""
+    never with None. *progressed* hears of each feed done, once `heard_ms` moved."""
 
     def __init__(
         self,
@@ -61,6 +61,7 @@ class TurnDetector:
         failed: Failed,
         min_speech: MinSpeech = lambda: 0,
         max_turn_ms: int | None = MAX_TURN_MS,
+        progressed: Callable[[], None] = lambda: None,
     ):
         self.buffer = buffer
         self.settings = settings
@@ -70,10 +71,13 @@ class TurnDetector:
         self._failed = failed
         self._min_speech = min_speech
         self._max_turn_ms = math.inf if max_turn_ms is None else max_turn_ms
+        self._progressed = progressed
         # the finder the buffer's audio is fed to; None until the next feed opens one
         self._finder: SpeechFinder | None = None
         # the end of the audio fed so far
         self._fed_ms = buffer.end_ms
+        # the end of the audio whose turns have all started and ended: a turn open past it ends after it
+        self.heard_ms = buffer.end_ms
         # where the last turn ended; no turn starts before it
         self._floor_ms = buffer.start_ms
         # the turn in progress: its item id and start
@@ -99,7 +103,7 @@ class TurnDetector:
         self.turn = None
         self._epoch += 1
         self._finder = None
-        self._fed_ms = self._tried_ms = self._floor_ms = self.buffer.end_ms
+        self._fed_ms = self._tried_ms = self._floor_ms = self.heard_ms = self.buffer.end_ms
         return found
 
     @property
@@ -158,6 +162,9 @@ class TurnDetector:
         self._failing = False
         self._fed_ms = self._tried_ms = end
         await self._apply(found, end, settings, min_speech)
+        if epoch == self._epoch:
+            self.heard_ms = end
+            self._progressed()
         if self.turn is None:
             # keep the open segment and what a turn's prefix padding needs
             held = min([end - _LEAD_MS, *(segment.start_ms for segment in found if segment.end_ms is None)])

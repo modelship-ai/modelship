@@ -24,7 +24,8 @@ Push = Callable[[str, str, bytes, int, SttStreamOptions], Awaitable[SttStreamTex
 
 class TurnStream:
     """The audio of *buffer* from *start_ms* on, streamed to *model* as stream *key*, opened with *options*; each
-    push carries at least *chunk_ms*. *delta* gets each push's new text, when the text only grew."""
+    push carries at least *chunk_ms*, and no audio past *bound*, when given. *delta* gets each push's new text, when
+    the text only grew."""
 
     def __init__(
         self,
@@ -37,6 +38,7 @@ class TurnStream:
         options: SttStreamOptions,
         lane: asyncio.Lock,
         delta: Delta | None = None,
+        bound: Callable[[], float] | None = None,
     ):
         assert buffer.rate is not None
         self._calls = calls
@@ -52,6 +54,7 @@ class TurnStream:
         self._options = options
         self._lane = lane
         self._delta = delta
+        self._bound = bound
         # the text sent as deltas so far
         self._said = ""
         # why the turn can't be transcribed, as an error event's error; None while it can
@@ -65,7 +68,7 @@ class TurnStream:
             return
         if self._push_task is not None and not self._push_task.done():
             return
-        end = self._buffer.end_ms
+        end = self._buffer.end_ms if self._bound is None else min(self._buffer.end_ms, self._bound())
         if end - self.sent_ms < self._chunk_ms:
             return
         pcm = self._buffer.pcm(self.sent_ms, end)
