@@ -81,8 +81,6 @@ class _Turns:
         self.buffer = InputAudioBuffer()
         self.vad = FakeVad()
         self.events: list[tuple] = []
-        # how many endings to refuse, as a full transcription queue does
-        self.refusals = 0
         # commit the buffer as the client does while the session sends speech_started
         self.commit_on_start = False
         # set, an ending waits for it after taking its audio
@@ -105,17 +103,12 @@ class _Turns:
             self.buffer.take()
             self.detector.reset()
 
-    async def _ended(self, turn: str, start: int, end: int) -> bool:
-        if self.refusals:
-            self.refusals -= 1
-            self.events.append(("refused", turn))
-            return False
+    async def _ended(self, turn: str, start: int, end: int) -> None:
         self.buffer.take(start, end)
         if self.sending is not None:
             # the session sends its events after it takes the audio
             await self.sending.wait()
         self.events.append(("ended", turn, start, end))
-        return True
 
     async def _failed(self) -> None:
         self.events.append(("failed",))
@@ -303,15 +296,6 @@ class TestTurns:
         turns.vad.gate.set()
         await turns.settle()
         assert turns.turns()[0] == (700, 2500)
-
-    @pytest.mark.asyncio
-    async def test_a_refused_ending_keeps_the_turn_and_its_audio_and_ends_it_on_a_later_feed(self):
-        turns = _Turns()
-        turns.refusals = 2
-        await turns.feed(_quiet(1), _tone(1), _quiet(1.5))
-        assert [event[0] for event in turns.events] == ["started", "refused", "refused", "ended"]
-        started, *_, ended = turns.events
-        assert ended == ("ended", started[1], 700, 2500)
 
     @pytest.mark.asyncio
     async def test_a_feed_in_flight_over_reset_audio_changes_nothing(self):

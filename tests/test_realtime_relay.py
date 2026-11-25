@@ -104,7 +104,8 @@ async def _refusal(websocket: _WebSocket, pipelines: dict, link=None) -> dict:
 class TestRefusals:
     @pytest.mark.asyncio
     async def test_without_a_model_it_is_refused(self):
-        assert (await _refusal(_WebSocket(None), READY))["code"] == "missing_model"
+        error = await _refusal(_WebSocket(None), READY)
+        assert (error["code"], error["param"]) == ("missing_required_parameter", "model")
 
     @pytest.mark.asyncio
     async def test_an_unknown_pipeline_is_refused(self):
@@ -114,11 +115,13 @@ class TestRefusals:
     @pytest.mark.asyncio
     async def test_a_pipeline_not_ready_is_refused(self):
         pipelines = {"voice": {**READY["voice"], "ready": False}}
-        assert (await _refusal(_WebSocket(), pipelines, _Link()))["code"] == "model_not_ready"
+        error = await _refusal(_WebSocket(), pipelines, _Link())
+        assert (error["type"], error["code"]) == ("server_error", None)
 
     @pytest.mark.asyncio
     async def test_a_pipeline_whose_app_cant_be_reached_is_refused(self):
-        assert (await _refusal(_WebSocket(), READY, None))["code"] == "model_not_ready"
+        error = await _refusal(_WebSocket(), READY, None)
+        assert (error["type"], error["code"]) == ("server_error", None)
 
 
 async def _relay(link: _Link, websocket: _WebSocket | None = None) -> tuple[asyncio.Task, _WebSocket]:

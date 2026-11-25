@@ -100,7 +100,8 @@ class TestAssistantPipeline:
         pipeline = AssistantPipeline(CHAT, _Routes(ready=False))  # type: ignore[arg-type]
         frames = [frame async for frame in pipeline.realtime(RealtimeOpening(key="k1"))]
         assert frames[0] == RealtimeOpened()
-        assert json.loads(frames[1])["error"]["code"] == "model_not_ready"
+        error = json.loads(frames[1])["error"]
+        assert (error["type"], error["code"]) == ("server_error", None)
         assert frames[2:] == [RealtimeClosed(1008)]
 
     @pytest.mark.asyncio
@@ -266,6 +267,7 @@ class TestRefusals:
     async def test_a_realtime_session_outside_the_usecase_is_refused(self):
         base = _Base()
         frames = [frame async for frame in base.realtime(RealtimeOpening(key="k1"))]
-        assert json.loads(frames[0])["error"]["code"] == "model_not_supported"
+        error = json.loads(frames[0])["error"]
+        assert (error["code"], error["param"]) == ("invalid_value", "model")
         assert frames[1:] == [RealtimeClosed(1008)]
         assert await base.realtime_event("k1", ["{}"]) is False
