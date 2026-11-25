@@ -481,7 +481,13 @@ class TestStreamingSpeechToText:
             audio_input = {"format": {"type": "audio/pcm", "rate": rate}}
             _send(ws, {"type": "session.update", "session": {"audio": {"input": audio_input}}})
             _until(ws, "session.updated")
-            _append_all(ws, bytes(rate * 2) + pcm + bytes(rate * 2), rate)
+            # in real time, as a microphone streams: a turn's text streams once server VAD heard it
+            audio = bytes(rate * 2) + pcm + bytes(rate * 2)
+            step = rate // 10 * 2
+            for start in range(0, len(audio), step):
+                chunk = base64.b64encode(audio[start : start + step]).decode()
+                _send(ws, {"type": "input_audio_buffer.append", "audio": chunk})
+                time.sleep(0.1)
             events = _until(ws, COMPLETED)
             kept = self._retrieve(ws, events[-1]["item_id"])
         turn = next(event["item_id"] for event in events if event["type"] == "input_audio_buffer.speech_started")
