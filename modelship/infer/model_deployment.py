@@ -8,6 +8,7 @@ import ray
 from ray import serve
 
 from modelship.deploy.deploy_leases import DeployLeaseError, wait_for_deploy_lease
+from modelship.deploy.request_router import AffinityRouter, Routing, StickyRouter
 from modelship.infer.base_infer import BaseInfer
 from modelship.infer.deployment_base import DeploymentBase
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase, RawRequestProxy
@@ -29,6 +30,7 @@ from modelship.openai.protocol import (
     ResponsesRequest,
     SpeechRequest,
     SttCapabilities,
+    SttStreamOptions,
     TranscriptionRequest,
     TranslationRequest,
     client_safe,
@@ -57,6 +59,12 @@ async def _report_load_failure(config: ModelshipModelConfig, reason: str, fatal:
 
 @serve.deployment
 class ModelDeployment(DeploymentBase):
+    @classmethod
+    def routing(cls, config: ModelshipModelConfig) -> Routing:
+        if config.usecase == ModelUsecase.transcription:
+            return Routing(StickyRouter, pins=("transcribe_push",), unpins=("transcribe_finish", "transcribe_close"))
+        return Routing(AffinityRouter)
+
     async def __init__(self, config: ModelshipModelConfig):
         configure_logging()
         # MSHIP_GATEWAY_NAME is forwarded to this actor via runtime_env (see
@@ -248,6 +256,35 @@ class ModelDeployment(DeploymentBase):
                 yield client_safe(chunk)
         else:
             yield client_safe(result)
+
+    async def transcribe_push(
+        self,
+        key: str,
+        pcm: bytes,
+        rate: int,
+        options: SttStreamOptions,
+        request_id: str | None = None,
+        identity: str | None = None,
+    ):
+        self._set_request_id(request_id)
+        self._set_identity(identity)
+        return client_safe(await self.infer.transcribe_push(key, pcm, rate, options))
+
+    async def transcribe_finish(
+        self,
+        key: str,
+        pcm: bytes,
+        rate: int,
+        options: SttStreamOptions,
+        request_id: str | None = None,
+        identity: str | None = None,
+    ):
+        self._set_request_id(request_id)
+        self._set_identity(identity)
+        return client_safe(await self.infer.transcribe_finish(key, pcm, rate, options))
+
+    async def transcribe_close(self, key: str) -> None:
+        await self.infer.transcribe_close(key)
 
     async def translate(
         self,

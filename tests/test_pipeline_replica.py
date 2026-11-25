@@ -11,12 +11,14 @@ import pytest
 from modelship.deploy import gateway_coordinator
 from modelship.infer import base_infer
 from modelship.infer.deployment_base import DeploymentBase
+from modelship.infer.model_deployment import ModelDeployment
 from modelship.infer.pipeline_deployment import load_pipeline
 from modelship.infer.pipelines import routes as routes_module
 from modelship.infer.pipelines.assistant import assistant_pipeline
 from modelship.infer.pipelines.assistant.assistant_pipeline import AssistantPipeline, RelayChannel
 from modelship.infer.pipelines.relay import RealtimeClosed, RealtimeOpened, RealtimeOpening
 from modelship.infer.pipelines.routes import ModelRoutes
+from modelship.openai.protocol import ErrorInfo, ErrorResponse, SttStreamOptions, SttStreamText
 from modelship.utils import downloads
 from modelship.utils.config_schema import AssistantPipelineConfig
 
@@ -214,6 +216,51 @@ class TestRefusals:
         assert [item async for item in base.generate(MagicMock(), {}, None)] == [base_infer._NOT_SUPPORTED]
         assert [item async for item in base.speak(MagicMock(), {}, None)] == [base_infer._NOT_SUPPORTED]
         assert await base.stt_capabilities() is None
+
+    @pytest.mark.asyncio
+    async def test_a_streamed_transcription_outside_the_usecase_is_refused(self):
+        base = _Base()
+        options = SttStreamOptions()
+        assert await base.transcribe_push("k1", b"\0\0", 16000, options) == base_infer._NOT_SUPPORTED
+        assert await base.transcribe_finish("k1", b"", 16000, options) == base_infer._NOT_SUPPORTED
+        assert await base.transcribe_close("k1") is None
+
+    @pytest.mark.asyncio
+    async def test_a_loader_without_streamed_transcription_refuses_it(self):
+        infer, loader = MagicMock(), base_infer.BaseInfer
+        options = SttStreamOptions()
+        assert await loader.transcribe_push(infer, "k1", b"\0\0", 16000, options) == base_infer._NOT_SUPPORTED
+        assert await loader.transcribe_finish(infer, "k1", b"", 16000, options) == base_infer._NOT_SUPPORTED
+        assert await loader.transcribe_close(infer, "k1") is None
+
+    @pytest.mark.asyncio
+    async def test_a_model_hands_its_streamed_transcription_to_its_loader(self):
+        text = SttStreamText(text="hello", language="en", audio_ms=320.0)
+        infer = MagicMock()
+        infer.transcribe_push = AsyncMock(return_value=text)
+        infer.transcribe_finish = AsyncMock(return_value=text)
+        infer.transcribe_close = AsyncMock()
+        model = ModelDeployment.func_or_class.__new__(ModelDeployment.func_or_class)
+        model.infer = infer
+        options = SttStreamOptions(language="en")
+
+        assert await model.transcribe_push("k1", b"\0\0", 24000, options, "r1", "me") == text
+        assert await model.transcribe_finish("k1", b"", 24000, options) == text
+        await model.transcribe_close("k1")
+
+        infer.transcribe_push.assert_awaited_once_with("k1", b"\0\0", 24000, options)
+        infer.transcribe_finish.assert_awaited_once_with("k1", b"", 24000, options)
+        infer.transcribe_close.assert_awaited_once_with("k1")
+
+    @pytest.mark.asyncio
+    async def test_a_server_error_from_a_push_is_replaced_for_the_client(self):
+        failed = ErrorResponse(error=ErrorInfo(message="decoder blew up", type="server_error"))
+        failed._http_status = 500
+        model = ModelDeployment.func_or_class.__new__(ModelDeployment.func_or_class)
+        model.infer = MagicMock(transcribe_push=AsyncMock(return_value=failed))
+        answer = await model.transcribe_push("k1", b"\0\0", 16000, SttStreamOptions())
+        assert isinstance(answer, ErrorResponse)
+        assert "decoder blew up" not in answer.error.message
 
     @pytest.mark.asyncio
     async def test_a_realtime_session_outside_the_usecase_is_refused(self):

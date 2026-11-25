@@ -40,6 +40,17 @@ class DeploymentBase:
     ):
         yield _NOT_SUPPORTED
 
+    async def transcribe_push(self, key, pcm, rate, options, request_id=None, identity=None):
+        """Appends *pcm* to streamed transcription *key*, opening it when there is none; its text so far."""
+        return _NOT_SUPPORTED
+
+    async def transcribe_finish(self, key, pcm, rate, options, request_id=None, identity=None):
+        """As `transcribe_push`, then ends stream *key*; its final text."""
+        return _NOT_SUPPORTED
+
+    async def transcribe_close(self, key: str) -> None:
+        """Drops streamed transcription *key*."""
+
     async def translate(
         self, audio_data, request, request_headers, disconnect_registry, request_id=None, identity=None
     ):

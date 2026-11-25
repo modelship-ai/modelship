@@ -31,6 +31,8 @@ from modelship.openai.protocol import (
     ResponsesRequest,
     SpeechRequest,
     SttCapabilities,
+    SttStreamOptions,
+    SttStreamText,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
@@ -537,6 +539,23 @@ class BaseInfer[Prepared](ABC):
         self, audio_data: bytes, request: TranscriptionRequest, raw_request: RawRequestProxy
     ) -> ErrorResponse | TranscriptionResponse | TranscriptionResponseVerbose | AsyncGenerator[str, None]:
         return _NOT_SUPPORTED
+
+    async def transcribe_push(
+        self, key: str, pcm: bytes, rate: int, options: SttStreamOptions
+    ) -> ErrorResponse | SttStreamText:
+        """Appends *pcm*, 16-bit mono at *rate*, to stream *key*, opening it with *options* when there is none; its
+        text so far."""
+        return _NOT_SUPPORTED
+
+    async def transcribe_finish(
+        self, key: str, pcm: bytes, rate: int, options: SttStreamOptions
+    ) -> ErrorResponse | SttStreamText:
+        """As `transcribe_push`, then ends stream *key* and drops it; its final text."""
+        return _NOT_SUPPORTED
+
+    async def transcribe_close(self, key: str) -> None:
+        """Drops stream *key*, if there is one."""
+        return None
 
     async def create_translation(
         self, audio_data: bytes, request: TranslationRequest, raw_request: RawRequestProxy
