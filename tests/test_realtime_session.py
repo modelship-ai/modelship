@@ -386,6 +386,29 @@ class TestOpening:
             session = ws.receive_json()["session"]
         assert (session["type"], session["object"]) == ("transcription", "realtime.transcription_session")
 
+    def test_a_session_expires_an_hour_after_it_opens(self):
+        opened = time.time()
+        with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
+            session = _open(ws)
+        assert opened + 3600 - 1 <= session["expires_at"] <= time.time() + 3600
+
+    def test_an_expired_session_says_so_and_closes(self, monkeypatch):
+        monkeypatch.setattr("modelship.infer.pipelines.assistant.session.MAX_SESSION_S", 0.3)
+        with _client(_route(ASSISTANT)).websocket_connect("/v1/realtime?model=assistant") as ws:
+            _open(ws)
+            error = ws.receive_json()["error"]
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_json()
+        assert closed.value.code == 1000
+        assert error == {
+            **error,
+            "type": "invalid_request_error",
+            "code": "session_expired",
+            "param": None,
+            "event_id": None,
+        }
+        assert error["message"].startswith("Your session hit the maximum duration of ")
+
     def test_without_a_model_it_is_refused(self):
         error = _refused(_client(_route(ASSISTANT)), "")
         assert (error["code"], error["param"]) == ("missing_required_parameter", "model")
@@ -1178,14 +1201,17 @@ class TestAudioInput:
         ws.send_json({"type": "session.update", "session": {"audio": {"input": {"format": {"type": "audio/pcmu"}}}}})
         ws.receive_json()
 
-    def test_the_buffer_refuses_audio_past_its_cap(self, monkeypatch):
-        monkeypatch.setattr("modelship.infer.pipelines.assistant.audio.MAX_SECONDS", 2.0)
+    def test_the_buffer_refuses_audio_past_its_cap_in_bytes(self, monkeypatch):
+        # 2 s of G.711, decoded to 16-bit PCM at 8 kHz
+        monkeypatch.setattr("modelship.infer.pipelines.assistant.audio.MAX_BYTES", 2 * 8000 * 2)
         with self._session(_Stt()) as ws:
             _open(ws)
             self._g711(ws)
-            _append(ws, b"\xff" * 8000 * 3)
+            _append(ws, b"\xff" * 8000 * 2)
+            _append(ws, b"\xff" * 8000)
             error = ws.receive_json()["error"]
         assert (error["type"], error["code"], error["param"]) == ("invalid_request_error", None, "audio")
+        assert error["message"] == "The input audio buffer holds at most 0.032 MB of PCM; commit or clear it."
 
     def test_a_commit_is_taken_while_turns_wait_for_transcription(self):
         stt = _Stt("One.", "Two.", delay=0.5)
