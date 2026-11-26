@@ -1015,7 +1015,7 @@ class TestTools:
             "response.done",
         ]
         assert [event["delta"] for event in events[3:5]] == ['{"room":', ' "kitchen"}']
-        assert events[5] == {**events[5], "call_id": "call_1", "arguments": '{"room": "kitchen"}'}
+        assert events[5] == {**events[5], "call_id": "call_1", "name": "turn_on", "arguments": '{"room": "kitchen"}'}
         (call,) = events[-1]["response"]["output"]
         assert call == {
             **call,
