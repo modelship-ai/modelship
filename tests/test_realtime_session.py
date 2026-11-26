@@ -302,7 +302,7 @@ class _Pipeline(AssistantPipeline):
     def _calls(self, opening: RealtimeOpening):
         return self.calls
 
-    def _finder(self):
+    def _vad_factory(self):
         return self.calls.vad.open
 
 

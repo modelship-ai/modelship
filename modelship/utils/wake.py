@@ -38,7 +38,7 @@ def _check(manifest: Path) -> None:
 
 class WakeStream:
     """The wake words heard in one stream of 16 kHz 16-bit mono PCM, found as it arrives, on a timeline in ms that
-    starts at *start_ms*. One feed at a time."""
+    starts at *start_ms*. One call at a time."""
 
     def __init__(self, words: list[tuple[Path, float | None]], library: str | None, start_ms: float) -> None:
         from pymicro_wakeword import MicroWakeWord, MicroWakeWordFeatures
@@ -54,7 +54,7 @@ class WakeStream:
         # features made so far
         self._frames = 0
 
-    def feed(self, pcm16: bytes) -> list[float]:
+    def detect(self, pcm16: bytes) -> list[float]:
         """Where a wake word ends at each step its score is above its cutoff in *pcm16*: the end of that step's
         audio."""
         found = []

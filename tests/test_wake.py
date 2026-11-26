@@ -24,7 +24,7 @@ def _hits(words: WakeWords, audio: bytes, chunk: int) -> list[float]:
     stream = words.stream(1000.0)
     found: list[float] = []
     for start in range(0, len(audio), chunk * 2):
-        found += stream.feed(audio[start : start + chunk * 2])
+        found += stream.detect(audio[start : start + chunk * 2])
     return found
 
 
