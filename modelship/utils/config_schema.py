@@ -316,8 +316,7 @@ class ModelshipModelConfig(_StrictModel):
     @field_validator("node_selector")
     @classmethod
     def sort_node_selector(cls, value: dict[str, str]) -> dict[str, str]:
-        # Key order means nothing to Ray; sorted, it leaves the fingerprint alone.
-        return dict(sorted(value.items()))
+        return sorted_node_selector(value)
 
     @model_validator(mode="after")
     def check_autoscaling_excludes_num_replicas(self):
@@ -577,6 +576,12 @@ class SessionDefaults(_StrictModel):
     audio: SessionAudio | None = None
 
 
+def sorted_node_selector(value: dict[str, str]) -> dict[str, str]:
+    """A model's or a pipeline's `node_selector`, sorted: key order means nothing to Ray, so it leaves the
+    fingerprint alone."""
+    return dict(sorted(value.items()))
+
+
 class PipelineConfig(_StrictModel):
     """What every pipeline type has: a pipeline is its own app, chaining models of its gateway. Experimental."""
 
@@ -585,6 +590,13 @@ class PipelineConfig(_StrictModel):
 
     name: str
     num_replicas: int = Field(default=1, ge=1)
+    # Ray label selector merged over the pipeline's, as a model's `node_selector`
+    node_selector: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("node_selector")
+    @classmethod
+    def sort_node_selector(cls, value: dict[str, str]) -> dict[str, str]:
+        return sorted_node_selector(value)
 
     @model_validator(mode="after")
     def check_name_has_no_hash(self):

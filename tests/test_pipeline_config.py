@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from modelship import launcher
+from modelship.deploy.actor_options import build_pipeline_deployment_options
 from modelship.deploy.config import parse_raw_models, parse_raw_pipelines, resolve_input_pipelines, validate_models
 from modelship.utils.cli import parse_args
 from modelship.utils.config_schema import (
@@ -23,7 +24,7 @@ from modelship.utils.model_flags import GENERATED_PIPELINE_ARGS, _block_model
 _QWEN = {"name": "qwen", "model": "org/qwen", "usecase": "generate", "loader": "vllm"}
 
 # what every pipeline type has at its top level
-_SHARED = {"name", "num_replicas"}
+_SHARED = {"name", "num_replicas", "node_selector"}
 
 
 def _assistant(**fields) -> AssistantPipelineConfig:
@@ -265,6 +266,14 @@ class TestPipelineFlags:
         assert [m["name"] for m in args.models] == ["qwen", "kokoro-en-v0_19"]
         assert args.pipelines == [{"name": "assistant", "type": "assistant", "assistant_config": {"llm": "qwen"}}]
 
+    def test_a_pipeline_takes_a_node_selector_flag(self):
+        args = _args(
+            "deploy",
+            "--pipeline", "assistant", "--pipeline.type", "assistant", "--pipeline.assistant-config.llm", "qwen",
+            "--pipeline.node-selector", "{modelship/hostname: head}",
+        )  # fmt: skip
+        assert args.pipelines[0]["node_selector"] == {"modelship/hostname": "head"}
+
     def test_start_takes_pipelines_too(self):
         args = _args(
             "start",
@@ -450,9 +459,32 @@ class TestAppName:
             {"duplex": "half"},
             {"min_interruption_ms": 800},
             {"session_defaults": {"instructions": "Be brief."}},
+            {"node_selector": {"modelship/hostname": "head"}},
         ],
     )
     def test_any_other_setting_renames_the_app(self, changed):
         base = _assistant(name="voice", stt="whisper")
         other = _assistant(**{"name": "voice", "stt": "whisper", **changed})
         assert base.deployment_name("g") != other.deployment_name("g")
+
+
+class TestPipelineNodeSelector:
+    def test_unset_the_pipeline_goes_to_any_node_that_runs_sherpa_onnx(self):
+        opts = build_pipeline_deployment_options(_assistant(name="voice", llm="qwen"), {})
+        assert opts["ray_actor_options"]["label_selector"] == {"modelship/variant": "in(cuda,cpu,vulkan,metal)"}
+
+    def test_it_is_added_and_replaces_a_computed_key(self):
+        pipeline = _assistant(
+            name="voice", llm="qwen", node_selector={"modelship/hostname": "head", "modelship/variant": "vulkan"}
+        )
+        opts = build_pipeline_deployment_options(pipeline, {})
+        assert opts["ray_actor_options"]["label_selector"] == {
+            "modelship/hostname": "head",
+            "modelship/variant": "vulkan",
+        }
+
+    def test_key_order_leaves_the_name_alone(self):
+        one = _assistant(name="voice", llm="qwen", node_selector={"rack": "r1", "gpu": "fast"})
+        other = _assistant(name="voice", llm="qwen", node_selector={"gpu": "fast", "rack": "r1"})
+        assert one.deployment_name("g") == other.deployment_name("g")
+        assert list(one.node_selector) == ["gpu", "rack"]
