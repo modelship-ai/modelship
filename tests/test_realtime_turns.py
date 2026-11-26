@@ -1,4 +1,4 @@
-"""Server VAD's turn finding: a session's audio fed as it arrives to a fake speech finder that hears speech wherever
+"""Server VAD's turn finding: a session's audio fed as it arrives to a fake VAD stream that hears speech wherever
 the audio is loud, and the turns it finds on the session's timeline."""
 
 import asyncio
@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from modelship.infer.pipelines.assistant.input.input_buffer import InputAudioBuffer
-from modelship.infer.pipelines.assistant.input.turns import MAX_TURN_MS, TurnDetector
+from modelship.infer.pipelines.assistant.input.turns import ANYWHERE, MAX_TURN_MS, TurnDetector, Window
 from modelship.openai.protocol.realtime import ServerVad
 from modelship.utils.vad import SpeechSegment
 
@@ -26,15 +26,15 @@ def _quiet(seconds: float) -> bytes:
 
 
 def wake_word(seconds: float = 0.6) -> bytes:
-    """What the fake finders hear as a wake word: a tone louder than speech."""
+    """What the fake VAD streams hear as a wake word: a tone louder than speech."""
     count = int(seconds * RATE)
     return (np.sin(2 * np.pi * 440 * np.arange(count) / RATE) * 25000).astype("<i2").tobytes()
 
 
 class FakeVad:
-    """Opens speech finders like the pipeline's: speech wherever a 10 ms frame is loud, a segment opening at its
-    first loud frame and closing once *silence_duration_ms* of quiet follows it; a finder opened to hear wake words
-    hears one end where a stretch of very loud frames ends. Records each finder's rate and start, and the ms each
+    """Opens VAD streams like the pipeline's: speech wherever a 10 ms frame is loud, a segment opening at its
+    first loud frame and closing once *silence_duration_ms* of quiet follows it; a stream opened to hear wake words
+    hears one end where a stretch of very loud frames ends. Records each stream's rate and start, and the ms each
     feed is given; *failing* makes feeds fail, and *gate*, set, makes each feed wait for it."""
 
     def __init__(self) -> None:
@@ -43,17 +43,17 @@ class FakeVad:
         self.feeds: list[float] = []
         self.gate: threading.Event | None = None
 
-    def open(self, rate: int, start_ms: float, wake: bool = False) -> "_FakeFinder":
+    def open(self, rate: int, start_ms: float, wake: bool = False) -> "_FakeVadStream":
         self.opened.append((rate, start_ms))
-        return _FakeFinder(self, rate, start_ms, wake)
+        return _FakeVadStream(self, rate, start_ms, wake)
 
 
-class _FakeFinder:
+class _FakeVadStream:
     def __init__(self, vad: FakeVad, rate: int, start_ms: float, wake: bool = False) -> None:
         self.vad = vad
         self.rate = rate
         self._wake = wake
-        self.woke: list[float] = []
+        self.wake_ends_ms: list[float] = []
         # where the next frame starts
         self._at = start_ms
         self._unfed = b""
@@ -63,8 +63,8 @@ class _FakeFinder:
         self._last = 0.0
         self._waking = False
 
-    def feed(
-        self, pcm16: bytes, threshold: float, silence_duration_ms: int, wake_pcm16: bytes | None = None
+    def detect(
+        self, pcm16: bytes, threshold: float, silence_duration_ms: int, sent_pcm16: bytes | None = None
     ) -> list[SpeechSegment]:
         if self.vad.gate is not None:
             self.vad.gate.wait()
@@ -72,8 +72,8 @@ class _FakeFinder:
             raise RuntimeError("the detector broke")
         self.vad.feeds.append(len(pcm16) // 2 * 1000 / self.rate)
         self._unfed += pcm16
-        self._unheard += pcm16 if wake_pcm16 is None else wake_pcm16
-        self.woke = []
+        self._unheard += pcm16 if sent_pcm16 is None else sent_pcm16
+        self.wake_ends_ms = []
         frame = self.rate // 100 * 2
         found = []
         while len(self._unfed) >= frame:
@@ -83,7 +83,7 @@ class _FakeFinder:
             at, self._at = self._at, self._at + 10
             waking = self._wake and np.abs(heard.astype(np.int32)).max() > 20000
             if self._waking and not waking:
-                self.woke.append(at)
+                self.wake_ends_ms.append(at)
             self._waking = waking
             if np.abs(samples.astype(np.int32)).max() > 1000:
                 self._start = at if self._start is None else self._start
@@ -96,8 +96,23 @@ class _FakeFinder:
         return found
 
 
+class _Rules:
+    """The turn rules of *turns*: its min_speech and window, None for anywhere."""
+
+    def __init__(self, turns: "_Turns", listen_ms: float | None) -> None:
+        self._turns = turns
+        self.listen_ms = listen_ms
+
+    def min_speech_ms(self) -> int:
+        return self._turns.min_speech
+
+    def window(self) -> Window:
+        window = self._turns.window
+        return ANYWHERE if window is None else Window(*window)
+
+
 class _Turns:
-    """A detector over a fresh buffer, recording what it reports."""
+    """A detector over a fresh buffer, recording what it reports as its TurnEvents."""
 
     def __init__(
         self, settings: ServerVad | None = None, max_turn_ms: int | None = MAX_TURN_MS, listen_ms: float | None = None
@@ -116,21 +131,19 @@ class _Turns:
         self.min_speech = 0
         # with wake words: where speech may start a turn without one
         self.window: tuple[float, float] | None = None
-        wake = listen_ms is not None
         self.detector = TurnDetector(
             self.buffer,
             settings or ServerVad(type="server_vad"),
-            lambda rate, start_ms: self.vad.open(rate, start_ms, wake),
-            self._started,
-            self._ended,
-            self._failed,
-            lambda: self.min_speech,
+            self.vad.open,
+            self,
+            _Rules(self, listen_ms),
             max_turn_ms=max_turn_ms,
-            listen_ms=listen_ms,
-            window=lambda: self.window,
         )
 
-    async def _started(self, turn: str, at: int, woken: bool) -> None:
+    def vad_progressed(self) -> None:
+        pass
+
+    async def turn_started(self, turn: str, at: int, woken: bool) -> None:
         self.events.append(("started", turn, at))
         if woken:
             self.woken.append(turn)
@@ -138,7 +151,7 @@ class _Turns:
             self.buffer.take()
             self.detector.reset()
 
-    async def _ended(self, turn: str, start: int, end: int, spoken: bool) -> None:
+    async def turn_ended(self, turn: str, start: int, end: int, spoken: bool) -> None:
         self.buffer.take(start, end)
         if self.sending is not None:
             # the session sends its events after it takes the audio
@@ -147,7 +160,7 @@ class _Turns:
         if not spoken:
             self.unspoken.append(turn)
 
-    async def _failed(self) -> None:
+    async def detection_failed(self) -> None:
         self.events.append(("failed",))
 
     async def feed(self, *parts: bytes, step: float | None = 0.1) -> None:
@@ -156,7 +169,7 @@ class _Turns:
         size = len(audio) if step is None else int(step * RATE) * 2
         for start in range(0, len(audio), size):
             assert self.buffer.append(audio[start : start + size], RATE) is None
-            self.detector.appended()
+            self.detector.on_audio()
             await self.settle()
 
     async def settle(self) -> None:
@@ -250,7 +263,7 @@ class TestTurns:
         turns.vad.gate = threading.Event()
         for _ in range(5):
             assert turns.buffer.append(_quiet(0.1), RATE) is None
-            turns.detector.appended()
+            turns.detector.on_audio()
             await asyncio.sleep(0.01)
         turns.vad.gate.set()
         await turns.settle()
@@ -273,7 +286,7 @@ class TestTurns:
         await turns.feed(_quiet(1))
         turns.buffer.take()
         assert turns.buffer.append(bytes(1600 * 2), 16000) is None
-        turns.detector.appended()
+        turns.detector.on_audio()
         await turns.settle()
         assert turns.vad.opened == [(RATE, 0.0), (RATE, 1000.0), (16000, 2000.0)]
 
@@ -317,7 +330,7 @@ class TestTurns:
         turns = _Turns()
         turns.sending = asyncio.Event()
         assert turns.buffer.append(_quiet(1) + _tone(1) + _quiet(1), RATE) is None
-        turns.detector.appended()
+        turns.detector.on_audio()
         task = turns.detector.task
         while turns.buffer.start_ms < 2500:
             await asyncio.sleep(0)
@@ -333,7 +346,7 @@ class TestTurns:
         turns = _Turns()
         turns.vad.gate = threading.Event()
         assert turns.buffer.append(_quiet(1) + _tone(1) + _quiet(1), RATE) is None
-        turns.detector.appended()
+        turns.detector.on_audio()
         await asyncio.sleep(0)
         # a session.update while the feed runs
         turns.detector.settings = ServerVad(type="server_vad", prefix_padding_ms=0, silence_duration_ms=200)
@@ -345,7 +358,7 @@ class TestTurns:
     async def test_a_feed_in_flight_over_reset_audio_changes_nothing(self):
         turns = _Turns()
         assert turns.buffer.append(_quiet(1) + _tone(1), RATE) is None
-        turns.detector.appended()
+        turns.detector.on_audio()
         turns.detector.reset()
         turns.buffer.clear()
         await turns.settle()
@@ -381,7 +394,7 @@ class TestTurns:
     async def test_closing_stops_the_feed_in_flight(self):
         turns = _Turns()
         assert turns.buffer.append(_quiet(1), RATE) is None
-        turns.detector.appended()
+        turns.detector.on_audio()
         await turns.detector.close()
         assert turns.detector._task is not None and turns.detector._task.done()
 
@@ -458,7 +471,7 @@ class TestWakeWords:
         size = int(0.1 * RATE) * 2
         for start in range(0, len(sent), size):
             assert turns.buffer.append(muted[start : start + size], RATE, sent[start : start + size]) is None
-            turns.detector.appended()
+            turns.detector.on_audio()
             await turns.settle()
         assert turns.turns() == [(1100, 2800)]
         assert len(turns.woken) == 1

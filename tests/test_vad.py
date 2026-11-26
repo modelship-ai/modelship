@@ -1,5 +1,6 @@
 """Vad: OpenAI server_vad timing over a scripted detector; SpeechStream's segments over
-a scripted Silero; plus the stream resampler and PCM16 decoding they're fed through."""
+a scripted Silero, through a VoiceDetector; plus the stream resampler and PCM16 decoding
+they're fed through."""
 
 import sys
 import types
@@ -9,7 +10,8 @@ import pytest
 
 from modelship.infer.sherpa_onnx.vad import SpeechStarted, SpeechStopped, Vad, VadSettings
 from modelship.utils.audio import StreamResampler, from_pcm16
-from modelship.utils.vad import CONTEXT, SAMPLE_RATE, WINDOW, SpeechSegment, SpeechStream
+from modelship.utils.vad import CONTEXT, SAMPLE_RATE, WINDOW, SpeechSegment
+from modelship.utils.voice import VoiceDetector
 
 _WINDOW = 512
 
@@ -194,8 +196,8 @@ def _windows(*runs: tuple[int, float]) -> bytes:
     return (level * 32768).astype("<i2").tobytes()
 
 
-def _stream(model: _Silero | None = None, start_ms: float = 0.0) -> SpeechStream:
-    return SpeechStream(model or _Silero(), SAMPLE_RATE, start_ms)  # type: ignore[arg-type]
+def _stream(model: _Silero | None = None, start_ms: float = 0.0) -> VoiceDetector:
+    return VoiceDetector(model or _Silero(), SAMPLE_RATE, start_ms)  # type: ignore[arg-type]
 
 
 # one window, in ms
@@ -206,57 +208,59 @@ class TestSpeechStream:
     def test_speech_opens_a_segment_once_it_lasts_dated_back_to_its_start(self):
         stream = _stream(start_ms=1000)
         # 250 ms is 7.8 windows
-        assert stream.feed(_windows((10, 0.0), (7, 0.9)), 0.5, 500) == []
-        assert stream.feed(_windows((1, 0.9)), 0.5, 500) == [SpeechSegment(1000 + 10 * _W, None, 1000 + 18 * _W)]
+        assert stream.detect(_windows((10, 0.0), (7, 0.9)), 0.5, 500) == []
+        assert stream.detect(_windows((1, 0.9)), 0.5, 500) == [SpeechSegment(1000 + 10 * _W, None, 1000 + 18 * _W)]
 
     def test_a_segment_closes_once_its_silence_lasts_and_ends_where_the_silence_began(self):
         stream = _stream()
         # 500 ms is 15.6 windows
-        assert stream.feed(_windows((10, 0.0), (20, 0.9), (15, 0.0)), 0.5, 500) == [
+        assert stream.detect(_windows((10, 0.0), (20, 0.9), (15, 0.0)), 0.5, 500) == [
             SpeechSegment(10 * _W, None, 30 * _W)
         ]
-        assert stream.feed(_windows((1, 0.0)), 0.5, 500) == [SpeechSegment(10 * _W, 30 * _W, 30 * _W)]
-        assert stream.feed(_windows((20, 0.0)), 0.5, 500) == []
+        assert stream.detect(_windows((1, 0.0)), 0.5, 500) == [SpeechSegment(10 * _W, 30 * _W, 30 * _W)]
+        assert stream.detect(_windows((20, 0.0)), 0.5, 500) == []
 
     def test_speech_before_the_silence_lasts_keeps_the_segment(self):
         stream = _stream()
-        found = stream.feed(_windows((10, 0.9), (10, 0.0), (10, 0.9), (16, 0.0)), 0.5, 500)
+        found = stream.detect(_windows((10, 0.9), (10, 0.0), (10, 0.9), (16, 0.0)), 0.5, 500)
         assert found == [SpeechSegment(0, 30 * _W, 30 * _W)]
 
     def test_a_window_between_the_thresholds_keeps_speech_going_but_starts_none(self):
         stream = _stream()
         # 0.35 is the threshold less the hysteresis
-        assert stream.feed(_windows((20, 0.4)), 0.5, 500) == []
-        found = stream.feed(_windows((10, 0.9), (5, 0.4), (16, 0.0)), 0.5, 500)
+        assert stream.detect(_windows((20, 0.4)), 0.5, 500) == []
+        found = stream.detect(_windows((10, 0.9), (5, 0.4), (16, 0.0)), 0.5, 500)
         assert found == [SpeechSegment(20 * _W, 35 * _W, 35 * _W)]
 
     def test_once_the_silence_began_a_window_between_the_thresholds_counts_as_silence(self):
-        found = _stream().feed(_windows((10, 0.9), (1, 0.0), (15, 0.4)), 0.5, 500)
+        found = _stream().detect(_windows((10, 0.9), (1, 0.0), (15, 0.4)), 0.5, 500)
         assert found == [SpeechSegment(0, 10 * _W, 10 * _W)]
 
     def test_silence_before_speech_lasts_starts_it_over(self):
-        assert _stream().feed(_windows((5, 0.9), (1, 0.0), (5, 0.9), (20, 0.0)), 0.5, 500) == []
+        assert _stream().detect(_windows((5, 0.9), (1, 0.0), (5, 0.9), (20, 0.0)), 0.5, 500) == []
 
     def test_each_feed_takes_the_settings_it_is_given(self):
         stream = _stream()
-        assert stream.feed(_windows((10, 0.9), (7, 0.0)), 0.5, 500)[-1].end_ms is None
-        assert stream.feed(_windows((1, 0.0)), 0.5, 200) == [SpeechSegment(0, 10 * _W, 10 * _W)]
+        assert stream.detect(_windows((10, 0.9), (7, 0.0)), 0.5, 500)[-1].end_ms is None
+        assert stream.detect(_windows((1, 0.0)), 0.5, 200) == [SpeechSegment(0, 10 * _W, 10 * _W)]
         # a threshold above the speech hears none
-        assert stream.feed(_windows((20, 0.6)), 0.7, 200) == []
+        assert stream.detect(_windows((20, 0.6)), 0.7, 200) == []
 
     def test_chunk_size_changes_nothing(self):
         audio = _windows((10, 0.0), (20, 0.9), (20, 0.0), (12, 0.9), (20, 0.0))
-        whole = _stream().feed(audio, 0.5, 500)
+        whole = _stream().detect(audio, 0.5, 500)
         stream, found = _stream(), []
         for at in range(0, len(audio), 734):
-            found += [segment for segment in stream.feed(audio[at : at + 734], 0.5, 500) if segment.end_ms is not None]
+            found += [
+                segment for segment in stream.detect(audio[at : at + 734], 0.5, 500) if segment.end_ms is not None
+            ]
         assert found == whole == [SpeechSegment(10 * _W, 30 * _W, 30 * _W), SpeechSegment(50 * _W, 62 * _W, 62 * _W)]
 
     def test_each_window_runs_with_the_64_samples_before_it_and_the_state_after_the_last(self):
         model = _Silero()
         stream = _stream(model)
-        stream.feed(_windows((1, 0.2), (1, 0.6)), 0.5, 500)
-        stream.feed(_windows((1, 0.4)), 0.5, 500)
+        stream.detect(_windows((1, 0.2), (1, 0.6)), 0.5, 500)
+        stream.detect(_windows((1, 0.4)), 0.5, 500)
         first, second, third = model.windows
         assert len(first) == CONTEXT + WINDOW
         assert not first[:CONTEXT].any()
@@ -267,8 +271,8 @@ class TestSpeechStream:
     def test_audio_at_another_rate_is_timed_on_the_streams_timeline(self):
         rate = 24000
         level = np.concatenate([np.zeros(rate), np.full(rate, 0.45), np.zeros(rate)])
-        stream = SpeechStream(_Silero(), rate, 500.0)  # type: ignore[arg-type]
-        (segment,) = stream.feed((level * 32768).astype("<i2").tobytes(), 0.5, 500)
+        stream = VoiceDetector(_Silero(), rate, 500.0)  # type: ignore[arg-type]
+        (segment,) = stream.detect((level * 32768).astype("<i2").tobytes(), 0.5, 500)
         assert segment.start_ms == pytest.approx(1500, abs=_W)
         assert segment.end_ms == pytest.approx(2500, abs=_W)
 

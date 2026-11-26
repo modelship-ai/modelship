@@ -1,7 +1,7 @@
 """The Silero VAD library against the real model, fetched from model-bundles, on
 speech the cluster's kokoro model synthesizes: sherpa-onnx's `Vad`, and the
-onnxruntime `SpeechStream` against it. `test_vad.py` covers the logic against
-stubs."""
+onnxruntime `SpeechStream`, through a `VoiceDetector`, against it. `test_vad.py`
+covers the logic against stubs."""
 
 import io
 
@@ -12,7 +12,8 @@ import soundfile as sf
 from modelship.infer.sherpa_onnx.vad import SpeechStarted, SpeechStopped, Vad, VadSettings
 from modelship.utils.audio import StreamResampler, to_pcm16
 from modelship.utils.sources import download_model_source, file
-from modelship.utils.vad import SAMPLE_RATE, STATE_SHAPE, SileroModel, SpeechSegment, SpeechStream, silero_vad_source
+from modelship.utils.vad import SAMPLE_RATE, STATE_SHAPE, SileroModel, SpeechSegment, silero_vad_source
+from modelship.utils.voice import VoiceDetector
 
 _PHRASES = ("Turn on the kitchen lights.", "What is the weather tomorrow?", "Play some music.")
 
@@ -84,11 +85,11 @@ class TestSileroVad:
     def _stream(self, model, audio, rate=SAMPLE_RATE, chunk_s=0.1, silence_ms=500) -> list[SpeechSegment]:
         """The segments a stream finds in *audio* (float32 at *rate*) fed *chunk_s* at a time; the last one may be
         open."""
-        stream = SpeechStream(model, rate, 0.0)
+        stream = VoiceDetector(model, rate, 0.0)
         pcm, step = to_pcm16(audio), int(chunk_s * rate) * 2
         found: list[SpeechSegment] = []
         for at in range(0, len(pcm), step):
-            segments = stream.feed(pcm[at : at + step], 0.5, silence_ms)
+            segments = stream.detect(pcm[at : at + step], 0.5, silence_ms)
             found = [*(segment for segment in found if segment.end_ms is not None), *segments]
         return found
 

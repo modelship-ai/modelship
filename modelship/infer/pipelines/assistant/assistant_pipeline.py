@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from modelship.infer.base_pipeline import BasePipeline
 from modelship.infer.infer_config import get_disconnect_registry
 from modelship.infer.pipelines.assistant.calls import PipelineCalls
-from modelship.infer.pipelines.assistant.input.turns import NewFinder
+from modelship.infer.pipelines.assistant.input.turns import VadStreamFactory
 from modelship.infer.pipelines.assistant.model_calls import ModelCalls
 from modelship.infer.pipelines.assistant.session import refuse, serve_session
 from modelship.infer.pipelines.relay import (
@@ -24,7 +24,8 @@ from modelship.infer.pipelines.routes import ModelRoutes
 from modelship.logging import get_logger
 from modelship.openai.protocol.realtime import RealtimeError
 from modelship.utils.config_schema import AssistantPipelineConfig
-from modelship.utils.vad import SileroModel, SpeechStream, silero_vad_source
+from modelship.utils.vad import SileroModel, silero_vad_source
+from modelship.utils.voice import VoiceDetector
 from modelship.utils.wake import WakeWords
 
 logger = get_logger("realtime")
@@ -112,18 +113,18 @@ class AssistantPipeline(BasePipeline):
         if assistant.wake is not None:
             self._wake = await asyncio.to_thread(WakeWords, assistant.wake.words)
 
-    def _finder(self) -> NewFinder | None:
-        """How a session's server VAD opens its speech finder, which hears the wake words too when asked; None
+    def _vad_factory(self) -> VadStreamFactory | None:
+        """How a session's server VAD opens a VoiceDetector, which hears the wake words too when asked; None
         without speech detection."""
         model, wake = self._silero, self._wake
         if model is None:
             return None
 
-        def open_finder(rate: int, start_ms: float, woken: bool) -> SpeechStream:
-            words = wake.stream(start_ms) if woken and wake is not None else None
-            return SpeechStream(model, rate, start_ms, words)
+        def open_vad(rate: int, start_ms: float, wake_words: bool) -> VoiceDetector:
+            words = wake.stream(start_ms) if wake_words and wake is not None else None
+            return VoiceDetector(model, rate, start_ms, words)
 
-        return open_finder
+        return open_vad
 
     async def realtime(self, opening: RealtimeOpening) -> AsyncIterator[RealtimeFrame]:
         channel = RelayChannel()
@@ -143,7 +144,7 @@ class AssistantPipeline(BasePipeline):
             error = RealtimeError(message=f"Pipeline {self.config.name!r} isn't ready yet.", type="server_error")
             await refuse(channel, error)
             return
-        await serve_session(channel, self.config, self._calls(opening), self._finder())
+        await serve_session(channel, self.config, self._calls(opening), self._vad_factory())
 
     def _calls(self, opening: RealtimeOpening) -> PipelineCalls:
         """How the session *opening* opens calls the pipeline's models."""

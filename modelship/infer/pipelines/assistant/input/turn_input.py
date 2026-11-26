@@ -24,7 +24,7 @@ class TurnInput(Protocol):
     # whether the model hears a turn as it arrives; a streamed turn costs the model no more as it grows
     streams: bool
 
-    def appended(self) -> None:
+    def on_audio(self) -> None:
         """The client appended audio to the buffer."""
         ...
 
@@ -58,7 +58,7 @@ class RecordedInput:
     def __init__(self, buffer: InputAudioBuffer):
         self._buffer = buffer
 
-    def appended(self) -> None:
+    def on_audio(self) -> None:
         pass
 
     def vad_progressed(self) -> None:
@@ -103,7 +103,7 @@ class StreamedInput:
         # streams closing, which the session waits for when it closes
         self._closing = BackgroundTasks()
 
-    def appended(self) -> None:
+    def on_audio(self) -> None:
         if self._detector() is None and self._stream is None:
             # the client commits: the buffer streams from its start
             self._stream = self._open(self._buffer.start_ms)
@@ -111,11 +111,10 @@ class StreamedInput:
 
     def vad_progressed(self) -> None:
         detector = self._detector()
-        opens = self._stream is None and detector is not None and detector.turn is not None and not detector.waiting
-        if opens and detector is not None and detector.turn is not None:
+        turn = detector.turn if detector is not None and not detector.awaiting_speech else None
+        if self._stream is None and turn is not None:
             # a woken turn now holds speech past its wake word
-            turn, start = detector.turn
-            self._stream = self._open(start, turn)
+            self._stream = self._open(turn.start_ms, turn.item_id)
         self._push()
 
     def turn_started(self, turn: str, start_ms: float, woken: bool) -> None:
@@ -158,4 +157,4 @@ class StreamedInput:
             await self._send(server_event(event, item_id=turn, content_index=0, delta=text))
 
         # audio server VAD hasn't heard yet may be past the turn's end
-        return TurnStream(self._target, key, self._buffer, start_ms, options, delta, lambda: detector.heard_ms)
+        return TurnStream(self._target, key, self._buffer, start_ms, options, delta, lambda: detector.vad_through_ms)
