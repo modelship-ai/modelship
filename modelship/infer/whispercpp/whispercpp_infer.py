@@ -3,6 +3,7 @@ import contextlib
 import json
 import logging
 import os
+import threading
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
@@ -33,6 +34,9 @@ _WHISPER_SAMPLE_RATE = 16000
 _GGML_MAGIC = b"lmgg"
 _GGUF_MAGIC = b"GGUF"
 
+# whisper.cpp detects the language when it is empty; "auto" does the same but logs an unknown-language error first.
+_DETECT_LANGUAGE = ""
+
 # TranslationResponseVerbose.language is documented as always "english" (the output language).
 _TRANSLATION_OUTPUT_LANGUAGE = "english"
 
@@ -61,13 +65,12 @@ class WhispercppInfer(BaseInfer):
         from pywhispercpp.model import Model
 
         use_gpu = self.model_config.num_gpus > 0
-        context_params: dict[str, Any] = {"use_gpu": use_gpu}
-        if self.config.flash_attn:
-            context_params["flash_attn"] = True
+        context_params: dict[str, Any] = {"use_gpu": use_gpu, "flash_attn": self.config.flash_attn}
 
         kwargs: dict[str, Any] = {"context_params": context_params}
-        if self.config.n_threads is not None:
-            kwargs["n_threads"] = self.config.n_threads
+        n_threads = _threads(self.config, self.model_config.num_cpus)
+        if n_threads is not None:
+            kwargs["n_threads"] = n_threads
 
         resolved_path = self.model_config._resolved_path
         if resolved_path is None:
@@ -88,21 +91,21 @@ class WhispercppInfer(BaseInfer):
         pass
 
     def _decode_kwargs(self, request: TranscriptionRequest | TranslationRequest, *, translate: bool) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"translate": translate, "temperature": request.temperature}
-        # Source hint for both tasks; no target-language knob exists, so to_language is unread.
-        if request.language:
-            kwargs["language"] = request.language
-        if request.prompt:
-            kwargs["initial_prompt"] = request.prompt
-        return kwargs
+        """Every setting a request can change, for one `Model.transcribe` call.
 
-    async def _detect_language(self, samples: Any) -> str:
-        # Detection on an English-only model returns an out-of-range id, which
-        # pywhispercpp maps to a wrong language.
-        if not self._multilingual:
-            return "en"
-        (lang, _prob), _all = await self.run_blocking(lambda _stop: self.model.auto_detect_language(samples))
-        return lang
+        pywhispercpp keeps the settings of each call for the next one, so each key is
+        set on every call, or one request's language or prompt would reach the next."""
+        return {
+            "translate": translate,
+            "temperature": request.temperature,
+            # The source language for both tasks; to_language has no whisper.cpp setting and is unread.
+            "language": request.language or self._unset_language(),
+            "initial_prompt": request.prompt or "",
+        }
+
+    def _unset_language(self) -> str:
+        """The language for a request that names none: detected, or English on an English-only model."""
+        return _DETECT_LANGUAGE if self._multilingual else "en"
 
     # -- transcription -----------------------------------------------------
 
@@ -151,9 +154,12 @@ class WhispercppInfer(BaseInfer):
             return create_error_response(f"failed to decode audio: {e}")
 
         decode_kwargs = self._decode_kwargs(request, translate=translate)
-        segments = await self.run_blocking(
-            lambda stop: self.model.transcribe(samples, abort_callback=stop.is_set, **decode_kwargs)
-        )
+
+        def decode(stop: threading.Event) -> tuple[list[Any], str]:
+            segments = self.model.transcribe(samples, abort_callback=stop.is_set, **decode_kwargs)
+            return segments, _decoded_language(self.model)
+
+        segments, decoded_language = await self.run_blocking(decode)
         # segments don't always start with a space; joined like the streamed transcript
         text = " ".join(part for part in (s.text.strip() for s in segments) if part)
         logger.log(TRACE, "%s response: text=%r", request_id, text)
@@ -164,12 +170,7 @@ class WhispercppInfer(BaseInfer):
                 return TranslationResponse(text=text)
             return TranscriptionResponse(text=text, usage=TranscriptionUsageAudio(seconds=duration_seconds))
 
-        if translate:
-            detected_language = _TRANSLATION_OUTPUT_LANGUAGE
-        else:
-            language = decode_kwargs.get("language")
-            detected_language = language if language else await self._detect_language(samples)
-
+        detected_language = _TRANSLATION_OUTPUT_LANGUAGE if translate else decoded_language
         response_segments = [
             TranscriptionSegment(id=i, start=s.t0 / 100.0, end=s.t1 / 100.0, text=s.text.strip())
             for i, s in enumerate(segments)
@@ -227,6 +228,26 @@ class WhispercppInfer(BaseInfer):
             yield encode_error_sse(
                 create_error_response(f"whisper.cpp transcription failed: {exc}", err_type="api_error", status_code=502)
             )
+
+
+def _threads(config: WhispercppConfig, num_cpus: float) -> int | None:
+    """The decode's thread count: the configured one, else the CPUs the deploy reserves, at most one
+    per physical core. None below one reserved CPU keeps whisper.cpp's own `min(4, cores)`."""
+    if config.n_threads is not None:
+        return config.n_threads
+    if num_cpus < 1:
+        return None
+    import psutil
+
+    cores = psutil.cpu_count(logical=False) or psutil.cpu_count() or 1
+    return min(int(num_cpus), cores)
+
+
+def _decoded_language(model: Any) -> str:
+    """The language the last `Model.transcribe` call decoded in: the one it was given, or the one it detected."""
+    import _pywhispercpp as _pw
+
+    return _pw.whisper_lang_str(_pw.whisper_full_lang_id(model._ctx))
 
 
 def _encode_transcript_event(payload: dict[str, Any]) -> str:

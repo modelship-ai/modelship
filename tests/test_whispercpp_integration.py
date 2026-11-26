@@ -120,6 +120,16 @@ class TestWhispercpp:
         assert response.status_code == 200
         assert response.json()["language"] == "en"
 
+    def test_a_request_keeps_no_setting_of_the_one_before(self, speech):
+        spanish = _post_audio(
+            "transcriptions", MULTILINGUAL_MODEL, speech, response_format="verbose_json", language="es", prompt="Hola."
+        )
+        assert spanish.status_code == 200
+        response = _post_audio("transcriptions", MULTILINGUAL_MODEL, speech, response_format="verbose_json")
+        assert response.status_code == 200
+        assert response.json()["language"] == "en"
+        assert "test" in response.json()["text"].lower()
+
     def test_transcription_streaming(self, speech):
         response = _post_audio("transcriptions", ENGLISH_ONLY_MODEL, speech, stream=True)
         assert response.status_code == 200

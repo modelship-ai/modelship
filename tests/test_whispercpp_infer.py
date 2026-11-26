@@ -15,7 +15,8 @@ from fastapi import UploadFile
 
 from modelship.infer.base_infer import MINIMAL_WAV
 from modelship.infer.infer_config import ModelLoader, ModelshipModelConfig, ModelUsecase
-from modelship.infer.whispercpp.whispercpp_infer import WhispercppInfer, _validate_ggml_model_file
+from modelship.infer.whispercpp import whispercpp_infer
+from modelship.infer.whispercpp.whispercpp_infer import WhispercppInfer, _threads, _validate_ggml_model_file
 from modelship.openai.protocol import (
     ErrorResponse,
     TranscriptionRequest,
@@ -26,6 +27,7 @@ from modelship.openai.protocol import (
     TranslationResponseVerbose,
 )
 from modelship.utils.audio import to_wav
+from modelship.utils.config_schema import WhispercppConfig
 from tests.test_base_infer_run_blocking import wait_for_turn
 
 
@@ -40,15 +42,19 @@ class _StubModel:
     """Stand-in for a `pywhispercpp.model.Model`. Records decode kwargs per
     `transcribe` call; polls `abort_callback` between segments like real whisper.cpp."""
 
-    def __init__(self, segments: list[_Segment], detected: tuple[str, float] = ("es", 0.9)):
+    def __init__(self, segments: list[_Segment], detected: str = "es"):
         self._segments = segments
         self._detected = detected
         self.calls: list[dict] = []
+        self.decoded: str | None = None
         self.aborted_early = False
         self.started = threading.Event()
 
     def transcribe(self, samples, new_segment_callback=None, abort_callback=None, **kwargs):
         self.calls.append(kwargs)
+        # whisper.cpp decodes in the language it is given, or the one it detects for an empty one
+        language = kwargs.get("language", "en")
+        self.decoded = language or self._detected
         self.started.set()
         emitted = []
         for seg in self._segments:
@@ -61,8 +67,10 @@ class _StubModel:
             time.sleep(0.05)  # gives the consumer a window to aclose() mid-loop
         return emitted
 
-    def auto_detect_language(self, samples):
-        return self._detected, {self._detected[0]: self._detected[1]}
+
+@pytest.fixture(autouse=True)
+def _decoded_language_from_stub(monkeypatch):
+    monkeypatch.setattr(whispercpp_infer, "_decoded_language", lambda model: model.decoded)
 
 
 def _config(**overrides) -> ModelshipModelConfig:
@@ -120,7 +128,71 @@ class TestDecodeKwargs:
         infer = _infer(_StubModel([]))
         kwargs = infer._decode_kwargs(_translation_request(to_language="de"), translate=True)
         assert "to_language" not in kwargs
-        assert "language" not in kwargs
+        assert kwargs["language"] == ""
+
+    def test_a_request_with_no_language_or_prompt_sets_both(self):
+        # pywhispercpp keeps each call's settings for the next call
+        infer = _infer(_StubModel([]))
+        kwargs = infer._decode_kwargs(_transcription_request(), translate=False)
+        assert (kwargs["language"], kwargs["initial_prompt"]) == ("", "")
+
+    def test_an_english_only_model_decodes_in_english(self):
+        infer = _infer(_StubModel([]))
+        infer._multilingual = False
+        assert infer._decode_kwargs(_transcription_request(), translate=False)["language"] == "en"
+
+    @pytest.mark.asyncio
+    async def test_no_setting_reaches_the_next_request(self):
+        model = _StubModel([_Segment("bonjour")], detected="fr")
+        infer = _infer(model)
+        first = _transcription_request(language="es", prompt="Hola.")
+        await infer._transcribe_once(MINIMAL_WAV, first, translate=False, request_id="r1")
+        second = await infer._transcribe_once(
+            MINIMAL_WAV, _transcription_request(response_format="verbose_json"), translate=False, request_id="r2"
+        )
+        assert (model.calls[-1]["language"], model.calls[-1]["initial_prompt"]) == ("", "")
+        assert isinstance(second, TranscriptionResponseVerbose)
+        assert second.language == "fr"
+
+
+class TestThreads:
+    def test_the_configured_count_wins(self):
+        assert _threads(WhispercppConfig(n_threads=3), num_cpus=8) == 3
+
+    def test_below_one_cpu_keeps_whisper_cpp_default(self):
+        assert _threads(WhispercppConfig(), num_cpus=0.1) is None
+
+    def test_follows_the_reserved_cpus(self, monkeypatch):
+        monkeypatch.setattr("psutil.cpu_count", lambda logical=True: 32 if logical else 16)
+        assert _threads(WhispercppConfig(), num_cpus=6.5) == 6
+
+    def test_at_most_one_per_physical_core(self, monkeypatch):
+        monkeypatch.setattr("psutil.cpu_count", lambda logical=True: 32 if logical else 16)
+        assert _threads(WhispercppConfig(), num_cpus=32) == 16
+
+
+class TestLoad:
+    @pytest.mark.parametrize("flash_attn", [False, True])
+    def test_flash_attn_reaches_whisper_cpp(self, monkeypatch, tmp_path, flash_attn):
+        import _pywhispercpp
+        import pywhispercpp.model
+
+        created: list[dict] = []
+
+        class _Model:
+            _ctx = None
+
+            def __init__(self, path, **kwargs):
+                created.append(kwargs)
+
+        monkeypatch.setattr(pywhispercpp.model, "Model", _Model)
+        monkeypatch.setattr(_pywhispercpp, "whisper_is_multilingual", lambda ctx: True)
+        path = tmp_path / "ggml-tiny.bin"
+        path.write_bytes((0x67676D6C).to_bytes(4, "little") + b"\x00" * 16)
+        config = _config(whispercpp_config={"flash_attn": flash_attn})
+        config._resolved_path = str(path)
+        WhispercppInfer(config)._load()
+        assert created[0]["context_params"]["flash_attn"] is flash_attn
 
 
 class TestTranscribeOnce:
@@ -141,7 +213,7 @@ class TestTranscribeOnce:
 
     @pytest.mark.asyncio
     async def test_verbose_json_uses_explicit_language_without_detection(self):
-        model = _StubModel([_Segment("hola")], detected=("en", 0.99))
+        model = _StubModel([_Segment("hola")], detected="en")
         infer = _infer(model)
         result = await infer._transcribe_once(
             MINIMAL_WAV,
@@ -150,12 +222,11 @@ class TestTranscribeOnce:
             request_id="r1",
         )
         assert isinstance(result, TranscriptionResponseVerbose)
-        assert result.language == "es"  # user-given language wins, no detection call needed
+        assert result.language == "es"  # user-given language wins
 
     @pytest.mark.asyncio
-    async def test_verbose_json_detects_real_language_when_unset(self):
-        """No language given -> the real detected language, not a fabricated value."""
-        model = _StubModel([_Segment("hola")], detected=("es", 0.87))
+    async def test_verbose_json_reports_the_language_the_decode_detected(self):
+        model = _StubModel([_Segment("hola")], detected="es")
         infer = _infer(model)
         result = await infer._transcribe_once(
             MINIMAL_WAV, _transcription_request(response_format="verbose_json"), translate=False, request_id="r1"
@@ -166,7 +237,7 @@ class TestTranscribeOnce:
     @pytest.mark.asyncio
     async def test_english_only_model_skips_detection(self):
         # A real ggml-tiny.en detects as 'sq' here.
-        model = _StubModel([_Segment("hello")], detected=("sq", 0.4))
+        model = _StubModel([_Segment("hello")], detected="sq")
         infer = _infer(model)
         infer._multilingual = False
         result = await infer._transcribe_once(
