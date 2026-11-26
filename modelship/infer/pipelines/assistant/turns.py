@@ -130,6 +130,11 @@ class TurnDetector:
         return found
 
     @property
+    def waiting(self) -> bool:
+        """Whether the turn in progress is one a wake word opened that has heard no speech past it yet."""
+        return self._waiting is not None
+
+    @property
     def task(self) -> asyncio.Task | None:
         """The feed in flight, if any."""
         return self._task if self._task is not None and not self._task.done() else None

@@ -887,7 +887,13 @@ class Session:
         task.add_done_callback(self._closing.discard)
 
     def _heard(self) -> None:
-        """Server VAD heard more audio: the turn's stream may push it."""
+        """Server VAD heard more audio: the turn's stream may push it, and a turn a wake word opened streams from
+        its start once speech past the wake word is heard."""
+        turns = self.turns
+        opens = self._stream is None and self._streams() and turns is not None and not turns.waiting
+        if opens and turns is not None and turns.turn is not None:
+            turn, start = turns.turn
+            self._stream = self._open_stream(start, turn)
         if self._stream is not None:
             self._stream.feed()
 
@@ -942,10 +948,11 @@ class Session:
         self._awake = _ASLEEP
         await self.send(server_event("input_audio_buffer.speech_started", audio_start_ms=audio_start_ms, item_id=turn))
         if self._streams():
-            # its deltas go out after its speech_started
+            # its deltas go out after its speech_started; a wake word's turn streams once it hears speech
             self._drop_stream()
-            self._stream = self._open_stream(audio_start_ms, turn)
-            self._stream.feed()
+            if not woken:
+                self._stream = self._open_stream(audio_start_ms, turn)
+                self._stream.feed()
         # a client stops playing at speech_started
         self.playback.stop()
         if self._interrupts():
