@@ -180,27 +180,37 @@ class AudioTranscription(BaseModel):
     prompt: str | None = None
 
 
-class ServerVad(BaseModel):
-    """Turns found by voice activity detection, with OpenAI's defaults."""
+class VoiceTurnDetection(BaseModel):
+    """What both kinds of server turn detection share: what a turn they find does to the answers."""
 
     model_config = ConfigDict(extra="allow")
+
+    create_response: bool = True
+    interrupt_response: bool = True
+
+
+class ServerVad(VoiceTurnDetection):
+    """Turns that end after a silence, with OpenAI's defaults."""
 
     type: Literal["server_vad"]
     threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     prefix_padding_ms: int = Field(default=300, ge=0, le=5000)
     silence_duration_ms: int = Field(default=500, ge=0, le=10000)
-    create_response: bool = True
-    interrupt_response: bool = True
     idle_timeout_ms: int | None = None
 
 
-class SemanticVad(BaseModel):
-    model_config = ConfigDict(extra="allow")
+Eagerness = Literal["low", "medium", "high", "auto"]
+
+
+class SemanticVad(VoiceTurnDetection):
+    """Turns that end when a classifier hears the speech finished, or after the longest wait *eagerness* allows."""
 
     type: Literal["semantic_vad"]
+    eagerness: Eagerness = "auto"
 
 
 TurnDetection = Annotated[ServerVad | SemanticVad, Field(discriminator="type")]
+TURN_DETECTION: TypeAdapter[ServerVad | SemanticVad] = TypeAdapter(TurnDetection)
 
 
 def server_vad() -> ServerVad:

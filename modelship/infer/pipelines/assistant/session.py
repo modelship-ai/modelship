@@ -27,6 +27,7 @@ from modelship.infer.pipelines.assistant.input.transcripts import (
     TranscriptionQueue,
     TurnAudio,
 )
+from modelship.infer.pipelines.assistant.input.turn_end import TurnClassifier, turn_end
 from modelship.infer.pipelines.assistant.input.turn_input import RecordedInput, StreamedInput, TurnInput
 from modelship.infer.pipelines.assistant.input.turns import MAX_TURN_MS, TurnDetector, VadStream, VadStreamFactory
 from modelship.infer.pipelines.assistant.items import ConversationItems
@@ -47,9 +48,9 @@ from modelship.openai.protocol.realtime import (
     RealtimeError,
     ResponseCancel,
     ResponseCreate,
-    ServerVad,
     SessionUpdate,
     UserMessage,
+    VoiceTurnDetection,
     error_event,
     server_event,
     session_event,
@@ -135,10 +136,15 @@ async def refuse(channel: Channel, error: RealtimeError) -> None:
 
 
 async def serve_session(
-    channel: Channel, config: AssistantPipelineConfig, calls: PipelineCalls, vad: VadStreamFactory | None = None
+    channel: Channel,
+    config: AssistantPipelineConfig,
+    calls: PipelineCalls,
+    vad: VadStreamFactory | None = None,
+    classifier: TurnClassifier | None = None,
 ) -> None:
-    """Runs one session on *config* until the client leaves; *calls* is how it calls the pipeline's models, and
-    *vad* opens what server VAD runs to find speech and wake words, None without speech detection."""
+    """Runs one session on *config* until the client leaves; *calls* is how it calls the pipeline's models, *vad*
+    opens what server turn detection runs to find speech and wake words, and *classifier* tells semantic VAD whether
+    a turn is finished; each None without speech detection."""
     refusal = _refusal(config, calls)
     if refusal is not None:
         await refuse(channel, refusal)
@@ -147,7 +153,7 @@ async def serve_session(
     if isinstance(stt, RealtimeError):
         await refuse(channel, stt)
         return
-    await Session(channel, config, calls, stt, vad).run()
+    await Session(channel, config, calls, stt, vad, classifier).run()
 
 
 class Session:
@@ -160,12 +166,14 @@ class Session:
         calls: PipelineCalls,
         stt: SttCapabilities | None,
         vad: VadStreamFactory | None = None,
+        classifier: TurnClassifier | None = None,
     ):
         self.channel = channel
         self.config = config
         # the pipeline's assistant settings
         self.assistant = config.assistant_config
         self._vad = vad
+        self._classifier = classifier
         self.state = new_session(config, MAX_SESSION_S)
         self.conversation = Conversation()
         self.buffer = InputAudioBuffer()
@@ -402,7 +410,7 @@ class Session:
     async def _detect_turns(self) -> None:
         """Starts, retunes or stops server VAD, as the session's turn detection says."""
         settings = self.state.audio.input.turn_detection
-        if not isinstance(settings, ServerVad):
+        if not isinstance(settings, VoiceTurnDetection):
             if self.turns is not None:
                 # not cancelled: a feed in flight stops at its next step, and a commit it began completes
                 self.turns.reset()
@@ -412,14 +420,15 @@ class Session:
                 # the open turn's stream; the buffer streams from its start with the next append
                 self.input.drop()
             return
+        end = turn_end(settings, self._classifier)
         if self.turns is not None:
-            self.turns.settings = settings
+            self.turns.end = end
             return
         # the buffer's stream, which the client was to commit
         self.input.drop()
         self.turns = TurnDetector(
             self.buffer,
-            settings,
+            end,
             self._open_vad,
             self,
             self.gate,
@@ -435,7 +444,7 @@ class Session:
     def _interrupts(self) -> bool:
         """Whether a turn server VAD finds cuts the answer off."""
         settings = self.state.audio.input.turn_detection
-        return isinstance(settings, ServerVad) and settings.interrupt_response
+        return isinstance(settings, VoiceTurnDetection) and settings.interrupt_response
 
     # TurnEvents: what server VAD tells the session
 
@@ -469,7 +478,9 @@ class Session:
             audio = SilentTurn((audio_end_ms - audio_start_ms) / 1000)
         await self.send(server_event("input_audio_buffer.speech_stopped", audio_end_ms=audio_end_ms, item_id=turn))
         settings = self.state.audio.input.turn_detection
-        answers = isinstance(settings, ServerVad) and settings.create_response and self.state.type == "realtime"
+        answers = (
+            isinstance(settings, VoiceTurnDetection) and settings.create_response and self.state.type == "realtime"
+        )
         # a turn that ends while the model answers gets no answer of its own; one it cut off doesn't count
         responding = self.active is not None and not self.active.done() and not self.active.cancelled
         item, transcribed = await self._commit(audio, turn)
@@ -484,6 +495,18 @@ class Session:
                     " Its audio stays buffered, and input_audio_buffer.commit still works.",
                     type="server_error",
                     code="server_error",
+                )
+            )
+        )
+
+    async def turn_end_failed(self) -> None:
+        await self.send(
+            error_event(
+                RealtimeError(
+                    message=f"Pipeline {self.config.name!r} couldn't tell whether the turn ended: its turn classifier"
+                    " failed. The turn ends after the longest wait its eagerness allows, unless speech follows.",
+                    type="server_error",
+                    code="turn_classifier_failed",
                 )
             )
         )

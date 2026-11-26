@@ -24,6 +24,7 @@ from modelship.infer.pipelines.routes import ModelRoutes
 from modelship.logging import get_logger
 from modelship.openai.protocol.realtime import RealtimeError
 from modelship.utils.config_schema import AssistantPipelineConfig
+from modelship.utils.smart_turn import SmartTurnModel, smart_turn_source
 from modelship.utils.vad import SileroModel, silero_vad_source
 from modelship.utils.voice import VoiceDetector
 from modelship.utils.wake import WakeWords
@@ -96,8 +97,10 @@ class AssistantPipeline(BasePipeline):
     def __init__(self, config: AssistantPipelineConfig, routes: ModelRoutes):
         super().__init__(config)
         self.routes = routes
-        # Silero, shared by every session's server VAD; None without an stt
+        # Silero, shared by every session's server turn detection; None without an stt
         self._silero: SileroModel | None = None
+        # Smart Turn, shared by every session's semantic VAD; None without an stt
+        self._smart_turn: SmartTurnModel | None = None
         # the wake words, checked once; None without
         self._wake: WakeWords | None = None
         # session key -> its channel
@@ -110,6 +113,8 @@ class AssistantPipeline(BasePipeline):
 
             path = await locked_download(silero_vad_source(), self.config.name)
             self._silero = await asyncio.to_thread(SileroModel, path)
+            path = await locked_download(smart_turn_source(), self.config.name)
+            self._smart_turn = await asyncio.to_thread(SmartTurnModel, path)
         if assistant.wake is not None:
             self._wake = await asyncio.to_thread(WakeWords, assistant.wake.words)
 
@@ -144,7 +149,7 @@ class AssistantPipeline(BasePipeline):
             error = RealtimeError(message=f"Pipeline {self.config.name!r} isn't ready yet.", type="server_error")
             await refuse(channel, error)
             return
-        await serve_session(channel, self.config, self._calls(opening), self._vad_factory())
+        await serve_session(channel, self.config, self._calls(opening), self._vad_factory(), self._smart_turn)
 
     def _calls(self, opening: RealtimeOpening) -> PipelineCalls:
         """How the session *opening* opens calls the pipeline's models."""

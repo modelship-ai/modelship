@@ -555,9 +555,19 @@ class SessionServerVad(_StrictModel):
     interrupt_response: bool = True
 
 
+class SessionSemanticVad(_StrictModel):
+    """Semantic VAD, with OpenAI's defaults: *eagerness* caps the wait for a turn heard as unfinished at 8 s (low),
+    4 s (medium, auto) or 2 s (high)."""
+
+    type: Literal["semantic_vad"]
+    eagerness: Literal["low", "medium", "high", "auto"] = "auto"
+    create_response: bool = True
+    interrupt_response: bool = True
+
+
 class SessionAudioInput(_StrictModel):
     # null: the client commits each turn; unset: server VAD with its defaults
-    turn_detection: SessionServerVad | None = None
+    turn_detection: Annotated[SessionServerVad | SessionSemanticVad, Field(discriminator="type")] | None = None
 
 
 class SessionAudio(_StrictModel):

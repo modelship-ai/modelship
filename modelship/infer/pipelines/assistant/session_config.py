@@ -5,6 +5,7 @@ import time
 
 from modelship.openai.protocol.realtime import (
     SESSION_OBJECTS,
+    TURN_DETECTION,
     AudioInput,
     AudioOutput,
     RealtimeError,
@@ -30,9 +31,12 @@ UPDATABLE = (
 )
 _INPUT_FIELDS = ("format", "transcription", "turn_detection")
 _OUTPUT_FIELDS = ("format", "voice", "speed")
+# the fields of one kind of turn detection that the other doesn't take
+_SERVER_VAD_ONLY = frozenset({"threshold", "prefix_padding_ms", "silence_duration_ms", "idle_timeout_ms"})
+_SEMANTIC_ONLY = frozenset({"eagerness"})
 
 
-def _turn_detection(config: AssistantPipelineConfig) -> ServerVad | None:
+def _turn_detection(config: AssistantPipelineConfig) -> ServerVad | SemanticVad | None:
     """A new session's turn detection: server VAD on a pipeline with stt, unless its defaults say otherwise."""
     if config.assistant_config.stt is None:
         return None
@@ -42,7 +46,7 @@ def _turn_detection(config: AssistantPipelineConfig) -> ServerVad | None:
         return server_vad()
     if given.turn_detection is None:
         return None
-    return ServerVad.model_validate(given.turn_detection.model_dump())
+    return TURN_DETECTION.validate_python(given.turn_detection.model_dump())
 
 
 def new_session(config: AssistantPipelineConfig, lifetime_s: float) -> RealtimeSession:
@@ -102,17 +106,25 @@ def check_update(
     return _check_audio_input(state, given, config, buffered) if given is not None else None
 
 
+def _misplaced_field(detection: ServerVad | SemanticVad) -> str | None:
+    """A field *detection* was given that belongs to the other kind of turn detection, if any."""
+    other = _SEMANTIC_ONLY if isinstance(detection, ServerVad) else _SERVER_VAD_ONLY
+    return next((name for name in detection.model_extra or {} if name in other), None)
+
+
 def _check_audio_input(
     state: RealtimeSession, given: AudioInput, config: AssistantPipelineConfig, buffered: bool
 ) -> RealtimeError | None:
     param = "session.audio.input.turn_detection"
     detection = given.turn_detection
-    if isinstance(detection, SemanticVad):
-        return RealtimeError(
-            message="semantic_vad is not supported yet; use server_vad.", code="invalid_value", param=param
-        )
-    if isinstance(detection, ServerVad):
-        if detection.idle_timeout_ms is not None:
+    if isinstance(detection, ServerVad | SemanticVad):
+        if (field := _misplaced_field(detection)) is not None:
+            return RealtimeError(
+                message=f"Unknown parameter: '{param}.{field}': {detection.type} doesn't take it.",
+                code="unknown_parameter",
+                param=f"{param}.{field}",
+            )
+        if isinstance(detection, ServerVad) and detection.idle_timeout_ms is not None:
             return RealtimeError(
                 message="idle_timeout_ms is not supported yet.",
                 code="invalid_value",

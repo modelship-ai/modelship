@@ -402,6 +402,29 @@ class TestAudioOutput:
         # each turn starts later on the session's timeline, its padding before its speech
         assert starts == sorted(starts) and starts[0] >= 200
 
+    def test_semantic_vad_ends_a_finished_question_after_a_short_pause_and_answers_it(self):
+        with connect(f"{REALTIME}?model=spoken", open_timeout=30) as ws:
+            _until(ws, "session.created")
+            audio = {"input": {"turn_detection": {"type": "semantic_vad"}}}
+            _send(ws, {"type": "session.update", "session": {"audio": audio}})
+            session = _until(ws, "session.updated")[-1]["session"]
+            rate, pcm = _speech("What colour is the sky on a clear day?")
+            # a second before the speech and two after it
+            _append_all(ws, bytes(rate * 2) + pcm + bytes(rate * 4), rate)
+            events = _until(ws, "response.done")
+        kinds = [event["type"] for event in events]
+        assert kinds.count("input_audio_buffer.speech_started") == 1, kinds
+        assert kinds.count("input_audio_buffer.speech_stopped") == 1, kinds
+        stopped = next(e for e in events if e["type"] == "input_audio_buffer.speech_stopped")
+        speech_end_ms = 1000 + len(pcm) // 2 * 1000 // rate
+        print(f"\nsemantic_vad turn ended {stopped['audio_end_ms'] - speech_end_ms} ms after the speech's audio")
+        # heard finished: 200 ms after the speech stopped, where server_vad waits 500
+        assert stopped["audio_end_ms"] < speech_end_ms + 500, (stopped, speech_end_ms)
+        heard = next(e for e in events if e["type"].endswith("transcription.completed"))["transcript"]
+        assert {"sky", "clear"} & set(_words(heard)), heard
+        assert events[-1]["response"]["status"] == "completed", events[-1]
+        assert session["audio"]["input"]["turn_detection"]["type"] == "semantic_vad"
+
     def test_talking_over_the_answer_cuts_it_off_and_the_new_question_is_answered(self):
         with connect(f"{REALTIME}?model=spoken", open_timeout=30) as ws:
             _until(ws, "session.created")

@@ -1,10 +1,13 @@
-"""Server VAD for a realtime session. `TurnDetector` feeds the client's audio, as it arrives, to a `VadStream`, and
-finds the session's turns on its timeline (the ms of audio the client has sent since the session opened).
+"""Server turn detection for a realtime session. `TurnDetector` feeds the client's audio, as it arrives, to a
+`VadStream`, and finds the session's turns on its timeline (the ms of audio the client has sent since the session
+opened).
 
-A turn starts at the first speech heard, less the prefix padding, and ends once the silence after it lasts
-`silence_duration_ms`. With wake words a turn also starts where a wake word ends, and other speech starts one only
-inside the window the session's `TurnRules` give. The detector is a state machine: `Idle` between turns, `Speaking`
-in a turn, and `AwaitingSpeech` in a turn a wake word opened until speech past the wake word is heard."""
+A turn starts at the first speech heard, less the prefix padding. Once its speech pauses, its `TurnEnd` says where
+it ends: after `silence_duration_ms` of silence (server_vad), or at once if a classifier hears it finished and else
+when the user speaks again or after the wait its eagerness allows (semantic_vad). With wake words a turn also starts
+where a wake word ends, and other speech starts one only inside the window the session's `TurnRules` give. The
+detector is a state machine: `Idle` between turns, `Speaking` in a turn, `Paused` in a turn whose speech paused and
+may go on, and `AwaitingSpeech` in a turn a wake word opened until speech past the wake word is heard."""
 
 import asyncio
 import contextlib
@@ -14,8 +17,9 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from modelship.infer.pipelines.assistant.input.input_buffer import InputAudioBuffer
+from modelship.infer.pipelines.assistant.input.turn_end import TurnClassifierError, TurnEnd
 from modelship.logging import get_logger
-from modelship.openai.protocol.realtime import ServerVad, item_id
+from modelship.openai.protocol.realtime import item_id
 from modelship.utils.vad import SpeechSegment
 
 logger = get_logger("realtime")
@@ -110,6 +114,10 @@ class TurnEvents(Protocol):
         """Feeding started failing; the buffer keeps all its audio while it fails."""
         ...
 
+    async def turn_end_failed(self) -> None:
+        """The classifier couldn't tell whether a turn ended; it ends after the longest wait unless speech follows."""
+        ...
+
     def vad_progressed(self) -> None:
         """A feed is done, and `vad_through_ms` moved."""
         ...
@@ -137,6 +145,15 @@ class Speaking:
 
 
 @dataclass(frozen=True)
+class Paused:
+    """In *turn*, whose speech stopped at *speech_ms* and may go on: without speech it ends at *gives_up_ms*."""
+
+    turn: OpenTurn
+    speech_ms: float
+    gives_up_ms: float
+
+
+@dataclass(frozen=True)
 class AwaitingSpeech:
     """In *turn*, which a wake word opened: speech that ends by *own_until_ms* is the wake word's own, and without
     speech past it the turn ends, unspoken, at *gives_up_ms*."""
@@ -146,7 +163,7 @@ class AwaitingSpeech:
     gives_up_ms: float
 
 
-TurnState = Idle | Speaking | AwaitingSpeech
+TurnState = Idle | Speaking | Paused | AwaitingSpeech
 
 
 class _StaleFeedError(Exception):
@@ -154,20 +171,21 @@ class _StaleFeedError(Exception):
 
 
 class TurnDetector:
-    """Finds the turns in *buffer*, as *settings* say, with the VAD streams *open_vad* opens, and tells *events*.
-    *rules* say when speech may start a turn. A turn without a pause is cut at *max_turn_ms*, or never with None."""
+    """Finds the turns in *buffer*, ending them as *end* says, with the VAD streams *open_vad* opens, and tells
+    *events*. *rules* say when speech may start a turn. A turn without a pause is cut at *max_turn_ms*, or never with
+    None."""
 
     def __init__(
         self,
         buffer: InputAudioBuffer,
-        settings: ServerVad,
+        end: TurnEnd,
         open_vad: VadStreamFactory,
         events: TurnEvents,
         rules: TurnRules = NO_RULES,
         max_turn_ms: int | None = MAX_TURN_MS,
     ):
         self.buffer = buffer
-        self.settings = settings
+        self.end = end
         self._open_vad = open_vad
         self._events = events
         self._rules = rules
@@ -239,13 +257,13 @@ class TurnDetector:
             logger.exception("Turn detection failed")
 
     async def _feed_once(self) -> None:
-        # one feed runs on the settings it started with
-        settings, buffer = self.settings, self.buffer
+        # one feed runs on the turn end it started with
+        turn_end, buffer = self.end, self.buffer
         self._feed_epoch = epoch = self._epoch
         min_speech = self._rules.min_speech_ms()
         start, end = max(self._fed_ms, buffer.start_ms), buffer.end_ms
         vad = self._vad_from(start)
-        found = await self._detect(vad, start, end, settings)
+        found = await self._detect(vad, start, end, turn_end)
         if epoch != self._epoch:
             return
         if found is None:
@@ -256,12 +274,12 @@ class TurnDetector:
         listen_ms = self._rules.listen_ms
         if vad.wake_ends_ms and isinstance(self._state, Idle) and listen_ms is not None:
             await self._woken(vad.wake_ends_ms[0], listen_ms)
-        await self._apply(found, end, settings, min_speech)
+        await self._apply(found, end, turn_end, min_speech)
         if epoch == self._epoch:
             self.vad_through_ms = end
             self._events.vad_progressed()
         if isinstance(self._state, Idle):
-            self._trim_buffer(found, end, settings)
+            self._trim_buffer(found, end, turn_end)
 
     def _vad_from(self, start: float) -> VadStream:
         """The VAD stream to feed the audio from *start* to: a new one after a failure, a reset or a new rate."""
@@ -272,16 +290,14 @@ class TurnDetector:
             vad = self._vad = self._open_vad(rate, start, self._rules.listen_ms is not None)
         return vad
 
-    async def _detect(
-        self, vad: VadStream, start: float, end: float, settings: ServerVad
-    ) -> list[SpeechSegment] | None:
+    async def _detect(self, vad: VadStream, start: float, end: float, turn_end: TurnEnd) -> list[SpeechSegment] | None:
         """Runs *vad* over the buffer's audio from *start* to *end* on a thread; its segments, or None if it failed."""
         buffer = self.buffer
         # wake words are heard in the audio as the client sent it, where the buffer holds silence in its place
         sent = buffer.sent_pcm(start, end) if buffer.keeps_sent else None
         try:
             return await asyncio.to_thread(
-                vad.detect, buffer.pcm(start, end), settings.threshold, settings.silence_duration_ms, sent
+                vad.detect, buffer.pcm(start, end), turn_end.threshold, turn_end.pause_ms, sent
             )
         except Exception:
             logger.exception("Detecting speech failed")
@@ -295,13 +311,13 @@ class TurnDetector:
             self._failing = True
             await self._events.detection_failed()
 
-    def _trim_buffer(self, found: list[SpeechSegment], end: float, settings: ServerVad) -> None:
+    def _trim_buffer(self, found: list[SpeechSegment], end: float, turn_end: TurnEnd) -> None:
         """Between turns, drops the audio no turn can start in: it keeps the open segment from where it may start a
         turn, and what a turn's prefix padding needs."""
         low = self._rules.window().start_ms
         opened = [max(segment.start_ms, low) for segment in found if segment.end_ms is None]
         held = min([end - _LEAD_MS, *opened])
-        self.buffer.drop_before(held - settings.prefix_padding_ms)
+        self.buffer.drop_before(held - turn_end.prefix_padding_ms)
 
     async def _woken(self, at_ms: float, listen_ms: float) -> None:
         """Opens a turn where a wake word ends, at *at_ms*, which waits *listen_ms* for speech."""
@@ -310,7 +326,7 @@ class TurnDetector:
             return
         await self._start(max(at_ms, self.buffer.start_ms), listen_ms)
 
-    def _opening(self, segment: SpeechSegment, settings: ServerVad, min_speech: int) -> float | None:
+    def _opening(self, segment: SpeechSegment, turn_end: TurnEnd, min_speech: int) -> float | None:
         """Where *segment* starts a turn now, or None: speech that starts outside the window or lasts shorter than
         *min_speech* inside it starts none."""
         window = self._rules.window()
@@ -318,7 +334,7 @@ class TurnDetector:
         speech_end = segment.speech_end_ms
         if speech_end <= first or speech_end - first < min_speech or first > window.end_ms:
             return None
-        padded = segment.start_ms - settings.prefix_padding_ms
+        padded = segment.start_ms - turn_end.prefix_padding_ms
         return max(self._floor_ms, self.buffer.start_ms, padded, window.start_ms)
 
     def _check_current(self) -> None:
@@ -326,7 +342,7 @@ class TurnDetector:
         if self._epoch != self._feed_epoch:
             raise _StaleFeedError
 
-    async def _apply(self, segments: list[SpeechSegment], end: float, settings: ServerVad, min_speech: int) -> None:
+    async def _apply(self, segments: list[SpeechSegment], end: float, turn_end: TurnEnd, min_speech: int) -> None:
         """Moves the state machine through one feed's segments, then through the time the feed covered."""
         heard = False
         for segment in segments:
@@ -339,8 +355,11 @@ class TurnDetector:
                     # the wake word's own speech
                     continue
                 self._state = Speaking(state.turn, state.turn.start_ms)
+            elif isinstance(state, Paused):
+                # the user goes on after a pause
+                self._state = Speaking(state.turn, state.speech_ms)
             elif isinstance(state, Idle):
-                opening = self._opening(segment, settings, min_speech)
+                opening = self._opening(segment, turn_end, min_speech)
                 if opening is None:
                     if segment.end_ms is None:
                         # it may last long enough, or the window open, by the next feed
@@ -350,30 +369,51 @@ class TurnDetector:
                     continue
                 await self._start(opening)
             heard = True
-            if not await self._speech(segment, settings):
+            if not await self._speech(segment, turn_end):
                 break
-        await self._elapsed(end, heard, settings)
+        await self._elapsed(end, heard, turn_end)
 
-    async def _speech(self, segment: SpeechSegment, settings: ServerVad) -> bool:
-        """Speech in the turn in progress: an open segment moves where its speech was last heard, a closed one ends
-        the turn. Whether the feed's later segments may hold more turns."""
+    async def _speech(self, segment: SpeechSegment, turn_end: TurnEnd) -> bool:
+        """Speech in the turn in progress: an open segment moves where its speech was last heard, a closed one pauses
+        it. Whether the feed's later segments may hold more speech."""
         state = self._state
         assert isinstance(state, Speaking)
         if segment.end_ms is None:
             state.speech_ms = segment.speech_end_ms
             return False
         state.speech_ms = segment.end_ms
-        await self._close(segment.end_ms, segment.end_ms + settings.silence_duration_ms)
+        await self._paused(segment.end_ms, turn_end)
         return True
 
-    async def _elapsed(self, end: float, heard: bool, settings: ServerVad) -> None:
-        """Ends the turn in progress where the audio fed up to *end* says it ends without more speech: its silence
+    async def _paused(self, speech_end_ms: float, turn_end: TurnEnd) -> None:
+        """The turn in progress went quiet at *speech_end_ms*: it ends where *turn_end* says, or waits for more
+        speech."""
+        state = self._state
+        assert isinstance(state, Speaking)
+        try:
+            at_ms = await turn_end.ends_at(self.buffer, state.turn.start_ms, speech_end_ms)
+        except TurnClassifierError:
+            logger.exception("Classifying the end of a turn failed")
+            at_ms = None
+            await self._events.turn_end_failed()
+        self._check_current()
+        if at_ms is not None:
+            await self._close(speech_end_ms, at_ms)
+        else:
+            self._state = Paused(state.turn, speech_end_ms, turn_end.gives_up_ms(speech_end_ms))
+
+    async def _elapsed(self, end: float, heard: bool, turn_end: TurnEnd) -> None:
+        """Ends the turn in progress where the audio fed up to *end* says it ends without more speech: its pause
         lasted, the wake word's listening ran out, or it reached the longest a turn lasts."""
         fed_to = min(end, self.buffer.end_ms)
         state = self._state
-        if isinstance(state, Speaking) and not heard and end - state.speech_ms >= settings.silence_duration_ms:
+        if isinstance(state, Speaking) and not heard and end - state.speech_ms >= turn_end.pause_ms:
             # the turn's speech ended before this feed's audio
-            await self._close(state.speech_ms, state.speech_ms + settings.silence_duration_ms)
+            await self._paused(state.speech_ms, turn_end)
+        state = self._state
+        if isinstance(state, Paused) and fed_to >= state.gives_up_ms:
+            # no speech followed the pause
+            await self._close(state.speech_ms, state.gives_up_ms)
         state = self._state
         if isinstance(state, AwaitingSpeech) and fed_to >= state.gives_up_ms:
             # no speech followed the wake word

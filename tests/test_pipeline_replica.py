@@ -109,8 +109,8 @@ class TestAssistantPipeline:
     async def test_a_session_runs_on_its_channel_until_its_client_leaves(self, monkeypatch):
         served: list = []
 
-        async def serve(channel, config, calls, vad) -> None:
-            served.append((calls, vad))
+        async def serve(channel, config, calls, vad, classifier) -> None:
+            served.append((calls, vad, classifier))
             await channel.send(await channel.receive())
             await channel.receive()
 
@@ -124,31 +124,39 @@ class TestAssistantPipeline:
         await pipeline.realtime_close("k1")
         assert [frame async for frame in stream] == []
         assert await pipeline.realtime_event("k1", ["late"]) is False
-        calls, vad = served[0]
+        calls, vad, classifier = served[0]
         assert calls._headers == {"x-device": "kitchen"}
         # a pipeline without an stt has no speech detection
         assert vad is None
+        assert classifier is None
 
     @pytest.mark.asyncio
     async def test_one_silero_model_serves_every_sessions_vad(self, monkeypatch):
         loaded: list[str] = []
 
         async def download(source, name) -> str:
-            return "/models/silero.onnx"
+            return f"/models/{source.dest}"
 
         class Silero:
             def __init__(self, path: str) -> None:
                 loaded.append(path)
 
+        class SmartTurn:
+            def __init__(self, path: str) -> None:
+                loaded.append(path)
+
         monkeypatch.setattr(downloads, "locked_download", download)
         monkeypatch.setattr(assistant_pipeline, "SileroModel", Silero)
+        monkeypatch.setattr(assistant_pipeline, "SmartTurnModel", SmartTurn)
         voice = AssistantPipelineConfig(name="voice", type="assistant", assistant_config={"stt": "parakeet"})
         pipeline = AssistantPipeline(voice, _Routes())  # type: ignore[arg-type]
         await pipeline.start()
         open_vad = pipeline._vad_factory()
         assert open_vad is not None
         first, second = open_vad(24000, 0.0, False), open_vad(8000, 500.0, False)
-        assert loaded == ["/models/silero.onnx"]
+        assert loaded == ["/models/vad/silero_vad_v5-6b99cbfd.onnx", "/models/turn/smart-turn-v3.2-cpu-2bb02631.onnx"]
+        # one Smart Turn model, for every session's semantic VAD
+        assert isinstance(pipeline._smart_turn, SmartTurn)
         assert first._speech._model is second._speech._model
         assert (first.rate, second.rate) == (24000, 8000)
         # a pipeline without wake words hears none
@@ -168,6 +176,7 @@ class TestAssistantPipeline:
 
         monkeypatch.setattr(downloads, "locked_download", download)
         monkeypatch.setattr(assistant_pipeline, "SileroModel", lambda path: object())
+        monkeypatch.setattr(assistant_pipeline, "SmartTurnModel", lambda path: object())
         monkeypatch.setattr(assistant_pipeline, "WakeWords", Words)
         config = {"stt": "parakeet", "wake": {"words": ["hey_jarvis"]}}
         voice = AssistantPipelineConfig(name="voice", type="assistant", assistant_config=config)
