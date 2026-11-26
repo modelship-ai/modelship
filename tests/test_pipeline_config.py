@@ -198,6 +198,40 @@ class TestAssistantSchema:
         with pytest.raises(ValidationError):
             _assistant(name="voice", stt="whisper", **given)
 
+    def test_a_pipeline_has_no_wake_words_by_default(self):
+        assert _assistant(name="voice", stt="whisper").assistant_config.wake is None
+
+    def test_wake_words_are_built_in_names_or_manifests_each_with_an_optional_cutoff(self):
+        words = ["okay_nabu", {"model": "hey_jarvis", "cutoff": 0.9}, "/models/hey_skippy.json"]
+        wake = _assistant(name="voice", stt="whisper", wake={"words": words}).assistant_config.wake
+        assert wake is not None
+        assert [(word.model, word.cutoff) for word in wake.words] == [
+            ("okay_nabu", None),
+            ("hey_jarvis", 0.9),
+            ("/models/hey_skippy.json", None),
+        ]
+        assert (wake.listen_s, wake.follow_up.mode, wake.follow_up.listen_s) == (10.0, "off", 10.0)
+
+    @pytest.mark.parametrize(
+        ("wake", "problem"),
+        [
+            ({"words": ["hey_siri"]}, "neither a built-in word"),
+            ({"words": ["/models/word.tflite"]}, "neither a built-in word"),
+            ({"words": []}, "at least 1 item"),
+            ({"words": [{"model": "hey_jarvis", "cutoff": 1.0}]}, "less than 1"),
+            ({"words": ["hey_jarvis"], "listen_s": 0}, "greater than 0"),
+            ({"words": ["hey_jarvis"], "follow_up": {"mode": "sometimes"}}, "follow_up.mode"),
+            ({"words": ["hey_jarvis"], "keywords": ["x"]}, "Extra inputs"),
+        ],
+    )
+    def test_wake_settings_it_cant_use_are_rejected(self, wake, problem):
+        with pytest.raises(ValidationError, match=problem):
+            _assistant(name="voice", stt="whisper", wake=wake)
+
+    def test_wake_words_need_an_stt_model(self):
+        with pytest.raises(ValidationError, match="wake needs an stt model"):
+            _assistant(name="voice", llm="qwen", wake={"words": ["hey_jarvis"]})
+
 
 class TestPipelineFlags:
     def test_each_pipeline_gets_the_flags_that_follow_it(self):
@@ -242,6 +276,18 @@ class TestPipelineFlags:
             "llm": "qwen",
             "session_defaults": {"instructions": "Be brief.", "max_output_tokens": 256},
         }
+
+    def test_wake_words_are_set_by_flags(self):
+        args = _args(
+            "deploy",
+            "--pipeline", "voice", "--pipeline.type", "assistant", "--pipeline.assistant-config.stt", "whisper",
+            "--pipeline.assistant-config.wake.words", "[okay_nabu, {model: hey_jarvis, cutoff: 0.9}]",
+            "--pipeline.assistant-config.wake.follow-up.mode", "question",
+        )  # fmt: skip
+        wake = parse_pipeline(args.pipelines[0]).assistant_config.wake
+        assert wake is not None
+        assert [word.model for word in wake.words] == ["okay_nabu", "hey_jarvis"]
+        assert wake.follow_up.mode == "question"
 
     def test_a_model_flag_after_a_pipeline_is_rejected(self, capsys):
         err = _error(capsys, "--model", "org/qwen", "--pipeline", "assistant", "--model.num-gpus", "1")

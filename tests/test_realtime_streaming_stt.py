@@ -8,6 +8,7 @@ import time
 
 from modelship.openai.protocol import ErrorInfo, ErrorResponse, SttCapabilities, SttStreamText
 from tests.test_realtime_session import (
+    ASSISTANT,
     SCRIBE,
     _append,
     _client,
@@ -20,6 +21,7 @@ from tests.test_realtime_session import (
     _tone,
     _until,
 )
+from tests.test_realtime_turns import wake_word
 
 STREAMING = SttCapabilities(streaming=True, reports_language=False, chunk_ms=160)
 # SCRIBE with the client committing each turn
@@ -294,3 +296,38 @@ class TestServerVad:
         [completed] = [event for event in events if event["type"] == COMPLETED]
         assert completed["transcript"] == "short"
         assert {key for _, key, _ in stt.ops("push", "finish")} == {stt.calls[0][1]}
+
+
+# a realtime session whose turns start at the wake word, answering none of them
+WOKEN = {
+    **ASSISTANT,
+    "wake": {"words": ["hey_jarvis"], "listen_s": 1},
+    "session_defaults": {"audio": {"input": {"turn_detection": {"type": "server_vad", "create_response": False}}}},
+}
+
+
+class TestWakeWords:
+    def test_a_wake_word_nobody_follows_never_reaches_the_model(self):
+        stt = _StreamStt()
+        with _session(stt, WOKEN) as ws:
+            _open(ws)
+            _stream(ws, _quiet(0.5), wake_word(0.6), _quiet(2))
+            events = _until(ws, COMPLETED)
+            _settle(ws)
+        assert events[-1]["transcript"] == ""
+        assert DELTA not in [event["type"] for event in events]
+        assert stt.calls == []
+
+    def test_a_wake_words_turn_streams_from_where_the_wake_word_ends_once_it_hears_speech(self):
+        stt = _StreamStt("turn the kitchen lights on")
+        with _session(stt, WOKEN) as ws:
+            _open(ws)
+            _stream(ws, _quiet(0.5), wake_word(0.6), _quiet(0.3), _tone(2), _quiet(1))
+            events = _until(ws, COMPLETED)
+        started = next(event for event in events if event["type"] == "input_audio_buffer.speech_started")
+        assert started["audio_start_ms"] == 1100
+        [key] = {key for _, key, _ in stt.ops("push", "finish")}
+        assert key.endswith(f":{started['item_id']}")
+        # from the wake word's end to the turn's: 0.3 s pause, 2 s of speech and 0.5 s of silence
+        assert sum(size for _, _, size in stt.ops("push", "finish")) == round(2.8 * RATE) * 2
+        assert events[-1]["transcript"] == "turn the kitchen lights on"

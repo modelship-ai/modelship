@@ -9,11 +9,14 @@ state and where its speech is.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from modelship.utils.sources import FileSource, check_file_source
+
+if TYPE_CHECKING:
+    from modelship.utils.wake import WakeStream
 
 SAMPLE_RATE = 16000
 
@@ -183,14 +186,19 @@ class SpeechSegment:
 class SpeechStream:
     """The speech in one stream of 16-bit mono PCM at *rate*, found as it arrives, on a timeline in ms that starts
     at *start_ms*. A segment opens once speech lasts MIN_SPEECH_MS, dated back to where it started, and closes once
-    silence lasts the silence duration. One feed at a time."""
+    silence lasts the silence duration. With *wake*, the wake words in the same audio too. One feed at a time."""
 
-    def __init__(self, model: SileroModel, rate: int, start_ms: float) -> None:
+    def __init__(self, model: SileroModel, rate: int, start_ms: float, wake: WakeStream | None = None) -> None:
         from modelship.utils.audio import StreamResampler
 
         self.rate = rate
         self._model = model
         self._resample = StreamResampler(rate, SAMPLE_RATE)
+        self._wake = wake
+        # the audio the wake words are heard in, when it isn't what Silero hears
+        self._wake_resample: StreamResampler | None = None
+        # where a wake word ended in the last feed's audio, at each step it was heard
+        self.woke: list[float] = []
         self._start_ms = start_ms
         self._state = np.zeros(STATE_SHAPE, dtype=np.float32)
         self._window = np.zeros(CONTEXT + WINDOW, dtype=np.float32)
@@ -203,11 +211,23 @@ class SpeechStream:
         self._open: int | None = None
         self._silence: int | None = None
 
-    def feed(self, pcm16: bytes, threshold: float, silence_duration_ms: int) -> list[SpeechSegment]:
-        """The segments that closed in *pcm16*, then the one still open."""
-        from modelship.utils.audio import from_pcm16
+    def feed(
+        self, pcm16: bytes, threshold: float, silence_duration_ms: int, wake_pcm16: bytes | None = None
+    ) -> list[SpeechSegment]:
+        """The segments that closed in *pcm16*, then the one still open; the wake words go to `woke`, heard in
+        *wake_pcm16*, the same stretch of audio as *pcm16*, when it is given on every feed."""
+        from modelship.utils.audio import StreamResampler, from_pcm16, to_pcm16
 
-        self._unfed = np.concatenate([self._unfed, self._resample(from_pcm16(pcm16))])
+        samples = self._resample(from_pcm16(pcm16))
+        if self._wake is not None:
+            if wake_pcm16 is not None:
+                if self._wake_resample is None:
+                    self._wake_resample = StreamResampler(self.rate, SAMPLE_RATE)
+                heard = self._wake_resample(from_pcm16(wake_pcm16))
+            else:
+                heard = samples
+            self.woke = self._wake.feed(to_pcm16(heard))
+        self._unfed = np.concatenate([self._unfed, samples])
         quiet = max(threshold - HYSTERESIS, 0.01)
         min_speech = MIN_SPEECH_MS * SAMPLE_RATE // 1000
         min_silence = silence_duration_ms * SAMPLE_RATE // 1000

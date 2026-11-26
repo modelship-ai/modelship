@@ -26,6 +26,10 @@ class Playback:
         """Whether the client is playing audio sent, or the room still echoes it."""
         return self._clock() < self._until + TAIL_SECONDS
 
+    def remaining(self) -> float:
+        """The seconds of the audio sent the client still has to play."""
+        return max(self._until - self._clock(), 0.0)
+
     def stop(self) -> None:
         """The client stopped playing."""
         self._until = -math.inf

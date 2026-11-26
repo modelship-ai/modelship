@@ -500,3 +500,59 @@ class TestStreamingSpeechToText:
         streamed = _words("".join(event["delta"] for event in deltas))
         assert streamed == _words(heard)[: len(streamed)], (streamed, heard)
         assert kept == heard
+
+
+WAKER = {
+    "name": "waker",
+    "type": "assistant",
+    "assistant_config": {"stt": NEMOTRON["name"], "llm": LLM["name"], "wake": {"words": ["hey_jarvis"]}},
+}
+
+
+@pytest.mark.integration
+@pytest.mark.sherpa_onnx
+class TestWakeWords:
+    @pytest.fixture(autouse=True, scope="class")
+    def _deploy(self, model_deployer, tmp_path_factory):
+        config = tmp_path_factory.mktemp("realtime-wake") / "models.yaml"
+        config.write_text(yaml.dump({"models": [NEMOTRON, LLM, TTS], "pipelines": [WAKER]}))
+        model_deployer.run("--config", str(config), "--reconcile", log_name="realtime-wake")
+        model_deployer.forget()
+        yield
+        model_deployer.deploy()
+
+    def _heard(self, text: str) -> list[dict]:
+        """What a session hears when Kokoro says *text* into it in real time, as a microphone streams."""
+        rate, pcm = _speech(text)
+        with connect(f"{REALTIME}?model=waker", open_timeout=30) as ws:
+            _until(ws, "session.created")
+            detection = {"type": "server_vad", "create_response": False}
+            audio_input = {"format": {"type": "audio/pcm", "rate": rate}, "turn_detection": detection}
+            _send(ws, {"type": "session.update", "session": {"audio": {"input": audio_input}}})
+            _until(ws, "session.updated")
+            audio = bytes(rate * 2) + pcm + bytes(rate * 2)
+            step = rate // 10 * 2
+            for start in range(0, len(audio), step):
+                chunk = base64.b64encode(audio[start : start + step]).decode()
+                _send(ws, {"type": "input_audio_buffer.append", "audio": chunk})
+                time.sleep(0.1)
+            # an update's answer comes after every event the audio before it caused
+            _send(ws, {"type": "session.update", "session": {}})
+            events = _until(ws, "session.updated")
+            kinds = [event["type"] for event in events]
+            if "input_audio_buffer.speech_started" in kinds and COMPLETED not in kinds:
+                events += _until(ws, COMPLETED)
+        return events
+
+    def test_the_wake_word_opens_a_turn_that_holds_what_follows_it(self):
+        events = self._heard("Hey Jarvis, turn on the kitchen lights.")
+        kinds = [event["type"] for event in events]
+        assert kinds.count("input_audio_buffer.speech_started") == 1, kinds
+        [completed] = [event for event in events if event["type"] == COMPLETED]
+        heard = _words(completed["transcript"])
+        assert {"kitchen", "lights"} <= set(heard), heard
+        assert "jarvis" not in heard, heard
+
+    def test_speech_without_the_wake_word_opens_no_turn(self):
+        events = self._heard("Turn on the kitchen lights.")
+        assert "input_audio_buffer.speech_started" not in [event["type"] for event in events]

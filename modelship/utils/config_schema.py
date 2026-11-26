@@ -606,6 +606,49 @@ class PipelineConfig(_StrictModel):
         raise NotImplementedError
 
 
+# the microWakeWord models pymicro-wakeword ships
+BUILTIN_WAKE_WORDS = ("okay_nabu", "hey_jarvis", "hey_mycroft", "alexa")
+
+
+class WakeWord(_StrictModel):
+    # a built-in word, or the path of a word's microWakeWord v2 manifest (.json), its .tflite beside it
+    model: str
+    # the score the word fires above; unset, its manifest's
+    cutoff: float | None = Field(default=None, gt=0.0, lt=1.0)
+
+    @field_validator("model")
+    @classmethod
+    def check_builtin_or_manifest(cls, value: str) -> str:
+        if value not in BUILTIN_WAKE_WORDS and not value.endswith(".json"):
+            builtins = ", ".join(BUILTIN_WAKE_WORDS)
+            raise ValueError(f"wake word {value!r} is neither a built-in word ({builtins}) nor a .json manifest")
+        return value
+
+
+class FollowUp(_StrictModel):
+    # after an answer, the user talks again without the wake word: never, when the answer asks something, or always
+    mode: Literal["off", "question", "always"] = "off"
+    # how long after the answer ends a turn may start without the wake word
+    listen_s: float = Field(default=10.0, gt=0, le=300)
+
+
+class Wake(_StrictModel):
+    """Wake words: a server VAD turn of a realtime session starts at one, or in a follow-up's window."""
+
+    words: Annotated[list[WakeWord], Field(min_length=1)]
+    # how long after the wake word the user has to start talking
+    listen_s: float = Field(default=10.0, gt=0, le=300)
+    follow_up: FollowUp = Field(default_factory=FollowUp)
+
+    @field_validator("words", mode="before")
+    @classmethod
+    def accept_names(cls, value: Any) -> Any:
+        # a word given by its model alone
+        if isinstance(value, list):
+            return [{"model": word} if isinstance(word, str) else word for word in value]
+        return value
+
+
 class AssistantConfig(_StrictModel):
     """An assistant's own settings, as a model's loader keeps its settings in `<loader>_config`."""
 
@@ -619,6 +662,7 @@ class AssistantConfig(_StrictModel):
     duplex: Literal["full", "half"] = "full"
     # while an answer plays, how long speech lasts before it starts a turn and cuts the answer off
     min_interruption_ms: int = Field(default=500, ge=0, le=5000)
+    wake: Wake | None = None
 
 
 class AssistantPipelineConfig(PipelineConfig):
@@ -658,6 +702,12 @@ class AssistantPipelineConfig(PipelineConfig):
                 f"pipeline {self.name!r}: assistant_config.session_defaults.audio.input.turn_detection needs an stt"
                 " model to take audio."
             )
+        return self
+
+    @model_validator(mode="after")
+    def check_wake_has_stt(self):
+        if self.assistant_config.wake is not None and self.assistant_config.stt is None:
+            raise ValueError(f"pipeline {self.name!r}: assistant_config.wake needs an stt model to hear the user.")
         return self
 
     def models(self) -> list[str]:

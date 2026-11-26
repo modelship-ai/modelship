@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import sys
 
-from . import __version__, engine, gates, llama_cpp, paths, sd_cpp, uv_binary, variants
+from . import __version__, engine, gates, llama_cpp, paths, sd_cpp, tflite, uv_binary, variants
 from .variants import VariantError, split_variant_flag
 from .variants import resolve as resolve_variant
 
@@ -61,6 +61,7 @@ def main(argv: list[str] | None = None) -> None:
         engine.EngineError,
         llama_cpp.LlamaCppError,
         sd_cpp.SdCppError,
+        tflite.TfliteError,
     ) as e:
         sys.exit(str(e))
 
@@ -81,6 +82,7 @@ def _bootstrap(variant, rest: list[str]) -> None:
     if variant.serves_models:
         llama_cpp.provision(variant)
         sd_cpp.provision(variant)
+        tflite.provision(variant)
     variants.write_recorded(paths.env_file(), variant.name)
 
     print(f"\nmship {__version__} bootstrapped for --{variant.name} in {paths.env_dir(variant.name)}")
@@ -101,6 +103,8 @@ def _engine_env(variant) -> dict[str, str]:
         env["MSHIP_LLAMA_SERVER_BIN"] = wrapper
     if variant.serves_models and (wrapper := sd_cpp.locate(variant)):
         env["MSHIP_SD_SERVER_BIN"] = wrapper
+    if library := tflite.locate(variant):
+        env["MSHIP_TFLITE_C_LIB"] = library
 
     if variant.name == "thin":
         # Same contract as the thin image.

@@ -136,6 +136,8 @@ class InputAudioBuffer:
 
     def __init__(self) -> None:
         self._pcm = bytearray()
+        # once kept: the audio as the client sent it, where the buffer holds silence in its place
+        self._sent: bytearray | None = None
         self.rate: int | None = None
         # where the buffer's first sample is on the timeline
         self.start_ms = 0.0
@@ -148,14 +150,25 @@ class InputAudioBuffer:
     def end_ms(self) -> float:
         return self.start_ms + self.seconds * 1000
 
-    def append(self, pcm16: bytes, rate: int) -> str | None:
-        """Adds *pcm16* at *rate*; why it can't, or None."""
+    @property
+    def keeps_sent(self) -> bool:
+        return self._sent is not None
+
+    def keep_sent(self) -> None:
+        """From now on, keeps the audio as the client sent it beside the buffer's."""
+        if self._sent is None:
+            self._sent = bytearray(self._pcm)
+
+    def append(self, pcm16: bytes, rate: int, sent: bytes | None = None) -> str | None:
+        """Adds *pcm16* at *rate*, where the client sent *sent* if it differs; why it can't, or None."""
         if self.rate is not None and self._pcm and rate != self.rate:
             return "The audio format changed with audio in the buffer; clear it first."
         if len(self._pcm) + len(pcm16) > MAX_BYTES:
             return f"The input audio buffer holds at most {MAX_BYTES / 1e6:g} MB of PCM; commit or clear it."
         self.rate = rate
         self._pcm += pcm16
+        if self._sent is not None:
+            self._sent += pcm16 if sent is None else sent
         return None
 
     def _offset(self, at_ms: float) -> int:
@@ -169,11 +182,19 @@ class InputAudioBuffer:
         """The audio from *from_ms* to *to_ms*, as much of it as the buffer holds."""
         return bytes(self._pcm[self._offset(from_ms) : self._offset(to_ms)])
 
+    def sent_pcm(self, from_ms: float, to_ms: float) -> bytes:
+        """The same audio as the client sent it."""
+        if self._sent is None:
+            return self.pcm(from_ms, to_ms)
+        return bytes(self._sent[self._offset(from_ms) : self._offset(to_ms)])
+
     def drop_before(self, at_ms: float) -> None:
         """Drops the audio before *at_ms*."""
         cut = self._offset(at_ms)
         if cut and self.rate is not None:
             del self._pcm[:cut]
+            if self._sent is not None:
+                del self._sent[:cut]
             self.start_ms += cut // 2 * 1000 / self.rate
 
     def clear(self) -> None:
