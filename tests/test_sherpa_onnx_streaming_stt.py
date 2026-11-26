@@ -106,7 +106,7 @@ def _pcm(samples: np.ndarray) -> bytes:
     return (samples * 32767).astype(np.int16).tobytes()
 
 
-NO_ZEROS = StreamFeed(lead_ms=0, tail_ms=0)
+NO_ZEROS = StreamFeed(lead_ms=0, tail_ms=0, chunk_ms=160)
 
 
 def _decoder(feed: StreamFeed = NO_ZEROS) -> tuple[StreamDecoder, _Recognizer]:
@@ -140,7 +140,7 @@ class TestStreamDecoder:
         assert decoder.streams == 1
 
     def test_a_stream_opens_with_the_lead_zeros_and_its_language(self):
-        decoder, recognizer = _decoder(StreamFeed(lead_ms=300, tail_ms=0))
+        decoder, recognizer = _decoder(StreamFeed(lead_ms=300, tail_ms=0, chunk_ms=160))
         result = _wait(decoder, "s1:t1", _audio(100), language="de")
         [stream] = recognizer.streams
         assert stream.options == {"language": "de"}
@@ -154,7 +154,7 @@ class TestStreamDecoder:
         assert recognizer.streams[0].options == {}
 
     def test_finish_pads_the_tail_ends_the_input_and_drops_the_stream(self):
-        decoder, recognizer = _decoder(StreamFeed(lead_ms=0, tail_ms=320))
+        decoder, recognizer = _decoder(StreamFeed(lead_ms=0, tail_ms=320, chunk_ms=160))
         result = _wait(decoder, "s1:t1", _audio(150), finish=True)
         [stream] = recognizer.streams
         assert stream.finished
@@ -164,13 +164,13 @@ class TestStreamDecoder:
 
     @pytest.mark.parametrize(("quiet_ms", "padded_ms"), [(100, 220), (320, 0), (600, 0)])
     def test_quiet_audio_at_the_end_counts_toward_the_tail(self, quiet_ms, padded_ms):
-        decoder, recognizer = _decoder(StreamFeed(lead_ms=0, tail_ms=320))
+        decoder, recognizer = _decoder(StreamFeed(lead_ms=0, tail_ms=320, chunk_ms=160))
         _wait(decoder, "s1:t1", _audio(200))
         _wait(decoder, "s1:t1", _audio(quiet_ms, 0.0), finish=True)
         assert len(recognizer.streams[0].audio) == RATE * (200 + quiet_ms + padded_ms) // 1000
 
     def test_a_push_that_is_all_quiet_adds_to_the_quiet_the_stream_ends_in(self):
-        decoder, recognizer = _decoder(StreamFeed(lead_ms=0, tail_ms=320))
+        decoder, recognizer = _decoder(StreamFeed(lead_ms=0, tail_ms=320, chunk_ms=160))
         _wait(decoder, "s1:t1", _audio(200))
         _wait(decoder, "s1:t1", _audio(200, 0.0))
         _wait(decoder, "s1:t1", _audio(100, 0.0), finish=True)
@@ -319,16 +319,16 @@ class TestStreamedTranscription:
         assert infer.decoder is not None and infer.decoder.streams == 1
 
     @pytest.mark.asyncio
-    async def test_it_streams_and_reports_no_language(self):
+    async def test_it_streams_its_chunk_at_a_time_and_reports_no_language(self):
         infer, _ = _infer()
         found = await infer.stt_capabilities()
-        assert (found.streaming, found.reports_language) == (True, False)
+        assert (found.streaming, found.reports_language, found.chunk_ms) == (True, False, 160)
 
 
 class TestFileTranscription:
     @pytest.mark.asyncio
     async def test_json_is_the_whole_files_text(self):
-        infer, recognizer = _infer(StreamFeed(lead_ms=0, tail_ms=320))
+        infer, recognizer = _infer(StreamFeed(lead_ms=0, tail_ms=320, chunk_ms=160))
         result = await infer.create_transcription(_wav(_audio(300)), _request(language="de"), None)
         assert isinstance(result, TranscriptionResponse)
         assert result.text == "w0 w1 w2"
@@ -338,7 +338,7 @@ class TestFileTranscription:
 
     @pytest.mark.asyncio
     async def test_verbose_json_words_are_timed_from_the_start_of_the_file(self):
-        infer, _ = _infer(StreamFeed(lead_ms=500, tail_ms=0))
+        infer, _ = _infer(StreamFeed(lead_ms=500, tail_ms=0, chunk_ms=160))
         request = _request(response_format="verbose_json", timestamp_granularities=["word"])
         audio = np.concatenate([_audio(200, 0.0), _audio(200)])
         result = await infer.create_transcription(_wav(audio), request, None)

@@ -29,11 +29,12 @@ class SherpaOnnxRegistryEntry(NamedTuple):
 
 
 class StreamFeed(NamedTuple):
-    """The zeros a streaming bundle's stream takes, measured: before the first audio, or it drops the first words,
-    and after the last, or it drops the last one."""
+    """How a streaming bundle's stream is fed. The zeros it takes, measured: before the first audio, or it drops the
+    first words, and after the last, or it drops the last one; and the audio it decodes at a time."""
 
     lead_ms: int
     tail_ms: int
+    chunk_ms: int
 
 
 class AsrEntry(NamedTuple):
@@ -178,7 +179,9 @@ REGISTRY: dict[str, SherpaOnnxRegistryEntry | AsrEntry] = {
             "joiner": "joiner.int8.onnx",
             "tokens": "tokens.txt",
         },
-        stream=StreamFeed(lead_ms=500, tail_ms=320),
+        # a word cut off at the audio's end needs up to ~420 ms of quiet after it (Kokoro clips, 3 voices), plus
+        # up to a chunk for where it ends on the chunk grid
+        stream=StreamFeed(lead_ms=500, tail_ms=640, chunk_ms=160),
     ),
 }
 

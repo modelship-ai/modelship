@@ -228,6 +228,20 @@ class _Calls:
         assert model == "whisper" and self.transcriber is not None
         return await self.transcriber.transcribe(audio, request)
 
+    # a streaming transcriber's calls
+
+    async def transcribe_push(self, model: str, key: str, pcm: bytes, rate: int, options):
+        assert model == "whisper" and self.transcriber is not None
+        return await self.transcriber.push(key, pcm, rate, options)
+
+    async def transcribe_finish(self, model: str, key: str, pcm: bytes, rate: int, options):
+        assert model == "whisper" and self.transcriber is not None
+        return await self.transcriber.finish(key, pcm, rate, options)
+
+    async def transcribe_close(self, model: str, key: str) -> None:
+        assert model == "whisper" and self.transcriber is not None
+        await self.transcriber.close(key)
+
     async def speak(self, model: str, request: SpeechRequest, session_id: str):
         if model != "kokoro" or self.speaker is None:
             return None

@@ -21,6 +21,8 @@ class SttCapabilities(OpenAIBaseModel):
     streaming: bool
     # detects the spoken language and returns it
     reports_language: bool
+    # the audio a streaming model decodes at a time; a push carries at least this much
+    chunk_ms: int | None = None
 
 
 class SttStreamOptions(OpenAIBaseModel):

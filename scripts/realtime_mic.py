@@ -20,6 +20,7 @@ import base64
 import contextlib
 import json
 import threading
+import time
 
 import sounddevice as sd
 from websockets.asyncio.client import connect
@@ -95,8 +96,19 @@ async def _send_microphone(ws, rate: int) -> None:
             await ws.send(json.dumps({"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode()}))
 
 
-async def _handle(ws, event: dict, player: Player) -> None:
+async def _handle(ws, event: dict, player: Player, heard: dict[str, str]) -> None:
     kind = event["type"]
+    if kind == "conversation.item.input_audio_transcription.delta":
+        if event["item_id"] not in heard:
+            print("you: ", end="", flush=True)
+        heard[event["item_id"]] = heard.get(event["item_id"], "") + event["delta"]
+        print(event["delta"], end="", flush=True)
+        return
+    if kind == "conversation.item.input_audio_transcription.completed" and event["item_id"] in heard:
+        streamed = heard.pop(event["item_id"])
+        # the final transcript is printed again only when it isn't what the deltas wrote
+        print("" if event["transcript"] == streamed else f"\nyou: {event['transcript']}", flush=True)
+        return
     if kind == "response.output_audio.delta":
         player.play(event["item_id"], base64.b64decode(event["delta"]))
     elif kind == "input_audio_buffer.speech_started":
@@ -107,7 +119,7 @@ async def _handle(ws, event: dict, player: Player) -> None:
             await ws.send(json.dumps({"type": "conversation.item.truncate", **truncate}))
     elif kind == "conversation.item.truncated":
         print(f"[heard {event['audio_end_ms']} ms of it]", flush=True)
-    elif kind == "input_audio_buffer.speech_stopped":
+    elif kind == "input_audio_buffer.speech_stopped" and not heard:
         print("[heard you]", flush=True)
     elif kind == "conversation.item.input_audio_transcription.completed":
         print(f"you: {event['transcript']}", flush=True)
@@ -126,6 +138,7 @@ async def main() -> None:
     parser.add_argument("--rate", type=int, default=24000, help="the sample rate to record and play at")
     parser.add_argument("--voice", help="the tts model's voice; unset, its default")
     parser.add_argument("--instructions", help="the system prompt, over the pipeline's")
+    parser.add_argument("--log", help="a file each server event is written to as a JSON line, without its audio")
     args = parser.parse_args()
 
     audio_format = {"type": "audio/pcm", "rate": args.rate}
@@ -136,6 +149,10 @@ async def main() -> None:
         session["instructions"] = args.instructions
 
     player = Player(args.rate)
+    # each item's transcript as its deltas wrote it, until it completes
+    heard: dict[str, str] = {}
+    log = open(args.log, "a", buffering=1) if args.log else None  # noqa: SIM115
+    started = time.monotonic()
     try:
         async with connect(f"{args.url}?model={args.pipeline}", max_size=None) as ws:
             await ws.send(json.dumps({"type": "session.update", "session": session}))
@@ -143,7 +160,11 @@ async def main() -> None:
             microphone = asyncio.ensure_future(_send_microphone(ws, args.rate))
             try:
                 async for message in ws:
-                    await _handle(ws, json.loads(message), player)
+                    event = json.loads(message)
+                    if log is not None:
+                        written = {k: v for k, v in event.items() if k != "delta" or "audio." not in event["type"]}
+                        log.write(json.dumps({"t": round(time.monotonic() - started, 3), **written}) + "\n")
+                    await _handle(ws, event, player, heard)
                 print("\n[session closed]", flush=True)
             except ConnectionClosed as closed:
                 print(f"\n[session closed: {closed}]", flush=True)
@@ -153,6 +174,8 @@ async def main() -> None:
                     await microphone
     finally:
         player.close()
+        if log is not None:
+            log.close()
 
 
 if __name__ == "__main__":

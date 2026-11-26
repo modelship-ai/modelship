@@ -4,6 +4,7 @@ silence after it lasts `silence_duration_ms`."""
 
 import asyncio
 import contextlib
+import math
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -16,7 +17,7 @@ logger = get_logger("realtime")
 
 # while feeding fails, it is tried again with this much new audio
 RETRY_STEP_MS = 300
-# a turn that runs this long without a pause ends here
+# a turn a batch speech-to-text model transcribes, run this long without a pause, ends here
 MAX_TURN_MS = 30_000
 # the audio before the end fed that holds speech too short to open a segment yet
 _LEAD_MS = 1000
@@ -47,7 +48,8 @@ class TurnDetector:
     """Finds the turns in *buffer* with the speech finders *open_finder* opens, as *settings* say. *started* gets
     each turn's item id and where it starts; *ended* gets its item id, start and end, and takes its audio out of the
     buffer; *failed* hears of each stretch of feeds that fail, during which the buffer keeps all its
-    audio. Speech shorter than *min_speech* says starts no turn."""
+    audio. Speech shorter than *min_speech* says starts no turn. A turn without a pause is cut at *max_turn_ms*, or
+    never with None. *progressed* hears of each feed done, once `heard_ms` moved."""
 
     def __init__(
         self,
@@ -58,6 +60,8 @@ class TurnDetector:
         ended: Ended,
         failed: Failed,
         min_speech: MinSpeech = lambda: 0,
+        max_turn_ms: int | None = MAX_TURN_MS,
+        progressed: Callable[[], None] = lambda: None,
     ):
         self.buffer = buffer
         self.settings = settings
@@ -66,10 +70,14 @@ class TurnDetector:
         self._ended = ended
         self._failed = failed
         self._min_speech = min_speech
+        self._max_turn_ms = math.inf if max_turn_ms is None else max_turn_ms
+        self._progressed = progressed
         # the finder the buffer's audio is fed to; None until the next feed opens one
         self._finder: SpeechFinder | None = None
         # the end of the audio fed so far
         self._fed_ms = buffer.end_ms
+        # the end of the audio whose turns have all started and ended: a turn open past it ends after it
+        self.heard_ms = buffer.end_ms
         # where the last turn ended; no turn starts before it
         self._floor_ms = buffer.start_ms
         # the turn in progress: its item id and start
@@ -95,7 +103,7 @@ class TurnDetector:
         self.turn = None
         self._epoch += 1
         self._finder = None
-        self._fed_ms = self._tried_ms = self._floor_ms = self.buffer.end_ms
+        self._fed_ms = self._tried_ms = self._floor_ms = self.heard_ms = self.buffer.end_ms
         return found
 
     @property
@@ -154,6 +162,9 @@ class TurnDetector:
         self._failing = False
         self._fed_ms = self._tried_ms = end
         await self._apply(found, end, settings, min_speech)
+        if epoch == self._epoch:
+            self.heard_ms = end
+            self._progressed()
         if self.turn is None:
             # keep the open segment and what a turn's prefix padding needs
             held = min([end - _LEAD_MS, *(segment.start_ms for segment in found if segment.end_ms is None)])
@@ -190,18 +201,20 @@ class TurnDetector:
         ended_before = self.turn is not None and not heard and end - self._speech_ms >= settings.silence_duration_ms
         if ended_before:
             await self._close(self._speech_ms, self._speech_ms + settings.silence_duration_ms)
-        if self.turn is not None and min(end, self.buffer.end_ms) - self.turn[1] >= MAX_TURN_MS:
-            await self._end(self.turn[1] + MAX_TURN_MS)
+        longest = self._max_turn_ms
+        if self.turn is not None and min(end, self.buffer.end_ms) - self.turn[1] >= longest:
+            await self._end(self.turn[1] + longest)
 
     async def _close(self, speech_end_ms: float, at_ms: float) -> None:
-        """Ends the turn in progress at *at_ms*, its speech ending at *speech_end_ms*: in 30 s turns, when the
-        speech ran longer."""
+        """Ends the turn in progress at *at_ms*, its speech ending at *speech_end_ms*: in turns of the longest a turn
+        lasts, when the speech ran longer."""
         assert self.turn is not None
-        while speech_end_ms > self.turn[1] + MAX_TURN_MS:
-            cut = self.turn[1] + MAX_TURN_MS
+        longest = self._max_turn_ms
+        while speech_end_ms > self.turn[1] + longest:
+            cut = self.turn[1] + longest
             await self._end(cut)
             await self._start(cut)
-        await self._end(min(at_ms, self.turn[1] + MAX_TURN_MS))
+        await self._end(min(at_ms, self.turn[1] + longest))
 
     async def _start(self, at_ms: float) -> None:
         self._check_current()

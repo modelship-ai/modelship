@@ -27,13 +27,16 @@ from modelship.infer.pipelines.assistant.conversation import Conversation, as_in
 from modelship.infer.pipelines.assistant.playback import Playback
 from modelship.infer.pipelines.assistant.response import ActiveResponse, NewSpeech
 from modelship.infer.pipelines.assistant.speech import SendAudio, Speech, Spoken
-from modelship.infer.pipelines.assistant.turns import OpenFinder, SpeechFinder, TurnDetector
+from modelship.infer.pipelines.assistant.stt_stream import Streamed, TurnStream
+from modelship.infer.pipelines.assistant.turns import MAX_TURN_MS, OpenFinder, SpeechFinder, TurnDetector
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
     RawSpeechResponse,
     SpeechRequest,
     SttCapabilities,
+    SttStreamOptions,
+    SttStreamText,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
@@ -125,6 +128,8 @@ _AUDIO_DELTA_SECONDS = 0.5
 MAX_SESSION_S = 3600
 # RFC 6455 normal closure: the session reached its maximum duration
 CLOSE_EXPIRED = 1000
+# how long a closing session waits for its streamed transcriptions to close
+_STREAM_CLOSE_S = 2.0
 
 Handler = Callable[[Any], Awaitable[RealtimeError | None]]
 
@@ -322,6 +327,12 @@ class Session:
         # the last transcription queued; each runs after the one before it
         self._transcribing: asyncio.Task | None = None
         self._transcriptions: set[asyncio.Task] = set()
+        # with a streaming stt model: the stream of the turn in progress, or of the buffer when the client commits
+        self._stream: TurnStream | None = None
+        # the session's calls to its streaming stt model go one at a time: Serve routes none while another is in flight
+        self._stt_lane = asyncio.Lock()
+        # streams closing
+        self._closing: set[asyncio.Task] = set()
         # server VAD, while the session's turn detection is on
         self.turns: TurnDetector | None = None
         # automatic responses waiting for their turn's transcript
@@ -367,8 +378,15 @@ class Session:
             self._closed = True
             # a closed session waits in reference cycles for the cyclic GC; its audio goes now
             self.buffer.clear()
-            for task in (expiry, *self._transcriptions, *self._replies, *self._retired_feeds):
+            self._drop_stream()
+            transcriptions = set(self._transcriptions)
+            for task in (expiry, *transcriptions, *self._replies, *self._retired_feeds):
                 task.cancel()
+            if transcriptions:
+                # a cancelled streamed transcription closes its stream as it ends
+                await asyncio.wait(transcriptions, timeout=_STREAM_CLOSE_S)
+            if self._closing:
+                await asyncio.wait(self._closing, timeout=_STREAM_CLOSE_S)
             if self.turns is not None:
                 await self.turns.close()
             if self.active is not None:
@@ -723,6 +741,11 @@ class Session:
             return RealtimeError(message=problem, param="audio")
         if self.turns is not None:
             self.turns.appended()
+        elif self._streams() and self._stream is None:
+            # the client commits: its buffer streams from its start
+            self._stream = self._open_stream(self.buffer.start_ms)
+        if self._stream is not None:
+            self._stream.feed()
         return None
 
     async def _audio_commit(self, event: AudioCommit) -> RealtimeError | None:
@@ -732,24 +755,40 @@ class Session:
                 f" {MIN_SECONDS * 1000:.0f} ms.",
                 code="input_audio_buffer_commit_empty",
             )
-        wav, seconds = self.buffer.take()
+        audio: bytes | Streamed
+        if self._streams():
+            # the turn server VAD has open streams from its start; else the buffer from its start
+            stream = self._stream or self._open_stream(self.buffer.start_ms)
+            self._stream = None
+            audio = Streamed(stream, self.buffer.pcm(stream.sent_ms, self.buffer.end_ms))
+            seconds = (self.buffer.end_ms - stream.start_ms) / 1000
+            self.buffer.clear()
+        else:
+            audio, seconds = self.buffer.take()
         turn = self.turns.reset() if self.turns is not None else None
         if turn is not None:
             # the client ended the turn server VAD had open
             end = round(self.buffer.end_ms)
             await self.send(server_event("input_audio_buffer.speech_stopped", audio_end_ms=end, item_id=turn))
-        await self._commit(wav, seconds, turn)
+        await self._commit(audio, seconds, turn)
         return None
 
-    async def _commit(self, wav: bytes, seconds: float, turn: str | None = None) -> tuple[UserMessage, asyncio.Task]:
-        """Adds a turn of the client's audio, as the user message *turn* names, and queues its transcription."""
+    async def _commit(
+        self, audio: bytes | Streamed, seconds: float, turn: str | None = None
+    ) -> tuple[UserMessage, asyncio.Task]:
+        """Adds a turn of the client's audio, as the user message *turn* names, and queues its transcription: of
+        *audio*, a WAV, or by finishing its stream."""
         item = UserMessage(type="message", role="user", content=[InputAudio(type="input_audio")])
         if turn is not None:
             item.id = turn
         before = self.conversation.insert(item)
         await self.send(server_event("input_audio_buffer.committed", previous_item_id=before, item_id=item.id))
         await self.send(server_event("conversation.item.added", previous_item_id=before, item=item))
-        task = asyncio.ensure_future(self._transcribe(item, wav, seconds, self._transcribing))
+        if isinstance(audio, Streamed):
+            transcription = self._transcribe_stream(item, audio, seconds, self._transcribing)
+        else:
+            transcription = self._transcribe(item, audio, seconds, self._transcribing)
+        task = asyncio.ensure_future(transcription)
         self._transcribing = task
         self._transcriptions.add(task)
         task.add_done_callback(self._transcriptions.discard)
@@ -757,10 +796,54 @@ class Session:
 
     async def _audio_clear(self, event: AudioClear) -> RealtimeError | None:
         self.buffer.clear()
+        self._drop_stream()
         if self.turns is not None:
             self.turns.reset()
         await self.send(server_event("input_audio_buffer.cleared"))
         return None
+
+    def _streams(self) -> bool:
+        """Whether the session's stt model takes its turns as they arrive."""
+        return self.stt is not None and self.stt.streaming
+
+    def _open_stream(self, start_ms: float, turn: str | None = None) -> TurnStream:
+        """A stream of the buffer's audio from *start_ms*: the turn *turn* server VAD found, which gets deltas, or
+        the buffer the client commits."""
+        stt = self.assistant.stt
+        assert stt is not None and self.stt is not None
+        settings = self.state.audio.input.transcription
+        language = (settings.language if settings is not None else None) or self.language
+
+        async def delta(text: str) -> None:
+            event = "conversation.item.input_audio_transcription.delta"
+            await self.send(server_event(event, item_id=turn, content_index=0, delta=text))
+
+        key = f"{self.state.id}:{turn or f'buffer_{random_uuid()[:12]}'}"
+        options = SttStreamOptions(language=language)
+        chunk = self.stt.chunk_ms or 0
+        turns = self.turns
+        if turn is None or turns is None:
+            return TurnStream(self.calls, stt, key, self.buffer, start_ms, chunk, options, self._stt_lane)
+        # audio server VAD hasn't heard yet may be past the turn's end
+        return TurnStream(
+            self.calls, stt, key, self.buffer, start_ms, chunk, options, self._stt_lane, delta, lambda: turns.heard_ms
+        )
+
+    def _drop_stream(self) -> None:
+        """Closes the stream of the audio that won't be committed."""
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            self._close_later(stream)
+
+    def _close_later(self, stream: TurnStream) -> None:
+        task = asyncio.ensure_future(stream.close())
+        self._closing.add(task)
+        task.add_done_callback(self._closing.discard)
+
+    def _heard(self) -> None:
+        """Server VAD heard more audio: the turn's stream may push it."""
+        if self._stream is not None:
+            self._stream.feed()
 
     async def _detect_turns(self) -> None:
         """Starts, retunes or stops server VAD, as the session's turn detection says."""
@@ -773,10 +856,14 @@ class Session:
                     self._retired_feeds.add(task)
                     task.add_done_callback(self._retired_feeds.discard)
                 self.turns = None
+                # the open turn's stream; the buffer streams from its start with the next append
+                self._drop_stream()
             return
         if self.turns is not None:
             self.turns.settings = settings
             return
+        # the buffer's stream, which the client was to commit
+        self._drop_stream()
         self.turns = TurnDetector(
             self.buffer,
             settings,
@@ -785,6 +872,9 @@ class Session:
             self._turn_ended,
             self._detection_failed,
             self._min_speech,
+            # a streamed turn costs its model no more as it grows
+            max_turn_ms=None if self._streams() else MAX_TURN_MS,
+            progressed=self._heard,
         )
 
     def _min_speech(self) -> int:
@@ -800,6 +890,11 @@ class Session:
 
     async def _turn_started(self, turn: str, audio_start_ms: int) -> None:
         await self.send(server_event("input_audio_buffer.speech_started", audio_start_ms=audio_start_ms, item_id=turn))
+        if self._streams():
+            # its deltas go out after its speech_started
+            self._drop_stream()
+            self._stream = self._open_stream(audio_start_ms, turn)
+            self._stream.feed()
         # a client stops playing at speech_started
         self.playback.stop()
         if self._interrupts():
@@ -817,13 +912,21 @@ class Session:
     async def _turn_ended(self, turn: str, audio_start_ms: int, audio_end_ms: int) -> None:
         """Commits the turn server VAD found."""
         # before any await, so a commit or clear from the client can't take the same audio
-        wav, seconds = self.buffer.take(audio_start_ms, audio_end_ms)
+        audio: bytes | Streamed
+        if self._streams():
+            stream = self._stream if self._stream is not None else self._open_stream(audio_start_ms, turn)
+            self._stream = None
+            audio = Streamed(stream, self.buffer.pcm(stream.sent_ms, audio_end_ms))
+            seconds = (audio_end_ms - stream.start_ms) / 1000
+            self.buffer.drop_before(audio_end_ms)
+        else:
+            audio, seconds = self.buffer.take(audio_start_ms, audio_end_ms)
         await self.send(server_event("input_audio_buffer.speech_stopped", audio_end_ms=audio_end_ms, item_id=turn))
         settings = self.state.audio.input.turn_detection
         answers = isinstance(settings, ServerVad) and settings.create_response and self.state.type == "realtime"
         # a turn that ends while the model answers gets no answer of its own; one it cut off doesn't count
         responding = self.active is not None and not self.active.done() and not self.active.cancelled
-        item, transcribed = await self._commit(wav, seconds, turn)
+        item, transcribed = await self._commit(audio, seconds, turn)
         if answers and not responding:
             reply = asyncio.ensure_future(self._reply(item, transcribed))
             self._replies.add(reply)
@@ -883,27 +986,55 @@ class Session:
         except Exception:
             logger.exception("Realtime session %s: transcribing %s failed", self.state.id, item.id)
             result = None
-        part = item.content[0]
-        assert isinstance(part, InputAudio)
         if isinstance(result, TranscriptionResponse | TranscriptionResponseVerbose):
-            part.transcript = result.text
             if detect and isinstance(result, TranscriptionResponseVerbose) and result.language not in ("", "unknown"):
                 self.language = result.language
+            await self._transcribed(item, seconds, result.text)
+        elif isinstance(result, ErrorResponse):
+            error = result.error.model_dump(include={"type", "code", "message", "param"})
+            await self._transcribed(item, seconds, error=error)
+        else:
+            error = {"type": "server_error", "code": "server_error", "message": f"Model {stt!r} didn't answer."}
+            await self._transcribed(item, seconds, error=error)
+
+    async def _transcribe_stream(
+        self, item: UserMessage, audio: Streamed, seconds: float, previous: asyncio.Task | None
+    ) -> None:
+        """Fills *item*'s transcript by finishing its stream, once the turn before it is done."""
+        try:
+            if previous is not None:
+                await asyncio.wait([previous])
+            result = await audio.stream.finish(audio.rest)
+        except asyncio.CancelledError:
+            # the session closed before the stream finished
+            self._close_later(audio.stream)
+            raise
+        if isinstance(result, SttStreamText):
+            if self.language is None and self.stt is not None and self.stt.reports_language and result.language:
+                self.language = result.language
+            await self._transcribed(item, seconds, result.text)
+        else:
+            await self._transcribed(item, seconds, error=result)
+
+    async def _transcribed(
+        self, item: UserMessage, seconds: float, transcript: str | None = None, error: dict | None = None
+    ) -> None:
+        """Gives *item* its *transcript*, or tells the client its transcription failed with *error*."""
+        if transcript is not None:
+            part = item.content[0]
+            assert isinstance(part, InputAudio)
+            part.transcript = transcript
             usage = {"type": "duration", "seconds": round(seconds, 3)}
             await self.send(
                 server_event(
                     "conversation.item.input_audio_transcription.completed",
                     item_id=item.id,
                     content_index=0,
-                    transcript=result.text,
+                    transcript=transcript,
                     usage=usage,
                 )
             )
         else:
-            if isinstance(result, ErrorResponse):
-                error = result.error.model_dump(include={"type", "code", "message", "param"})
-            else:
-                error = {"type": "server_error", "code": "server_error", "message": f"Model {stt!r} didn't answer."}
             await self.send(
                 server_event(
                     "conversation.item.input_audio_transcription.failed", item_id=item.id, content_index=0, error=error
