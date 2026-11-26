@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, field_validator, model_validator
 
 from modelship.logging import get_logger
+from modelship.openai.protocol.realtime import ReasoningEffort
 
 if TYPE_CHECKING:
     # Annotation only; a real import pulls huggingface_hub.
@@ -541,7 +542,7 @@ def default_gpu_memory_utilization(config: ModelshipModelConfig) -> float:
 
 
 class SessionReasoning(_StrictModel):
-    effort: Literal["minimal", "low", "medium", "high", "xhigh"] | None = None
+    effort: ReasoningEffort | None = None
 
 
 class SessionServerVad(_StrictModel):
