@@ -184,8 +184,10 @@ class WhispercppConfig(_StrictModel):
     """Tunables for the ``whispercpp`` loader, which runs whisper.cpp in-process
     via `pywhispercpp` bindings (no subprocess)."""
 
+    # Unset: the CPUs the deploy reserves, at most one per physical core; below one CPU, whisper.cpp's min(4, cores).
     n_threads: int | None = None
-    flash_attn: bool = False
+    # whisper.cpp's own default.
+    flash_attn: bool = True
 
 
 class SherpaOnnxConfig(_StrictModel):

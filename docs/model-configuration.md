@@ -708,8 +708,10 @@ Configured via `whispercpp_config`:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `n_threads` | int | pywhispercpp's own default (`min(4, cores)`) | Compute thread count |
-| `flash_attn` | bool | `false` | ggml flash attention |
+| `n_threads` | int | `num_cpus`, at most one per physical core; whisper.cpp's `min(4, cores)` when `num_cpus` is below 1 | Compute thread count |
+| `flash_attn` | bool | `true` (whisper.cpp's default) | ggml flash attention |
+
+A request with no `language` is decoded in the language whisper.cpp detects (English on a `.en` model), and `verbose_json` reports that language.
 
 `model:` accepts:
 - A whisper.cpp model name (e.g. `base.en`, `large-v3-turbo`), shorthand for `ggerganov/whisper.cpp:ggml-<name>.bin` — pinned, validated at deploy time, and cached under `huggingface/` like any HF ref. The [repo's file list](https://huggingface.co/ggerganov/whisper.cpp/tree/main) shows every name.
