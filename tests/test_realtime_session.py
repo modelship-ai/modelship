@@ -788,6 +788,17 @@ class TestResponses:
         ]
         assert (first["max_output_tokens"], second["max_output_tokens"]) == (9, "inf")
 
+    def test_a_reasoning_effort_of_none_reaches_the_llm(self):
+        llm = _Llm(_answer("A."))
+        with self._session(llm) as ws:
+            _open(ws)
+            ws.send_json({"type": "session.update", "session": {"reasoning": {"effort": "none"}}})
+            assert ws.receive_json()["session"]["reasoning"] == {"effort": "none"}
+            _say(ws, "Hi")
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.done")
+        assert [r.reasoning for r in llm.requests] == [{"effort": "none"}]
+
     def test_an_out_of_band_response_stays_out_of_the_conversation(self):
         llm = _Llm(_answer("Kitchen."), _answer("Fine."))
         with self._session(llm) as ws:

@@ -233,7 +233,7 @@ An `assistant` runs an OpenAI Realtime session over speech to text, a chat model
 | `min_interruption_ms` | int | While an answer plays, how long speech lasts before it starts a turn and cuts the answer off. Default `500`, at most `5000` |
 | `wake` | object | Wake words: a server VAD turn starts only after one. Unset, every turn does. Needs an `stt`. See below |
 
-An assistant needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (`[audio]`, the default for a pipeline with `tts`, or `[text]`, the default without one; `[audio]` needs a `tts`), `max_output_tokens` (an integer or `inf`), `reasoning` (`{effort: low}`, from `minimal` to `xhigh`) and `audio.input.turn_detection` (`server_vad` with its settings, or `null` for turns the client commits; it needs an `stt`); more of OpenAI's session fields arrive as the pipeline learns to use them.
+An assistant needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (`[audio]`, the default for a pipeline with `tts`, or `[text]`, the default without one; `[audio]` needs a `tts`), `max_output_tokens` (an integer or `inf`), `reasoning` (`{effort: low}`, from `minimal` to `xhigh` as in OpenAI's spec, or `none`, as Chat Completions takes it, to turn the `llm`'s thinking off) and `audio.input.turn_detection` (`server_vad` with its settings, or `null` for turns the client commits; it needs an `stt`); more of OpenAI's session fields arrive as the pipeline learns to use them.
 
 A session on a pipeline with an `llm`:
 
