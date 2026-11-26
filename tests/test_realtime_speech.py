@@ -10,8 +10,9 @@ import numpy as np
 import pytest
 
 from modelship.infer.pipelines.assistant.codecs import from_wav, read_wav, resample, to_pcm16
+from modelship.infer.pipelines.assistant.output.chunker import FIRST_CHARS, MAX_CHARS, Chunker, speakable
 from modelship.infer.pipelines.assistant.output.playback import TAIL_SECONDS, Playback
-from modelship.infer.pipelines.assistant.output.speech import FIRST_CHARS, MAX_CHARS, Chunker, Speech, speakable
+from modelship.infer.pipelines.assistant.output.speech import Speech
 from modelship.openai.protocol.realtime import RealtimeError
 
 LONG_SENTENCE = (

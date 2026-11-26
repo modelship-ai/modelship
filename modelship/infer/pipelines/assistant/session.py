@@ -2,22 +2,23 @@
 to it as a `Channel`, and the pipeline names the models it runs over. A session holds a conversation of text and of
 the client's audio turns, which the client commits or server VAD finds and the pipeline's stt model transcribes,
 and answers it with the pipeline's LLM, in text or spoken by its tts model. A turn server VAD finds cuts the answer
-off, and the client truncates a spoken answer to what it played."""
+off, and the client truncates a spoken answer to what it played.
+
+`Session` runs the session's life and dispatches the client's events. The work lives in its parts: `session_config`
+(settings), `items` (conversation items), `input/` (the audio buffer, server VAD, transcription) and `output/`
+(responses, speech, playback)."""
 
 import asyncio
 import base64
 import json
-import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
-from pydantic import BaseModel
-
 from modelship.infer.base_pipeline import CLOSE_REFUSED
-from modelship.infer.pipelines.assistant.calls import Answer, PipelineCalls
+from modelship.infer.pipelines.assistant.calls import PipelineCalls
 from modelship.infer.pipelines.assistant.client_events import parse_event
-from modelship.infer.pipelines.assistant.codecs import G711_RATE, bytes_per_second, from_wav, to_pcm16
-from modelship.infer.pipelines.assistant.conversation import Conversation, as_input
+from modelship.infer.pipelines.assistant.codecs import G711_RATE, to_pcm16
+from modelship.infer.pipelines.assistant.conversation import Conversation
 from modelship.infer.pipelines.assistant.input.gate import TurnGate
 from modelship.infer.pipelines.assistant.input.input_buffer import MIN_SECONDS, InputAudioBuffer
 from modelship.infer.pipelines.assistant.input.transcripts import (
@@ -28,75 +29,39 @@ from modelship.infer.pipelines.assistant.input.transcripts import (
 )
 from modelship.infer.pipelines.assistant.input.turn_input import RecordedInput, StreamedInput, TurnInput
 from modelship.infer.pipelines.assistant.input.turns import MAX_TURN_MS, TurnDetector, VadStream, VadStreamFactory
+from modelship.infer.pipelines.assistant.items import ConversationItems
 from modelship.infer.pipelines.assistant.output.playback import Playback
-from modelship.infer.pipelines.assistant.output.response import ActiveResponse, NewSpeech
-from modelship.infer.pipelines.assistant.output.speech import SendAudio, Speech, Spoken
+from modelship.infer.pipelines.assistant.output.responder import Responder
+from modelship.infer.pipelines.assistant.output.response import ActiveResponse
+from modelship.infer.pipelines.assistant.output.speech import Spoken
+from modelship.infer.pipelines.assistant.session_config import apply_update, check_update, new_session
 from modelship.infer.pipelines.assistant.tasks import BackgroundTasks
 from modelship.logging import get_logger
-from modelship.openai.protocol import (
-    ErrorResponse,
-    RawSpeechResponse,
-    SpeechRequest,
-    SttCapabilities,
-)
+from modelship.openai.protocol import SttCapabilities
 from modelship.openai.protocol.realtime import (
-    SESSION_OBJECTS,
-    AssistantMessage,
     AudioAppend,
     AudioClear,
     AudioCommit,
-    AudioG711,
-    AudioInput,
-    AudioOutput,
     AudioPcm,
     InputAudio,
-    Item,
-    ItemCreate,
-    ItemDelete,
-    ItemReference,
-    ItemRetrieve,
-    ItemTruncate,
-    OutputAudio,
     RealtimeError,
-    RealtimeResponse,
-    RealtimeSession,
-    ResponseAudio,
-    ResponseAudioOutput,
     ResponseCancel,
     ResponseCreate,
-    SemanticVad,
     ServerVad,
-    SessionAudio,
     SessionUpdate,
     UserMessage,
-    Voice,
-    VoiceId,
     error_event,
     server_event,
-    server_vad,
     session_event,
 )
-from modelship.openai.protocol.responses.schemas import ResponsesRequest
-from modelship.utils import random_uuid
 from modelship.utils.config_schema import AssistantPipelineConfig
 
 logger = get_logger("realtime")
 
-_UPDATABLE = (
-    "instructions",
-    "output_modalities",
-    "max_output_tokens",
-    "reasoning",
-    "tools",
-    "tool_choice",
-    "parallel_tool_calls",
-)
 _REALTIME_ONLY = frozenset(
     {"conversation.item.create", "conversation.item.truncate", "response.create", "response.cancel"}
 )
 _STT_ONLY = frozenset({"input_audio_buffer.append", "input_audio_buffer.commit"})
-# a spoken answer goes out in pieces of this much audio
-_AUDIO_DELTA_SECONDS = 0.5
 # OpenAI's maximum duration of a session
 MAX_SESSION_S = 3600
 # RFC 6455 normal closure: the session reached its maximum duration
@@ -138,43 +103,6 @@ def _refusal(config: AssistantPipelineConfig, calls: PipelineCalls) -> RealtimeE
                 message=f"Pipeline {config.name!r} uses model {model!r}, which isn't ready yet.", type="server_error"
             )
     return None
-
-
-def _turn_detection(config: AssistantPipelineConfig) -> ServerVad | None:
-    """A new session's turn detection: server VAD on a pipeline with stt, unless its defaults say otherwise."""
-    if config.assistant_config.stt is None:
-        return None
-    defaults = config.assistant_config.session_defaults
-    given = defaults.audio.input if defaults is not None and defaults.audio is not None else None
-    if given is None or "turn_detection" not in given.model_fields_set:
-        return server_vad()
-    if given.turn_detection is None:
-        return None
-    return ServerVad.model_validate(given.turn_detection.model_dump())
-
-
-def _new_session(config: AssistantPipelineConfig) -> RealtimeSession:
-    assistant = config.assistant_config
-    kind = "realtime" if assistant.llm is not None else "transcription"
-    defaults = assistant.session_defaults
-    fields = defaults.model_dump(exclude_none=True, exclude={"audio"}) if defaults is not None else {}
-    audio = SessionAudio(input=AudioInput(turn_detection=_turn_detection(config)))
-    if kind == "realtime":
-        fields.setdefault("output_modalities", ["audio"] if assistant.tts is not None else ["text"])
-        audio.output = AudioOutput()
-    fields["audio"] = audio
-    return RealtimeSession(
-        type=kind,
-        object=SESSION_OBJECTS[kind],
-        id=f"sess_{random_uuid()[:20]}",
-        model=config.name,
-        expires_at=int(time.time() + MAX_SESSION_S),
-        **fields,
-    )
-
-
-def _voice_name(voice: Voice | None) -> str | None:
-    return voice.id if isinstance(voice, VoiceId) else voice
 
 
 async def _stt_capabilities(
@@ -237,12 +165,17 @@ class Session:
         self.config = config
         # the pipeline's assistant settings
         self.assistant = config.assistant_config
-        self.calls = calls
         self._vad = vad
-        self.state = _new_session(config)
+        self.state = new_session(config, MAX_SESSION_S)
         self.conversation = Conversation()
-        self.active: ActiveResponse | None = None
         self.buffer = InputAudioBuffer()
+        # the client playing the session's spoken answers
+        self.playback = Playback()
+        # what each spoken message said, by item id
+        spoken: dict[str, Spoken] = {}
+        self.items = ConversationItems(self.conversation, self.send, spoken, self._stop_speaking)
+        self.responder = Responder(config, calls, self.state, self.conversation, self.playback, spoken, self.send)
+        self.active: ActiveResponse | None = None
         # server VAD, while the session's turn detection is on
         self.turns: TurnDetector | None = None
         # how the turns reach the stt model, and their transcription; a session without one takes no audio
@@ -253,36 +186,34 @@ class Session:
             self.transcriptions = TranscriptionQueue(context, self.conversation, self.send)
             if context.streams:
                 self.input = StreamedInput(context, self.buffer, lambda: self.turns, self.send)
-        # automatic responses waiting for their turn's transcript
-        self._replies = BackgroundTasks()
-        # a turn server VAD found, or an answer it cut off, still needs an answer: the next turn's answers it
-        self._unanswered_turn = False
-        # feeds still finishing after server VAD was turned off
-        self._retired_feeds = BackgroundTasks()
-        # the client playing the session's spoken answers
-        self.playback = Playback()
         # the wake words a realtime session's server VAD turns start at; None for none
         wake = self.assistant.wake if self.state.type == "realtime" else None
         self.gate = TurnGate(self.assistant, wake, self.buffer, self.playback, self._answering)
         if wake is not None and self.assistant.duplex == "half":
             # the wake words are heard in the audio the session mutes while its answer plays
             self.buffer.keep_sent()
-        # what each spoken message said, by item id
-        self._spoken: dict[str, Spoken] = {}
+        # automatic responses waiting for their turn's transcript
+        self._replies = BackgroundTasks()
+        # a turn server VAD found, or an answer it cut off, still needs an answer: the next turn's answers it
+        self._unanswered_turn = False
+        # feeds still finishing after server VAD was turned off
+        self._retired_feeds = BackgroundTasks()
         self._sending = asyncio.Lock()
         self._closed = False
         self._handlers: dict[str, Handler] = {
             "session.update": self._session_update,
-            "conversation.item.create": self._item_create,
-            "conversation.item.retrieve": self._item_retrieve,
-            "conversation.item.delete": self._item_delete,
-            "conversation.item.truncate": self._item_truncate,
+            "conversation.item.create": self.items.create,
+            "conversation.item.retrieve": self.items.retrieve,
+            "conversation.item.delete": self.items.delete,
+            "conversation.item.truncate": self.items.truncate,
             "response.create": self._response_create,
             "response.cancel": self._response_cancel,
             "input_audio_buffer.append": self._audio_append,
             "input_audio_buffer.commit": self._audio_commit,
             "input_audio_buffer.clear": self._audio_clear,
         }
+
+    # the session's life
 
     async def run(self) -> None:
         logger.info("Realtime session %s opened on pipeline %s", self.state.id, self.config.name)
@@ -300,22 +231,26 @@ class Session:
                 await self._handle(message)
         finally:
             self._closed = True
-            # a closed session waits in reference cycles for the cyclic GC; its audio goes now
-            self.buffer.clear()
-            self.input.drop()
             expiry.cancel()
-            self._replies.cancel()
-            self._retired_feeds.cancel()
-            if self.transcriptions is not None:
-                # a cancelled streamed transcription closes its stream as it ends
-                self.transcriptions.cancel()
-                await self.transcriptions.wait(_STREAM_CLOSE_S)
-            await self.input.wait_closed(_STREAM_CLOSE_S)
-            if self.turns is not None:
-                await self.turns.close()
-            if self.active is not None:
-                await self.active.abandon()
+            await self._wind_down()
         logger.info("Realtime session %s closed", self.state.id)
+
+    async def _wind_down(self) -> None:
+        """Stops everything the session runs, once its client left."""
+        # a closed session waits in reference cycles for the cyclic GC; its audio goes now
+        self.buffer.clear()
+        self.input.drop()
+        self._replies.cancel()
+        self._retired_feeds.cancel()
+        if self.transcriptions is not None:
+            # a cancelled streamed transcription closes its stream as it ends
+            self.transcriptions.cancel()
+            await self.transcriptions.wait(_STREAM_CLOSE_S)
+        await self.input.wait_closed(_STREAM_CLOSE_S)
+        if self.turns is not None:
+            await self.turns.close()
+        if self.active is not None:
+            await self.active.abandon()
 
     async def _expire(self) -> None:
         """Ends the session once it reaches its maximum duration, as OpenAI does."""
@@ -355,282 +290,32 @@ class Session:
 
     async def _session_update(self, event: SessionUpdate) -> RealtimeError | None:
         update = event.session
-        if update.type is not None and update.type != self.state.type:
-            return RealtimeError(
-                message=f"This session is a {self.state.type} session; its type can't change.",
-                code="invalid_value",
-                param="session.type",
-            )
-        asks_audio = update.output_modalities is not None and "audio" in update.output_modalities
-        if asks_audio and (error := self._no_tts("session.output_modalities")) is not None:
+        if (error := check_update(self.state, update, self.config, self.buffer.seconds > 0)) is not None:
             return error
-        audio = update.audio
-        audio_input = audio.input if audio is not None and "input" in audio.model_fields_set else None
-        if audio_input is not None:
-            error = self._check_audio_input(audio_input)
-            if error is not None:
-                return error
-            for name in ("format", "transcription", "turn_detection"):
-                if name in audio_input.model_fields_set:
-                    setattr(self.state.audio.input, name, getattr(audio_input, name))
+        if apply_update(self.state, update):
             await self._detect_turns()
-        audio_output = audio.output if audio is not None else None
-        if audio_output is not None and self.state.audio.output is not None:
-            for name in ("format", "voice", "speed"):
-                if name in audio_output.model_fields_set:
-                    setattr(self.state.audio.output, name, getattr(audio_output, name))
-        for name in _UPDATABLE:
-            if name in update.model_fields_set:
-                setattr(self.state, name, getattr(update, name))
         if ignored := sorted(update.model_extra or {}):
             logger.debug("Realtime session %s: ignoring session fields not used yet: %s", self.state.id, ignored)
         await self.send(session_event("session.updated", self.state))
         return None
 
-    def _check_audio_input(self, given: AudioInput) -> RealtimeError | None:
-        param = "session.audio.input.turn_detection"
-        detection = given.turn_detection
-        if isinstance(detection, SemanticVad):
-            return RealtimeError(
-                message="semantic_vad is not supported yet; use server_vad.", code="invalid_value", param=param
-            )
-        if isinstance(detection, ServerVad):
-            if detection.idle_timeout_ms is not None:
-                return RealtimeError(
-                    message="idle_timeout_ms is not supported yet.",
-                    code="invalid_value",
-                    param=f"{param}.idle_timeout_ms",
-                )
-            if self.assistant.stt is None:
-                return RealtimeError(
-                    message=f"Pipeline {self.config.name!r} has no stt model to take audio.",
-                    code="invalid_value",
-                    param=param,
-                )
-        changes_format = "format" in given.model_fields_set and given.format != self.state.audio.input.format
-        if changes_format and self.buffer.seconds:
-            return RealtimeError(
-                message="Clear the input audio buffer before changing its format.",
-                code="invalid_value",
-                param="session.audio.input.format",
-            )
-        return None
-
-    def _missing_item(self, item_id: str, param: str) -> RealtimeError:
-        return RealtimeError(message=f"No item {item_id!r} in the conversation.", code="item_not_found", param=param)
-
-    async def _item_create(self, event: ItemCreate) -> RealtimeError | None:
-        item, previous = event.item, event.previous_item_id
-        if (error := _audio_in_item(item, "item")) is not None:
-            return error
-        if previous is not None and previous != "root" and self.conversation.get(previous) is None:
-            return self._missing_item(previous, "previous_item_id")
-        if self.conversation.get(item.id) is not None:
-            return RealtimeError(
-                message=f"The conversation already has an item {item.id!r}.", code="invalid_value", param="item.id"
-            )
-        before = self.conversation.insert(item, previous)
-        await self.send(server_event("conversation.item.added", previous_item_id=before, item=item))
-        await self.send(server_event("conversation.item.done", previous_item_id=before, item=item))
-        return None
-
-    async def _item_retrieve(self, event: ItemRetrieve) -> RealtimeError | None:
-        item = self.conversation.get(event.item_id)
-        if item is None:
-            return self._missing_item(event.item_id, "item_id")
-        await self.send(server_event("conversation.item.retrieved", item=item))
-        return None
-
-    async def _item_delete(self, event: ItemDelete) -> RealtimeError | None:
-        if not self.conversation.delete(event.item_id):
-            return self._missing_item(event.item_id, "item_id")
-        self._spoken.pop(event.item_id, None)
-        await self.send(server_event("conversation.item.deleted", item_id=event.item_id))
-        return None
-
-    async def _item_truncate(self, event: ItemTruncate) -> RealtimeError | None:
-        item = self.conversation.get(event.item_id)
-        if item is None:
-            return self._missing_item(event.item_id, "item_id")
-        if not isinstance(item, AssistantMessage):
-            return RealtimeError(
-                message="Only an assistant message can be truncated.", code="invalid_value", param="item_id"
-            )
-        index = event.content_index
-        part = item.content[index] if index < len(item.content) else None
-        if not isinstance(part, OutputAudio):
-            return RealtimeError(
-                message=f"Part {index} of item {item.id!r} holds no audio.", code="invalid_value", param="content_index"
-            )
-        active = self.active
-        if active is not None and not active.done() and active.has_item(item.id):
-            # the client stopped playing an answer still being spoken
-            active.cancel()
-            self.playback.stop()
-            await asyncio.wait([active.task])
-        spoken = self._spoken.get(item.id, Spoken())
-        played = round(spoken.ms)
-        if event.audio_end_ms > played:
-            return RealtimeError(
-                message=f"audio_end_ms is past the end of the part's audio, at {played} ms.",
-                code="invalid_value",
-                param="audio_end_ms",
-            )
-        part.transcript = spoken.truncate(event.audio_end_ms, part.transcript)
-        await self.send(
-            server_event(
-                "conversation.item.truncated",
-                item_id=item.id,
-                content_index=index,
-                audio_end_ms=event.audio_end_ms,
-            )
-        )
-        return None
-
-    def _input(self, given: list[Item | ItemReference]) -> list[Item] | RealtimeError:
-        """A response's own input items, each reference replaced by the conversation item it names."""
-        items = []
-        for i, item in enumerate(given):
-            if isinstance(item, ItemReference):
-                found = self.conversation.get(item.id)
-                if found is None:
-                    return self._missing_item(item.id, f"response.input[{i}].id")
-                item = found
-            elif (error := _audio_in_item(item, f"response.input[{i}]")) is not None:
-                return error
-            items.append(item)
-        return items
+    # responses
 
     async def _response_create(self, event: ResponseCreate) -> RealtimeError | None:
-        if self.active is not None and not self.active.done():
+        if self._answering():
             return RealtimeError(
                 message="A response is in progress; wait for its response.done or cancel it.",
                 code="conversation_already_has_active_response",
             )
-        params = event.response
-        modalities = params.output_modalities or self.state.output_modalities or ["text"]
-        if "audio" in modalities and (error := self._no_tts("response.output_modalities")) is not None:
-            return error
-        if ignored := sorted(params.model_extra or {}):
-            logger.debug("Realtime session %s: ignoring response fields not used yet: %s", self.state.id, ignored)
-        items = self.conversation.items if params.input is None else self._input(params.input)
-        if isinstance(items, RealtimeError):
-            return items
-        llm = self.assistant.llm
-        assert llm is not None
-        max_output_tokens = params.max_output_tokens or self.state.max_output_tokens or "inf"
-        reasoning = params.reasoning or self.state.reasoning
-        tools = params.tools if params.tools is not None else self.state.tools
-        tool_choice = params.tool_choice if params.tool_choice is not None else self.state.tool_choice
-        parallel = params.parallel_tool_calls
-        instructions = params.instructions if params.instructions is not None else self.state.instructions
         pending = self.transcriptions.last if self.transcriptions is not None else None
-
-        async def start() -> Answer | RealtimeError:
-            # the turns committed before this response, transcribed
-            if pending is not None:
-                await asyncio.wait([pending])
-            request = ResponsesRequest(
-                model=llm,
-                input=as_input(items),
-                instructions=instructions,
-                max_output_tokens=None if max_output_tokens == "inf" else max_output_tokens,
-                reasoning={"effort": reasoning.effort} if reasoning is not None and reasoning.effort else None,
-                tools=[tool.model_dump(exclude_none=True) for tool in tools] if tools else None,
-                tool_choice=tool_choice.model_dump() if isinstance(tool_choice, BaseModel) else tool_choice,
-                parallel_tool_calls=parallel if parallel is not None else self.state.parallel_tool_calls,
-                stream=True,
-                store=False,
-            )
-            answer = self.calls.respond(llm, request, self.state.id)
-            if answer is None:
-                return RealtimeError(message=f"Pipeline model {llm!r} isn't ready.", type="server_error")
-            return answer
-
-        in_conversation = params.conversation != "none"
-        response = RealtimeResponse(
-            id=f"resp_{random_uuid()[:20]}",
-            conversation_id=self.conversation.id if in_conversation else None,
-            output_modalities=modalities,
-            max_output_tokens=max_output_tokens,
-            metadata=params.metadata,
-        )
-        speech = None
-        if "audio" in modalities:
-            output = self.state.audio.output
-            assert output is not None
-            given = params.audio.output if params.audio is not None else None
-            audio_format = given.format if given is not None and given.format is not None else output.format
-            voice = given.voice if given is not None and given.voice is not None else output.voice
-            response.audio = ResponseAudio(output=ResponseAudioOutput(format=audio_format, voice=voice))
-            speech = self._speech(audio_format, voice, output.speed)
-        conversation = self.conversation if in_conversation else None
-        active = self.active = ActiveResponse(response, llm, start, conversation, self.send, speech)
+        active = self.responder.start(event.response, pending)
+        if isinstance(active, RealtimeError):
+            return active
+        self.active = active
         active.task.add_done_callback(lambda _: self.gate.answered(active.response, active.in_conversation))
-        if in_conversation:
+        if active.in_conversation:
             self._unanswered_turn = False
         return None
-
-    def _answering(self) -> bool:
-        """Whether a response is in progress."""
-        return self.active is not None and not self.active.done()
-
-    def _no_tts(self, param: str) -> RealtimeError | None:
-        if self.assistant.tts is not None:
-            return None
-        return RealtimeError(
-            message=f"Pipeline {self.config.name!r} has no tts model to speak with; ask for text output.",
-            code="invalid_value",
-            param=param,
-        )
-
-    def _speech(self, audio_format: AudioPcm | AudioG711, voice: Voice | None, speed: float) -> NewSpeech:
-        """A spoken answer's speech: the pipeline's tts model says it in *voice* at *speed*, sent as *audio_format*."""
-        tts = self.assistant.tts
-        assert tts is not None
-        kind = audio_format.type
-        rate = audio_format.rate if isinstance(audio_format, AudioPcm) else G711_RATE
-        per_second = bytes_per_second(kind, rate)
-        step = int(per_second * _AUDIO_DELTA_SECONDS) // 2 * 2
-        name = _voice_name(voice)
-
-        async def speak(text: str) -> bytes | RealtimeError:
-            request = SpeechRequest(input=text, model=tts, voice=name, speed=speed, response_format="wav")
-            try:
-                result = await self.calls.speak(tts, request, self.state.id)
-            except Exception:
-                logger.exception("Realtime session %s: speaking with %r failed", self.state.id, tts)
-                result = None
-            if isinstance(result, RawSpeechResponse):
-                return result.audio
-            if isinstance(result, ErrorResponse):
-                error = result.error
-                return RealtimeError(message=error.message, type=error.type, code=error.code)
-            return RealtimeError(
-                message=f"Pipeline model {tts!r} didn't speak the answer.", type="server_error", code="server_error"
-            )
-
-        def encode(wav: bytes) -> bytes:
-            return from_wav(wav, kind, rate)
-
-        def new(item_id: str, send: SendAudio) -> Speech:
-            # made while its response runs
-            response = self.active
-            assert response is not None
-
-            async def played(audio: bytes) -> bool:
-                if not await send(audio):
-                    return False
-                # audio a cancel overtook doesn't play: the client stopped
-                if not response.cancelled:
-                    self.playback.sent(len(audio) / per_second)
-                return True
-
-            speech = Speech(speak, encode, played, step, per_second)
-            self._spoken[item_id] = speech.spoken
-            return speech
-
-        return new
 
     async def _response_cancel(self, event: ResponseCancel) -> RealtimeError | None:
         active = self.active
@@ -640,6 +325,20 @@ class Session:
         # a client that cancels stops playing
         self.playback.stop()
         return None
+
+    def _answering(self) -> bool:
+        """Whether a response is in progress."""
+        return self.active is not None and not self.active.done()
+
+    async def _stop_speaking(self, item_id: str) -> None:
+        """Stops the response in progress if it speaks message *item_id*: the client stopped playing it."""
+        active = self.active
+        if active is not None and not active.done() and active.has_item(item_id):
+            active.cancel()
+            self.playback.stop()
+            await asyncio.wait([active.task])
+
+    # the input audio buffer
 
     async def _audio_append(self, event: AudioAppend) -> RealtimeError | None:
         try:
@@ -698,6 +397,8 @@ class Session:
         await self.send(server_event("input_audio_buffer.cleared"))
         return None
 
+    # server VAD
+
     async def _detect_turns(self) -> None:
         """Starts, retunes or stops server VAD, as the session's turn detection says."""
         settings = self.state.audio.input.turn_detection
@@ -731,6 +432,11 @@ class Session:
             raise RuntimeError(f"pipeline {self.config.name!r} has no speech detection")
         return self._vad(rate, start_ms, wake_words)
 
+    def _interrupts(self) -> bool:
+        """Whether a turn server VAD finds cuts the answer off."""
+        settings = self.state.audio.input.turn_detection
+        return isinstance(settings, ServerVad) and settings.interrupt_response
+
     # TurnEvents: what server VAD tells the session
 
     def vad_progressed(self) -> None:
@@ -749,11 +455,6 @@ class Session:
                 active.cancel("turn_detected")
                 # the answer cut off is owed, even if this turn says nothing; one a wake word stopped is not
                 self._unanswered_turn = not woken
-
-    def _interrupts(self) -> bool:
-        """Whether a turn server VAD finds cuts the answer off."""
-        settings = self.state.audio.input.turn_detection
-        return isinstance(settings, ServerVad) and settings.interrupt_response
 
     async def turn_ended(self, turn: str, audio_start_ms: int, audio_end_ms: int, spoken: bool) -> None:
         """Commits the turn server VAD found; one without speech, after a wake word nobody followed, is committed
@@ -775,24 +476,6 @@ class Session:
         if answers and not responding and spoken:
             self._replies.spawn(self._reply(item, transcribed))
 
-    async def _reply(self, item: UserMessage, transcribed: asyncio.Task) -> None:
-        """Answers the turn *item* once it is transcribed, unless it said nothing and no turn before it waits for an
-        answer, or another answer began."""
-        await asyncio.wait([transcribed])
-        part = item.content[0]
-        said = isinstance(part, InputAudio) and bool((part.transcript or "").strip())
-        if self.conversation.get(item.id) is None or (self.active is not None and not self.active.done()):
-            return
-        if self._interrupts() and self.turns is not None and self.turns.turn is not None:
-            # the user is talking again, which would cut the answer off: the next turn's answer covers this one
-            self._unanswered_turn = self._unanswered_turn or said
-            return
-        if not said and not self._unanswered_turn:
-            return
-        error = await self._response_create(ResponseCreate(type="response.create"))
-        if error is not None:
-            await self.send(error_event(error))
-
     async def detection_failed(self) -> None:
         await self.send(
             error_event(
@@ -805,15 +488,20 @@ class Session:
             )
         )
 
-
-def _audio_in_item(item: Item, param: str) -> RealtimeError | None:
-    """The error for audio sent inside an item, not through the input audio buffer."""
-    if isinstance(item, UserMessage):
-        for i, part in enumerate(item.content):
-            if isinstance(part, InputAudio):
-                return RealtimeError(
-                    message="Audio in an item is not supported yet; append it to the input audio buffer.",
-                    code="invalid_value",
-                    param=f"{param}.content[{i}]",
-                )
-    return None
+    async def _reply(self, item: UserMessage, transcribed: asyncio.Task) -> None:
+        """Answers the turn *item* once it is transcribed, unless it said nothing and no turn before it waits for an
+        answer, or another answer began."""
+        await asyncio.wait([transcribed])
+        part = item.content[0]
+        said = isinstance(part, InputAudio) and bool((part.transcript or "").strip())
+        if self.conversation.get(item.id) is None or self._answering():
+            return
+        if self._interrupts() and self.turns is not None and self.turns.turn is not None:
+            # the user is talking again, which would cut the answer off: the next turn's answer covers this one
+            self._unanswered_turn = self._unanswered_turn or said
+            return
+        if not said and not self._unanswered_turn:
+            return
+        error = await self._response_create(ResponseCreate(type="response.create"))
+        if error is not None:
+            await self.send(error_event(error))

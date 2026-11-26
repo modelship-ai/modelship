@@ -15,7 +15,7 @@ from modelship.infer.pipelines.assistant.input.transcripts import (
     TranscriptionQueue,
 )
 from modelship.infer.pipelines.assistant.input.turn_input import RecordedInput
-from modelship.infer.pipelines.assistant.session import _new_session
+from modelship.infer.pipelines.assistant.session_config import new_session
 from modelship.openai.protocol import (
     ErrorInfo,
     ErrorResponse,
@@ -49,7 +49,7 @@ class _Calls:
 
 
 def _context(calls=None, capabilities: SttCapabilities = DETECTS) -> SttContext:
-    return SttContext(calls or _Calls(), "w", capabilities, _new_session(SCRIBE))  # type: ignore[arg-type]
+    return SttContext(calls or _Calls(), "w", capabilities, new_session(SCRIBE, 3600))  # type: ignore[arg-type]
 
 
 def _item() -> UserMessage:
