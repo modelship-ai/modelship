@@ -404,6 +404,8 @@ class TurnDetector:
         else:
             self._state = AwaitingSpeech(turn, at_ms + _WAKE_TAIL_MS, at_ms + listen_ms)
         await self._events.turn_started(turn.item_id, round(at_ms), woken)
+        # the session may have committed or cleared the buffer while it heard of the turn
+        self._check_current()
         return turn
 
     async def _end(self, at_ms: float) -> None:
