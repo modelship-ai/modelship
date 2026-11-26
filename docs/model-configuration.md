@@ -219,6 +219,7 @@ pipelines:
 | `name` | string | Name clients pass to the pipeline's endpoint. No `#` |
 | `type` | string | Required. `assistant`: an OpenAI Realtime session (usecase `realtime`, served on `/v1/realtime?model=<name>`) |
 | `num_replicas` | int | Replicas of the pipeline's deployment. Default `1`. It reserves no CPU or GPU |
+| `node_selector` | map | Ray node labels the pipeline's replicas must match, as a model's [`node_selector`](#multi-node-clusters): merged over the variants that run it, its keys replacing theirs. Default `{}`: any node whose variant runs sherpa-onnx. Pin it near its models, e.g. `{modelship/hostname: head}`, so a session's audio doesn't cross the network to reach it |
 | `assistant_config` | object | Required for `type: assistant`: the fields below |
 
 An `assistant` runs an OpenAI Realtime session over speech to text, a chat model, and text to speech. Its `assistant_config`:
