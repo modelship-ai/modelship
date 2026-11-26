@@ -437,7 +437,7 @@ class ResponsesStreamTranslator:
             item.status = self._closed_status(oi)
             yield self._event(
                 "response.function_call_arguments.done",
-                {"item_id": item.id, "output_index": oi, "arguments": args},
+                {"item_id": item.id, "output_index": oi, "name": item.name, "arguments": args},
             )
             yield self._event(
                 "response.output_item.done",

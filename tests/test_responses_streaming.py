@@ -197,6 +197,7 @@ class TestToolCallStream:
         arg_deltas = [e["delta"] for e in events if e["type"] == "response.function_call_arguments.delta"]
         assert "".join(arg_deltas) == '{"city":"NYC"}'
         done = next(e for e in events if e["type"] == "response.function_call_arguments.done")
+        assert done["name"] == "get_weather"
         assert done["arguments"] == '{"city":"NYC"}'
         # completed output carries the function_call item with name + call_id
         fc = next(o for o in events[-1]["response"]["output"] if o["type"] == "function_call")
