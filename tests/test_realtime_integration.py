@@ -15,7 +15,7 @@ import pytest
 import yaml
 from websockets.sync.client import connect
 
-from modelship.infer.pipelines.assistant.audio import to_pcm16
+from modelship.infer.pipelines.assistant.codecs import to_pcm16
 from modelship.utils.config_schema import parse_pipeline
 from tests.conftest import MODEL_CONFIGS, serve_apps
 

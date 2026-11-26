@@ -7,8 +7,8 @@ import json
 
 import pytest
 
+from modelship.infer.pipelines import relay
 from modelship.infer.pipelines.relay import RealtimeClosed, RealtimeOpened, RealtimeOpening
-from modelship.openai import realtime_relay
 from modelship.openai.realtime_relay import serve_relay
 
 VOICE = {"name": "voice", "type": "assistant", "assistant_config": {"stt": "w"}}
@@ -179,7 +179,7 @@ class TestRelaying:
 
     @pytest.mark.asyncio
     async def test_reading_stops_while_enough_waits_to_be_handed_over(self, monkeypatch):
-        monkeypatch.setattr(realtime_relay, "MAX_QUEUED_BYTES", 250)
+        monkeypatch.setattr(relay, "MAX_QUEUED_BYTES", 250)
         link = _Link()
         link.gate = asyncio.Event()
         task, websocket = await _relay(link)

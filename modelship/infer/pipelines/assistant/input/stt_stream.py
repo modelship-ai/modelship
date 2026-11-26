@@ -7,8 +7,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import NamedTuple
 
-from modelship.infer.pipelines.assistant.audio import InputAudioBuffer
 from modelship.infer.pipelines.assistant.calls import PipelineCalls
+from modelship.infer.pipelines.assistant.input.input_buffer import InputAudioBuffer
 from modelship.logging import get_logger
 from modelship.openai.protocol import ErrorResponse, SttStreamOptions, SttStreamText
 

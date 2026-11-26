@@ -17,7 +17,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from modelship.infer.pipelines.assistant.assistant_pipeline import AssistantPipeline
-from modelship.infer.pipelines.assistant.response import ActiveResponse
+from modelship.infer.pipelines.assistant.output.response import ActiveResponse
 from modelship.infer.pipelines.assistant.session import Session
 from modelship.infer.pipelines.relay import RealtimeOpening
 from modelship.openai.protocol import (
@@ -1219,7 +1219,7 @@ class TestAudioInput:
 
     def test_the_buffer_refuses_audio_past_its_cap_in_bytes(self, monkeypatch):
         # 2 s of G.711, decoded to 16-bit PCM at 8 kHz
-        monkeypatch.setattr("modelship.infer.pipelines.assistant.audio.MAX_BYTES", 2 * 8000 * 2)
+        monkeypatch.setattr("modelship.infer.pipelines.assistant.input.input_buffer.MAX_BYTES", 2 * 8000 * 2)
         with self._session(_Stt()) as ws:
             _open(ws)
             self._g711(ws)
@@ -2226,7 +2226,7 @@ class TestTruncate:
 
 
 def test_g711_tables_match_audioop():
-    from modelship.infer.pipelines.assistant.audio import to_pcm16
+    from modelship.infer.pipelines.assistant.codecs import to_pcm16
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)

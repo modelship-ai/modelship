@@ -3,18 +3,18 @@ the gateway feeds with the client's frames and drains of the session's."""
 
 import asyncio
 import contextlib
-from collections import deque
 from collections.abc import AsyncIterator
 
 from modelship.infer.base_pipeline import BasePipeline
 from modelship.infer.infer_config import get_disconnect_registry
 from modelship.infer.pipelines.assistant.calls import PipelineCalls
+from modelship.infer.pipelines.assistant.input.turns import NewFinder
 from modelship.infer.pipelines.assistant.model_calls import ModelCalls
 from modelship.infer.pipelines.assistant.session import refuse, serve_session
-from modelship.infer.pipelines.assistant.turns import NewFinder
 from modelship.infer.pipelines.relay import (
     CLOSE_FAILED,
-    MAX_QUEUED_BYTES,
+    ClientFrame,
+    FrameQueue,
     RealtimeClosed,
     RealtimeFrame,
     RealtimeOpened,
@@ -38,42 +38,20 @@ class RelayChannel:
     gateway takes them."""
 
     def __init__(self) -> None:
-        self._inbound: deque[str | bytes] = deque()
-        self._queued = 0
-        self._arrived = asyncio.Event()
-        self._room = asyncio.Event()
-        self._room.set()
-        self._left = False
+        self._inbound = FrameQueue()
         self._outbound: asyncio.Queue[RealtimeFrame] = asyncio.Queue()
         self._closed = False
 
-    async def push(self, frames: list[str | bytes]) -> None:
-        """Queues the client's *frames*, returning once the queue is under MAX_QUEUED_BYTES again."""
-        for frame in frames:
-            self._inbound.append(frame)
-            self._queued += len(frame)
-        self._arrived.set()
-        while self._queued > MAX_QUEUED_BYTES and not self._left:
-            self._room.clear()
-            await self._room.wait()
+    async def push(self, frames: list[ClientFrame]) -> None:
+        """Queues the client's *frames*, returning once at most MAX_QUEUED_BYTES wait again."""
+        await self._inbound.put(frames)
 
     def leave(self) -> None:
         """The client left: once its queued frames are read, `receive` answers None."""
-        self._left = True
-        self._arrived.set()
-        self._room.set()
+        self._inbound.close()
 
-    async def receive(self) -> str | bytes | None:
-        while not self._inbound:
-            if self._left:
-                return None
-            self._arrived.clear()
-            await self._arrived.wait()
-        frame = self._inbound.popleft()
-        self._queued -= len(frame)
-        if self._queued <= MAX_QUEUED_BYTES:
-            self._room.set()
-        return frame
+    async def receive(self) -> ClientFrame | None:
+        return await self._inbound.get()
 
     async def send(self, text: str) -> None:
         if not self._closed:
@@ -181,7 +159,7 @@ class AssistantPipeline(BasePipeline):
         elif not session.cancelled() and (error := session.exception()) is not None:
             logger.error("Realtime session on pipeline %s failed", self.config.name, exc_info=error)
 
-    async def realtime_event(self, key: str, frames: list[str | bytes]) -> bool:
+    async def realtime_event(self, key: str, frames: list[ClientFrame]) -> bool:
         channel = self._channels.get(key)
         if channel is None:
             return False

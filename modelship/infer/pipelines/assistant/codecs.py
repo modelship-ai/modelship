@@ -1,6 +1,6 @@
-"""A session's audio. Input: the turn the client hasn't committed yet, as 16-bit mono PCM, and the WAV a committed
-turn goes to the speech-to-text model as; G.711 is decoded here, and the loaders resample whatever rate they get.
-Output: the text-to-speech model's WAV in the client's format, resampled and G.711-encoded here."""
+"""Audio encodings a session converts between, all pure functions. Input: G.711 decoded to 16-bit PCM, and PCM wrapped
+in the WAV a committed turn goes to the speech-to-text model as; the loaders resample whatever rate they get. Output:
+the text-to-speech model's WAV in the client's format, resampled and G.711-encoded."""
 
 import functools
 import io
@@ -8,10 +8,6 @@ import wave
 
 import numpy as np
 
-# OpenAI's least audio for a commit
-MIN_SECONDS = 0.1
-# the most PCM the input audio buffer holds: an hour of 24 kHz 16-bit audio
-MAX_BYTES = 3600 * 24000 * 2
 G711_RATE = 8000
 
 
@@ -92,17 +88,18 @@ def resample(samples: np.ndarray, source: int, target: int) -> np.ndarray:
 
 def read_wav(data: bytes) -> tuple[np.ndarray, int]:
     """A 16-bit PCM WAV's samples, mixed to mono, and its rate."""
-    with wave.open(io.BytesIO(data)) as wav:
-        if wav.getsampwidth() != 2:
-            raise ValueError(f"the WAV has {wav.getsampwidth() * 8}-bit samples, not 16-bit")
-        channels, rate = wav.getnchannels(), wav.getframerate()
-        samples = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2")
+    with wave.open(io.BytesIO(data)) as wav_file:
+        if wav_file.getsampwidth() != 2:
+            raise ValueError(f"the WAV has {wav_file.getsampwidth() * 8}-bit samples, not 16-bit")
+        channels, rate = wav_file.getnchannels(), wav_file.getframerate()
+        samples = np.frombuffer(wav_file.readframes(wav_file.getnframes()), dtype="<i2")
     if channels > 1:
         samples = samples[: len(samples) // channels * channels].reshape(-1, channels).mean(axis=1).astype(np.int16)
     return samples, rate
 
 
 def output_rate(kind: str, pcm_rate: int) -> int:
+    """The sample rate of output audio of format *kind*: G.711 is always 8 kHz."""
     return G711_RATE if kind in _G711_CODES else pcm_rate
 
 
@@ -117,10 +114,12 @@ def from_wav(data: bytes, kind: str, pcm_rate: int) -> bytes:
 
 
 def bytes_per_second(kind: str, pcm_rate: int) -> int:
+    """How many bytes a second of audio of format *kind* takes: one per sample for G.711, two for PCM."""
     return G711_RATE if kind in _G711_CODES else pcm_rate * 2
 
 
 def wav(pcm16: bytes, rate: int) -> bytes:
+    """Mono 16-bit *pcm16* at *rate*, as a WAV file."""
     out = io.BytesIO()
     with wave.open(out, "wb") as wav_file:
         wav_file.setnchannels(1)
@@ -128,84 +127,3 @@ def wav(pcm16: bytes, rate: int) -> bytes:
         wav_file.setframerate(rate)
         wav_file.writeframes(pcm16)
     return out.getvalue()
-
-
-class InputAudioBuffer:
-    """The client's audio not committed yet, at one sample rate, placed on the session's timeline: the ms of
-    audio the client has sent since the session opened."""
-
-    def __init__(self) -> None:
-        self._pcm = bytearray()
-        # once kept: the audio as the client sent it, where the buffer holds silence in its place
-        self._sent: bytearray | None = None
-        self.rate: int | None = None
-        # where the buffer's first sample is on the timeline
-        self.start_ms = 0.0
-
-    @property
-    def seconds(self) -> float:
-        return len(self._pcm) // 2 / self.rate if self.rate else 0.0
-
-    @property
-    def end_ms(self) -> float:
-        return self.start_ms + self.seconds * 1000
-
-    @property
-    def keeps_sent(self) -> bool:
-        return self._sent is not None
-
-    def keep_sent(self) -> None:
-        """From now on, keeps the audio as the client sent it beside the buffer's."""
-        if self._sent is None:
-            self._sent = bytearray(self._pcm)
-
-    def append(self, pcm16: bytes, rate: int, sent: bytes | None = None) -> str | None:
-        """Adds *pcm16* at *rate*, where the client sent *sent* if it differs; why it can't, or None."""
-        if self.rate is not None and self._pcm and rate != self.rate:
-            return "The audio format changed with audio in the buffer; clear it first."
-        if len(self._pcm) + len(pcm16) > MAX_BYTES:
-            return f"The input audio buffer holds at most {MAX_BYTES / 1e6:g} MB of PCM; commit or clear it."
-        self.rate = rate
-        self._pcm += pcm16
-        if self._sent is not None:
-            self._sent += pcm16 if sent is None else sent
-        return None
-
-    def _offset(self, at_ms: float) -> int:
-        """The byte offset of *at_ms* in the buffer, clamped to it."""
-        if self.rate is None:
-            return 0
-        samples = round((at_ms - self.start_ms) * self.rate / 1000)
-        return min(max(samples, 0), len(self._pcm) // 2) * 2
-
-    def pcm(self, from_ms: float, to_ms: float) -> bytes:
-        """The audio from *from_ms* to *to_ms*, as much of it as the buffer holds."""
-        return bytes(self._pcm[self._offset(from_ms) : self._offset(to_ms)])
-
-    def sent_pcm(self, from_ms: float, to_ms: float) -> bytes:
-        """The same audio as the client sent it."""
-        if self._sent is None:
-            return self.pcm(from_ms, to_ms)
-        return bytes(self._sent[self._offset(from_ms) : self._offset(to_ms)])
-
-    def drop_before(self, at_ms: float) -> None:
-        """Drops the audio before *at_ms*."""
-        cut = self._offset(at_ms)
-        if cut and self.rate is not None:
-            del self._pcm[:cut]
-            if self._sent is not None:
-                del self._sent[:cut]
-            self.start_ms += cut // 2 * 1000 / self.rate
-
-    def clear(self) -> None:
-        self.drop_before(self.end_ms)
-
-    def take(self, from_ms: float | None = None, to_ms: float | None = None) -> tuple[bytes, float]:
-        """The audio from *from_ms* (the buffer's start by default) to *to_ms* (its end) as a WAV, and its length
-        in seconds; the buffer then starts at *to_ms*."""
-        assert self.rate is not None
-        start = self.start_ms if from_ms is None else from_ms
-        end = self.end_ms if to_ms is None else to_ms
-        pcm = self.pcm(start, end)
-        self.drop_before(end)
-        return wav(pcm, self.rate), len(pcm) // 2 / self.rate

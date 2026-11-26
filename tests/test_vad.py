@@ -7,18 +7,9 @@ import types
 import numpy as np
 import pytest
 
+from modelship.infer.sherpa_onnx.vad import SpeechStarted, SpeechStopped, Vad, VadSettings
 from modelship.utils.audio import StreamResampler, from_pcm16
-from modelship.utils.vad import (
-    CONTEXT,
-    SAMPLE_RATE,
-    WINDOW,
-    SpeechSegment,
-    SpeechStarted,
-    SpeechStopped,
-    SpeechStream,
-    Vad,
-    VadSettings,
-)
+from modelship.utils.vad import CONTEXT, SAMPLE_RATE, WINDOW, SpeechSegment, SpeechStream
 
 _WINDOW = 512
 
