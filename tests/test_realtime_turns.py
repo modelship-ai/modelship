@@ -8,6 +8,7 @@ import threading
 import numpy as np
 import pytest
 
+from modelship.infer.pipelines.assistant.input import turns as turns_module
 from modelship.infer.pipelines.assistant.input.input_buffer import InputAudioBuffer
 from modelship.infer.pipelines.assistant.input.turns import ANYWHERE, MAX_TURN_MS, TurnDetector, Window
 from modelship.openai.protocol.realtime import ServerVad
@@ -316,13 +317,17 @@ class TestTurns:
         assert turns.vad.opened[-1] == (RATE, 0.0)
 
     @pytest.mark.asyncio
-    async def test_a_commit_while_the_session_reports_a_turn_stops_the_feed(self):
+    async def test_a_commit_while_the_session_reports_a_turn_stops_the_feed(self, monkeypatch):
+        failures: list[str] = []
+        monkeypatch.setattr(turns_module.logger, "exception", lambda message, *args: failures.append(message))
         turns = _Turns()
         turns.commit_on_start = True
         await turns.feed(_quiet(1), _tone(1), _quiet(1), step=None)
         assert [event[0] for event in turns.events] == ["started"]
         assert turns.detector.turn is None
         assert turns.buffer.seconds == 0
+        # the stale feed stops quietly
+        assert failures == []
 
     @pytest.mark.asyncio
     async def test_a_reset_lets_a_commit_under_way_finish(self):
