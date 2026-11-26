@@ -127,7 +127,7 @@ PIPELINE_MAX_ONGOING_REQUESTS = 1000
 
 def build_pipeline_deployment_options(pipeline: PipelineConfig, env: dict[str, str] | None = None) -> dict:
     """kwargs for a pipeline app's `Deployment.options(**...)`: no CPU or GPU, on a node whose variant runs
-    sherpa-onnx; *env* as for `build_deployment_options`."""
+    sherpa-onnx, narrowed by its `node_selector`; *env* as for `build_deployment_options`."""
     env_vars = build_cache_env_vars()
     env_vars.update(deploy_env_vars() if env is None else env)
     env_vars.update(cluster_env_vars() | state_store_env_var())
@@ -136,7 +136,7 @@ def build_pipeline_deployment_options(pipeline: PipelineConfig, env: dict[str, s
             "num_gpus": 0,
             "num_cpus": 0,
             "runtime_env": {"env_vars": env_vars},
-            "label_selector": deployment_label_selector(PIPELINE_AUDIO_LOADER, 0, {}),
+            "label_selector": deployment_label_selector(PIPELINE_AUDIO_LOADER, 0, pipeline.node_selector),
         },
         "max_ongoing_requests": PIPELINE_MAX_ONGOING_REQUESTS,
     }
