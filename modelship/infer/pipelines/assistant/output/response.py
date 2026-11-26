@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from modelship.infer.pipelines.assistant.calls import Answer
 from modelship.infer.pipelines.assistant.conversation import Conversation
-from modelship.infer.pipelines.assistant.speech import SendAudio, Speech
+from modelship.infer.pipelines.assistant.output.speech import SendAudio, Speech
 from modelship.logging import get_logger
 from modelship.metrics import RequestTracker
 from modelship.openai.protocol import ErrorResponse

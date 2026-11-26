@@ -14,7 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 from modelship.infer.base_pipeline import CLOSE_REFUSED
 from modelship.infer.pipelines.relay import (
     CLOSE_FAILED,
-    MAX_QUEUED_BYTES,
+    FrameQueue,
     RealtimeClosed,
     RealtimeFrame,
     RealtimeOpened,
@@ -106,14 +106,8 @@ class _Relay:
         self.link = link
         self.key = opening.key
         self.opening = opening
-        # the client's frames not handed over yet
-        self._waiting: list[str | bytes] = []
-        self._queued = 0
-        self._arrived = asyncio.Event()
-        self._room = asyncio.Event()
-        self._room.set()
-        # the client left
-        self._read_all = False
+        # the client's frames not handed over yet; closed once the client left
+        self._waiting = FrameQueue()
         # the session heard that its client left
         self._left = False
 
@@ -179,27 +173,17 @@ class _Relay:
                 frame = message.get("text")
                 if frame is None:
                     frame = message.get("bytes") or b""
-                self._waiting.append(frame)
-                self._queued += len(frame)
-                self._arrived.set()
-                while self._queued > MAX_QUEUED_BYTES:
-                    self._room.clear()
-                    await self._room.wait()
+                await self._waiting.put([frame])
         except (WebSocketDisconnect, RuntimeError):
             return
         finally:
-            self._read_all = True
-            self._arrived.set()
+            self._waiting.close()
 
     async def _forward(self) -> bool:
         """Hands the waiting frames to the session, all of them in one call, each time the last call returns. True
         once the client left and the session heard it; False when the session's replica no longer holds it."""
         while True:
-            await self._arrived.wait()
-            self._arrived.clear()
-            frames, self._waiting = self._waiting, []
-            self._queued = 0
-            self._room.set()
+            frames = await self._waiting.get_all()
             try:
                 held = not frames or await self.link.send(self.key, frames)
             except Exception:
@@ -208,6 +192,6 @@ class _Relay:
             if not held:
                 logger.warning("Realtime session %s: its pipeline replica doesn't hold it any more", self.key)
                 return False
-            if self._read_all and not self._waiting:
+            if self._waiting.closed and self._waiting.empty:
                 await self._leave()
                 return True

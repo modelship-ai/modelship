@@ -9,20 +9,10 @@ import numpy as np
 import pytest
 import soundfile as sf
 
+from modelship.infer.sherpa_onnx.vad import SpeechStarted, SpeechStopped, Vad, VadSettings
 from modelship.utils.audio import StreamResampler, to_pcm16
 from modelship.utils.sources import download_model_source, file
-from modelship.utils.vad import (
-    SAMPLE_RATE,
-    STATE_SHAPE,
-    SileroModel,
-    SpeechSegment,
-    SpeechStarted,
-    SpeechStopped,
-    SpeechStream,
-    Vad,
-    VadSettings,
-    silero_vad_source,
-)
+from modelship.utils.vad import SAMPLE_RATE, STATE_SHAPE, SileroModel, SpeechSegment, SpeechStream, silero_vad_source
 
 _PHRASES = ("Turn on the kitchen lights.", "What is the weather tomorrow?", "Play some music.")
 

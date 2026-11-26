@@ -96,60 +96,41 @@ class ModelCalls:
     async def transcribe(
         self, model: str, audio: bytes, request: TranscriptionRequest, session_id: str
     ) -> TranscriptionResponse | TranscriptionResponseVerbose | ErrorResponse | None:
-        handle = self._routes.handle(model)
-        if handle is None:
-            return None
-        req_id = random_uuid()
-        stream = cast(
-            "DeploymentResponseGenerator[Any]",
-            handle.transcribe.options(stream=True, session_id=session_id).remote(
-                audio, request, self._headers, self._registry, req_id, self._identity
-            ),
-        )
-        return await self._answer(stream, req_id)
-
-    # a stream's calls carry its key as their session_id, which pins the stream to the replica holding it
+        return await self._request("transcribe", model, session_id, audio, request)
 
     async def transcribe_push(
         self, model: str, key: str, pcm: bytes, rate: int, options: SttStreamOptions
     ) -> SttStreamText | ErrorResponse | None:
-        handle = self._routes.handle(model)
-        if handle is None:
-            return None
-        call = handle.transcribe_push.options(session_id=key)
-        return await call.remote(key, pcm, rate, options, random_uuid(), self._identity)
+        return await self._stream_call("transcribe_push", model, key, pcm, rate, options, random_uuid(), self._identity)
 
     async def transcribe_finish(
         self, model: str, key: str, pcm: bytes, rate: int, options: SttStreamOptions
     ) -> SttStreamText | ErrorResponse | None:
-        handle = self._routes.handle(model)
-        if handle is None:
-            return None
-        call = handle.transcribe_finish.options(session_id=key)
-        return await call.remote(key, pcm, rate, options, random_uuid(), self._identity)
+        return await self._stream_call(
+            "transcribe_finish", model, key, pcm, rate, options, random_uuid(), self._identity
+        )
 
     async def transcribe_close(self, model: str, key: str) -> None:
-        handle = self._routes.handle(model)
-        if handle is not None:
-            await handle.transcribe_close.options(session_id=key).remote(key)
+        await self._stream_call("transcribe_close", model, key)
 
     async def speak(
         self, model: str, request: SpeechRequest, session_id: str
     ) -> RawSpeechResponse | ErrorResponse | None:
+        return await self._request("speak", model, session_id, request)
+
+    async def _request(self, method: str, model: str, session_id: str, *args: Any) -> Any:
+        """Calls handle method *method* of *model* with *args* the way the gateway calls a model: the client's
+        headers, the disconnect registry, a request id and the client's identity follow them, and the call is routed
+        on *session_id*. The one item it streams back; None for none, or while nothing serves *model*."""
         handle = self._routes.handle(model)
         if handle is None:
             return None
         req_id = random_uuid()
+        call = getattr(handle, method).options(stream=True, session_id=session_id)
         stream = cast(
             "DeploymentResponseGenerator[Any]",
-            handle.speak.options(stream=True, session_id=session_id).remote(
-                request, self._headers, self._registry, req_id, self._identity
-            ),
+            call.remote(*args, self._headers, self._registry, req_id, self._identity),
         )
-        return await self._answer(stream, req_id)
-
-    async def _answer(self, stream: DeploymentResponseGenerator, req_id: str) -> Any:
-        """The one item a call that doesn't stream answers with; None for none."""
         finished = False
         try:
             results = [result async for result in stream]
@@ -158,3 +139,12 @@ class ModelCalls:
             if not finished:
                 await _stop_call(stream, self._registry, req_id)
         return results[0] if results else None
+
+    async def _stream_call(self, method: str, model: str, key: str, *args: Any) -> Any:
+        """Calls handle method *method* of *model* on stream *key*, with *args* after the key; None while nothing
+        serves *model*. The call carries the key as its session_id, which pins the stream to the replica holding
+        it."""
+        handle = self._routes.handle(model)
+        if handle is None:
+            return None
+        return await getattr(handle, method).options(session_id=key).remote(key, *args)

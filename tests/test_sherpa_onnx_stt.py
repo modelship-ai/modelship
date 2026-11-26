@@ -20,13 +20,13 @@ from modelship.infer.sherpa_onnx.bundle import bundle_paths
 from modelship.infer.sherpa_onnx.family import nemo_transducer
 from modelship.infer.sherpa_onnx.registry import REGISTRY
 from modelship.infer.sherpa_onnx.stt_infer import Piece, SherpaOnnxSttInfer, pieces, segments
+from modelship.infer.sherpa_onnx.vad import SpeechStopped
 from modelship.openai.protocol import (
     ErrorResponse,
     TranscriptionRequest,
     TranscriptionResponse,
     TranscriptionResponseVerbose,
 )
-from modelship.utils.vad import SpeechStopped
 
 PARAKEET = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
 

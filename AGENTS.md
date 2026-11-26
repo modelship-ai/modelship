@@ -47,6 +47,17 @@ Pre-commit only runs ruff; it does **not** run pyright or tests, so don't rely o
 
 When in doubt, check OpenAI's reference for the exact route. Existing deviations are documented and tracked separately; do not add new ones.
 
+## Code structure
+
+Every change, not only a refactor, keeps the code readable:
+
+- **One concern per unit.** A class or module that takes on another job is split as part of the change. No god files that grow a feature at a time; a new feature fits a clear structure instead of threading flags through existing methods.
+- **Reusable methods.** Logic written twice becomes one function; the same pattern written three times (a task set, a bounded queue, a handle lookup) becomes a helper.
+- **Design patterns where they remove a branch or a duplicate:** an explicit state machine for state that lives in several fields, a strategy for "the same step done two ways", a listener protocol in place of a bundle of callbacks, a policy object for a rule table. Not for their own sake.
+- **Types over tuples.** A value with named parts is a dataclass or NamedTuple, not `tuple[float, float]` with a sentinel.
+- **Names say what a thing is or does.** One word means one thing across a package; no `feed` that means three operations, no `NewFinder`/`OpenFinder` for one concept.
+- **Comments a newcomer can follow.** A module or class docstring says what the unit is, what it is responsible for and who uses it; an inline comment names the invariant it protects in a full sentence. Still mechanical facts only: no history or rationale essays.
+
 ## Lint / format / typecheck rules
 
 - Line length **120** (not 88). Ruff handles formatting; `E501` is disabled because the formatter owns line length.

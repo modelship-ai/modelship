@@ -9,7 +9,7 @@ import math
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from modelship.infer.pipelines.assistant.audio import InputAudioBuffer
+from modelship.infer.pipelines.assistant.input.input_buffer import InputAudioBuffer
 from modelship.logging import get_logger
 from modelship.openai.protocol.realtime import ServerVad, item_id
 from modelship.utils.vad import SpeechSegment

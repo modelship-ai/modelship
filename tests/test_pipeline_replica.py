@@ -13,6 +13,7 @@ from modelship.infer import base_infer
 from modelship.infer.deployment_base import DeploymentBase
 from modelship.infer.model_deployment import ModelDeployment
 from modelship.infer.pipeline_deployment import load_pipeline
+from modelship.infer.pipelines import relay
 from modelship.infer.pipelines import routes as routes_module
 from modelship.infer.pipelines.assistant import assistant_pipeline
 from modelship.infer.pipelines.assistant.assistant_pipeline import AssistantPipeline, RelayChannel
@@ -41,7 +42,7 @@ class TestRelayChannel:
 
     @pytest.mark.asyncio
     async def test_a_hand_over_waits_while_the_queue_is_over_its_cap(self, monkeypatch):
-        monkeypatch.setattr(assistant_pipeline, "MAX_QUEUED_BYTES", 5)
+        monkeypatch.setattr(relay, "MAX_QUEUED_BYTES", 5)
         channel = RelayChannel()
         push = asyncio.ensure_future(channel.push(["abc", "def"]))
         await _settle()

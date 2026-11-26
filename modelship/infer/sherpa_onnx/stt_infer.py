@@ -18,6 +18,7 @@ from modelship.infer.infer_config import ModelshipModelConfig, RawRequestProxy
 from modelship.infer.sherpa_onnx.family import nemo_transducer
 from modelship.infer.sherpa_onnx.registry import AsrEntry
 from modelship.infer.sherpa_onnx.sherpa_onnx_infer import PROVIDER, SherpaOnnxInfer
+from modelship.infer.sherpa_onnx.vad import SpeechStopped, Vad, VadSettings
 from modelship.logging import TRACE, get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
@@ -33,7 +34,6 @@ from modelship.openai.protocol import (
 )
 from modelship.utils import base_request_id
 from modelship.utils.audio import decode_audio
-from modelship.utils.vad import SpeechStopped, Vad, VadSettings
 
 logger = get_logger("infer.sherpa_onnx")
 

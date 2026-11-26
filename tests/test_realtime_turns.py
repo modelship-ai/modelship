@@ -8,8 +8,8 @@ import threading
 import numpy as np
 import pytest
 
-from modelship.infer.pipelines.assistant.audio import InputAudioBuffer
-from modelship.infer.pipelines.assistant.turns import MAX_TURN_MS, TurnDetector
+from modelship.infer.pipelines.assistant.input.input_buffer import InputAudioBuffer
+from modelship.infer.pipelines.assistant.input.turns import MAX_TURN_MS, TurnDetector
 from modelship.openai.protocol.realtime import ServerVad
 from modelship.utils.vad import SpeechSegment
 

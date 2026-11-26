@@ -12,24 +12,20 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from modelship.infer.base_pipeline import CLOSE_REFUSED
-from modelship.infer.pipelines.assistant.audio import (
-    G711_RATE,
-    MIN_SECONDS,
-    InputAudioBuffer,
-    bytes_per_second,
-    from_wav,
-    to_pcm16,
-)
 from modelship.infer.pipelines.assistant.calls import Answer, PipelineCalls
+from modelship.infer.pipelines.assistant.client_events import parse_event
+from modelship.infer.pipelines.assistant.codecs import G711_RATE, bytes_per_second, from_wav, to_pcm16
 from modelship.infer.pipelines.assistant.conversation import Conversation, as_input
-from modelship.infer.pipelines.assistant.playback import Playback
-from modelship.infer.pipelines.assistant.response import ActiveResponse, NewSpeech
-from modelship.infer.pipelines.assistant.speech import SendAudio, Speech, Spoken
-from modelship.infer.pipelines.assistant.stt_stream import Streamed, TurnStream
-from modelship.infer.pipelines.assistant.turns import MAX_TURN_MS, NewFinder, SpeechFinder, TurnDetector
+from modelship.infer.pipelines.assistant.input.input_buffer import MIN_SECONDS, InputAudioBuffer
+from modelship.infer.pipelines.assistant.input.stt_stream import Streamed, TurnStream
+from modelship.infer.pipelines.assistant.input.turns import MAX_TURN_MS, NewFinder, SpeechFinder, TurnDetector
+from modelship.infer.pipelines.assistant.output.playback import Playback
+from modelship.infer.pipelines.assistant.output.response import ActiveResponse, NewSpeech
+from modelship.infer.pipelines.assistant.output.speech import SendAudio, Speech, Spoken
+from modelship.infer.pipelines.assistant.tasks import BackgroundTasks
 from modelship.logging import get_logger
 from modelship.openai.protocol import (
     ErrorResponse,
@@ -43,7 +39,6 @@ from modelship.openai.protocol import (
     TranscriptionResponseVerbose,
 )
 from modelship.openai.protocol.realtime import (
-    CLIENT_EVENTS,
     SESSION_OBJECTS,
     AssistantMessage,
     AudioAppend,
@@ -53,7 +48,6 @@ from modelship.openai.protocol.realtime import (
     AudioInput,
     AudioOutput,
     AudioPcm,
-    ClientEvent,
     InputAudio,
     Item,
     ItemCreate,
@@ -101,29 +95,6 @@ _REALTIME_ONLY = frozenset(
     {"conversation.item.create", "conversation.item.truncate", "response.create", "response.cancel"}
 )
 _STT_ONLY = frozenset({"input_audio_buffer.append", "input_audio_buffer.commit"})
-# the union members pydantic names in a validation error's location
-_UNION_TAGS = frozenset(
-    {
-        "user",
-        "system",
-        "assistant",
-        "message",
-        "function_call",
-        "function_call_output",
-        "item_reference",
-        "input_text",
-        "input_audio",
-        "output_text",
-        "output_audio",
-        "audio/pcm",
-        "audio/pcmu",
-        "audio/pcma",
-        "str",
-        "VoiceId",
-        "server_vad",
-        "semantic_vad",
-    }
-)
 # a spoken answer goes out in pieces of this much audio
 _AUDIO_DELTA_SECONDS = 0.5
 # OpenAI's maximum duration of a session
@@ -204,58 +175,6 @@ def _new_session(config: AssistantPipelineConfig) -> RealtimeSession:
         expires_at=int(time.time() + MAX_SESSION_S),
         **fields,
     )
-
-
-def _param(loc: tuple[int | str, ...]) -> str:
-    """A validation error's location as a param: `item.content[0].type`."""
-    parts: list[str] = []
-    for part in loc:
-        if isinstance(part, int) and parts:
-            parts[-1] += f"[{part}]"
-        elif part not in _UNION_TAGS:
-            parts.append(str(part))
-    return ".".join(parts)
-
-
-def _invalid_type(given: str, accepted: list[str]) -> RealtimeError:
-    supported = ", ".join(repr(kind) for kind in accepted)
-    return RealtimeError(
-        message=f"Invalid value: {given!r}. Supported values are: {supported}.", code="invalid_value", param="type"
-    )
-
-
-def _missing(param: str) -> RealtimeError:
-    return RealtimeError(
-        message=f"Missing required parameter: {param!r}.", code="missing_required_parameter", param=param
-    )
-
-
-def _invalid(error: ValidationError, accepted: list[str]) -> RealtimeError:
-    """The error for a client event that isn't valid; *accepted* are the event types the session takes."""
-    problem = error.errors()[0]
-    if not problem["loc"]:
-        if problem["type"] == "json_invalid":
-            return RealtimeError(message="The event is not valid JSON.")
-        if problem["type"] == "union_tag_invalid":
-            return _invalid_type(str(problem.get("ctx", {}).get("tag")), accepted)
-        if problem["type"] == "union_tag_not_found":
-            return _missing("type")
-        return RealtimeError(message='An event is a JSON object with a "type".')
-    # the first part is the event's type
-    param = _param(problem["loc"][1:])
-    if problem["type"] == "missing":
-        return _missing(param)
-    return RealtimeError(message=f"{param}: {problem['msg']}", code="invalid_value", param=param)
-
-
-def _raw_field(text: str, name: str) -> str | None:
-    """Field *name* of an event that didn't validate, if it is a string."""
-    try:
-        raw = json.loads(text)
-    except ValueError:
-        return None
-    found = raw.get(name) if isinstance(raw, dict) else None
-    return found if isinstance(found, str) else None
 
 
 def _voice_name(voice: Voice | None) -> str | None:
@@ -342,21 +261,21 @@ class Session:
         self.language: str | None = None
         # the last transcription queued; each runs after the one before it
         self._transcribing: asyncio.Task | None = None
-        self._transcriptions: set[asyncio.Task] = set()
+        self._transcriptions = BackgroundTasks()
         # with a streaming stt model: the stream of the turn in progress, or of the buffer when the client commits
         self._stream: TurnStream | None = None
         # the session's calls to its streaming stt model go one at a time: Serve routes none while another is in flight
         self._stt_lane = asyncio.Lock()
         # streams closing
-        self._closing: set[asyncio.Task] = set()
+        self._closing = BackgroundTasks()
         # server VAD, while the session's turn detection is on
         self.turns: TurnDetector | None = None
         # automatic responses waiting for their turn's transcript
-        self._replies: set[asyncio.Task] = set()
+        self._replies = BackgroundTasks()
         # a turn server VAD found went unanswered because the user talked again
         self._reply_owed = False
         # feeds still finishing after server VAD was turned off
-        self._retired_feeds: set[asyncio.Task] = set()
+        self._retired_feeds = BackgroundTasks()
         # the client playing the session's spoken answers
         self.playback = Playback()
         # the wake words a realtime session's server VAD turns start at; None for none
@@ -402,14 +321,12 @@ class Session:
             # a closed session waits in reference cycles for the cyclic GC; its audio goes now
             self.buffer.clear()
             self._drop_stream()
-            transcriptions = set(self._transcriptions)
-            for task in (expiry, *transcriptions, *self._replies, *self._retired_feeds):
-                task.cancel()
-            if transcriptions:
-                # a cancelled streamed transcription closes its stream as it ends
-                await asyncio.wait(transcriptions, timeout=_STREAM_CLOSE_S)
-            if self._closing:
-                await asyncio.wait(self._closing, timeout=_STREAM_CLOSE_S)
+            expiry.cancel()
+            for tasks in (self._transcriptions, self._replies, self._retired_feeds):
+                tasks.cancel()
+            # a cancelled streamed transcription closes its stream as it ends
+            await self._transcriptions.wait(_STREAM_CLOSE_S)
+            await self._closing.wait(_STREAM_CLOSE_S)
             if self.turns is not None:
                 await self.turns.close()
             if self.active is not None:
@@ -434,23 +351,11 @@ class Session:
                 await self.channel.send(text)
 
     async def _handle(self, text: str) -> None:
-        try:
-            event: ClientEvent = CLIENT_EVENTS.validate_json(text)
-        except ValidationError as e:
-            accepted = self._event_types()
-            kind = _raw_field(text, "type")
-            # a type the session doesn't take is the error, whatever else is wrong with the event
-            error = (
-                _invalid_type(kind, accepted) if kind is not None and kind not in accepted else _invalid(e, accepted)
-            )
-            error.event_id = _raw_field(text, "event_id")
-            await self.send(error_event(error))
+        event = parse_event(text, self._event_types())
+        if isinstance(event, RealtimeError):
+            await self.send(error_event(event))
             return
-        accepted = self._event_types()
-        if event.type not in accepted:
-            error = _invalid_type(event.type, accepted)
-        else:
-            error = await self._handlers[event.type](event)
+        error = await self._handlers[event.type](event)
         if error is not None:
             error.event_id = event.event_id
             await self.send(error_event(error))
@@ -834,10 +739,7 @@ class Session:
             transcription = self._transcribe_stream(item, audio, seconds, self._transcribing)
         else:
             transcription = self._transcribe(item, audio, seconds, self._transcribing)
-        task = asyncio.ensure_future(transcription)
-        self._transcribing = task
-        self._transcriptions.add(task)
-        task.add_done_callback(self._transcriptions.discard)
+        task = self._transcribing = self._transcriptions.spawn(transcription)
         return item, task
 
     async def _audio_clear(self, event: AudioClear) -> RealtimeError | None:
@@ -882,9 +784,7 @@ class Session:
             self._close_later(stream)
 
     def _close_later(self, stream: TurnStream) -> None:
-        task = asyncio.ensure_future(stream.close())
-        self._closing.add(task)
-        task.add_done_callback(self._closing.discard)
+        self._closing.spawn(stream.close())
 
     def _heard(self) -> None:
         """Server VAD heard more audio: the turn's stream may push it, and a turn a wake word opened streams from
@@ -906,7 +806,6 @@ class Session:
                 self.turns.reset()
                 if (task := self.turns.task) is not None:
                     self._retired_feeds.add(task)
-                    task.add_done_callback(self._retired_feeds.discard)
                 self.turns = None
                 # the open turn's stream; the buffer streams from its start with the next append
                 self._drop_stream()
@@ -991,9 +890,7 @@ class Session:
         responding = self.active is not None and not self.active.done() and not self.active.cancelled
         item, transcribed = await self._commit(audio, seconds, turn)
         if answers and not responding and spoken:
-            reply = asyncio.ensure_future(self._reply(item, transcribed))
-            self._replies.add(reply)
-            reply.add_done_callback(self._replies.discard)
+            self._replies.spawn(self._reply(item, transcribed))
 
     async def _reply(self, item: UserMessage, transcribed: asyncio.Task) -> None:
         """Answers the turn *item* once it is transcribed, unless it said nothing and no turn before it waits for an
