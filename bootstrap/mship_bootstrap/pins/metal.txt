@@ -494,6 +494,7 @@ numpy==2.2.6 \
     #   numba
     #   onnxruntime
     #   pandas
+    #   pymicro-wakeword
     #   pywhispercpp
     #   ray
     #   scikit-learn
@@ -724,6 +725,21 @@ pyjwt==2.12.1 \
     --hash=sha256:28ca37c070cad8ba8cd9790cd940535d40274d22f80ab87f3ac6a713e6e8454c \
     --hash=sha256:c74a7a2adf861c04d002db713dd85f84beb242228e671280bf709d765b03672b
     # via mcp
+pymicro-features==2.0.2 \
+    --hash=sha256:0d0bed7843ec78b6ced82d1a2dcddeb4fe5df61b3af80a281d0868c8e279c727 \
+    --hash=sha256:65a76a7c7851ee0dd6083dda56b835ab9dc6eddeaf11b34461795758de846d0f \
+    --hash=sha256:a8f8b115cf825c44c7a1fddc0af154e2fb0c52f8d1a4597e1f1a113b91ff8324 \
+    --hash=sha256:acead36386b42934e620f57d7481177ba461dde247cccef6a846f5831805e6c7 \
+    --hash=sha256:e76b656ce6a2eab9571657bbecaf17a5c07830306f9b544fbbea16c567bd78fb
+    # via pymicro-wakeword
+pymicro-wakeword==2.5.0 \
+    --hash=sha256:2355c1cb3fbfe4a59f4eccd6f17bd3eca260f7c6fb701fe3c44ccc98d49dd19e \
+    --hash=sha256:3869f536402b1254e3be3549d3a462ecd6ed21ce2c3e77ec8eb501c3c700417c \
+    --hash=sha256:6c75b77c936efd19b8c35a094cb7e3fdbd4ebcd0f63635a0851ce591990829f2 \
+    --hash=sha256:950336248aefc9e7d0334f1894f878a3e319e2850b165d592c69b48bc706c823 \
+    --hash=sha256:af92b862fe0488fba7422b9819b1a8c88781b2f90fb3e4b7f1dcfd1d90a6b69b \
+    --hash=sha256:e518dd2256436e57134cabb91b83a0b434aff6c34fdbada2841ff4b1f0f20ff5
+    # via mship-engine
 pyopenssl==26.0.0 \
     --hash=sha256:df94d28498848b98cc1c0ffb8ef1e71e40210d3b0a8064c9d29571ed2904bf81 \
     --hash=sha256:f293934e52936f2e3413b89c6ce36df66a0b34ae1ea3a053b8c5020ff2f513fc

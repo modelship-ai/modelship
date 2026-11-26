@@ -25,6 +25,8 @@ def provisioned(tmp_path, monkeypatch):
         patch.object(cli.llama_cpp, "locate", return_value="/builds/llama-server.sh"),
         patch.object(cli.sd_cpp, "provision", return_value="/builds/sd-server.sh"),
         patch.object(cli.sd_cpp, "locate", return_value="/builds/sd-server.sh"),
+        patch.object(cli.tflite, "provision", return_value=None),
+        patch.object(cli.tflite, "locate", return_value=None),
         patch("os.execve") as execve,
     ):
         yield execve
@@ -110,6 +112,13 @@ class TestEngineEnvironment:
         cli.main(["deploy", "--cpu"])
         env = provisioned.call_args[0][2]
         assert env["MSHIP_SD_SERVER_BIN"] == "/builds/sd-server.sh"
+
+    def test_the_tflite_library_is_set_before_exec_where_there_is_one(self, provisioned):
+        cli.main(["deploy", "--cpu"])
+        assert "MSHIP_TFLITE_C_LIB" not in provisioned.call_args[0][2]
+        cli.tflite.locate.return_value = "/builds/libtensorflowlite_c.dylib"
+        cli.main(["deploy", "--metal"])
+        assert provisioned.call_args[0][2]["MSHIP_TFLITE_C_LIB"] == "/builds/libtensorflowlite_c.dylib"
 
     def test_thin_advertises_no_capacity(self, provisioned):
         cli.main(["deploy", "--thin"])

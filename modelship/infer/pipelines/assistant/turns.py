@@ -1,6 +1,7 @@
 """Server VAD for a realtime session: the client's audio is fed to a speech stream as it arrives, and each turn is
 found on the session's timeline. A turn starts at the first speech heard, less the prefix padding, and ends once the
-silence after it lasts `silence_duration_ms`."""
+silence after it lasts `silence_duration_ms`. With wake words, a turn starts where a wake word ends, or at speech in
+the window the session gives, and none elsewhere."""
 
 import asyncio
 import contextlib
@@ -21,23 +22,35 @@ RETRY_STEP_MS = 300
 MAX_TURN_MS = 30_000
 # the audio before the end fed that holds speech too short to open a segment yet
 _LEAD_MS = 1000
+# speech that ends this soon after a wake word is the wake word's own
+_WAKE_TAIL_MS = 250
 
 
 class SpeechFinder(Protocol):
-    """Finds the speech in one stream of the session's audio, as `SpeechStream` does."""
+    """Finds the speech in one stream of the session's audio, as `SpeechStream` does, and the wake words in it."""
 
     rate: int
+    # where a wake word ended in the last feed's audio, at each step it was heard
+    woke: list[float]
 
-    def feed(self, pcm16: bytes, threshold: float, silence_duration_ms: int) -> list[SpeechSegment]: ...
+    def feed(
+        self, pcm16: bytes, threshold: float, silence_duration_ms: int, wake_pcm16: bytes | None = None
+    ) -> list[SpeechSegment]: ...
 
 
 # opens a finder on 16-bit PCM at a rate, its timeline starting at a ms
 OpenFinder = Callable[[int, float], SpeechFinder]
-Started = Callable[[str, int], Awaitable[None]]
-Ended = Callable[[str, int, int], Awaitable[None]]
+# the same, hearing wake words too when told so
+NewFinder = Callable[[int, float, bool], SpeechFinder]
+# a turn's item id, where it starts, and whether a wake word opened it
+Started = Callable[[str, int, bool], Awaitable[None]]
+# a turn's item id, start and end, and whether it holds speech: one a wake word opened may hold none
+Ended = Callable[[str, int, int, bool], Awaitable[None]]
 Failed = Callable[[], Awaitable[None]]
 # how long speech must last, in ms, before it starts a turn now
 MinSpeech = Callable[[], int]
+# with wake words: where speech may start a turn now, from and until a ms on the timeline; None anywhere
+Window = Callable[[], tuple[float, float] | None]
 
 
 class _StaleFeedError(Exception):
@@ -49,7 +62,9 @@ class TurnDetector:
     each turn's item id and where it starts; *ended* gets its item id, start and end, and takes its audio out of the
     buffer; *failed* hears of each stretch of feeds that fail, during which the buffer keeps all its
     audio. Speech shorter than *min_speech* says starts no turn. A turn without a pause is cut at *max_turn_ms*, or
-    never with None. *progressed* hears of each feed done, once `heard_ms` moved."""
+    never with None. *progressed* hears of each feed done, once `heard_ms` moved. With *listen_ms*, a wake word the
+    finder hears opens a turn where it ends, which ends without speech when none follows within *listen_ms*; other
+    speech starts a turn only within *window*."""
 
     def __init__(
         self,
@@ -62,6 +77,8 @@ class TurnDetector:
         min_speech: MinSpeech = lambda: 0,
         max_turn_ms: int | None = MAX_TURN_MS,
         progressed: Callable[[], None] = lambda: None,
+        listen_ms: float | None = None,
+        window: Window = lambda: None,
     ):
         self.buffer = buffer
         self.settings = settings
@@ -72,6 +89,11 @@ class TurnDetector:
         self._min_speech = min_speech
         self._max_turn_ms = math.inf if max_turn_ms is None else max_turn_ms
         self._progressed = progressed
+        self._listen_ms = listen_ms
+        self._window = window
+        # the turn a wake word opened, until speech after the wake word is heard: where that speech has to reach,
+        # and where the turn ends without it
+        self._waiting: tuple[float, float] | None = None
         # the finder the buffer's audio is fed to; None until the next feed opens one
         self._finder: SpeechFinder | None = None
         # the end of the audio fed so far
@@ -101,6 +123,7 @@ class TurnDetector:
         """Forgets the turn in progress, as the buffer was committed or cleared; its item id, or None."""
         found = self.turn[0] if self.turn is not None else None
         self.turn = None
+        self._waiting = None
         self._epoch += 1
         self._finder = None
         self._fed_ms = self._tried_ms = self._floor_ms = self.heard_ms = self.buffer.end_ms
@@ -142,9 +165,11 @@ class TurnDetector:
         finder = self._finder
         if finder is None or finder.rate != rate or start != self._fed_ms:
             finder = self._finder = self._open_finder(rate, start)
+        # wake words are heard in the audio as the client sent it, where the buffer holds silence in its place
+        sent = buffer.sent_pcm(start, end) if buffer.keeps_sent else None
         try:
             found = await asyncio.to_thread(
-                finder.feed, buffer.pcm(start, end), settings.threshold, settings.silence_duration_ms
+                finder.feed, buffer.pcm(start, end), settings.threshold, settings.silence_duration_ms, sent
             )
         except Exception:
             logger.exception("Detecting speech failed")
@@ -161,14 +186,42 @@ class TurnDetector:
             return
         self._failing = False
         self._fed_ms = self._tried_ms = end
+        if finder.woke and self.turn is None and self._listen_ms is not None:
+            await self._wake(finder.woke[0], self._listen_ms)
         await self._apply(found, end, settings, min_speech)
         if epoch == self._epoch:
             self.heard_ms = end
             self._progressed()
         if self.turn is None:
-            # keep the open segment and what a turn's prefix padding needs
-            held = min([end - _LEAD_MS, *(segment.start_ms for segment in found if segment.end_ms is None)])
+            # keep the open segment, from where it may start a turn, and what a turn's prefix padding needs
+            low = self._low()
+            opened = [max(segment.start_ms, low) for segment in found if segment.end_ms is None]
+            held = min([end - _LEAD_MS, *opened])
             buffer.drop_before(held - settings.prefix_padding_ms)
+
+    def _low(self) -> float:
+        """Where speech may start a turn from now: nowhere while the window is shut."""
+        window = self._window()
+        return -math.inf if window is None else window[0]
+
+    async def _wake(self, at_ms: float, listen_ms: float) -> None:
+        """Opens a turn where a wake word ends, at *at_ms*, which waits *listen_ms* for speech."""
+        if at_ms <= self._floor_ms:
+            # in a turn that ended already
+            return
+        at = max(at_ms, self.buffer.start_ms)
+        self._waiting = (at + _WAKE_TAIL_MS, at + listen_ms)
+        await self._start(at, woken=True)
+
+    def _opening(self, begin: float, speech_end: float, settings: ServerVad, min_speech: int) -> float | None:
+        """Where speech from *begin* to *speech_end* starts a turn now, or None: speech that starts outside the
+        window or lasts shorter than *min_speech* in it starts none."""
+        window = self._window()
+        low, high = window if window is not None else (-math.inf, math.inf)
+        first = max(begin, low)
+        if speech_end <= first or speech_end - first < min_speech or first > high:
+            return None
+        return max(self._floor_ms, self.buffer.start_ms, begin - settings.prefix_padding_ms, low)
 
     def _check_current(self) -> None:
         """Stops the feed when the buffer was committed or cleared while it waited on the session."""
@@ -182,25 +235,41 @@ class TurnDetector:
             if stop is not None and stop <= self._floor_ms:
                 # a turn that ended already holds it
                 continue
-            if self.turn is None and speech_end - begin < min_speech:
-                if stop is None:
-                    # it may last long enough by the next feed
-                    break
-                # too short to start a turn, now or on a later feed
-                self._floor_ms = stop
-                continue
-            heard = True
+            if self._waiting is not None:
+                if speech_end <= self._waiting[0]:
+                    # the wake word's own speech
+                    continue
+                self._waiting = None
+            opening = None
             if self.turn is None:
-                await self._start(max(self._floor_ms, self.buffer.start_ms, begin - settings.prefix_padding_ms))
+                opening = self._opening(begin, speech_end, settings, min_speech)
+                if opening is None:
+                    if stop is None:
+                        # it may last long enough, or the window open, by the next feed
+                        break
+                    # it starts no turn, now or on a later feed
+                    self._floor_ms = stop
+                    continue
+            heard = True
+            if opening is not None:
+                await self._start(opening)
             if stop is None:
                 self._speech_ms = speech_end
                 break
             self._speech_ms = stop
             await self._close(stop, stop + settings.silence_duration_ms)
         # the turn's speech ended before this feed's audio
-        ended_before = self.turn is not None and not heard and end - self._speech_ms >= settings.silence_duration_ms
+        ended_before = (
+            self.turn is not None
+            and self._waiting is None
+            and not heard
+            and end - self._speech_ms >= settings.silence_duration_ms
+        )
         if ended_before:
             await self._close(self._speech_ms, self._speech_ms + settings.silence_duration_ms)
+        if self.turn is not None and self._waiting is not None and min(end, self.buffer.end_ms) >= self._waiting[1]:
+            # no speech followed the wake word
+            await self._end(self._waiting[1])
         longest = self._max_turn_ms
         if self.turn is not None and min(end, self.buffer.end_ms) - self.turn[1] >= longest:
             await self._end(self.turn[1] + longest)
@@ -216,18 +285,20 @@ class TurnDetector:
             await self._start(cut)
         await self._end(min(at_ms, self.turn[1] + longest))
 
-    async def _start(self, at_ms: float) -> None:
+    async def _start(self, at_ms: float, woken: bool = False) -> None:
         self._check_current()
         self.turn = (item_id(), at_ms)
         self._speech_ms = at_ms
-        await self._started(self.turn[0], round(at_ms))
+        await self._started(self.turn[0], round(at_ms), woken)
 
     async def _end(self, at_ms: float) -> None:
         self._check_current()
         assert self.turn is not None
         turn_id, start = self.turn
+        spoken = self._waiting is None
+        self._waiting = None
         # the session takes the turn's audio before it awaits anything
-        await self._ended(turn_id, round(start), round(at_ms))
+        await self._ended(turn_id, round(start), round(at_ms), spoken)
         if self._epoch == self._feed_epoch:
             self.turn = None
             self._floor_ms = at_ms

@@ -42,7 +42,7 @@ from modelship.openai.protocol.responses.schemas import ResponsesRequest
 from modelship.openai.protocol.responses.streaming import ResponsesStreamTranslator
 from modelship.openai.realtime_relay import serve_relay
 from modelship.utils.config_schema import AssistantPipelineConfig, parse_pipeline
-from tests.test_realtime_turns import FakeVad
+from tests.test_realtime_turns import FakeVad, wake_word
 
 ASSISTANT = {"name": "assistant", "stt": "whisper", "llm": "qwen", "session_defaults": {"instructions": "Be brief."}}
 SCRIBE = {"name": "scribe", "stt": "whisper"}
@@ -1947,6 +1947,162 @@ class TestBargeIn:
             events = _until(ws, "conversation.item.done")
         assert "input_audio_buffer.speech_started" in [event["type"] for event in events]
         assert [e["transcript"] for e in events if e["type"].endswith("transcription.completed")] == ["Stop."]
+
+
+def _wake(pipeline: dict, listen_s: float = 10, follow_up: dict | None = None) -> dict:
+    wake = {"words": ["hey_jarvis"], "listen_s": listen_s, **({"follow_up": follow_up} if follow_up else {})}
+    return {**pipeline, "wake": wake}
+
+
+def _kinds(events: list[dict]) -> list[str]:
+    return [event["type"] for event in events]
+
+
+class TestWakeWords:
+    def _session(self, stt: _Stt, llm: _Llm | None = None, pipeline: dict = ASSISTANT, tts: _Tts | None = None):
+        client = _client(_route(pipeline), llm=llm, transcriber=stt, speaker=tts)
+        return client.websocket_connect(f"/v1/realtime?model={pipeline['name']}")
+
+    def _settle(self, ws) -> list[dict]:
+        """The events the session sends once it has handled everything sent so far."""
+        time.sleep(0.1)
+        ws.send_json({"type": "session.update", "session": {}})
+        return _until(ws, "session.updated")
+
+    def test_speech_without_the_wake_word_starts_no_turn(self):
+        stt, llm = _Stt("Lights on."), _Llm(_answer("Done."))
+        with self._session(stt, llm, pipeline=_wake(ASSISTANT)) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            events = self._settle(ws)
+        assert "input_audio_buffer.speech_started" not in _kinds(events)
+        assert stt.requests == [] and llm.requests == []
+
+    def test_the_wake_word_opens_the_turn_where_it_ends_and_the_speech_after_it_is_answered(self):
+        stt, llm = _Stt("Lights on."), _Llm(_answer("Done."))
+        with self._session(stt, llm, pipeline=_wake(ASSISTANT)) as ws:
+            _open(ws)
+            _stream(ws, _quiet(0.5), wake_word(0.6), _quiet(0.2), _tone(1), _quiet(1))
+            events = _until(ws, "response.done")
+        started, stopped = events[:2]
+        assert _kinds([started, stopped]) == ["input_audio_buffer.speech_started", "input_audio_buffer.speech_stopped"]
+        # the wake word isn't in the turn
+        assert (started["audio_start_ms"], stopped["audio_end_ms"]) == (1100, 2800)
+        assert _wav(stt.audio[0]) == (24000, round(1.7 * 24000))
+        assert events[-1]["response"]["status"] == "completed"
+
+    def test_a_wake_word_nobody_follows_commits_an_empty_turn_untranscribed_and_unanswered(self):
+        stt, llm = _Stt("Lights on."), _Llm(_answer("Done."))
+        with self._session(stt, llm, pipeline=_wake(ASSISTANT, listen_s=1)) as ws:
+            _open(ws)
+            _stream(ws, _quiet(0.5), wake_word(0.6), _quiet(2))
+            events = _until(ws, "conversation.item.done") + self._settle(ws)
+        assert _kinds(events)[:6] == [
+            "input_audio_buffer.speech_started",
+            "input_audio_buffer.speech_stopped",
+            "input_audio_buffer.committed",
+            "conversation.item.added",
+            "conversation.item.input_audio_transcription.completed",
+            "conversation.item.done",
+        ]
+        assert (events[0]["audio_start_ms"], events[1]["audio_end_ms"]) == (1100, 2100)
+        assert events[4]["transcript"] == ""
+        assert "response.created" not in _kinds(events)
+        assert stt.requests == [] and llm.requests == []
+
+    def test_one_wake_word_starts_one_turn(self):
+        stt = _Stt("Lights on.", "And the oven.")
+        with self._session(stt, _Llm(_answer("Done.")), pipeline=_wake(ASSISTANT)) as ws:
+            _open(ws)
+            _stream(ws, _quiet(0.5), wake_word(0.6), _quiet(0.2), _tone(1), _quiet(1))
+            _until(ws, "response.done")
+            _stream(ws, _tone(1), _quiet(1))
+            events = self._settle(ws)
+        assert "input_audio_buffer.speech_started" not in _kinds(events)
+        assert len(stt.requests) == 1
+
+    @pytest.mark.parametrize(
+        ("mode", "answer", "follows"),
+        [
+            ("question", "Which room?", True),
+            ("question", "Done.", False),
+            ("always", "Done.", True),
+            ("off", "Which room?", False),
+        ],
+    )
+    def test_after_an_answer_the_follow_up_says_whether_the_user_talks_on_without_the_wake_word(
+        self, mode, answer, follows
+    ):
+        stt = _Stt("Lights on.", "The kitchen.")
+        llm = _Llm(_answer(answer), _answer("Ok."))
+        pipeline = _wake(ASSISTANT, follow_up={"mode": mode, "listen_s": 5})
+        with self._session(stt, llm, pipeline=pipeline) as ws:
+            _open(ws)
+            _stream(ws, _quiet(0.5), wake_word(0.6), _quiet(0.2), _tone(1), _quiet(1))
+            _until(ws, "response.done")
+            _stream(ws, _quiet(0.5), _tone(1), _quiet(1))
+            events = self._settle(ws)
+        assert ("input_audio_buffer.speech_started" in _kinds(events)) is follows
+        assert len(stt.requests) == (2 if follows else 1)
+
+    def test_the_follow_up_window_closes_after_its_listen_s(self):
+        stt = _Stt("Lights on.", "The kitchen.")
+        pipeline = _wake(ASSISTANT, follow_up={"mode": "always", "listen_s": 0.5})
+        with self._session(stt, _Llm(_answer("Done."), _answer("Ok.")), pipeline=pipeline) as ws:
+            _open(ws)
+            _stream(ws, _quiet(0.5), wake_word(0.6), _quiet(0.2), _tone(1), _quiet(1))
+            _until(ws, "response.done")
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            events = self._settle(ws)
+        assert "input_audio_buffer.speech_started" not in _kinds(events)
+
+    def test_while_an_answer_plays_only_the_wake_word_interrupts_it(self):
+        llm = _Llm(_answer(LONG_ANSWER, finish=None), _answer("Ok."))
+        stt = _Stt("Stop.")
+        with self._session(stt, llm, pipeline=_wake(SPEAKER, listen_s=1), tts=_Tts()) as ws:
+            _open(ws)
+            _say(ws, "Read me the news.")
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.output_audio.delta")
+            # talking over the answer without the wake word
+            _stream(ws, _tone(1), _quiet(1))
+            talked = self._settle(ws)
+            _stream(ws, wake_word(0.6), _quiet(2))
+            woke = _until(ws, "conversation.item.done") + self._settle(ws)
+        assert "input_audio_buffer.speech_started" not in _kinds(talked)
+        done = next(event for event in woke if event["type"] == "response.done")["response"]
+        assert (done["status"], done["status_details"]["reason"]) == ("cancelled", "turn_detected")
+        assert _kinds(woke).index("input_audio_buffer.speech_started") < _kinds(woke).index("response.done")
+        # the answer a wake word stopped isn't given again
+        assert len(llm.requests) == 1 and stt.requests == []
+
+    def test_in_half_duplex_the_wake_word_is_heard_while_the_answer_plays(self):
+        llm = _Llm(_answer(LONG_ANSWER, finish=None), _answer("Ok."))
+        stt = _Stt("Stop.")
+        with self._session(stt, llm, pipeline=_wake(HALF), tts=_Tts()) as ws:
+            _open(ws)
+            _say(ws, "Read me the news.")
+            ws.send_json({"type": "response.create"})
+            _until(ws, "response.output_audio.delta")
+            _stream(ws, wake_word(0.6), _quiet(0.2), _tone(1), _quiet(1))
+            events = _until(ws, "conversation.item.input_audio_transcription.completed")
+        assert "input_audio_buffer.speech_started" in _kinds(events)
+        assert events[-1]["transcript"] == "Stop."
+
+    def test_a_transcription_session_isnt_woken(self):
+        with self._session(_Stt("Note one."), pipeline=_wake(SCRIBE)) as ws:
+            _open(ws)
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            events = _until(ws, "conversation.item.done")
+        assert [e["transcript"] for e in events if e["type"].endswith("transcription.completed")] == ["Note one."]
+
+    def test_a_turn_the_client_commits_needs_no_wake_word(self):
+        stt = _Stt("Lights on.")
+        with self._session(stt, _Llm(_answer("Done.")), pipeline=_wake(MANUAL)) as ws:
+            _open(ws)
+            _append(ws, _tone(1))
+            events = _commit(ws)
+        assert [e["transcript"] for e in events if e["type"].endswith("transcription.completed")] == ["Lights on."]
 
 
 TRAIN = "The train leaves at seven forty. You don't need to book a seat, but it's cheaper if you do."

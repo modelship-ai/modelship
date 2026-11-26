@@ -146,10 +146,37 @@ class TestAssistantPipeline:
         await pipeline.start()
         finder = pipeline._finder()
         assert finder is not None
-        first, second = finder(24000, 0.0), finder(8000, 500.0)
+        first, second = finder(24000, 0.0, False), finder(8000, 500.0, False)
         assert loaded == ["/models/silero.onnx"]
         assert first._model is second._model
         assert (first.rate, second.rate) == (24000, 8000)
+        # a pipeline without wake words hears none
+        assert first._wake is None
+
+    @pytest.mark.asyncio
+    async def test_each_speech_finder_of_a_pipeline_with_wake_words_has_its_own_detector(self, monkeypatch):
+        async def download(source, name) -> str:
+            return "/models/silero.onnx"
+
+        class Words:
+            def __init__(self, words) -> None:
+                self.words = words
+
+            def stream(self, start_ms: float) -> object:
+                return ("stream", start_ms)
+
+        monkeypatch.setattr(downloads, "locked_download", download)
+        monkeypatch.setattr(assistant_pipeline, "SileroModel", lambda path: object())
+        monkeypatch.setattr(assistant_pipeline, "WakeWords", Words)
+        config = {"stt": "parakeet", "wake": {"words": ["hey_jarvis"]}}
+        voice = AssistantPipelineConfig(name="voice", type="assistant", assistant_config=config)
+        pipeline = AssistantPipeline(voice, _Routes())  # type: ignore[arg-type]
+        await pipeline.start()
+        finder = pipeline._finder()
+        assert finder is not None
+        assert finder(24000, 500.0, True)._wake == ("stream", 500.0)
+        # a transcription session hears no wake words
+        assert finder(24000, 500.0, False)._wake is None
 
     def test_an_assistant_config_loads_the_assistant(self):
         assert isinstance(load_pipeline(CHAT, MagicMock()), AssistantPipeline)

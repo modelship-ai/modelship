@@ -231,6 +231,7 @@ An `assistant` runs an OpenAI Realtime session over speech to text, a chat model
 | `session_defaults` | object | Defaults for OpenAI's Realtime session fields; a client's `session.update` overrides any of them |
 | `duplex` | string | `full` (default): the user can talk over an answer, for devices that cancel their own echo. `half`: the audio a session gets while its answer plays is dropped, so a speaker's echo is never heard as the user |
 | `min_interruption_ms` | int | While an answer plays, how long speech lasts before it starts a turn and cuts the answer off. Default `500`, at most `5000` |
+| `wake` | object | Wake words: a server VAD turn starts only after one. Unset, every turn does. Needs an `stt`. See below |
 
 An assistant needs at least one of `stt` and `llm`. `session_defaults` holds `instructions` (the system prompt), `output_modalities` (`[audio]`, the default for a pipeline with `tts`, or `[text]`, the default without one; `[audio]` needs a `tts`), `max_output_tokens` (an integer or `inf`), `reasoning` (`{effort: low}`, from `minimal` to `xhigh`) and `audio.input.turn_detection` (`server_vad` with its settings, or `null` for turns the client commits; it needs an `stt`); more of OpenAI's session fields arrive as the pipeline learns to use them.
 
@@ -264,7 +265,34 @@ Server VAD finds each turn in the audio the client streams:
 - `semantic_vad` and `idle_timeout_ms` are refused as not supported yet.
 - When speech detection fails, the session sends one `server_error` error and keeps the audio, up to the buffer's cap; it tries again with each 300 ms of new audio, and once it works, the audio it missed is detected too. `input_audio_buffer.commit` still works meanwhile.
 - With `duplex: half`, the audio appended while the answer plays is replaced by silence, for server VAD and commits alike, so the user can't talk over the answer: cancel it with `response.cancel` instead.
-- `scripts/realtime_mic.py` talks to a pipeline from a terminal: `uv run scripts/realtime_mic.py --pipeline <name>` streams the microphone and plays the answers. Talking over an answer stops it, and the script truncates it to what was played. It cancels no echo, so use headphones, or a pipeline with `duplex: half`.
+- `scripts/realtime_mic.py` talks to a pipeline from a terminal: `uv run scripts/realtime_mic.py --pipeline <name>` streams the microphone and plays the answers, and prints what it hears as it streams in. Talking over an answer stops it, and the script truncates it to what was played. It cancels no echo, so use headphones, or a pipeline with `duplex: half`. `--log FILE` writes every server event, without its audio, as a JSON line.
+
+With `wake`, a realtime session's server VAD turns start only after a wake word, for devices that stream their microphone all the time:
+
+```yaml
+    assistant_config:
+      stt: "parakeet"
+      llm: "qwen"
+      tts: "kokoro"
+      wake:
+        words: ["okay_nabu", {model: "hey_jarvis", cutoff: 0.9}]
+        listen_s: 10
+        follow_up: {mode: "question", listen_s: 8}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `words` | list | The words it wakes on: a built-in word (`okay_nabu`, `hey_jarvis`, `hey_mycroft`, `alexa`), or the path of a word's microWakeWord v2 manifest (`.json`, its `.tflite` beside it, on every node the pipeline runs on). `{model, cutoff}` sets the score a word fires above; unset, its manifest's |
+| `listen_s` | float | How long after the wake word the user has to start talking. Default `10` |
+| `follow_up.mode` | string | After an answer, whether the user talks again without the wake word: `off` (default), `question` (when the answer ends in `?`, `;` or `？`, as Home Assistant's `continue_conversation`), or `always` |
+| `follow_up.listen_s` | float | How long after the answer ends a turn may start without the wake word. Default `10` |
+
+- The pipeline's replica runs [microWakeWord](https://github.com/OHF-Voice/micro-wake-word) through `pymicro-wakeword`, on the same 16 kHz audio as Silero, one detector per session. The built-in words are the ones Home Assistant's Voice PE runs, Apache-2.0. A custom word trained with microWakeWord's notebook carries its training data's terms: that data includes sets licensed for non-commercial use only. A word that doesn't load fails the pipeline's deploy.
+- A wake word opens a turn where it ends: the session sends `speech_started` with that `audio_start_ms` at once, so a client playing an answer stops, and the wake word itself isn't transcribed. The speech that follows within `listen_s` holds the turn, which ends at its pause as any other. When nobody speaks, the turn ends after `listen_s` with `speech_stopped`, is committed with an empty transcript without calling the `stt`, and gets no answer.
+- A wake word opens one turn. A turn starts without one only in a follow-up's window, which opens when an answer finishes playing, as `follow_up` says, and closes once a turn starts or `listen_s` passes. A wake word heard during a turn is part of it.
+- While an answer plays, only the wake word cuts it off, as with `interrupt_response`, and the answer isn't given again; `min_interruption_ms` doesn't apply. With `follow_up.mode: always`, the user can also talk over it as without wake words. In `duplex: half`, the wake word is heard in the audio the client sent while VAD hears silence in its place.
+- Only server VAD turns of a realtime session are gated: turns the client commits, and a transcription session's turns, need no wake word. Speech heard asleep is never transcribed, and the buffer doesn't keep it.
+- On macOS, `mship bootstrap` supplies the TFLite library `pymicro-wakeword` runs on, since the package installed below macOS 15 ships only Linux's.
 
 A session on a pipeline with `tts` speaks its answers:
 

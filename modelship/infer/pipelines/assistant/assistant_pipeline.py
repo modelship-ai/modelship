@@ -11,7 +11,7 @@ from modelship.infer.infer_config import get_disconnect_registry
 from modelship.infer.pipelines.assistant.calls import PipelineCalls
 from modelship.infer.pipelines.assistant.model_calls import ModelCalls
 from modelship.infer.pipelines.assistant.session import refuse, serve_session
-from modelship.infer.pipelines.assistant.turns import OpenFinder
+from modelship.infer.pipelines.assistant.turns import NewFinder
 from modelship.infer.pipelines.relay import (
     CLOSE_FAILED,
     MAX_QUEUED_BYTES,
@@ -25,6 +25,7 @@ from modelship.logging import get_logger
 from modelship.openai.protocol.realtime import RealtimeError
 from modelship.utils.config_schema import AssistantPipelineConfig
 from modelship.utils.vad import SileroModel, SpeechStream, silero_vad_source
+from modelship.utils.wake import WakeWords
 
 logger = get_logger("realtime")
 
@@ -118,22 +119,33 @@ class AssistantPipeline(BasePipeline):
         self.routes = routes
         # Silero, shared by every session's server VAD; None without an stt
         self._silero: SileroModel | None = None
+        # the wake words, checked once; None without
+        self._wake: WakeWords | None = None
         # session key -> its channel
         self._channels: dict[str, RelayChannel] = {}
 
     async def start(self) -> None:
-        if self.config.assistant_config.stt is not None:
+        assistant = self.config.assistant_config
+        if assistant.stt is not None:
             from modelship.utils.downloads import locked_download
 
             path = await locked_download(silero_vad_source(), self.config.name)
             self._silero = await asyncio.to_thread(SileroModel, path)
+        if assistant.wake is not None:
+            self._wake = await asyncio.to_thread(WakeWords, assistant.wake.words)
 
-    def _finder(self) -> OpenFinder | None:
-        """How a session's server VAD opens its speech finder; None without speech detection."""
-        model = self._silero
+    def _finder(self) -> NewFinder | None:
+        """How a session's server VAD opens its speech finder, which hears the wake words too when asked; None
+        without speech detection."""
+        model, wake = self._silero, self._wake
         if model is None:
             return None
-        return lambda rate, start_ms: SpeechStream(model, rate, start_ms)
+
+        def open_finder(rate: int, start_ms: float, woken: bool) -> SpeechStream:
+            words = wake.stream(start_ms) if woken and wake is not None else None
+            return SpeechStream(model, rate, start_ms, words)
+
+        return open_finder
 
     async def realtime(self, opening: RealtimeOpening) -> AsyncIterator[RealtimeFrame]:
         channel = RelayChannel()
