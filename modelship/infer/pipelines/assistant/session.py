@@ -27,6 +27,7 @@ from modelship.infer.pipelines.assistant.input.transcripts import (
     TranscriptionQueue,
     TurnAudio,
 )
+from modelship.infer.pipelines.assistant.input.turn_end import TurnClassifier, TurnClassifierLoader, turn_end
 from modelship.infer.pipelines.assistant.input.turn_input import RecordedInput, StreamedInput, TurnInput
 from modelship.infer.pipelines.assistant.input.turns import MAX_TURN_MS, TurnDetector, VadStream, VadStreamFactory
 from modelship.infer.pipelines.assistant.items import ConversationItems
@@ -34,7 +35,12 @@ from modelship.infer.pipelines.assistant.output.playback import Playback
 from modelship.infer.pipelines.assistant.output.responder import Responder
 from modelship.infer.pipelines.assistant.output.response import ActiveResponse
 from modelship.infer.pipelines.assistant.output.speech import Spoken
-from modelship.infer.pipelines.assistant.session_config import apply_update, check_update, new_session
+from modelship.infer.pipelines.assistant.session_config import (
+    apply_update,
+    asks_semantic_vad,
+    check_update,
+    new_session,
+)
 from modelship.infer.pipelines.assistant.tasks import BackgroundTasks
 from modelship.logging import get_logger
 from modelship.openai.protocol import SttCapabilities
@@ -47,9 +53,10 @@ from modelship.openai.protocol.realtime import (
     RealtimeError,
     ResponseCancel,
     ResponseCreate,
-    ServerVad,
+    SemanticVad,
     SessionUpdate,
     UserMessage,
+    VoiceTurnDetection,
     error_event,
     server_event,
     session_event,
@@ -135,10 +142,15 @@ async def refuse(channel: Channel, error: RealtimeError) -> None:
 
 
 async def serve_session(
-    channel: Channel, config: AssistantPipelineConfig, calls: PipelineCalls, vad: VadStreamFactory | None = None
+    channel: Channel,
+    config: AssistantPipelineConfig,
+    calls: PipelineCalls,
+    vad: VadStreamFactory | None = None,
+    classifiers: TurnClassifierLoader | None = None,
 ) -> None:
-    """Runs one session on *config* until the client leaves; *calls* is how it calls the pipeline's models, and
-    *vad* opens what server VAD runs to find speech and wake words, None without speech detection."""
+    """Runs one session on *config* until the client leaves; *calls* is how it calls the pipeline's models, *vad*
+    opens what server turn detection runs to find speech and wake words, and *classifiers* builds what tells semantic
+    VAD whether a turn is finished; each None without speech detection."""
     refusal = _refusal(config, calls)
     if refusal is not None:
         await refuse(channel, refusal)
@@ -147,7 +159,12 @@ async def serve_session(
     if isinstance(stt, RealtimeError):
         await refuse(channel, stt)
         return
-    await Session(channel, config, calls, stt, vad).run()
+    session = Session(channel, config, calls, stt, vad, classifiers)
+    detection = session.state.audio.input.turn_detection
+    if isinstance(detection, SemanticVad) and (error := await session.load_classifier()) is not None:
+        await refuse(channel, error)
+        return
+    await session.run()
 
 
 class Session:
@@ -160,12 +177,16 @@ class Session:
         calls: PipelineCalls,
         stt: SttCapabilities | None,
         vad: VadStreamFactory | None = None,
+        classifiers: TurnClassifierLoader | None = None,
     ):
         self.channel = channel
         self.config = config
         # the pipeline's assistant settings
         self.assistant = config.assistant_config
         self._vad = vad
+        self._classifiers = classifiers
+        # built when the session first asks for semantic VAD
+        self._classifier: TurnClassifier | None = None
         self.state = new_session(config, MAX_SESSION_S)
         self.conversation = Conversation()
         self.buffer = InputAudioBuffer()
@@ -292,6 +313,8 @@ class Session:
         update = event.session
         if (error := check_update(self.state, update, self.config, self.buffer.seconds > 0)) is not None:
             return error
+        if asks_semantic_vad(update) and (error := await self.load_classifier()) is not None:
+            return error
         if apply_update(self.state, update):
             await self._detect_turns()
         if ignored := sorted(update.model_extra or {}):
@@ -399,10 +422,29 @@ class Session:
 
     # server VAD
 
+    async def load_classifier(self) -> RealtimeError | None:
+        """Gets the turn classifier semantic VAD needs, built once per replica; the error when it can't be built."""
+        if self._classifier is not None:
+            return None
+        try:
+            if self._classifiers is None:
+                raise RuntimeError(f"pipeline {self.config.name!r} has no turn classifier")
+            self._classifier = await self._classifiers.load()
+        except Exception:
+            logger.exception("Loading the turn classifier failed")
+            return RealtimeError(
+                message=f"Pipeline {self.config.name!r} can't run semantic_vad now: its turn classifier failed to"
+                " load. Use server_vad, or try again.",
+                type="server_error",
+                code="turn_classifier_unavailable",
+                param="session.audio.input.turn_detection",
+            )
+        return None
+
     async def _detect_turns(self) -> None:
         """Starts, retunes or stops server VAD, as the session's turn detection says."""
         settings = self.state.audio.input.turn_detection
-        if not isinstance(settings, ServerVad):
+        if not isinstance(settings, VoiceTurnDetection):
             if self.turns is not None:
                 # not cancelled: a feed in flight stops at its next step, and a commit it began completes
                 self.turns.reset()
@@ -412,14 +454,15 @@ class Session:
                 # the open turn's stream; the buffer streams from its start with the next append
                 self.input.drop()
             return
+        end = turn_end(settings, self._classifier)
         if self.turns is not None:
-            self.turns.settings = settings
+            self.turns.end = end
             return
         # the buffer's stream, which the client was to commit
         self.input.drop()
         self.turns = TurnDetector(
             self.buffer,
-            settings,
+            end,
             self._open_vad,
             self,
             self.gate,
@@ -435,7 +478,7 @@ class Session:
     def _interrupts(self) -> bool:
         """Whether a turn server VAD finds cuts the answer off."""
         settings = self.state.audio.input.turn_detection
-        return isinstance(settings, ServerVad) and settings.interrupt_response
+        return isinstance(settings, VoiceTurnDetection) and settings.interrupt_response
 
     # TurnEvents: what server VAD tells the session
 
@@ -469,7 +512,9 @@ class Session:
             audio = SilentTurn((audio_end_ms - audio_start_ms) / 1000)
         await self.send(server_event("input_audio_buffer.speech_stopped", audio_end_ms=audio_end_ms, item_id=turn))
         settings = self.state.audio.input.turn_detection
-        answers = isinstance(settings, ServerVad) and settings.create_response and self.state.type == "realtime"
+        answers = (
+            isinstance(settings, VoiceTurnDetection) and settings.create_response and self.state.type == "realtime"
+        )
         # a turn that ends while the model answers gets no answer of its own; one it cut off doesn't count
         responding = self.active is not None and not self.active.done() and not self.active.cancelled
         item, transcribed = await self._commit(audio, turn)
@@ -484,6 +529,18 @@ class Session:
                     " Its audio stays buffered, and input_audio_buffer.commit still works.",
                     type="server_error",
                     code="server_error",
+                )
+            )
+        )
+
+    async def turn_end_failed(self) -> None:
+        await self.send(
+            error_event(
+                RealtimeError(
+                    message=f"Pipeline {self.config.name!r} couldn't tell whether the turn ended: its turn classifier"
+                    " failed. The turn ends after the longest wait its eagerness allows, unless speech follows.",
+                    type="server_error",
+                    code="turn_classifier_failed",
                 )
             )
         )

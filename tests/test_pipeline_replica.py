@@ -20,7 +20,7 @@ from modelship.infer.pipelines.assistant.assistant_pipeline import AssistantPipe
 from modelship.infer.pipelines.relay import RealtimeClosed, RealtimeOpened, RealtimeOpening
 from modelship.infer.pipelines.routes import ModelRoutes
 from modelship.openai.protocol import ErrorInfo, ErrorResponse, SttStreamOptions, SttStreamText
-from modelship.utils import downloads
+from modelship.utils import downloads, smart_turn
 from modelship.utils.config_schema import AssistantPipelineConfig
 
 CHAT = AssistantPipelineConfig(name="chat", type="assistant", assistant_config={"llm": "qwen"})
@@ -109,8 +109,8 @@ class TestAssistantPipeline:
     async def test_a_session_runs_on_its_channel_until_its_client_leaves(self, monkeypatch):
         served: list = []
 
-        async def serve(channel, config, calls, vad) -> None:
-            served.append((calls, vad))
+        async def serve(channel, config, calls, vad, classifiers) -> None:
+            served.append((calls, vad, classifiers))
             await channel.send(await channel.receive())
             await channel.receive()
 
@@ -124,17 +124,18 @@ class TestAssistantPipeline:
         await pipeline.realtime_close("k1")
         assert [frame async for frame in stream] == []
         assert await pipeline.realtime_event("k1", ["late"]) is False
-        calls, vad = served[0]
+        calls, vad, classifiers = served[0]
         assert calls._headers == {"x-device": "kitchen"}
         # a pipeline without an stt has no speech detection
         assert vad is None
+        assert classifiers is None
 
     @pytest.mark.asyncio
     async def test_one_silero_model_serves_every_sessions_vad(self, monkeypatch):
         loaded: list[str] = []
 
         async def download(source, name) -> str:
-            return "/models/silero.onnx"
+            return f"/models/{source.dest}"
 
         class Silero:
             def __init__(self, path: str) -> None:
@@ -148,11 +149,38 @@ class TestAssistantPipeline:
         open_vad = pipeline._vad_factory()
         assert open_vad is not None
         first, second = open_vad(24000, 0.0, False), open_vad(8000, 500.0, False)
-        assert loaded == ["/models/silero.onnx"]
+        assert loaded == ["/models/vad/silero_vad_v5-6b99cbfd.onnx"]
         assert first._speech._model is second._speech._model
         assert (first.rate, second.rate) == (24000, 8000)
         # a pipeline without wake words hears none
         assert first._wake is None
+
+    @pytest.mark.asyncio
+    async def test_smart_turn_is_fetched_at_start_and_built_once_when_a_session_first_needs_it(self, monkeypatch):
+        fetched: list[str] = []
+        built: list[str] = []
+
+        async def download(source, name) -> str:
+            fetched.append(source.dest)
+            return f"/models/{source.dest}"
+
+        class SmartTurn:
+            def __init__(self, path: str) -> None:
+                built.append(path)
+
+        monkeypatch.setattr(downloads, "locked_download", download)
+        monkeypatch.setattr(assistant_pipeline, "SileroModel", lambda path: object())
+        monkeypatch.setattr(smart_turn, "SmartTurnModel", SmartTurn)
+        voice = AssistantPipelineConfig(name="voice", type="assistant", assistant_config={"stt": "parakeet"})
+        pipeline = AssistantPipeline(voice, _Routes())  # type: ignore[arg-type]
+        await pipeline.start()
+        assert "turn/smart-turn-v3.2-cpu-2bb02631.onnx" in fetched
+        assert built == []
+        loader = pipeline._smart_turn
+        assert loader is not None
+        first, second = await asyncio.gather(loader.load(), loader.load())
+        assert first is second and isinstance(first, SmartTurn)
+        assert built == ["/models/turn/smart-turn-v3.2-cpu-2bb02631.onnx"]
 
     @pytest.mark.asyncio
     async def test_each_vad_of_a_pipeline_with_wake_words_has_its_own_wake_detector(self, monkeypatch):

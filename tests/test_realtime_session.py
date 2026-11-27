@@ -42,7 +42,7 @@ from modelship.openai.protocol.responses.schemas import ResponsesRequest
 from modelship.openai.protocol.responses.streaming import ResponsesStreamTranslator
 from modelship.openai.realtime_relay import serve_relay
 from modelship.utils.config_schema import AssistantPipelineConfig, parse_pipeline
-from tests.test_realtime_turns import FakeVad, wake_word
+from tests.test_realtime_turns import Classifier, FakeVad, wake_word
 
 ASSISTANT = {"name": "assistant", "stt": "whisper", "llm": "qwen", "session_defaults": {"instructions": "Be brief."}}
 SCRIBE = {"name": "scribe", "stt": "whisper"}
@@ -209,12 +209,14 @@ class _Calls:
         vad: FakeVad | None = None,
         known=MODELS,
         serving=MODELS,
+        classifier: "Classifier | Loader | None" = None,
     ):
         self.llm = llm
         self.stt = stt
         self.transcriber = transcriber
         self.speaker = speaker
         self.vad = vad or FakeVad()
+        self.classifier = classifier
         self.known = known
         self.serving = serving
         self.asked: list[str] = []
@@ -267,13 +269,14 @@ def _client(
     transcriber: _Stt | None = None,
     speaker: _Tts | None = None,
     vad: FakeVad | None = None,
+    classifier: "Classifier | Loader | None" = None,
 ) -> TestClient:
     """A gateway app relaying sessions on *pipelines* to the pipeline, held in-process; each session's `_Calls` go
     into *sessions*."""
     app = FastAPI()
 
     def link(name: str) -> _Link:
-        calls = _Calls(llm, stt, transcriber, speaker, vad, known, serving)
+        calls = _Calls(llm, stt, transcriber, speaker, vad, known, serving, classifier)
         if sessions is not None:
             sessions.append(calls)
         config = parse_pipeline(pipelines[name]["config"])
@@ -292,12 +295,30 @@ class _Routes:
         return True
 
 
+class Loader:
+    """Builds *classifier* when a session first asks for semantic VAD, as `SmartTurnLoader` does; with *failing*,
+    or no classifier, the build fails. Counts the builds."""
+
+    def __init__(self, classifier: Classifier | None, failing: bool = False) -> None:
+        self.classifier = classifier
+        self.failing = failing
+        self.loads = 0
+
+    async def load(self) -> Classifier:
+        self.loads += 1
+        if self.failing or self.classifier is None:
+            raise RuntimeError("the classifier didn't load")
+        return self.classifier
+
+
 class _Pipeline(AssistantPipeline):
-    """The assistant pipeline, calling *calls* and finding speech with their *vad*."""
+    """The assistant pipeline, calling *calls* and finding speech and turn ends with their *vad* and *classifier*."""
 
     def __init__(self, config: AssistantPipelineConfig, calls: _Calls):
         super().__init__(config, _Routes())  # type: ignore[arg-type]
         self.calls = calls
+        given = calls.classifier
+        self._smart_turn = given if isinstance(given, Loader) else Loader(given)  # type: ignore[assignment]
 
     def _calls(self, opening: RealtimeOpening):
         return self.calls
@@ -1292,7 +1313,16 @@ class TestAudioInput:
     @pytest.mark.parametrize(
         ("turn_detection", "code", "param"),
         [
-            ({"type": "semantic_vad"}, "invalid_value", "session.audio.input.turn_detection"),
+            (
+                {"type": "semantic_vad", "silence_duration_ms": 800},
+                "unknown_parameter",
+                "session.audio.input.turn_detection.silence_duration_ms",
+            ),
+            (
+                {"type": "server_vad", "eagerness": "high"},
+                "unknown_parameter",
+                "session.audio.input.turn_detection.eagerness",
+            ),
             (
                 {"type": "server_vad", "idle_timeout_ms": 5000},
                 "invalid_value",
@@ -1637,11 +1667,19 @@ SERVER_VAD = {
     "interrupt_response": True,
     "idle_timeout_ms": None,
 }
+SEMANTIC_VAD = {"type": "semantic_vad", "eagerness": "auto", "create_response": True, "interrupt_response": True}
 
 
 class TestServerVad:
-    def _session(self, stt: _Stt, llm: _Llm | None = None, pipeline: dict = ASSISTANT, vad: FakeVad | None = None):
-        client = _client(_route(pipeline), llm=llm, transcriber=stt, vad=vad)
+    def _session(
+        self,
+        stt: _Stt,
+        llm: _Llm | None = None,
+        pipeline: dict = ASSISTANT,
+        vad: FakeVad | None = None,
+        classifier: "Classifier | Loader | None" = None,
+    ):
+        client = _client(_route(pipeline), llm=llm, transcriber=stt, vad=vad, classifier=classifier)
         return client.websocket_connect(f"/v1/realtime?model={pipeline['name']}")
 
     def _settle(self, ws, llm: _Llm | None = None) -> None:
@@ -1676,6 +1714,74 @@ class TestServerVad:
         with self._session(_Stt(), pipeline=pipeline) as ws:
             session = _open(ws)
         assert session["audio"]["input"]["turn_detection"] == expected
+
+    def test_the_pipelines_defaults_can_ask_for_semantic_vad(self):
+        detection = {"type": "semantic_vad", "eagerness": "high"}
+        pipeline = {**ASSISTANT, "session_defaults": {"audio": {"input": {"turn_detection": detection}}}}
+        with self._session(_Stt(), pipeline=pipeline, classifier=Classifier(0.9)) as ws:
+            session = _open(ws)
+        assert session["audio"]["input"]["turn_detection"] == SEMANTIC_VAD | {"eagerness": "high"}
+
+    def test_semantic_vad_ends_a_turn_heard_finished_after_a_short_pause(self):
+        stt, llm, classifier = _Stt("Lights on."), _Llm(_answer("Done.")), Classifier(0.9)
+        with self._session(stt, llm, classifier=classifier) as ws:
+            _open(ws)
+            audio = {"input": {"turn_detection": {"type": "semantic_vad"}}}
+            ws.send_json({"type": "session.update", "session": {"audio": audio}})
+            updated = _until(ws, "session.updated")[-1]
+            _stream(ws, _quiet(1), _tone(1), _quiet(1))
+            events = _until(ws, "response.done")
+        assert updated["session"]["audio"]["input"]["turn_detection"] == SEMANTIC_VAD
+        started, stopped = events[:2]
+        assert (started["audio_start_ms"], stopped["audio_end_ms"]) == (700, 2200)
+        assert events[-1]["response"]["status"] == "completed"
+        assert classifier.heard_ms == [1500]
+
+    def test_semantic_vad_is_refused_when_its_classifier_fails_to_load(self):
+        with self._session(_Stt(), classifier=None) as ws:
+            _open(ws)
+            audio = {"input": {"turn_detection": {"type": "semantic_vad"}}}
+            ws.send_json({"type": "session.update", "session": {"audio": audio}})
+            error = ws.receive_json()["error"]
+            ws.send_json({"type": "session.update", "session": {}})
+            session = _until(ws, "session.updated")[-1]["session"]
+        assert (error["type"], error["code"]) == ("server_error", "turn_classifier_unavailable")
+        assert error["param"] == "session.audio.input.turn_detection"
+        # the update didn't apply
+        assert session["audio"]["input"]["turn_detection"] == SERVER_VAD
+
+    def test_the_classifier_is_built_once_and_only_for_semantic_vad(self):
+        loader = Loader(Classifier(0.9))
+        with self._session(_Stt(), classifier=loader) as ws:
+            _open(ws)
+            ws.send_json({"type": "session.update", "session": {"instructions": "Be brief."}})
+            _until(ws, "session.updated")
+            assert loader.loads == 0
+            for _ in range(2):
+                audio = {"input": {"turn_detection": {"type": "semantic_vad"}}}
+                ws.send_json({"type": "session.update", "session": {"audio": audio}})
+                _until(ws, "session.updated")
+        assert loader.loads == 1
+
+    def test_a_session_whose_defaults_ask_for_semantic_vad_is_refused_when_its_classifier_fails_to_load(self):
+        detection = {"type": "semantic_vad"}
+        pipeline = {**ASSISTANT, "session_defaults": {"audio": {"input": {"turn_detection": detection}}}}
+        client = _client(_route(pipeline), transcriber=_Stt())
+        error = _refused(client, f"?model={pipeline['name']}")
+        assert error["code"] == "turn_classifier_unavailable"
+
+    def test_semantic_vad_reports_a_classifier_that_fails_and_ends_the_turn_after_the_longest_wait(self):
+        stt, llm = _Stt("Lights on."), _Llm(_answer("Done."))
+        with self._session(stt, llm, classifier=Classifier(failing=True)) as ws:
+            _open(ws)
+            audio = {"input": {"turn_detection": {"type": "semantic_vad", "eagerness": "high"}}}
+            ws.send_json({"type": "session.update", "session": {"audio": audio}})
+            _until(ws, "session.updated")
+            _stream(ws, _quiet(1), _tone(1), _quiet(2.5))
+            events = _until(ws, "input_audio_buffer.speech_stopped")
+        (error,) = [event["error"] for event in events if event["type"] == "error"]
+        assert (error["type"], error["code"]) == ("server_error", "turn_classifier_failed")
+        assert events[-1]["audio_end_ms"] == 4000
 
     def test_a_turn_is_found_committed_transcribed_and_answered(self):
         stt, llm = _Stt("Lights on."), _Llm(_answer("Done."))

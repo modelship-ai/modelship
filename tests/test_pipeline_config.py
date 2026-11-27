@@ -129,7 +129,9 @@ class TestAssistantSchema:
             {"turn_detection": None},
             {"reasoning": {"effort": "huge"}},
             {"reasoning": {"effort": "max"}},
-            {"audio": {"input": {"turn_detection": {"type": "semantic_vad"}}}},
+            {"audio": {"input": {"turn_detection": {"type": "semantic_vad", "silence_duration_ms": 800}}}},
+            {"audio": {"input": {"turn_detection": {"type": "semantic_vad", "eagerness": "eager"}}}},
+            {"audio": {"input": {"turn_detection": {"type": "server_vad", "eagerness": "high"}}}},
             {"audio": {"input": {"turn_detection": {"type": "server_vad", "idle_timeout_ms": 5000}}}},
             {"audio": {"input": {"turn_detection": {"type": "server_vad", "threshold": 1.5}}}},
             {"audio": {"input": {"format": {"type": "audio/pcm"}}}},
@@ -155,6 +157,17 @@ class TestAssistantSchema:
         assert manual is not None and manual.audio is not None
         assert manual.audio.input is not None
         assert "turn_detection" in manual.audio.input.model_fields_set
+
+    def test_turn_detection_defaults_take_semantic_vad(self):
+        semantic = {"type": "semantic_vad", "eagerness": "low", "interrupt_response": False}
+        pipeline = _assistant(
+            name="assistant", stt="whisper", session_defaults={"audio": {"input": {"turn_detection": semantic}}}
+        )
+        defaults = pipeline.assistant_config.session_defaults
+        assert defaults is not None and defaults.audio is not None and defaults.audio.input is not None
+        given = defaults.audio.input.turn_detection
+        assert given is not None and given.type == "semantic_vad"
+        assert (given.eagerness, given.create_response, given.interrupt_response) == ("low", True, False)
 
     def test_turn_detection_needs_an_stt_model(self):
         vad = {"audio": {"input": {"turn_detection": {"type": "server_vad"}}}}

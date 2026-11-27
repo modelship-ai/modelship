@@ -10,8 +10,9 @@ import pytest
 
 from modelship.infer.pipelines.assistant.input import turns as turns_module
 from modelship.infer.pipelines.assistant.input.input_buffer import InputAudioBuffer
+from modelship.infer.pipelines.assistant.input.turn_end import SemanticEnd, SilenceEnd, TurnEnd
 from modelship.infer.pipelines.assistant.input.turns import ANYWHERE, MAX_TURN_MS, TurnDetector, Window
-from modelship.openai.protocol.realtime import ServerVad
+from modelship.openai.protocol.realtime import SemanticVad, ServerVad
 from modelship.utils.vad import SpeechSegment
 
 RATE = 24000
@@ -116,7 +117,11 @@ class _Turns:
     """A detector over a fresh buffer, recording what it reports as its TurnEvents."""
 
     def __init__(
-        self, settings: ServerVad | None = None, max_turn_ms: int | None = MAX_TURN_MS, listen_ms: float | None = None
+        self,
+        settings: ServerVad | None = None,
+        max_turn_ms: int | None = MAX_TURN_MS,
+        listen_ms: float | None = None,
+        end: TurnEnd | None = None,
     ) -> None:
         self.buffer = InputAudioBuffer()
         self.vad = FakeVad()
@@ -134,7 +139,7 @@ class _Turns:
         self.window: tuple[float, float] | None = None
         self.detector = TurnDetector(
             self.buffer,
-            settings or ServerVad(type="server_vad"),
+            end or SilenceEnd(settings or ServerVad(type="server_vad")),
             self.vad.open,
             self,
             _Rules(self, listen_ms),
@@ -163,6 +168,9 @@ class _Turns:
 
     async def detection_failed(self) -> None:
         self.events.append(("failed",))
+
+    async def turn_end_failed(self) -> None:
+        self.events.append(("end_failed",))
 
     async def feed(self, *parts: bytes, step: float | None = 0.1) -> None:
         """Appends *parts*, *step* seconds at a time as a live client does, or each at once."""
@@ -354,7 +362,7 @@ class TestTurns:
         turns.detector.on_audio()
         await asyncio.sleep(0)
         # a session.update while the feed runs
-        turns.detector.settings = ServerVad(type="server_vad", prefix_padding_ms=0, silence_duration_ms=200)
+        turns.detector.end = SilenceEnd(ServerVad(type="server_vad", prefix_padding_ms=0, silence_duration_ms=200))
         turns.vad.gate.set()
         await turns.settle()
         assert turns.turns()[0] == (700, 2500)
@@ -488,3 +496,99 @@ class TestWakeWords:
         # the wake word is speech like any other
         assert turns.turns() == [(200, 1600)]
         assert turns.woken == []
+
+
+class Classifier:
+    """A turn classifier that answers *answers* in order, the last one from then on, and records how much audio each
+    call heard; *failing* makes it raise."""
+
+    def __init__(self, *answers: float, failing: bool = False) -> None:
+        self.answers = list(answers)
+        self.failing = failing
+        self.heard_ms: list[float] = []
+
+    def end_probability(self, pcm16: bytes, rate: int) -> float:
+        if self.failing:
+            raise RuntimeError("the classifier broke")
+        self.heard_ms.append(len(pcm16) // 2 * 1000 / rate)
+        return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+
+
+def _semantic(classifier: Classifier, eagerness: str = "auto") -> _Turns:
+    return _Turns(end=SemanticEnd(SemanticVad(type="semantic_vad", eagerness=eagerness), classifier))  # type: ignore[arg-type]
+
+
+class TestSemanticTurns:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("step", [0.1, None], ids=["live", "all-at-once"])
+    async def test_a_turn_heard_finished_ends_after_a_short_pause(self, step):
+        classifier = Classifier(0.9)
+        turns = _semantic(classifier)
+        await turns.feed(_quiet(1), _tone(1), _quiet(1), step=step)
+        # speech from 1000 to 2000, the default 300 ms of padding, and the 200 ms pause the classifier waits for
+        assert turns.turns() == [(700, 2200)]
+        assert classifier.heard_ms == [1500]
+
+    @pytest.mark.asyncio
+    async def test_a_turn_heard_unfinished_goes_on_when_the_user_speaks_again(self):
+        classifier = Classifier(0.1, 0.9)
+        turns = _semantic(classifier)
+        await turns.feed(_quiet(1), _tone(0.5), _quiet(0.6), _tone(0.5), _quiet(1))
+        # one turn over both stretches of speech, ending 200 ms after the second
+        assert turns.turns() == [(700, 2800)]
+        assert len(classifier.heard_ms) == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("eagerness", "waits_ms"), [("high", 2000), ("auto", 4000), ("medium", 4000), ("low", 8000)]
+    )
+    async def test_a_turn_heard_unfinished_ends_after_the_wait_its_eagerness_allows(self, eagerness, waits_ms):
+        turns = _semantic(Classifier(0.1), eagerness)
+        await turns.feed(_quiet(1), _tone(1), _quiet(waits_ms / 1000 - 0.1))
+        assert turns.turns() == []
+        await turns.feed(_quiet(0.2))
+        assert turns.turns() == [(700, 2000 + waits_ms)]
+
+    @pytest.mark.asyncio
+    async def test_the_classifier_hears_the_last_8_s_of_a_long_turn(self):
+        classifier = Classifier(0.9)
+        turns = _semantic(classifier)
+        await turns.feed(_quiet(0.5), _tone(10), _quiet(0.5))
+        assert turns.turns() == [(200, 10700)]
+        assert classifier.heard_ms == [8000]
+
+    @pytest.mark.asyncio
+    async def test_a_classifier_that_fails_is_reported_and_the_turn_ends_after_the_longest_wait(self):
+        turns = _semantic(Classifier(failing=True), "high")
+        await turns.feed(_quiet(1), _tone(1), _quiet(2.5))
+        assert turns.events[1] == ("end_failed",)
+        assert turns.turns() == [(700, 4000)]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("then", "ends_ms"),
+        [
+            (SemanticVad(type="semantic_vad", eagerness="high"), 4000),
+            (ServerVad(type="server_vad"), 2500),
+        ],
+        ids=["eagerness-high", "server-vad"],
+    )
+    async def test_a_paused_turn_ends_as_settings_changed_meanwhile_say(self, then, ends_ms):
+        classifier = Classifier(0.1)
+        turns = _semantic(classifier, "low")
+        await turns.feed(_quiet(1), _tone(1), _quiet(0.3))
+        assert turns.turns() == []
+        turns.detector.end = SilenceEnd(then) if isinstance(then, ServerVad) else SemanticEnd(then, classifier)
+        await turns.feed(_quiet(3))
+        # speech stopped at 2000: high eagerness gives up 2 s later, server_vad after its 500 ms of silence
+        assert turns.turns() == [(700, ends_ms)]
+
+    @pytest.mark.asyncio
+    async def test_a_reset_while_paused_forgets_the_turn(self):
+        turns = _semantic(Classifier(0.1), "high")
+        await turns.feed(_quiet(1), _tone(1), _quiet(0.5))
+        assert turns.detector.turn is not None
+        turns.buffer.take()
+        turns.detector.reset()
+        await turns.feed(_quiet(3))
+        assert turns.turns() == []
