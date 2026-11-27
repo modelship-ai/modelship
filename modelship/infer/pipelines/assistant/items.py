@@ -20,8 +20,8 @@ from modelship.openai.protocol.realtime import (
 )
 
 Send = Callable[[dict], Awaitable[None]]
-# stops the response that speaks message item_id, if one does, and waits for it to end
-StopSpeaking = Callable[[str], Awaitable[None]]
+# the client stopped playing message item_id
+StoppedPlaying = Callable[[str], None]
 
 
 def missing_item(item_id: str, param: str) -> RealtimeError:
@@ -44,14 +44,15 @@ def audio_in_item(item: Item, param: str) -> RealtimeError | None:
 
 class ConversationItems:
     """Handles the `conversation.item.*` events on *conversation*, answering through *send*. *spoken* holds what
-    each spoken message said, by item id, and *stop_speaking* stops an answer still being spoken when the client
-    truncates it."""
+    each spoken message said, by item id, and *stopped_playing* hears of each message the client truncates."""
 
-    def __init__(self, conversation: Conversation, send: Send, spoken: dict[str, Spoken], stop_speaking: StopSpeaking):
+    def __init__(
+        self, conversation: Conversation, send: Send, spoken: dict[str, Spoken], stopped_playing: StoppedPlaying
+    ):
         self._conversation = conversation
         self._send = send
         self._spoken = spoken
-        self._stop_speaking = stop_speaking
+        self._stopped_playing = stopped_playing
 
     async def create(self, event: ItemCreate) -> RealtimeError | None:
         item, previous = event.item, event.previous_item_id
@@ -96,8 +97,6 @@ class ConversationItems:
             return RealtimeError(
                 message=f"Part {index} of item {item.id!r} holds no audio.", code="invalid_value", param="content_index"
             )
-        # the client stopped playing an answer still being spoken
-        await self._stop_speaking(item.id)
         spoken = self._spoken.get(item.id, Spoken())
         played = round(spoken.ms)
         if event.audio_end_ms > played:
@@ -106,7 +105,13 @@ class ConversationItems:
                 code="invalid_value",
                 param="audio_end_ms",
             )
-        part.transcript = spoken.truncate(event.audio_end_ms, part.transcript)
+        # The conversation keeps a cut copy: an answer still being spoken goes on, and its events carry all its text.
+        stored = item.model_copy(deep=True)
+        cut = stored.content[index]
+        assert isinstance(cut, OutputAudio)
+        cut.transcript = spoken.truncate(event.audio_end_ms, cut.transcript)
+        self._conversation.replace(stored)
+        self._stopped_playing(item.id)
         await self._send(
             server_event(
                 "conversation.item.truncated",

@@ -428,9 +428,12 @@ class ActiveResponse:
                 "response.output_item.done", response_id=self.response.id, output_index=self._index(item), item=item
             )
         )
-        if self._conversation is not None and self._conversation.get(item.id) is not None:
+        stored = self._conversation.get(item.id) if self._conversation is not None else None
+        if self._conversation is not None and stored is not None:
+            # a truncated message is stored as a cut copy
+            stored.status = item.status
             before = self._conversation.before(item.id)
-            await self._send(server_event("conversation.item.done", previous_item_id=before, item=item))
+            await self._send(server_event("conversation.item.done", previous_item_id=before, item=stored))
 
     async def _end(self, status: ResponseStatus, details: StatusDetails | None) -> None:
         await self._output.end()

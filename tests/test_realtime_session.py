@@ -2319,8 +2319,9 @@ class TestTruncate:
             error = ws.receive_json()["error"]
         assert (error["code"], error["param"]) == ("invalid_value", "content_index")
 
-    def test_truncating_an_answer_still_spoken_cancels_it(self):
-        llm = _Llm(_answer("The kitchen lights are on now. And", finish=None))
+    def test_truncating_an_answer_still_spoken_cuts_the_stored_item_and_the_answer_goes_on(self):
+        text = "The kitchen lights are on now. And"
+        llm = _Llm(_answer(text, finish=None))
         with self._session(llm) as ws:
             _open(ws)
             _say(ws, "Are the lights on?")
@@ -2328,14 +2329,20 @@ class TestTruncate:
             item_id = _until(ws, "response.output_audio.delta")[-1]["item_id"]
             # a third of the first sentence's 300 ms
             ws.send_json(_truncate(item_id, 100))
-            events = _until(ws, "conversation.item.truncated")
+            before = _until(ws, "conversation.item.truncated")
             ws.send_json({"type": "conversation.item.retrieve", "item_id": item_id})
-            retrieved = ws.receive_json()["item"]
-        kinds = [event["type"] for event in events]
-        assert kinds.index("response.done") < kinds.index("conversation.item.truncated")
-        done = next(event for event in events if event["type"] == "response.done")["response"]
-        assert (done["status"], done["status_details"]["reason"]) == ("cancelled", "client_cancelled")
+            retrieved = _until(ws, "conversation.item.retrieved")[-1]["item"]
+            # the Agents SDK's interrupt: truncate, then cancel
+            ws.send_json({"type": "response.cancel"})
+            after = _until(ws, "response.done")
+        assert "response.done" not in _kinds(before)
         assert retrieved["content"][0]["transcript"] == "The kitchen"
+        assert "error" not in _kinds(after)
+        done = after[-1]["response"]
+        assert (done["status"], done["status_details"]["reason"]) == ("cancelled", "client_cancelled")
+        assert done["output"][0]["content"][0]["transcript"] == text
+        stored = next(event for event in after if event["type"] == "conversation.item.done")["item"]
+        assert (stored["status"], stored["content"][0]["transcript"]) == ("incomplete", "The kitchen")
         assert llm.closed_early == [True]
 
 
