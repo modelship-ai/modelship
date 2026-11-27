@@ -565,6 +565,25 @@ class TestSemanticTurns:
         assert turns.turns() == [(700, 4000)]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("then", "ends_ms"),
+        [
+            (SemanticVad(type="semantic_vad", eagerness="high"), 4000),
+            (ServerVad(type="server_vad"), 2500),
+        ],
+        ids=["eagerness-high", "server-vad"],
+    )
+    async def test_a_paused_turn_ends_as_settings_changed_meanwhile_say(self, then, ends_ms):
+        classifier = Classifier(0.1)
+        turns = _semantic(classifier, "low")
+        await turns.feed(_quiet(1), _tone(1), _quiet(0.3))
+        assert turns.turns() == []
+        turns.detector.end = SilenceEnd(then) if isinstance(then, ServerVad) else SemanticEnd(then, classifier)
+        await turns.feed(_quiet(3))
+        # speech stopped at 2000: high eagerness gives up 2 s later, server_vad after its 500 ms of silence
+        assert turns.turns() == [(700, ends_ms)]
+
+    @pytest.mark.asyncio
     async def test_a_reset_while_paused_forgets_the_turn(self):
         turns = _semantic(Classifier(0.1), "high")
         await turns.feed(_quiet(1), _tone(1), _quiet(0.5))

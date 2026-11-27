@@ -146,11 +146,11 @@ class Speaking:
 
 @dataclass(frozen=True)
 class Paused:
-    """In *turn*, whose speech stopped at *speech_ms* and may go on: without speech it ends at *gives_up_ms*."""
+    """In *turn*, whose speech stopped at *speech_ms* and may go on: without speech it ends where the detector's
+    `TurnEnd` gives up, the one in force when each feed starts."""
 
     turn: OpenTurn
     speech_ms: float
-    gives_up_ms: float
 
 
 @dataclass(frozen=True)
@@ -400,7 +400,7 @@ class TurnDetector:
         if at_ms is not None:
             await self._close(speech_end_ms, at_ms)
         else:
-            self._state = Paused(state.turn, speech_end_ms, turn_end.gives_up_ms(speech_end_ms))
+            self._state = Paused(state.turn, speech_end_ms)
 
     async def _elapsed(self, end: float, heard: bool, turn_end: TurnEnd) -> None:
         """Ends the turn in progress where the audio fed up to *end* says it ends without more speech: its pause
@@ -411,9 +411,9 @@ class TurnDetector:
             # the turn's speech ended before this feed's audio
             await self._paused(state.speech_ms, turn_end)
         state = self._state
-        if isinstance(state, Paused) and fed_to >= state.gives_up_ms:
+        if isinstance(state, Paused) and fed_to >= (gives_up_ms := turn_end.gives_up_ms(state.speech_ms)):
             # no speech followed the pause
-            await self._close(state.speech_ms, state.gives_up_ms)
+            await self._close(state.speech_ms, gives_up_ms)
         state = self._state
         if isinstance(state, AwaitingSpeech) and fed_to >= state.gives_up_ms:
             # no speech followed the wake word
