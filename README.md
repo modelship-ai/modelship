@@ -186,7 +186,8 @@ Fourteen cluster guarantees — zero-downtime model cutover, load-driven autosca
 | `POST /v1/audio/translations` | Audio translation |
 | `POST /v1/audio/speech` | Text-to-speech (SSE streaming or single-response) |
 | `POST /v1/images/generations` | Image generation |
-| `GET /v1/models` | List available models |
+| `GET /v1/models` | List available models and pipelines |
+| `WS /v1/realtime` | Realtime API for voice assistants, on a [pipeline](docs/model-configuration.md#pipelines-experimental) (experimental) |
 
 ## More ways to run
 

@@ -8,7 +8,7 @@ Modelship is a **FastAPI gateway** exposing an OpenAI-compatible API, built on [
 - **llama-server** — proxied `llama-server` subprocess for quantized GGUF chat/embeddings/vision, CPU or GPU
 - **[HuggingFace Diffusers](https://github.com/huggingface/diffusers)** — image generation via `AutoPipelineForText2Image`
 - **stable-diffusion.cpp** — `sd-server` subprocess for GGUF SD/Flux image generation, CPU or GPU (CUDA, Vulkan, Metal)
-- **sherpa-onnx** — TTS (Kokoro) and offline STT (Parakeet), CPU
+- **sherpa-onnx** — TTS (Kokoro) and STT (Parakeet, or Nemotron for streaming), CPU
 - **whisper.cpp** — STT via `pywhispercpp`, CPU everywhere plus Metal on Apple Silicon
 
 ## Request Lifecycle
@@ -43,7 +43,7 @@ Each model in `models.yaml` becomes an isolated Ray Serve deployment (`ModelDepl
 | `diffusers` | HuggingFace Diffusers | Image generation | No — GPU or CPU, `cuda` variant only |
 | `stable_diffusion_cpp` | sd-server subprocess (stable-diffusion.cpp) | Image generation (GGUF SD1.5/SDXL/SD-Turbo, Flux) | No — CPU or GPU (CUDA, Vulkan, Metal; fractional or one whole GPU) |
 | `whispercpp` | `pywhispercpp` | STT | No — CPU everywhere, Metal on Apple Silicon |
-| `sherpa_onnx` | sherpa-onnx | TTS (Kokoro), STT (Parakeet) | No — never touches CUDA |
+| `sherpa_onnx` | sherpa-onnx | TTS (Kokoro), STT (Parakeet, Nemotron) | No — never touches CUDA |
 
 Every deployment also carries a Ray label selector for the nodes that can run it (see [Capability-aware scheduling](#capability-aware-scheduling)) alongside `num_gpus`/`GPU`.
 
@@ -60,6 +60,15 @@ Every model deployment but a `transcription` one routes with `AffinityRouter` (`
 The router ranks a model's replicas by a hash of the key and each replica's id, so every gateway replica ranks a key alike, and a replica added or removed moves only its own share of keys. It takes the first replica in that order that has at most 1.25 × the replicas' mean in-flight requests + 2, and Ray Serve still skips a replica at `max_ongoing_requests`. A request with no key (embeddings, audio, images) goes to the less busy of two random replicas, like Ray Serve's default router.
 
 A `transcription` model routes with `StickyRouter` instead: a streamed transcription keeps its decoder state in the replica that opened it, so `transcribe_push` pins its key to that replica, `transcribe_finish` and `transcribe_close` go there and unpin it, and every other call, a whole-file `transcribe` included, goes to any replica.
+
+## Pipelines and the Realtime API (experimental)
+
+A [pipeline](model-configuration.md#pipelines-experimental) chains models the gateway already serves, as a deployment of its own that reserves no CPU or GPU. Its one type, `assistant`, serves `WS /v1/realtime`.
+
+- **The gateway relays** — it opens a stream on the pipeline's deployment for the session's life and forwards the client's WebSocket frames. The session itself lives in the pipeline replica, in memory: its conversation, turn detection and responses
+- **One replica per session** — the pipeline's deployment routes with `StickyRouter`, so every call of a session reaches the replica that holds it
+- **Audio in the replica** — Silero VAD, Smart Turn (semantic VAD) and microWakeWord run on CPU inside the pipeline replica
+- **Models through the gateway's table** — the session calls its `stt`, `llm` and `tts` models by their deployment handles. Each pipeline replica holds the gateway's model table, and a deploy's switch waits for it as it waits for the gateway's replicas
 
 ## Responses API (`/v1/responses`)
 
@@ -154,5 +163,7 @@ An unsatisfiable deploy pends. Ray Serve's slow-start warning lists only the rep
 | `modelship/infer/diffusers/diffusers_infer.py` | Diffusers pipeline wrapper |
 | `modelship/infer/stable_diffusion_cpp/stable_diffusion_cpp_infer.py` | sd-server subprocess driver (image gen over its job API) |
 | `modelship/infer/whispercpp/` | whisper.cpp STT wrapper |
-| `modelship/infer/sherpa_onnx/` | sherpa-onnx TTS and offline STT |
+| `modelship/infer/sherpa_onnx/` | sherpa-onnx TTS, offline and streaming STT |
+| `modelship/openai/realtime_relay.py` | The gateway's relay of a `/v1/realtime` WebSocket to its pipeline replica |
+| `modelship/infer/pipeline_deployment.py`, `infer/pipelines/` | Ray Serve pipeline actor; the `assistant` pipeline's sessions, turn detection and responses |
 | `config/examples/` | Example model configurations, for `--config` |
