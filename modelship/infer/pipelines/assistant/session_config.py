@@ -88,6 +88,12 @@ def _audio_input(update: SessionFields) -> AudioInput | None:
     return audio.input if audio is not None and "input" in audio.model_fields_set else None
 
 
+def asks_semantic_vad(update: SessionFields) -> bool:
+    """Whether *update* turns semantic VAD on."""
+    given = _audio_input(update)
+    return given is not None and isinstance(given.turn_detection, SemanticVad)
+
+
 def check_update(
     state: RealtimeSession, update: SessionFields, config: AssistantPipelineConfig, buffered: bool
 ) -> RealtimeError | None:

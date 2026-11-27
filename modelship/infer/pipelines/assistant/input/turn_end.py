@@ -28,6 +28,13 @@ class TurnClassifier(Protocol):
     def end_probability(self, pcm16: bytes, rate: int) -> float: ...
 
 
+class TurnClassifierLoader(Protocol):
+    """Builds the replica's turn classifier when a session first asks for semantic VAD
+    (`modelship.utils.smart_turn.SmartTurnLoader`); raises when it can't."""
+
+    async def load(self) -> TurnClassifier: ...
+
+
 class TurnClassifierError(Exception):
     """The classifier failed on a turn."""
 

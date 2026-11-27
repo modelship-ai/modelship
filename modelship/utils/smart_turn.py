@@ -1,8 +1,10 @@
 """End-of-turn classification with Smart Turn v3.2 (pipecat-ai/smart-turn, BSD 2-Clause) on onnxruntime, for the
 realtime pipeline's semantic VAD. `SmartTurnModel` is one model shared by every session of a replica: it hears a
-turn's last 8 s of audio and says how likely the speaker is done."""
+turn's last 8 s of audio and says how likely the speaker is done. `SmartTurnLoader` builds it on first use."""
 
 from __future__ import annotations
+
+import asyncio
 
 import numpy as np
 
@@ -41,6 +43,8 @@ class SmartTurnModel:
         options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1
+        # each check allocates its tensors anew, so no memory stays reserved between checks
+        options.enable_cpu_mem_arena = False
         self._session = onnxruntime.InferenceSession(model_path, options, providers=["CPUExecutionProvider"])
 
     def end_probability(self, pcm16: bytes, rate: int) -> float:
@@ -55,3 +59,19 @@ class SmartTurnModel:
         features = log_mel(last_8s(samples))[None]
         (probability,) = self._session.run(None, {"input_features": features})
         return float(np.asarray(probability).item())
+
+
+class SmartTurnLoader:
+    """The replica's one `SmartTurnModel`, built from *model_path* when a session first asks for semantic VAD, so a
+    replica whose sessions never do holds no model. A build that fails is tried again on the next ask."""
+
+    def __init__(self, model_path: str) -> None:
+        self._path = model_path
+        self._model: SmartTurnModel | None = None
+        self._lock = asyncio.Lock()
+
+    async def load(self) -> SmartTurnModel:
+        async with self._lock:
+            if self._model is None:
+                self._model = await asyncio.to_thread(SmartTurnModel, self._path)
+            return self._model
