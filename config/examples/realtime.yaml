@@ -4,9 +4,6 @@ models:
     usecase: "generate"
     loader: "llama_server"
     num_cpus: 4
-    llama_server_config:
-      # Qwen3 thinks before it answers unless this turns it off
-      reasoning: "off"
 
   - name: "parakeet"
     model: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
@@ -30,3 +27,6 @@ pipelines:
       tts: "kokoro"
       session_defaults:
         instructions: "You are a helpful voice assistant. Answer in one or two short sentences."
+        # Qwen3 thinks before it answers unless this turns it off
+        reasoning:
+          effort: "none"
