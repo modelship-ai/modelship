@@ -194,7 +194,7 @@ class Session:
         self.playback = Playback()
         # what each spoken message said, by item id
         spoken: dict[str, Spoken] = {}
-        self.items = ConversationItems(self.conversation, self.send, spoken, self._stop_speaking)
+        self.items = ConversationItems(self.conversation, self.send, spoken, self._stopped_playing)
         self.responder = Responder(config, calls, self.state, self.conversation, self.playback, spoken, self.send)
         self.active: ActiveResponse | None = None
         # server VAD, while the session's turn detection is on
@@ -353,13 +353,11 @@ class Session:
         """Whether a response is in progress."""
         return self.active is not None and not self.active.done()
 
-    async def _stop_speaking(self, item_id: str) -> None:
-        """Stops the response in progress if it speaks message *item_id*: the client stopped playing it."""
+    def _stopped_playing(self, item_id: str) -> None:
+        """The client stopped playing message *item_id*; the response speaking it, if one is, goes on."""
         active = self.active
         if active is not None and not active.done() and active.has_item(item_id):
-            active.cancel()
             self.playback.stop()
-            await asyncio.wait([active.task])
 
     # the input audio buffer
 

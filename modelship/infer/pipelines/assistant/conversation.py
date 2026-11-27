@@ -62,6 +62,11 @@ class Conversation:
         self._items.insert(position, item)
         return self._items[position - 1].id if position else None
 
+    def replace(self, item: Item) -> None:
+        """Puts *item* in place of the item with its id, which the conversation holds."""
+        position = next(i for i, other in enumerate(self._items) if other.id == item.id)
+        self._items[position] = item
+
     def delete(self, item_id: str) -> bool:
         for i, item in enumerate(self._items):
             if item.id == item_id:
