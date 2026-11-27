@@ -1,6 +1,6 @@
 # Example configs
 
-Example `models.yaml` configs; the images also carry them under `/modelship/config/examples/`. The files named after a loader show the different ways to declare a model for it (a Hub reference, a single file, a local path), so take the entries you need instead of deploying the file whole. `full-stack.yaml` and `mini-pc.yaml` are complete stacks: pass either with `--config` as it is.
+Example `models.yaml` configs; the images also carry them under `/modelship/config/examples/`. The files named after a loader show the different ways to declare a model for it (a Hub reference, a single file, a local path), so take the entries you need instead of deploying the file whole. `full-stack.yaml`, `mini-pc.yaml` and `realtime.yaml` are complete stacks: pass any of them with `--config` as it is.
 
 | File | What it runs | Hardware |
 |---|---|---|
@@ -14,6 +14,7 @@ Example `models.yaml` configs; the images also carry them under `/modelship/conf
 | [whispercpp.yaml](whispercpp.yaml) | Speech-to-text via pywhispercpp | CPU (Metal on macOS) |
 | [full-stack.yaml](full-stack.yaml) | LLM + TTS + STT + embeddings on one GPU | NVIDIA GPU |
 | [mini-pc.yaml](mini-pc.yaml) | Low-resource stack: llama-server chat + Kokoro TTS + whisper.cpp STT | CPU (e.g. Intel N100) |
+| [realtime.yaml](realtime.yaml) | Voice assistant on `/v1/realtime` ([experimental](../../docs/model-configuration.md#pipelines-experimental)): Parakeet STT + llama-server chat + Kokoro TTS | CPU |
 
 Example:
 

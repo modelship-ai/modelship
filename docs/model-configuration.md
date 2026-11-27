@@ -170,7 +170,7 @@ The actions run in a fixed order, so that what frees room runs before what needs
 3. `stop_start` only: the old deployments of replaced and removed models are deleted.
 4. New deployments come up (`add`, `replace`, `redeploy`).
 5. Rescales that raise a replica limit.
-6. [Pipelines](#pipelines-experimental): their audio deployments come up or rescale, after every model.
+6. [Pipelines](#pipelines-experimental): their deployments come up or rescale, after every model.
 7. The gateway switches to the new models and pipelines, and the version is committed.
 8. `blue_green` only: the old deployments of replaced and removed models and pipelines are deleted.
 
@@ -194,7 +194,9 @@ A request that fails or is cancelled after step 2 gets its scale-downs undone to
 
 ## Pipelines (experimental)
 
-> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a conversation of text and of the client's spoken turns, which the pipeline's `stt` transcribes and its `llm` answers, in text or spoken by its `tts`, calling the client's functions. Server VAD finds each turn in the client's audio, or the client commits it itself, and the user can talk over a spoken answer.
+> **Experimental.** Pipelines deploy, and a `/v1/realtime` session on one holds a conversation of text and of the client's spoken turns, which the pipeline's `stt` transcribes (as they are spoken, with a streaming model) and its `llm` answers, in text or spoken by its `tts`, calling the client's functions. Server VAD or semantic VAD finds each turn in the client's audio, optionally only after a wake word, or the client commits it itself, and the user can talk over a spoken answer.
+
+[`config/examples/realtime.yaml`](https://github.com/modelship-ai/modelship/blob/main/config/examples/realtime.yaml) is a voice assistant that runs on CPU.
 
 A pipeline is its own deployment that chains models the gateway already serves. Its `type` decides what it does and which endpoint serves it. Every pipeline has a `name` and a `num_replicas`, and keeps its type's own settings in a `<type>_config` block, the way a model keeps its loader's in `<loader>_config`. Pipelines sit beside `models:` in the same file:
 

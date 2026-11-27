@@ -1,0 +1,32 @@
+models:
+  - name: "qwen"
+    model: "lmstudio-community/Qwen3-4B-GGUF:*Q4_K_M.gguf"
+    usecase: "generate"
+    loader: "llama_server"
+    num_cpus: 4
+    llama_server_config:
+      # Qwen3 thinks before it answers unless this turns it off
+      reasoning: "off"
+
+  - name: "parakeet"
+    model: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+    usecase: "transcription"
+    loader: "sherpa_onnx"
+    num_cpus: 2
+
+  - name: "kokoro"
+    model: "kokoro-en-v0_19"
+    usecase: "tts"
+    loader: "sherpa_onnx"
+    num_cpus: 2
+
+# Clients open ws://<host>:8000/modelship/v1/realtime?model=assistant
+pipelines:
+  - name: "assistant"
+    type: "assistant"
+    assistant_config:
+      stt: "parakeet"
+      llm: "qwen"
+      tts: "kokoro"
+      session_defaults:
+        instructions: "You are a helpful voice assistant. Answer in one or two short sentences."
