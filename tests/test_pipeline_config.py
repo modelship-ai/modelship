@@ -111,13 +111,6 @@ class TestAssistantSchema:
             defaults.reasoning.effort,
         ) == ("Be brief.", ["text"], "inf", "low")
 
-    def test_session_defaults_take_a_reasoning_effort_of_none(self):
-        defaults = _assistant(
-            name="assistant", llm="qwen", session_defaults={"reasoning": {"effort": "none"}}
-        ).assistant_config.session_defaults
-        assert defaults is not None and defaults.reasoning is not None
-        assert defaults.reasoning.effort == "none"
-
     @pytest.mark.parametrize(
         "session_defaults",
         [
@@ -129,6 +122,7 @@ class TestAssistantSchema:
             {"turn_detection": None},
             {"reasoning": {"effort": "huge"}},
             {"reasoning": {"effort": "max"}},
+            {"reasoning": {"effort": "none"}},
             {"audio": {"input": {"turn_detection": {"type": "semantic_vad", "silence_duration_ms": 800}}}},
             {"audio": {"input": {"turn_detection": {"type": "semantic_vad", "eagerness": "eager"}}}},
             {"audio": {"input": {"turn_detection": {"type": "server_vad", "eagerness": "high"}}}},
