@@ -12,9 +12,7 @@ Modality = Literal["text", "audio"]
 # ["text"] or ["audio"]: not both, which OpenAI's spec refuses
 Modalities = Annotated[list[Modality], Field(min_length=1, max_length=1)]
 MaxOutputTokens = Annotated[int, Field(ge=1)] | Literal["inf"]
-# OpenAI's realtime spec allows "minimal" to "xhigh"; "none", as Chat Completions and Responses take it, turns
-# the llm's thinking off
-ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
 ResponseStatus = Literal["in_progress", "completed", "cancelled", "incomplete", "failed"]
 ItemStatus = Literal["completed", "incomplete", "in_progress"]
 

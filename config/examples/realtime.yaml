@@ -1,6 +1,7 @@
 models:
+  # Qwen3's Instruct-2507 models don't think before they answer
   - name: "qwen"
-    model: "lmstudio-community/Qwen3-4B-GGUF:*Q4_K_M.gguf"
+    model: "lmstudio-community/Qwen3-4B-Instruct-2507-GGUF:*Q4_K_M.gguf"
     usecase: "generate"
     loader: "llama_server"
     num_cpus: 4
@@ -27,6 +28,3 @@ pipelines:
       tts: "kokoro"
       session_defaults:
         instructions: "You are a helpful voice assistant. Answer in one or two short sentences."
-        # Qwen3 thinks before it answers unless this turns it off
-        reasoning:
-          effort: "none"
